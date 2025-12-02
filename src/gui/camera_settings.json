@@ -1,0 +1,9 @@
+{
+  "ip": "100.100.100.1",
+  "fps": "1000",
+  "exposure_us": "500",
+  "width": "640",
+  "height": "480",
+  "frames": "20",
+  "output": "./captures/run"
+}

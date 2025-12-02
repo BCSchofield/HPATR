@@ -1,0 +1,26 @@
+# HPATR Requirements
+# Python package dependencies for HPATR (High-Performance Aerosol Testing & Research)
+
+# Core image processing
+opencv-python>=4.5.0
+numpy>=1.20.0
+matplotlib>=3.3.0
+pandas>=1.2.0
+
+# GUI
+customtkinter>=5.0.0
+Pillow>=8.0.0
+openpyxl>=3.0.0
+
+# Serial communication
+pyserial>=3.5
+
+# Optional: Phantom SDK (install separately if needed)
+# pyphantom>=3.11.11.806  # Install from vendor or pip if available
+
+# Optional: PyVISA for Tektronix AFG1062
+# pyvisa>=1.11.0  # Uncomment if using AFG1062
+
+# Config file handling
+PyYAML>=5.4.0
+

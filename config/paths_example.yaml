@@ -1,0 +1,32 @@
+# HPATR Configuration File
+# Copy this file to paths.yaml and update with your actual paths
+
+imaging:
+  # Default input directory for Phantom camera output
+  default_input_dir: "/Volumes/LaCie/Phantom/Flashed_Output"
+  # Default input filename
+  default_input_file: "flashed_output.tiff"
+  # Root directory for all imaging outputs (timestamped folders will be created here)
+  output_root: "/Volumes/LaCie/Shadowgraph"
+  # Structure: output_root/Month_Year/Day_Month/Timestamp/Input/ and Outputs/
+
+gui:
+  # Directory for experiment logs
+  experiment_log_dir: "/Volumes/LaCie/Experiments/Logs"
+  # Serial log file (relative to script location or absolute path)
+  serial_log_file: "serial_log.txt"
+  # Camera settings file path
+  camera_settings_file: "src/gui/camera_settings.json"
+  # Phantom SDK path (if needed - usually installed via pip)
+  # Note: Phantom SDK is typically installed via pip (pyphantom package)
+  # If you need to point to specific DLLs, set this path:
+  phantom_sdk_path: ""  # Leave empty if using pip-installed pyphantom
+
+mp4_to_tiff:
+  # Default video input path
+  default_video_path: "/Volumes/LaCie/Phantom/Video/5fps_First_Cine_Trial.mp4"
+  # Default TIFF output folder
+  default_tiff_folder: "/Volumes/LaCie/Phantom/TIFF_Output"
+  # Default flashed output folder (brightest frame)
+  default_flashed_output: "/Volumes/LaCie/Phantom/Flashed_Output"
+
