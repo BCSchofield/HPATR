@@ -866,6 +866,7 @@ class ModernExperimentControlApp:
         self.cam_seconds = ctk.StringVar()
         self.cam_output = ctk.StringVar()
         self.camera_status = ctk.StringVar(value="Camera: idle")
+        self.pipeline_enabled = ctk.BooleanVar(value=False)  # Pipeline checkbox
 
         # AFG1062 Control Variables
         self.afg_available = PYVISA_AVAILABLE
@@ -1068,6 +1069,12 @@ class ModernExperimentControlApp:
         # Label to display image (will be updated) - fills width
         self.shadowgraph_image_label = ctk.CTkLabel(image_frame, text="Loading...")
         self.shadowgraph_image_label.pack(fill="x", padx=0, pady=0)
+        
+        # Error message label (below image, initially hidden)
+        self.pipeline_error_label = ctk.CTkLabel(image_panel, text="", 
+                                                 font=ctk.CTkFont(size=10),
+                                                 text_color="red", wraplength=480)
+        self.pipeline_error_label.pack(pady=(0, 10), padx=5)
         
         # Store reference to image panel for updates
         self.shadowgraph_image_panel = image_panel
@@ -1386,6 +1393,12 @@ class ModernExperimentControlApp:
         capture_frame.pack(fill="x", pady=1)
         ctk.CTkLabel(capture_frame, textvariable=self.camera_status, font=ctk.CTkFont(size=9)).pack(side="left", padx=(5, 2))
         ctk.CTkButton(capture_frame, text="Abort", command=self.cam_abort, width=60, height=25).pack(side="left", padx=2)
+        
+        # Pipeline checkbox (to the left of Capture button)
+        pipeline_checkbox = ctk.CTkCheckBox(capture_frame, text="Pipeline", 
+                                           variable=self.pipeline_enabled, width=80, height=25)
+        pipeline_checkbox.pack(side="right", padx=(0, 5))
+        
         self.cam_capture_btn = ctk.CTkButton(capture_frame, text="Capture", 
                                            command=self._cam_capture_handler, width=90, height=25,
                                            fg_color="red", hover_color="darkred")
@@ -2675,18 +2688,91 @@ class ModernExperimentControlApp:
                 frame_range = (trigger_frame, end_frame)
                 print(f"Saving {frames_to_save} frames ({seconds:.3f}s) from frame {trigger_frame} to {end_frame}")
                 
-                self.phantom_camera.save_recording(output_path, cine_index=1, file_format='cine', frame_range=frame_range)
+                # Check if pipeline is enabled
+                pipeline_enabled = self.pipeline_enabled.get()
                 
-                actual_saved_duration = frames_to_save / frame_rate
-                status_msg = f"Recording saved successfully ({frames_to_save} frames, {actual_saved_duration:.3f}s)"
+                if pipeline_enabled:
+                    # Pipeline mode: Save directly as TIFF sequence to TIFF_Output folder
+                    try:
+                        from config_loader import get_mp4_config
+                        config = get_mp4_config()
+                        tiff_output_base = config.get('default_tiff_folder', None)
+                        if tiff_output_base:
+                            tiff_output_base = resolve_path(tiff_output_base)
+                        else:
+                            # Fallback: use LaCie drive
+                            lacie_base = find_lacie_drive()
+                            if lacie_base:
+                                tiff_output_base = os.path.join(lacie_base, "Phantom", "TIFF_Output")
+                            else:
+                                tiff_output_base = "D:\\Phantom\\TIFF_Output"
+                        
+                        # Ensure TIFF_Output folder exists
+                        os.makedirs(tiff_output_base, exist_ok=True)
+                        
+                        # Save as TIFF sequence directly
+                        tiff_output_path = os.path.join(tiff_output_base, "run")
+                        print(f"Pipeline enabled: Saving TIFF sequence to {tiff_output_base}")
+                        self.phantom_camera.save_recording(tiff_output_path, cine_index=1, file_format='tiff', frame_range=frame_range)
+                        
+                        # Also save .cine file for backup
+                        self.phantom_camera.save_recording(output_path, cine_index=1, file_format='cine', frame_range=frame_range)
+                        
+                        # Start pipeline processing in separate thread
+                        threading.Thread(
+                            target=self._run_pipeline_thread,
+                            args=(tiff_output_base,),
+                            daemon=True
+                        ).start()
+                        
+                        actual_saved_duration = frames_to_save / frame_rate
+                        status_msg = f"Recording saved + Pipeline started ({frames_to_save} frames, {actual_saved_duration:.3f}s)"
+                    except Exception as pipeline_error:
+                        print(f"Error in pipeline save: {pipeline_error}")
+                        import traceback
+                        traceback.print_exc()
+                        # Fallback to normal .cine save
+                        self.phantom_camera.save_recording(output_path, cine_index=1, file_format='cine', frame_range=frame_range)
+                        actual_saved_duration = frames_to_save / frame_rate
+                        status_msg = f"Recording saved (pipeline failed: {str(pipeline_error)})"
+                else:
+                    # Normal mode: Save as .cine file
+                    self.phantom_camera.save_recording(output_path, cine_index=1, file_format='cine', frame_range=frame_range)
+                    actual_saved_duration = frames_to_save / frame_rate
+                    status_msg = f"Recording saved successfully ({frames_to_save} frames, {actual_saved_duration:.3f}s)"
                 
             except Exception as cine_error:
                 print(f"Error accessing cine object: {cine_error}")
                 import traceback
                 traceback.print_exc()
                 # Fallback: save without checking frame count
-                self.phantom_camera.save_recording(output_path, cine_index=1, file_format='cine')
-                status_msg = f"Recording saved successfully ({seconds:.3f}s requested)"
+                pipeline_enabled = self.pipeline_enabled.get()
+                if pipeline_enabled:
+                    # Try pipeline save
+                    try:
+                        from config_loader import get_mp4_config
+                        config = get_mp4_config()
+                        tiff_output_base = config.get('default_tiff_folder', None)
+                        if tiff_output_base:
+                            tiff_output_base = resolve_path(tiff_output_base)
+                        else:
+                            lacie_base = find_lacie_drive()
+                            if lacie_base:
+                                tiff_output_base = os.path.join(lacie_base, "Phantom", "TIFF_Output")
+                            else:
+                                tiff_output_base = "D:\\Phantom\\TIFF_Output"
+                        os.makedirs(tiff_output_base, exist_ok=True)
+                        tiff_output_path = os.path.join(tiff_output_base, "run")
+                        self.phantom_camera.save_recording(tiff_output_path, cine_index=1, file_format='tiff')
+                        self.phantom_camera.save_recording(output_path, cine_index=1, file_format='cine')
+                        threading.Thread(target=self._run_pipeline_thread, args=(tiff_output_base,), daemon=True).start()
+                        status_msg = f"Recording saved + Pipeline started ({seconds:.3f}s requested)"
+                    except:
+                        self.phantom_camera.save_recording(output_path, cine_index=1, file_format='cine')
+                        status_msg = f"Recording saved (pipeline failed)"
+                else:
+                    self.phantom_camera.save_recording(output_path, cine_index=1, file_format='cine')
+                    status_msg = f"Recording saved successfully ({seconds:.3f}s requested)"
             
             self.master.after(0, lambda: self.camera_status.set(status_msg))
             self.master.after(0, lambda: self.cam_capture_btn.configure(text="Capture", state="normal"))
@@ -2702,6 +2788,70 @@ class ModernExperimentControlApp:
             print(f"Recording save error: {e}")
             import traceback
             traceback.print_exc()
+
+    def _run_pipeline_thread(self, tiff_output_folder):
+        """Run the full pipeline: find brightest frame → process → display result"""
+        try:
+            # Clear any previous error
+            self.master.after(0, lambda: self.pipeline_error_label.configure(text=""))
+            self.master.after(0, lambda: self.camera_status.set("Pipeline: Finding brightest frame..."))
+            
+            # Step 1: Find brightest frame from TIFF_Output
+            print("\n[PIPELINE] Step 1: Finding brightest frame...")
+            from config_loader import get_mp4_config
+            config = get_mp4_config()
+            flashed_output_folder = config.get('default_flashed_output', None)
+            if flashed_output_folder:
+                flashed_output_folder = resolve_path(flashed_output_folder)
+            else:
+                lacie_base = find_lacie_drive()
+                if lacie_base:
+                    flashed_output_folder = os.path.join(lacie_base, "Phantom", "Flashed_Output")
+                else:
+                    flashed_output_folder = "D:\\Phantom\\Flashed_Output"
+            
+            # Import find_brightest_frame function
+            from imaging.mp4_to_tiff import find_brightest_frame
+            
+            # Find and save brightest frame (will overwrite if exists)
+            success = find_brightest_frame(tiff_output_folder, flashed_output_folder)
+            if not success:
+                raise Exception("Failed to find brightest frame")
+            
+            flashed_output_path = os.path.join(flashed_output_folder, "flashed_output.tiff")
+            if not os.path.exists(flashed_output_path):
+                raise Exception(f"Brightest frame not found at {flashed_output_path}")
+            
+            print(f"[PIPELINE] Brightest frame saved to: {flashed_output_path}")
+            self.master.after(0, lambda: self.camera_status.set("Pipeline: Processing image..."))
+            
+            # Step 2: Run save_and_analyse on flashed_output.tiff
+            print("[PIPELINE] Step 2: Processing image with save_and_analyse...")
+            from imaging.save_and_analyse import process_and_save_to_lacie
+            
+            success = process_and_save_to_lacie(flashed_output_path)
+            if not success:
+                raise Exception("Failed to process image with save_and_analyse")
+            
+            print("[PIPELINE] Image processing complete!")
+            self.master.after(0, lambda: self.camera_status.set("Pipeline: Complete!"))
+            
+            # Step 3: Refresh shadowgraph image display
+            print("[PIPELINE] Step 3: Refreshing GUI display...")
+            time.sleep(0.5)  # Small delay to ensure file is written
+            self.master.after(0, self.refresh_shadowgraph_image)
+            
+            print("[PIPELINE] Pipeline completed successfully!")
+            
+        except Exception as e:
+            error_msg = f"Pipeline Error: {str(e)}"
+            print(f"[PIPELINE ERROR] {error_msg}")
+            import traceback
+            traceback.print_exc()
+            
+            # Display error in left column
+            self.master.after(0, lambda: self.pipeline_error_label.configure(text=error_msg))
+            self.master.after(0, lambda: self.camera_status.set(f"Pipeline failed: {str(e)}"))
 
     def get_camera_output_base_path(self):
         """Get base path for camera videos (without timestamped folders)"""
