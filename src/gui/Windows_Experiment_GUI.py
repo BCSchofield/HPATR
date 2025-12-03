@@ -813,7 +813,7 @@ class ModernExperimentControlApp:
         
         # Center window on screen and bring to front
         window_width = 1500
-        window_height = 1020  # Fixed height instead of screen-based
+        window_height = 960  # Fixed height instead of screen-based
         screen_width = master.winfo_screenwidth()
         screen_height = master.winfo_screenheight()
         x = (screen_width - window_width) // 2
@@ -1070,11 +1070,42 @@ class ModernExperimentControlApp:
         self.shadowgraph_image_label = ctk.CTkLabel(image_frame, text="Loading...")
         self.shadowgraph_image_label.pack(fill="x", padx=0, pady=0)
         
-        # Error message label (below image, initially hidden)
+        # Pipeline status label (below image, shows pipeline progress)
+        self.pipeline_status_label = ctk.CTkLabel(image_panel, text="", 
+                                                  font=ctk.CTkFont(size=11, weight="bold"),
+                                                  text_color="gray", wraplength=480)
+        self.pipeline_status_label.pack(pady=(5, 5), padx=5)
+        
+        # Error message label (below pipeline status, initially hidden)
         self.pipeline_error_label = ctk.CTkLabel(image_panel, text="", 
                                                  font=ctk.CTkFont(size=10),
                                                  text_color="red", wraplength=480)
         self.pipeline_error_label.pack(pady=(0, 10), padx=5)
+        
+        # Pressure Graph - below shadowgraph image
+        graph_title = ctk.CTkLabel(image_panel, text="📈 Pressure Monitoring", 
+                                 font=ctk.CTkFont(size=12, weight="bold"))
+        graph_title.pack(pady=(10, 5))
+        
+        # Create matplotlib figure for pressure graph
+        self.fig, self.ax = plt.subplots(figsize=(4.5, 2.5))
+        self.ax.set_title('Pressure Over Time', fontsize=10, fontweight='bold')
+        self.ax.set_xlabel('Time (s)', fontsize=8)
+        self.ax.set_ylabel('Pressure (BAR)', fontsize=8)
+        self.ax.grid(True, alpha=0.3)
+        
+        # Initialize empty line
+        self.pressure_line, = self.ax.plot([], [], 'b-', linewidth=2, label='Pressure')
+        self.ax.legend(fontsize=8)
+        
+        # Set initial axis limits
+        self.ax.set_xlim(0, 60)
+        self.ax.set_ylim(0, 20)
+        
+        # Create canvas widget
+        self.canvas = FigureCanvasTkAgg(self.fig, image_panel)
+        self.canvas.draw()
+        self.canvas.get_tk_widget().pack(pady=5, padx=5)
         
         # Store reference to image panel for updates
         self.shadowgraph_image_panel = image_panel
@@ -1394,15 +1425,16 @@ class ModernExperimentControlApp:
         ctk.CTkLabel(capture_frame, textvariable=self.camera_status, font=ctk.CTkFont(size=9)).pack(side="left", padx=(5, 2))
         ctk.CTkButton(capture_frame, text="Abort", command=self.cam_abort, width=60, height=25).pack(side="left", padx=2)
         
-        # Pipeline checkbox (to the left of Capture button)
-        pipeline_checkbox = ctk.CTkCheckBox(capture_frame, text="Pipeline", 
-                                           variable=self.pipeline_enabled, width=80, height=25)
-        pipeline_checkbox.pack(side="right", padx=(0, 5))
-        
+        # Capture button (rightmost)
         self.cam_capture_btn = ctk.CTkButton(capture_frame, text="Capture", 
                                            command=self._cam_capture_handler, width=90, height=25,
                                            fg_color="red", hover_color="darkred")
         self.cam_capture_btn.pack(side="right", padx=2)
+        
+        # Pipeline checkbox (to the left of Capture button)
+        pipeline_checkbox = ctk.CTkCheckBox(capture_frame, text="Pipeline", 
+                                           variable=self.pipeline_enabled, width=80, height=25)
+        pipeline_checkbox.pack(side="right", padx=(0, 5))
         
         # Disable camera controls for Mac users
         if not self.camera_available:
@@ -1425,63 +1457,39 @@ class ModernExperimentControlApp:
                                    font=ctk.CTkFont(size=12, weight="bold"))
         control_title.pack(pady=(5, 2))
         
-        # Buttons - smaller
+        # Buttons - centered
         buttons_frame = ctk.CTkFrame(control_frame)
-        buttons_frame.pack(fill="x", padx=5, pady=2)
+        buttons_frame.pack(fill="x", padx=5, pady=10)
+        
+        # Inner frame to center buttons
+        buttons_inner = ctk.CTkFrame(buttons_frame)
+        buttons_inner.pack(expand=True)
         
         # Home button - smaller
-        self.home_button = ctk.CTkButton(buttons_frame, text="🏠 HOME", 
+        self.home_button = ctk.CTkButton(buttons_inner, text="🏠 HOME", 
                                        command=self.home_motor, width=80, height=25,
                                        fg_color="orange", hover_color="darkorange")
         self.home_button.pack(side="left", padx=2)
 
-        # Cleaning button with safety confirmation - placed to the left of START
+        # Cleaning button with safety confirmation
         self.cleaning_in_progress = False
-        self.clean_button = ctk.CTkButton(buttons_frame, text="🧼 CLEANING", 
+        self.clean_button = ctk.CTkButton(buttons_inner, text="🧼 CLEANING", 
                                         command=self.start_cleaning, width=110, height=25,
                                         fg_color="#5555AA", hover_color="#444488")
         self.clean_button.pack(side="left", padx=2)
         
         # Homed indicator - smaller
-        self.homed_label = ctk.CTkLabel(buttons_frame, text="NO", 
+        self.homed_label = ctk.CTkLabel(buttons_inner, text="NO", 
                                       font=ctk.CTkFont(size=10, weight="bold"),
                                       text_color="red")
         self.homed_label.pack(side="left", padx=(5, 2))
         
-        # Start button - smaller, right-aligned
-        self.start_button = ctk.CTkButton(buttons_frame, text="START EXPERIMENT", 
+        # Start button - smaller
+        self.start_button = ctk.CTkButton(buttons_inner, text="START EXPERIMENT", 
                                         command=self.start_experiment, width=150, height=25,
                                         fg_color="green", hover_color="darkgreen",
                                         font=ctk.CTkFont(size=10, weight="bold"))
-        self.start_button.pack(side="right", padx=2)
-        
-        # Pressure Graph - much smaller, inside control panel
-        # Create matplotlib figure - ultra small with more detail
-        self.fig, self.ax = plt.subplots(figsize=(2.16, 1.152))
-        self.ax.set_xlabel('Time (s)', fontsize=8)
-        self.ax.set_ylabel('Pressure (BAR)', fontsize=8)
-        self.ax.grid(True, alpha=0.3, linewidth=0.3)
-        
-        # Add more detailed grid lines
-        self.ax.set_xticks(range(0, 61, 10))  # Every 10 seconds
-        self.ax.set_yticks(range(0, 21, 5))   # Every 5 BAR
-        self.ax.tick_params(axis='both', which='major', labelsize=5)
-        
-        # Initialize empty line with thinner line
-        self.pressure_line, = self.ax.plot([], [], 'b-', linewidth=0.5, label='Pressure')
-        self.ax.legend(fontsize=3, loc='upper right')
-        
-        # Set initial axis limits with tighter margins
-        self.ax.set_xlim(0, 60)
-        self.ax.set_ylim(0, 20)
-        
-        # Remove extra padding
-        self.fig.tight_layout(pad=0.1)
-        
-        # Create canvas widget - ultra small
-        self.canvas = FigureCanvasTkAgg(self.fig, control_frame)
-        self.canvas.draw()
-        self.canvas.get_tk_widget().pack(pady=1)
+        self.start_button.pack(side="left", padx=2)
 
     def create_afg_section(self, parent):
         """Create AFG1062 control section"""
@@ -2726,7 +2734,7 @@ class ModernExperimentControlApp:
                         ).start()
                         
                         actual_saved_duration = frames_to_save / frame_rate
-                        status_msg = f"Recording saved + Pipeline started ({frames_to_save} frames, {actual_saved_duration:.3f}s)"
+                        status_msg = f"Recording saved ({frames_to_save} frames, {actual_saved_duration:.3f}s)"
                     except Exception as pipeline_error:
                         print(f"Error in pipeline save: {pipeline_error}")
                         import traceback
@@ -2734,7 +2742,8 @@ class ModernExperimentControlApp:
                         # Fallback to normal .cine save
                         self.phantom_camera.save_recording(output_path, cine_index=1, file_format='cine', frame_range=frame_range)
                         actual_saved_duration = frames_to_save / frame_rate
-                        status_msg = f"Recording saved (pipeline failed: {str(pipeline_error)})"
+                        status_msg = f"Recording saved ({frames_to_save} frames, {actual_saved_duration:.3f}s)"
+                        # Pipeline error will be shown in pipeline_error_label
                 else:
                     # Normal mode: Save as .cine file
                     self.phantom_camera.save_recording(output_path, cine_index=1, file_format='cine', frame_range=frame_range)
@@ -2766,7 +2775,7 @@ class ModernExperimentControlApp:
                         self.phantom_camera.save_recording(tiff_output_path, cine_index=1, file_format='tiff')
                         self.phantom_camera.save_recording(output_path, cine_index=1, file_format='cine')
                         threading.Thread(target=self._run_pipeline_thread, args=(tiff_output_base,), daemon=True).start()
-                        status_msg = f"Recording saved + Pipeline started ({seconds:.3f}s requested)"
+                        status_msg = f"Recording saved ({seconds:.3f}s)"
                     except:
                         self.phantom_camera.save_recording(output_path, cine_index=1, file_format='cine')
                         status_msg = f"Recording saved (pipeline failed)"
@@ -2792,9 +2801,9 @@ class ModernExperimentControlApp:
     def _run_pipeline_thread(self, tiff_output_folder):
         """Run the full pipeline: find brightest frame → process → display result"""
         try:
-            # Clear any previous error
+            # Clear any previous error and set initial status
             self.master.after(0, lambda: self.pipeline_error_label.configure(text=""))
-            self.master.after(0, lambda: self.camera_status.set("Pipeline: Finding brightest frame..."))
+            self.master.after(0, lambda: self.pipeline_status_label.configure(text="Step 1: Finding brightest frame...", text_color="gray"))
             
             # Step 1: Find brightest frame from TIFF_Output
             print("\n[PIPELINE] Step 1: Finding brightest frame...")
@@ -2823,7 +2832,7 @@ class ModernExperimentControlApp:
                 raise Exception(f"Brightest frame not found at {flashed_output_path}")
             
             print(f"[PIPELINE] Brightest frame saved to: {flashed_output_path}")
-            self.master.after(0, lambda: self.camera_status.set("Pipeline: Processing image..."))
+            self.master.after(0, lambda: self.pipeline_status_label.configure(text="Step 2: Processing image...", text_color="gray"))
             
             # Step 2: Run save_and_analyse on flashed_output.tiff
             print("[PIPELINE] Step 2: Processing image with save_and_analyse...")
@@ -2834,12 +2843,15 @@ class ModernExperimentControlApp:
                 raise Exception("Failed to process image with save_and_analyse")
             
             print("[PIPELINE] Image processing complete!")
-            self.master.after(0, lambda: self.camera_status.set("Pipeline: Complete!"))
+            self.master.after(0, lambda: self.pipeline_status_label.configure(text="Step 3: Refreshing display...", text_color="gray"))
             
             # Step 3: Refresh shadowgraph image display
             print("[PIPELINE] Step 3: Refreshing GUI display...")
             time.sleep(0.5)  # Small delay to ensure file is written
             self.master.after(0, self.refresh_shadowgraph_image)
+            
+            # Show "Done!" in green when complete
+            self.master.after(0, lambda: self.pipeline_status_label.configure(text="Done!", text_color="green"))
             
             print("[PIPELINE] Pipeline completed successfully!")
             
@@ -2851,7 +2863,7 @@ class ModernExperimentControlApp:
             
             # Display error in left column
             self.master.after(0, lambda: self.pipeline_error_label.configure(text=error_msg))
-            self.master.after(0, lambda: self.camera_status.set(f"Pipeline failed: {str(e)}"))
+            self.master.after(0, lambda: self.pipeline_status_label.configure(text="Pipeline failed", text_color="red"))
 
     def get_camera_output_base_path(self):
         """Get base path for camera videos (without timestamped folders)"""

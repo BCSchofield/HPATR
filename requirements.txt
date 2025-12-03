@@ -3,7 +3,7 @@
 
 # Core image processing
 opencv-python>=4.5.0
-numpy>=1.20.0
+numpy>=1.20.0,<2.0  # NumPy 2.x incompatible with pyphantom (compiled with NumPy 1.x)
 matplotlib>=3.3.0
 pandas>=1.2.0
 
