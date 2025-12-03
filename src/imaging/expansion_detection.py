@@ -1,4 +1,7 @@
-#Git Save Test 1
+"""
+HPATR Expansion Detection Module
+Core image processing functions for droplet detection using Canny, Watershed, and optimization.
+"""
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
@@ -109,7 +112,7 @@ def process_image(
     }
 
     # ==== STEP 1: CANNY EDGE DETECTION FOR SMALL DROPLETS ====
-    print("🔍 Step 1: Canny Edge Detection for small droplets...")
+    print("Step 1: Canny Edge Detection for small droplets...")
     
     # Canny edge detection (tunable)
     edges = cv2.Canny(blur, int(canny_thresh1), int(canny_thresh2))
@@ -127,19 +130,19 @@ def process_image(
             if radius >= 5:  # Minimum radius filter
                 canny_circles.append([x, y, radius])
     
-    print(f"✓ Canny detection found {len(canny_circles)} small droplets")
+    print(f"Canny detection found {len(canny_circles)} small droplets")
 
     # Save Canny edge detection image (only when running directly)
     if not output_dir:
         canny_filename = f"CANNY_EDGES.png"
         canny_save_path = os.path.join("/tmp", canny_filename)  # Temporary location
         cv2.imwrite(canny_save_path, edges)
-        print(f"✓ Canny edge detection saved: {canny_save_path}")
+        print(f"Canny edge detection saved: {canny_save_path}")
     else:
-        print(f"✓ Canny edge detection will be saved by calling script")
+        print(f"Canny edge detection will be saved by calling script")
 
     # ==== STEP 2: WATERSHED + HOUGH FOR LARGE DROPLETS ====
-    print("🌊 Step 2: Watershed + Hough detection for large droplets...")
+    print("Step 2: Watershed + Hough detection for large droplets...")
     
     # Thresholding & Morphological Operations
     ret, thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
@@ -168,7 +171,7 @@ def process_image(
     watershed_debug_images = {}  # Store watershed debug images
     if hough_circles is not None:
         hough_circles = np.round(hough_circles[0, :]).astype("int")
-        print(f"✓ Hough detection found {len(hough_circles)} potential large droplets")
+        print(f"Hough detection found {len(hough_circles)} potential large droplets")
         
         # Watershed processing with Hough markers
         sure_bg = cv2.dilate(opening, kernel, iterations=WATERSHED_DILATION_ITERATIONS)
@@ -183,7 +186,7 @@ def process_image(
         markers[unknown == 255] = 0
         
         # Filter out small connected component markers
-        print(f"🔍 Filtering connected component markers...")
+        print(f"Filtering connected component markers...")
         original_marker_count = markers.max() - 1
         filtered_markers = np.zeros_like(markers)
         filtered_markers[unknown == 255] = 0  # Keep unknown regions as 0
@@ -207,7 +210,7 @@ def process_image(
         
         markers = filtered_markers
         filtered_marker_count = markers.max() - 1
-        print(f"✓ Filtered markers: {original_marker_count} → {filtered_marker_count} (removed {original_marker_count - filtered_marker_count} small components)")
+        print(f"Filtered markers: {original_marker_count} -> {filtered_marker_count} (removed {original_marker_count - filtered_marker_count} small components)")
         
         # Add Hough circles as markers
         next_label = markers.max() + 1
@@ -235,7 +238,7 @@ def process_image(
                 else:
                     print(f"  Skipped Hough circle at ({x}, {y}) - no foreground nearby")
         
-        print(f"✓ Added {hough_markers_added} Hough markers out of {len(hough_circles)} circles")
+        print(f"Added {hough_markers_added} Hough markers out of {len(hough_circles)} circles")
         
         # Apply watershed
         markers_ws = cv2.watershed(img_rgb, markers)
@@ -277,12 +280,12 @@ def process_image(
         }
         
         # Extract watershed regions with area filtering
-        print(f"🔍 Extracting watershed regions from {markers_ws.max() - 1} labels...")
+        print(f"Extracting watershed regions from {markers_ws.max() - 1} labels...")
         watershed_regions_found = 0
         small_regions_skipped = 0
         
         # Debug: Check what watershed labels actually exist
-        print(f"🔍 DEBUG: Watershed labels range from 2 to {markers_ws.max()}")
+        print(f"DEBUG: Watershed labels range from 2 to {markers_ws.max()}")
         for label in range(2, markers_ws.max() + 1):
             mask = np.zeros_like(gray)
             mask[markers_ws == label] = 255
@@ -300,20 +303,20 @@ def process_image(
                     if radius >= 10:  # Minimum radius for watershed results
                         watershed_circles.append([x, y, radius])
                         watershed_regions_found += 1
-                        print(f"    ✓ Kept watershed region {watershed_regions_found}: center=({x:.1f}, {y:.1f}), radius={radius:.1f}, area={area:.0f}")
+                        print(f"    Kept watershed region {watershed_regions_found}: center=({x:.1f}, {y:.1f}), radius={radius:.1f}, area={area:.0f}")
                     else:
                         small_regions_skipped += 1
-                        print(f"    ✗ Skipped small region: center=({x:.1f}, {y:.1f}), radius={radius:.1f} (too small)")
+                        print(f"    [SKIP] Skipped small region: center=({x:.1f}, {y:.1f}), radius={radius:.1f} (too small)")
                 else:
                     small_regions_skipped += 1
-                    print(f"    ✗ Skipped small region: area={area:.0f} (below MIN_DROPLET_AREA={MIN_DROPLET_AREA})")
+                    print(f"    [SKIP] Skipped small region: area={area:.0f} (below MIN_DROPLET_AREA={MIN_DROPLET_AREA})")
         
-        print(f"✓ Watershed extraction complete: {watershed_regions_found} regions kept, {small_regions_skipped} small regions skipped")
+        print(f"Watershed extraction complete: {watershed_regions_found} regions kept, {small_regions_skipped} small regions skipped")
     
-    print(f"✓ Watershed processing found {len(watershed_circles)} large droplets")
+    print(f"Watershed processing found {len(watershed_circles)} large droplets")
 
     # ==== STEP 3: COMBINE ALL DETECTED CIRCLES ====
-    print("🔗 Step 3: Combining all detected circles...")
+    print("Step 3: Combining all detected circles...")
     
     all_circles = []
     circle_sources = []  # Track which method found each circle
@@ -339,17 +342,17 @@ def process_image(
             all_circles.append(watershed_circle)
             circle_sources.append("Watershed")
     
-    print(f"✓ Combined detection: {len(all_circles)} total circles")
+    print(f"Combined detection: {len(all_circles)} total circles")
     print(f"  - Canny: {circle_sources.count('Canny')} circles")
     print(f"  - Watershed: {circle_sources.count('Watershed')} circles")
     
     # Debug: Print details of each circle
-    print("\n🔍 DEBUG: Circle details before optimization:")
+    print("\nDEBUG: Circle details before optimization:")
     for i, (circle, source) in enumerate(zip(all_circles, circle_sources)):
         print(f"  Circle {i+1}: ({circle[0]:.1f}, {circle[1]:.1f}, r={circle[2]:.1f}) - {source}")
 
     # ==== STEP 4: OPTIMIZE ALL CIRCLES ====
-    print("🔄 Step 4: Optimizing all detected circles...")
+    print("Step 4: Optimizing all detected circles...")
     
     optimized_circles = []
     optimization_data = []
@@ -363,12 +366,12 @@ def process_image(
         size_optimized_circles = optimized_circles.copy()
         
         # Debug: Print what's actually in size_optimized_circles
-        print("\n🔍 DEBUG: Size optimized circles (should have same centers as original):")
+        print("\nDEBUG: Size optimized circles (should have same centers as original):")
         for i, (orig, size_opt) in enumerate(zip(all_circles, size_optimized_circles)):
             print(f"  Circle {i+1}: Original ({orig[0]:.1f}, {orig[1]:.1f}) -> Size-opt ({size_opt[0]:.1f}, {size_opt[1]:.1f})")
         
         # Then optimize positions for circles below target
-        print("\n📍 Step 4b: Optimizing circle positions...")
+        print("\nStep 4b: Optimizing circle positions...")
         position_optimized_circles = []
         
         for i, (original_circle, optimized_circle, source) in enumerate(zip(all_circles, optimized_circles, circle_sources)):
@@ -439,10 +442,10 @@ def process_image(
                 'positions_tested': position_info['positions_tested']
             })
     
-    print(f"✓ Optimization complete: {len(optimized_circles)} circles optimized")
+    print(f"Optimization complete: {len(optimized_circles)} circles optimized")
 
     # ==== STEP 5: CREATE FINAL OUTPUT ====
-    print("📊 Step 5: Creating final output...")
+    print("Step 5: Creating final output...")
     
     # Create final annotated image
     final_image = img_rgb.copy()
@@ -464,35 +467,12 @@ def process_image(
         cv2.putText(final_image, str(i+1), (x-10, y-10), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
     
-    # Save final results (only when running directly, not when called from save_and_analyse)
-    if not output_dir:
-        # Create unique folder for each run (only for direct execution)
-        timestamp = time.strftime("%m_%d_%H_%M_%S")
-        save_dir = f"/Volumes/LaCie/Shadowgraph/Expansion_Detection_Tests/{timestamp}"
-        os.makedirs(save_dir, exist_ok=True)
-        
-        # Save final annotated image
-        final_image_path = f"{save_dir}/FINAL_OPTIMIZED_RESULT.png"
-        plt.figure(figsize=(12, 8))
-        plt.imshow(final_image)
-        plt.title(f"Final Optimized Result - {len(optimized_circles)} Droplets")
-        plt.axis('off')
-        plt.tight_layout()
-        plt.savefig(final_image_path, dpi=300, bbox_inches='tight')
-        plt.close()
-        
-        # Save comprehensive CSV
-        csv_path = f"{save_dir}/FINAL_ANALYSIS.csv"
-        df = pd.DataFrame(optimization_data)
-        df.to_csv(csv_path, index=False)
-        
-        print(f"✓ Final optimized result saved: {final_image_path}")
-        print(f"✓ Comprehensive analysis saved: {csv_path}")
-    else:
-        print(f"✓ Results will be saved by calling script to: {output_dir}")
+    # Results are saved by the calling script (save_and_analyse.py or __main__ section)
+    if output_dir:
+        print(f"Results will be saved by calling script to: {output_dir}")
     
     # Print summary
-    print(f"\n📊 FINAL SUMMARY:")
+    print(f"\nFINAL SUMMARY:")
     print(f"  Total droplets detected: {len(optimized_circles)}")
     print(f"  Canny detection: {circle_sources.count('Canny')} droplets")
     print(f"  Watershed detection: {circle_sources.count('Watershed')} droplets")
@@ -514,6 +494,40 @@ def process_image(
         'preprocess_debug': preprocess_debug,
         'preprocess_params': preprocess_params,
     }
+
+def calculate_black_percentage_numpy(gray_img, cx, cy, cr, black_threshold=128):
+    """
+    Calculate black pixel percentage for a circle using NumPy masks (vectorized, fast).
+    
+    Args:
+        gray_img: Grayscale image (2D numpy array)
+        cx: Circle center x coordinate
+        cy: Circle center y coordinate
+        cr: Circle radius
+        black_threshold: Pixel value threshold for black (default 128)
+    
+    Returns:
+        percentage: Black pixel percentage (0-100)
+        total_pixels: Total pixels in circle
+    """
+    height, width = gray_img.shape
+    
+    # Create coordinate grids for entire image
+    y_coords, x_coords = np.ogrid[:height, :width]
+    
+    # Calculate distance squared from circle center for ALL pixels at once
+    distances_squared = (x_coords - cx)**2 + (y_coords - cy)**2
+    
+    # Create boolean mask: True where pixel is inside circle
+    circle_mask = distances_squared <= cr**2
+    
+    # Extract pixels inside circle and count black ones
+    pixels_in_circle = gray_img[circle_mask]
+    black_pixels = np.sum(pixels_in_circle < black_threshold)
+    total_pixels = np.sum(circle_mask)
+    
+    percentage = (black_pixels / total_pixels) * 100 if total_pixels > 0 else 0
+    return percentage, total_pixels
 
 def optimize_circle_sizes(circles, original_image, target_black_percentage=98, max_expansion_factor=2.0, max_contraction_factor=0.5):
     """
@@ -567,23 +581,10 @@ def optimize_circle_sizes(circles, original_image, target_black_percentage=98, m
             if test_radius < 3:  # Minimum radius
                 continue
                 
-            # Calculate black pixel percentage for this radius
-            black_pixels = 0
-            total_pixels = 0
-            
-            # Sample pixels within the circle
-            for dy in range(-test_radius, test_radius + 1):
-                for dx in range(-test_radius, test_radius + 1):
-                    # Check if pixel is within circle
-                    if dx*dx + dy*dy <= test_radius*test_radius:
-                        ny, nx = int(y + dy), int(x + dx)  # Convert to integers
-                        if 0 <= ny < height and 0 <= nx < width:
-                            total_pixels += 1
-                            if gray_img[ny, nx] < 128:  # Black pixel threshold
-                                black_pixels += 1
+            # Calculate black pixel percentage for this radius using NumPy masks (fast!)
+            percentage, total_pixels = calculate_black_percentage_numpy(gray_img, x, y, test_radius)
             
             if total_pixels > 0:
-                percentage = (black_pixels / total_pixels) * 100
                 test_radii.append(test_radius)
                 black_percentages.append(percentage)
                 print(f"  Radius {test_radius}: {percentage:.1f}% black")
@@ -626,23 +627,10 @@ def optimize_circle_sizes(circles, original_image, target_black_percentage=98, m
                 if test_radius < 3:  # Minimum radius
                     continue
                     
-                # Calculate black pixel percentage for this radius
-                black_pixels = 0
-                total_pixels = 0
-                
-                # Sample pixels within the circle
-                for dy in range(-test_radius, test_radius + 1):
-                    for dx in range(-test_radius, test_radius + 1):
-                        # Check if pixel is within circle
-                        if dx*dx + dy*dy <= test_radius*test_radius:
-                            ny, nx = int(y + dy), int(x + dx)  # Convert to integers
-                            if 0 <= ny < height and 0 <= nx < width:
-                                total_pixels += 1
-                                if gray_img[ny, nx] < 128:  # Black pixel threshold
-                                    black_pixels += 1
+                # Calculate black pixel percentage for this radius using NumPy masks (fast!)
+                percentage, total_pixels = calculate_black_percentage_numpy(gray_img, x, y, test_radius)
                 
                 if total_pixels > 0:
-                    percentage = (black_pixels / total_pixels) * 100
                     test_radii.append(test_radius)
                     black_percentages.append(percentage)
                     print(f"  Radius {test_radius}: {percentage:.1f}% black")
@@ -700,23 +688,9 @@ def optimize_circle_position(circle, original_image, search_radius=240, step_siz
     height, width = gray_img.shape
     
     def calculate_black_percentage(cx, cy, cr):
-        """Calculate black pixel percentage for a circle at given position"""
-        black_pixels = 0
-        total_pixels = 0
-        
-        # Convert radius to integer for range function
-        cr_int = int(cr)
-        
-        for dy in range(-cr_int, cr_int + 1):
-            for dx in range(-cr_int, cr_int + 1):
-                if dx*dx + dy*dy <= cr*cr:  # Use original float for distance calculation
-                    ny, nx = int(cy + dy), int(cx + dx)
-                    if 0 <= ny < height and 0 <= nx < width:
-                        total_pixels += 1
-                        if gray_img[ny, nx] < 128:  # Black pixel threshold
-                            black_pixels += 1
-        
-        return (black_pixels / total_pixels) * 100 if total_pixels > 0 else 0
+        """Calculate black pixel percentage for a circle at given position using NumPy masks"""
+        percentage, _ = calculate_black_percentage_numpy(gray_img, cx, cy, cr)
+        return percentage
     
     # Start with original position
     best_x, best_y = x, y
@@ -736,26 +710,109 @@ def optimize_circle_position(circle, original_image, search_radius=240, step_siz
             'positions_tested': 1
         }
     
-    # Search in a grid around the original position
-    positions_tested = 0
-    best_positions = []  # Store all positions that give the same best percentage
+    # Step 1: Coarse grid search to find promising region (avoid local maxima)
+    print(f"  Step 1: Coarse grid search (step_size={step_size*3})...")
+    coarse_step = step_size * 3  # Coarse grid: 3x larger steps
+    coarse_positions_tested = 0
+    coarse_best_x, coarse_best_y = x, y
+    coarse_best_percentage = best_percentage
     
-    for dy in range(-search_radius, search_radius + 1, step_size):
-        for dx in range(-search_radius, search_radius + 1, step_size):
+    for dy in range(-search_radius, search_radius + 1, coarse_step):
+        for dx in range(-search_radius, search_radius + 1, coarse_step):
             test_x, test_y = x + dx, y + dy
             
             # Check if position is within image bounds
             if test_x - r >= 0 and test_x + r < width and test_y - r >= 0 and test_y + r < height:
                 percentage = calculate_black_percentage(test_x, test_y, r)
-                positions_tested += 1
+                coarse_positions_tested += 1
                 
                 # Update best if this is better
-                if percentage > best_percentage:
-                    best_percentage = percentage
-                    best_x, best_y = test_x, test_y
-                    best_positions = [[test_x, test_y]]
-                elif percentage == best_percentage:
-                    best_positions.append([test_x, test_y])
+                if percentage > coarse_best_percentage:
+                    coarse_best_percentage = percentage
+                    coarse_best_x, coarse_best_y = test_x, test_y
+    
+    print(f"  Coarse search: {coarse_positions_tested} positions tested, best: ({coarse_best_x:.1f}, {coarse_best_y:.1f}) with {coarse_best_percentage:.1f}%")
+    
+    # Step 2: Gradient descent from best coarse position
+    print(f"  Step 2: Gradient descent refinement...")
+    current_x, current_y = coarse_best_x, coarse_best_y
+    current_percentage = coarse_best_percentage
+    learning_rate = max(2.0, step_size)  # Adaptive learning rate
+    max_iterations = 50
+    gradient_step = 1.0  # Step size for gradient calculation
+    convergence_threshold = 0.1  # Stop when gradient magnitude is below this
+    
+    positions_tested = coarse_positions_tested
+    gradient_iterations = 0
+    
+    for iteration in range(max_iterations):
+        # Calculate gradient numerically using central differences
+        grad_x = 0.0
+        grad_y = 0.0
+        
+        # Gradient in x direction (central difference)
+        if current_x + gradient_step < width - r and current_x - gradient_step >= r:
+            right_percentage = calculate_black_percentage(current_x + gradient_step, current_y, r)
+            left_percentage = calculate_black_percentage(current_x - gradient_step, current_y, r)
+            grad_x = (right_percentage - left_percentage) / (2 * gradient_step)
+        elif current_x + gradient_step < width - r:
+            # Forward difference if can't go left
+            right_percentage = calculate_black_percentage(current_x + gradient_step, current_y, r)
+            grad_x = (right_percentage - current_percentage) / gradient_step
+        elif current_x - gradient_step >= r:
+            # Backward difference if can't go right
+            left_percentage = calculate_black_percentage(current_x - gradient_step, current_y, r)
+            grad_x = (current_percentage - left_percentage) / gradient_step
+        
+        # Gradient in y direction (central difference)
+        if current_y + gradient_step < height - r and current_y - gradient_step >= r:
+            down_percentage = calculate_black_percentage(current_x, current_y + gradient_step, r)
+            up_percentage = calculate_black_percentage(current_x, current_y - gradient_step, r)
+            grad_y = (down_percentage - up_percentage) / (2 * gradient_step)
+        elif current_y + gradient_step < height - r:
+            # Forward difference if can't go up
+            down_percentage = calculate_black_percentage(current_x, current_y + gradient_step, r)
+            grad_y = (down_percentage - current_percentage) / gradient_step
+        elif current_y - gradient_step >= r:
+            # Backward difference if can't go down
+            up_percentage = calculate_black_percentage(current_x, current_y - gradient_step, r)
+            grad_y = (current_percentage - up_percentage) / gradient_step
+        
+        # Calculate gradient magnitude
+        gradient_magnitude = np.sqrt(grad_x**2 + grad_y**2)
+        
+        # Check for convergence
+        if gradient_magnitude < convergence_threshold:
+            print(f"  Converged at iteration {iteration + 1} (gradient magnitude: {gradient_magnitude:.3f})")
+            break
+        
+        # Move in direction of gradient (uphill)
+        new_x = current_x + learning_rate * grad_x
+        new_y = current_y + learning_rate * grad_y
+        
+        # Keep within image bounds
+        new_x = np.clip(new_x, r, width - r)
+        new_y = np.clip(new_y, r, height - r)
+        
+        # Calculate new percentage
+        new_percentage = calculate_black_percentage(new_x, new_y, r)
+        positions_tested += 1
+        gradient_iterations += 1
+        
+        # Update if better
+        if new_percentage > current_percentage:
+            current_x, current_y = new_x, new_y
+            current_percentage = new_percentage
+        else:
+            # If not improving, reduce learning rate
+            learning_rate *= 0.8
+            if learning_rate < 0.5:
+                break  # Learning rate too small, converged
+    
+    # Use best position found
+    best_x, best_y = current_x, current_y
+    best_percentage = current_percentage
+    best_positions = [[best_x, best_y]]
     
     # Calculate movement distance
     movement_distance = np.sqrt((best_x - x)**2 + (best_y - y)**2)
@@ -763,7 +820,7 @@ def optimize_circle_position(circle, original_image, search_radius=240, step_siz
     
     print(f"  Best position ({best_x:.1f}, {best_y:.1f}): {best_percentage:.1f}% black")
     print(f"  Movement: {movement_distance:.1f} pixels, Improvement: +{improvement:.1f}%")
-    print(f"  Positions tested: {positions_tested}")
+    print(f"  Total positions tested: {positions_tested} (coarse: {coarse_positions_tested}, gradient: {gradient_iterations})")
     
     return [best_x, best_y, r], best_percentage, {
         'original_position': [x, y],
@@ -771,6 +828,8 @@ def optimize_circle_position(circle, original_image, search_radius=240, step_siz
         'movement_distance': movement_distance,
         'improvement': improvement,
         'positions_tested': positions_tested,
+        'coarse_positions_tested': coarse_positions_tested,
+        'gradient_iterations': gradient_iterations,
         'best_positions': best_positions
     }
 
@@ -1027,7 +1086,7 @@ def create_position_optimization_visualization(original_image, original_circles,
     
     # Left side: All circles after size optimization (before position optimization)
     left_side = rgb_img.copy()
-    print("\n🔍 DEBUG: Drawing left side circles (size-optimized):")
+    print("\nDEBUG: Drawing left side circles (size-optimized):")
     for i, (x, y, r) in enumerate(size_optimized_circles):
         print(f"  Circle {i+1}: ({x:.1f}, {y:.1f}, r={r:.1f})")
         cv2.circle(left_side, (int(x), int(y)), int(r), (0, 255, 0), 1)  # Thinner green circles
@@ -1113,11 +1172,9 @@ MIN_CONNECTED_COMPONENT_AREA = 50        # Minimum area for connected component 
 # Droplet detection parameters
 MIN_DROPLET_AREA = 220                  # Minimum droplet area in pixels (filters out tiny spiky regions)
 SMALL_DROPLET_MAX_AREA = 4000            # Allow larger droplets in Canny detection (scaled for 1620x1080)
-CIRCULARITY_THRESHOLD = 0.5              # Lower threshold to catch more droplets
 
-# Canny edge detection parameters
-CANNY_THRESH_1 = 100                     # Lower threshold for edge detection
-CANNY_THRESH_2 = 200                     # Upper threshold for edge detection
+# Note: Canny thresholds are now passed as parameters to process_image()
+# (canny_thresh1 and canny_thresh2) for better flexibility
 
 # ==== MAIN EXECUTION (only runs when script is executed directly) ====
 if __name__ == "__main__":
@@ -1136,14 +1193,21 @@ if __name__ == "__main__":
         default_input_file = config.get('default_input_file', 'flashed_output.tiff')
         IMAGE_PATH = os.path.join(default_input_dir, default_input_file)
     
-    # Use a local output directory for direct execution
-    OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'data', 'sample_output')
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    ANNOTATED_IMAGE_PATH = f'{OUTPUT_DIR}/manual_annotated_droplets_combined.png'
-    CSV_PATH = f'{OUTPUT_DIR}/manual_droplet_sizes_combined.csv'
+    # Use config for output directory, fallback to local data directory
+    try:
+        output_root = config.get('output_root', None)
+        if output_root:
+            SAVE_DIR = os.path.join(output_root, "Expansion_Detection_Tests", time.strftime("%m_%d_%H_%M_%S"))
+        else:
+            SAVE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'data', 'sample_output')
+    except:
+        SAVE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'data', 'sample_output')
+    os.makedirs(SAVE_DIR, exist_ok=True)
+    ANNOTATED_IMAGE_PATH = f'{SAVE_DIR}/manual_annotated_droplets_combined.png'
+    CSV_PATH = f'{SAVE_DIR}/manual_droplet_sizes_combined.csv'
     
-    # Process the image
-    result = process_image(IMAGE_PATH, OUTPUT_DIR)
+    # Process the image (pass None so it doesn't save internally, we'll save manually)
+    result = process_image(IMAGE_PATH, None)
     
     # Save the results locally (for when running script directly)
     cv2.imwrite(ANNOTATED_IMAGE_PATH, cv2.cvtColor(result['final_image'], cv2.COLOR_RGB2BGR))
@@ -1193,7 +1257,7 @@ if __name__ == "__main__":
         print("No droplets detected with the current parameters.")
 
     # ==== CREATE COMPREHENSIVE VISUALIZATION ====
-    print("🖼️ Creating comprehensive visualization...")
+    print("Creating comprehensive visualization...")
     
     # Create a figure to show the complete pipeline
     fig, axes = plt.subplots(2, 3, figsize=(15, 10))
@@ -1278,21 +1342,16 @@ if __name__ == "__main__":
     
     plt.tight_layout()
     
-    # Save the comprehensive visualization
-    # Create unique folder for each run
-    timestamp = time.strftime("%m_%d_%H_%M_%S")  # Unique timestamp for each run
-    save_dir = f"/Volumes/LaCie/Shadowgraph/Expansion_Detection_Tests/{timestamp}"
-    os.makedirs(save_dir, exist_ok=True)
-    
+    # Save the comprehensive visualization (reuse SAVE_DIR from earlier)
     filename = f"COMPLETE_PIPELINE.png"
-    save_path = os.path.join(save_dir, filename)
+    save_path = os.path.join(SAVE_DIR, filename)
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
     print(f"Complete pipeline visualization saved to: {save_path}")
     
     plt.show()
     
     # ==== OPTIMIZATION VISUALIZATION ====
-    print("🖼️ Creating optimization visualization...")
+    print("Creating optimization visualization...")
     
     # Create optimization visualization
     opt_debug_images = create_optimization_visualization(
@@ -1342,16 +1401,16 @@ if __name__ == "__main__":
         
         # Save optimization visualization
         opt_filename = f"OPTIMIZATION_ANALYSIS.png"
-        opt_save_path = os.path.join(save_dir, opt_filename)
+        opt_save_path = os.path.join(SAVE_DIR, opt_filename)
         plt.savefig(opt_save_path, dpi=300, bbox_inches='tight')
         print(f"Optimization visualization saved to: {opt_save_path}")
         
         plt.show()
     else:
-        print("⚠️ No optimization visualization created")
+        print("[WARNING] No optimization visualization created")
     
     # ==== POSITION OPTIMIZATION VISUALIZATION ====
-    print("📍 Creating position optimization visualization...")
+    print("Creating position optimization visualization...")
     
     # Create position movement visualization
     position_movement_viz = create_position_optimization_visualization(
@@ -1364,7 +1423,7 @@ if __name__ == "__main__":
     
     # Save position movement visualization
     position_filename = f"POSITION_MOVEMENT.png"
-    position_save_path = os.path.join(save_dir, position_filename)
+    position_save_path = os.path.join(SAVE_DIR, position_filename)
     cv2.imwrite(position_save_path, cv2.cvtColor(position_movement_viz, cv2.COLOR_RGB2BGR))
     print(f"Position movement visualization saved to: {position_save_path}")
     
@@ -1390,12 +1449,12 @@ if __name__ == "__main__":
     
     # Save final optimized circles image
     final_img_filename = f"FINAL_OPTIMIZED_CIRCLES.png"
-    final_img_path = os.path.join(save_dir, final_img_filename)
+    final_img_path = os.path.join(SAVE_DIR, final_img_filename)
     cv2.imwrite(final_img_path, cv2.cvtColor(final_circles_img, cv2.COLOR_RGB2BGR))
-    print(f"✓ Final optimized circles image saved: {final_img_path}")
+    print(f"Final optimized circles image saved: {final_img_path}")
     
     # Print summary
-    print(f"\n📊 Optimization Summary:")
+    print(f"\nOptimization Summary:")
     print(f"  Total circles optimized: {len(result['optimization_data'])}")
     avg_change = df['radius_change_percent'].mean()
     print(f"  Average radius change: {avg_change:.1f}%")

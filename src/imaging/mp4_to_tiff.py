@@ -89,7 +89,7 @@ def find_brightest_frame(tiff_folder, output_path):
         tiff_folder (str): Folder containing TIFF frames
         output_path (str): Path to save the brightest frame
     """
-    print(f"\n🔍 Finding brightest frame...")
+    print(f"\nFinding brightest frame...")
     print(f"  Input folder: {tiff_folder}")
     print(f"  Output: {output_path}")
     
@@ -153,7 +153,7 @@ def find_brightest_frame(tiff_folder, output_path):
 
 def main():
     """Main function to run the video conversion and brightest frame detection"""
-    print("🚀 HPATR MP4 to TIFF Converter + Brightest Frame Finder")
+    print("HPATR MP4 to TIFF Converter + Brightest Frame Finder")
     print("=" * 60)
     
     # Load config
@@ -206,7 +206,7 @@ def main():
         print(f"\nTo change defaults, edit config/paths.yaml")
         return
     
-    print("\n🎉 All operations completed successfully!")
+    print("\n[SUCCESS] All operations completed successfully!")
 
 if __name__ == "__main__":
     main() 

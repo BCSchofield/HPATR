@@ -37,14 +37,14 @@ def copy_input_to_lacie(input_source, destination_folder):
     input_destination = os.path.join(input_subfolder, f"input{file_extension}")
     shutil.copy2(input_source, input_destination)
     
-    print(f"✓ Copied input file to: {input_destination}")
+    print(f"Copied input file to: {input_destination}")
     return input_destination
 
 def create_outputs_folder(main_folder):
     """Create Outputs/ subfolder for Canny_W_Watershed results"""
     outputs_folder = os.path.join(main_folder, "Outputs")
     os.makedirs(outputs_folder, exist_ok=True)
-    print(f"✓ Created outputs folder: {outputs_folder}")
+    print(f"Created outputs folder: {outputs_folder}")
     return outputs_folder
 
 def save_processed_images_to_lacie(processed_results, outputs_folder):
@@ -59,19 +59,19 @@ def save_processed_images_to_lacie(processed_results, outputs_folder):
         plt.tight_layout()
         plt.savefig(final_image_path, dpi=300, bbox_inches='tight')
         plt.close()
-        print(f"✓ Saved final optimized image: {final_image_path}")
+        print(f"Saved final optimized image: {final_image_path}")
         
         # Save comprehensive CSV
         csv_path = os.path.join(outputs_folder, "FINAL_ANALYSIS.csv")
         df = pd.DataFrame(processed_results['optimization_data'])
         df.to_csv(csv_path, index=False)
-        print(f"✓ Saved comprehensive analysis: {csv_path}")
+        print(f"Saved comprehensive analysis: {csv_path}")
         
         # Save Canny edges image
         if 'canny_edges' in processed_results:
             canny_edges_path = os.path.join(outputs_folder, "CANNY_EDGES.png")
             cv2.imwrite(canny_edges_path, processed_results['canny_edges'])
-            print(f"✓ Saved Canny edges: {canny_edges_path}")
+            print(f"Saved Canny edges: {canny_edges_path}")
         
         # Save Canny circles visualization
         canny_viz = cv2.imread(processed_results.get('input_path', ''))
@@ -82,7 +82,7 @@ def save_processed_images_to_lacie(processed_results, outputs_folder):
                 cv2.circle(canny_viz, (x, y), r, (0, 255, 0), 2)  # Green for Canny
             canny_path = os.path.join(outputs_folder, "CANNY_DETECTION.png")
             cv2.imwrite(canny_path, cv2.cvtColor(canny_viz, cv2.COLOR_RGB2BGR))
-            print(f"✓ Saved Canny detection: {canny_path}")
+            print(f"Saved Canny detection: {canny_path}")
         
         # Save Watershed circles visualization
         watershed_viz = cv2.imread(processed_results.get('input_path', ''))
@@ -93,7 +93,7 @@ def save_processed_images_to_lacie(processed_results, outputs_folder):
                 cv2.circle(watershed_viz, (x, y), r, (255, 0, 0), 2)  # Red for Watershed
             watershed_path = os.path.join(outputs_folder, "WATERSHED_DETECTION.png")
             cv2.imwrite(watershed_path, cv2.cvtColor(watershed_viz, cv2.COLOR_RGB2BGR))
-            print(f"✓ Saved Watershed detection: {watershed_path}")
+            print(f"Saved Watershed detection: {watershed_path}")
         
         # Save position movement visualization
         position_movement_viz = create_position_optimization_visualization(
@@ -105,7 +105,7 @@ def save_processed_images_to_lacie(processed_results, outputs_folder):
         )
         position_path = os.path.join(outputs_folder, "POSITION_MOVEMENT.png")
         cv2.imwrite(position_path, cv2.cvtColor(position_movement_viz, cv2.COLOR_RGB2BGR))
-        print(f"✓ Saved position movement visualization: {position_path}")
+        print(f"Saved position movement visualization: {position_path}")
         
         # Create the wonderful 12-part comprehensive visualization
         debug_folder = os.path.join(outputs_folder, "debug_images")
@@ -177,9 +177,9 @@ def save_processed_images_to_lacie(processed_results, outputs_folder):
             preprocessing_path = os.path.join(debug_folder, 'PREPROCESSING_OVERVIEW.png')
             plt.savefig(preprocessing_path, dpi=200, bbox_inches='tight')
             plt.close(fig_pp)
-            print(f"✓ Saved preprocessing overview: {preprocessing_path}")
+            print(f"Saved preprocessing overview: {preprocessing_path}")
         except Exception as e:
-            print(f"⚠️ Failed to create preprocessing overview: {e}")
+            print(f"[WARNING] Failed to create preprocessing overview: {e}")
         
         # Create a figure to show all steps (4 rows, 3 columns) - sized to fit screen
         fig, axes = plt.subplots(4, 3, figsize=(15, 12))
@@ -301,14 +301,14 @@ def save_processed_images_to_lacie(processed_results, outputs_folder):
         filename = f"COMPLETE_PIPELINE_VISUALIZATION_{timestamp}.png"
         save_path = os.path.join(debug_folder, filename)
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"✓ Saved comprehensive pipeline visualization: {save_path}")
+        print(f"Saved comprehensive pipeline visualization: {save_path}")
         
         # Close the figure to free memory
         plt.close()
         
         # Create watershed debug visualization (similar to MAC_Canny_w_Watershed.py output)
         if 'watershed_debug_images' in processed_results and processed_results['watershed_debug_images']:
-            print("🌊 Creating watershed debug visualization...")
+            print("Creating watershed debug visualization...")
             
             # Create watershed debug figure (4x3 grid)
             fig_ws, axes_ws = plt.subplots(4, 3, figsize=(15, 12))
@@ -386,22 +386,22 @@ def save_processed_images_to_lacie(processed_results, outputs_folder):
             ws_filename = f"WATERSHED_DEBUG_VISUALIZATION_{timestamp}.png"
             ws_save_path = os.path.join(debug_folder, ws_filename)
             plt.savefig(ws_save_path, dpi=300, bbox_inches='tight')
-            print(f"✓ Saved watershed debug visualization: {ws_save_path}")
+            print(f"Saved watershed debug visualization: {ws_save_path}")
             
             plt.close()
         
-        print(f"✓ Saved comprehensive debug visualization to: {debug_folder}")
+        print(f"Saved comprehensive debug visualization to: {debug_folder}")
         
         return True
         
     except Exception as e:
-        print(f"❌ Error saving processed images: {e}")
+        print(f"[ERROR] Error saving processed images: {e}")
         return False
 
 def process_and_save_to_lacie(input_source_path):
     """Complete pipeline: copy input, process, save outputs"""
     try:
-        print(f"🔄 Starting complete pipeline...")
+        print(f"Starting complete pipeline...")
         print(f"  Input source: {input_source_path}")
         
         # Load config
@@ -419,7 +419,7 @@ def process_and_save_to_lacie(input_source_path):
         day_path = os.path.join(month_path, day_folder)
         final_folder_path = os.path.join(day_path, timestamp_folder)
         
-        print(f"📁 Creating folder structure...")
+        print(f"Creating folder structure...")
         print(f"  Shadowgraph folder: Shadowgraph")
         print(f"  Month folder: {month_folder}")
         print(f"  Day folder: {day_folder}")
@@ -431,7 +431,7 @@ def process_and_save_to_lacie(input_source_path):
         os.makedirs(day_path, exist_ok=True)
         os.makedirs(final_folder_path, exist_ok=True)
         
-        print(f"✓ Created main folder structure: {final_folder_path}")
+        print(f"Created main folder structure: {final_folder_path}")
         
         # 2. Copy input file to Input/ subfolder
         input_destination = copy_input_to_lacie(input_source_path, final_folder_path)
@@ -440,34 +440,34 @@ def process_and_save_to_lacie(input_source_path):
         outputs_folder = create_outputs_folder(final_folder_path)
         
         # 4. Run Canny_W_Watershed processing
-        print(f"🔄 Running Canny_W_Watershed processing...")
+        print(f"Running Canny_W_Watershed processing...")
         processed_results = process_image(input_destination, outputs_folder)
         processed_results['input_path'] = input_destination  # Add input path to results
         
-        print(f"✓ Processing complete!")
+        print(f"Processing complete!")
         
         # 5. Save all outputs to Outputs/ subfolder
-        print(f"💾 Saving all outputs to LaCie...")
+        print(f"Saving all outputs to LaCie...")
         save_success = save_processed_images_to_lacie(processed_results, outputs_folder)
         
         if save_success:
-            print(f"🎉 Complete pipeline finished successfully!")
+            print(f"[SUCCESS] Complete pipeline finished successfully!")
             
             # Automatically open the annotated image to show results
             try:
                 import matplotlib.pyplot as plt
                 annotated_image_path = os.path.join(outputs_folder, "annotated_droplets_combined.png")
                 
-                print(f"🖼️  Opening annotated image for review...")
+                print(f"Opening annotated image for review...")
                 plt.figure(figsize=(10, 10))
                 plt.title('Annotated Droplets (Watershed + Canny)')
                 plt.imshow(processed_results['final_image'])
                 plt.axis('off')
                 plt.show()
-                print(f"✓ Annotated image displayed successfully")
+                print(f"Annotated image displayed successfully")
                 
             except Exception as e:
-                print(f"⚠️  Could not display image: {e}")
+                print(f"[WARNING] Could not display image: {e}")
                 print(f"   Image saved to: {os.path.join(outputs_folder, 'FINAL_OPTIMIZED_RESULT.png')}")
             
             # Show the complete folder structure
@@ -491,11 +491,11 @@ def process_and_save_to_lacie(input_source_path):
             
             return True
         else:
-            print(f"❌ Failed to save processed outputs")
+            print(f"[ERROR] Failed to save processed outputs")
             return False
         
     except Exception as e:
-        print(f"❌ Error in complete pipeline: {e}")
+        print(f"[ERROR] Error in complete pipeline: {e}")
         return False
 
 # Removed check_paths() - no longer needed with config system
@@ -504,7 +504,7 @@ def process_and_save_to_lacie(input_source_path):
 
 def main():
     """Main function to run the image processing pipeline"""
-    print("🚀 HPATR Image Processing Pipeline")
+    print("HPATR Image Processing Pipeline")
     print("=" * 60)
     
     # Load config
@@ -515,11 +515,11 @@ def main():
     
     # Check if output root exists
     if not os.path.exists(output_root):
-        print(f"⚠️  Output root not found: {output_root}")
+        print(f"[WARNING] Output root not found: {output_root}")
         print("   Creating directory...")
         os.makedirs(output_root, exist_ok=True)
     
-    print(f"✓ Output root: {output_root}")
+    print(f"Output root: {output_root}")
     
     # Determine input source (use command line arg if provided, else config default)
     if len(sys.argv) > 1:
@@ -531,20 +531,20 @@ def main():
     
     # Check if input file exists
     if not os.path.exists(input_source):
-        print(f"❌ Input file not found: {input_source}")
+        print(f"[ERROR] Input file not found: {input_source}")
         print(f"   Please check config/paths.yaml or provide input file as argument")
         return
     
-    print(f"✓ Input file found: {input_source}")
+    print(f"Input file found: {input_source}")
     
     # Run the complete pipeline
-    print(f"\n🔄 Starting complete pipeline...")
+    print(f"\nStarting complete pipeline...")
     success = process_and_save_to_lacie(input_source)
     
     if success:
-        print("\n🎉 Complete pipeline finished successfully!")
+        print("\n[SUCCESS] Complete pipeline finished successfully!")
     else:
-        print("\n💥 Pipeline failed!")
+        print("\n[ERROR] Pipeline failed!")
 
 if __name__ == "__main__":
     main()

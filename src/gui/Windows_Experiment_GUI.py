@@ -26,16 +26,16 @@ try:
 except ImportError:
     # Fallback if config not available
     GUI_CONFIG = {}
-    print("⚠ Config loader not available, using defaults")
+    print("[WARNING] Config loader not available, using defaults")
 
 # Phantom SDK detection and import HELPsz
 PHANTOM_SDK_AVAILABLE = False
 try:
     from pyphantom import Phantom, utils, cine
     PHANTOM_SDK_AVAILABLE = True
-    print("✓ Phantom SDK (pyphantom) detected and loaded")
+    print(" Phantom SDK (pyphantom) detected and loaded")
 except ImportError as e:
-    print(f"⚠ Phantom SDK (pyphantom) not available: {e}")
+    print(f"[WARNING] Phantom SDK (pyphantom) not available: {e}")
     print("  Camera functionality will be limited. Install pyphantom to enable full camera control.")
 
 # Py`VISA` detection and import (for Tektronix AFG1062)
@@ -43,9 +43,9 @@ PYVISA_AVAILABLE = False
 try:
     import pyvisa
     PYVISA_AVAILABLE = True
-    print("✓ PyVISA detected and loaded")
+    print(" PyVISA detected and loaded")
 except ImportError:
-    print("⚠ PyVISA not available - AFG1062 functionality will be disabled")
+    print("[WARNING] PyVISA not available - AFG1062 functionality will be disabled")
     print("  Install with: pip install pyvisa")
     print("  Note: You may also need to install VISA drivers from:")
     print("    - National Instruments: https://www.ni.com/en-us/support/downloads/drivers/download.ni-visa.html")
@@ -783,11 +783,11 @@ class ModernExperimentControlApp:
                 self.window_icon = ImageTk.PhotoImage(pil_image)
                 master.iconphoto(False, self.window_icon)
                 
-                print(f"✓ Window icon loaded: {icon_path}")
+                print(f" Window icon loaded: {icon_path}")
             else:
-                print(f"⚠ Icon file not found: {icon_path}")
+                print(f"[WARNING] Icon file not found: {icon_path}")
         except Exception as e:
-            print(f"⚠ Could not load window icon: {e}")
+            print(f"[WARNING] Could not load window icon: {e}")
         
         # Platform detection
         self.is_windows = platform.system() == "Windows"
@@ -799,12 +799,12 @@ class ModernExperimentControlApp:
         if PHANTOM_SDK_AVAILABLE:
             try:
                 self.phantom_camera = PhantomController()
-                print("✓ PhantomController initialized")
+                print(" PhantomController initialized")
             except Exception as e:
-                print(f"⚠ Failed to initialize PhantomController: {e}")
+                print(f"[WARNING] Failed to initialize PhantomController: {e}")
                 self.camera_available = False
         else:
-            print("⚠ Phantom SDK not available - camera controls will be disabled")
+            print("[WARNING] Phantom SDK not available - camera controls will be disabled")
         
         # Center window on screen and bring to front
         window_width = 1000
@@ -868,12 +868,12 @@ class ModernExperimentControlApp:
         if PYVISA_AVAILABLE:
             try:
                 self.afg_controller = AFGController()
-                print("✓ AFGController initialized")
+                print(" AFGController initialized")
             except Exception as e:
-                print(f"⚠ Failed to initialize AFGController: {e}")
+                print(f"[WARNING] Failed to initialize AFGController: {e}")
                 self.afg_available = False
         else:
-            print("⚠ PyVISA not available - AFG1062 controls will be disabled")
+            print("[WARNING] PyVISA not available - AFG1062 controls will be disabled")
         
         self.afg_pulse_duration = ctk.StringVar(value="0.001")  # Default 1ms
         self.afg_channel = ctk.StringVar(value="CH1")  # Default to CH1
@@ -961,7 +961,7 @@ class ModernExperimentControlApp:
                                           state="readonly", height=25)
         self.arduino_port.pack(side="left", fill="x", expand=True, padx=2)
         
-        refresh_btn = ctk.CTkButton(port_frame, text="🔄 Refresh", 
+        refresh_btn = ctk.CTkButton(port_frame, text="Refresh", 
                                   command=self.refresh_ports, width=80, height=25)
         refresh_btn.pack(side="right", padx=2)
         
@@ -1135,7 +1135,7 @@ class ModernExperimentControlApp:
         self.notes_text.bind("<FocusOut>", self.on_notes_focus_out)
         
         # Save to Excel button - centered
-        save_btn = ctk.CTkButton(notes_frame, text="💾 Save to Excel", 
+        save_btn = ctk.CTkButton(notes_frame, text="Save to Excel", 
                                command=self.save_to_excel, width=100, height=25)
         save_btn.pack(pady=(2, 0))
 
@@ -1209,7 +1209,7 @@ class ModernExperimentControlApp:
             
             # Add disabled message at the bottom
             disabled_label = ctk.CTkLabel(camera_frame, 
-                                        text="⚠️ Windows SDK Required For Camera Functionality",
+                                        text="[WARNING] Windows SDK Required For Camera Functionality",
                                         font=ctk.CTkFont(size=14, weight="bold"),
                                         text_color="orange")
             disabled_label.pack(pady=15)
@@ -1246,7 +1246,7 @@ class ModernExperimentControlApp:
         self.homed_label.pack(side="left", padx=(5, 2))
         
         # Start button - smaller, right-aligned
-        self.start_button = ctk.CTkButton(buttons_frame, text="🚀 START EXPERIMENT", 
+        self.start_button = ctk.CTkButton(buttons_frame, text="START EXPERIMENT", 
                                         command=self.start_experiment, width=150, height=25,
                                         fg_color="green", hover_color="darkgreen",
                                         font=ctk.CTkFont(size=10, weight="bold"))
@@ -1326,7 +1326,7 @@ class ModernExperimentControlApp:
                 self.disable_widget_recursive(widget)
             
             disabled_label = ctk.CTkLabel(afg_frame, 
-                                        text="⚠️ PyVISA Required - Install with: pip install pyvisa",
+                                        text="[WARNING] PyVISA Required - Install with: pip install pyvisa",
                                         font=ctk.CTkFont(size=12, weight="bold"),
                                         text_color="orange")
             disabled_label.pack(pady=10)
@@ -1416,7 +1416,7 @@ class ModernExperimentControlApp:
             self.serial_reader_thread.start()
             
             self.status.set("Connected to Arduino")
-            print("✓ Connected to Arduino - persistent connection established")
+            print(" Connected to Arduino - persistent connection established")
             return True
             
         except Exception as e:
@@ -2741,7 +2741,7 @@ class ModernExperimentControlApp:
             
             # Check if configured - try to trigger, will fail if not configured
             self.afg_controller.trigger(channel=channel_num)
-            self.afg_status.set(f"AFG {channel_str}: Test pulse sent ✓")
+            self.afg_status.set(f"AFG {channel_str}: Test pulse sent ")
             print(f"AFG1062 {channel_str} test pulse triggered successfully")
         except RuntimeError as e:
             error_msg = str(e)

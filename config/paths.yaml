@@ -33,7 +33,7 @@ gui:
 
 mp4_to_tiff:
   # Default video input path
-  default_video_path: "{lacie_drive}/Phantom/Video/5fps_First_Cine_Trial.mp4"
+  default_video_path: "{lacie_drive}/Phantom/Video/Shadowgraph_Video.mp4"
   # Default TIFF output folder
   default_tiff_folder: "{lacie_drive}/Phantom/TIFF_Output"
   # Default flashed output folder (brightest frame)
