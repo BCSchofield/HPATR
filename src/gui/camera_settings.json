@@ -4,6 +4,6 @@
   "exposure_us": "500",
   "width": "640",
   "height": "480",
-  "frames": "20",
-  "output": "./captures/run"
+  "seconds": "0.020",
+  "output": "D:\\Phantom\\Video"
 }

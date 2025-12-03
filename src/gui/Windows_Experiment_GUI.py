@@ -21,12 +21,17 @@ import sys
 # Add src directory to path for config imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
-    from config_loader import get_gui_config
+    from config_loader import get_gui_config, resolve_path, find_lacie_drive
     GUI_CONFIG = get_gui_config()
 except ImportError:
     # Fallback if config not available
     GUI_CONFIG = {}
     print("[WARNING] Config loader not available, using defaults")
+    # Define fallback functions
+    def resolve_path(path_str, lacie_base=None):
+        return path_str
+    def find_lacie_drive():
+        return None
 
 # Phantom SDK detection and import HELPsz
 PHANTOM_SDK_AVAILABLE = False
@@ -807,8 +812,8 @@ class ModernExperimentControlApp:
             print("[WARNING] Phantom SDK not available - camera controls will be disabled")
         
         # Center window on screen and bring to front
-        window_width = 1000
-        window_height = 810  # Fixed height instead of screen-based
+        window_width = 1500
+        window_height = 1020  # Fixed height instead of screen-based
         screen_width = master.winfo_screenwidth()
         screen_height = master.winfo_screenheight()
         x = (screen_width - window_width) // 2
@@ -896,10 +901,16 @@ class ModernExperimentControlApp:
         main_frame = ctk.CTkFrame(self.master)
         main_frame.pack(fill="both", expand=True, padx=20, pady=10)
 
+        # Create horizontal container for left image panel and right controls
+        content_frame = ctk.CTkFrame(main_frame)
+        content_frame.pack(fill="both", expand=True, padx=10, pady=5)
 
-        # Create main frame for all controls (no scrolling)
-        controls_frame = ctk.CTkFrame(main_frame)
-        controls_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        # Left column: Shadowgraph result image display
+        self.create_shadowgraph_image_panel(content_frame)
+
+        # Right column: Create main frame for all controls (no scrolling)
+        controls_frame = ctk.CTkFrame(content_frame)
+        controls_frame.pack(side="right", fill="both", expand=True, padx=(10, 0), pady=5)
 
         # Arduino Connection Section
         self.create_arduino_section(controls_frame)
@@ -942,6 +953,185 @@ class ModernExperimentControlApp:
         # Separator - truly centered
         separator5 = ctk.CTkFrame(controls_frame, height=2, fg_color="gray")
         separator5.pack(fill="x", pady=5)
+
+    def find_latest_shadowgraph_result(self):
+        """Find the latest FINAL_OPTIMIZED_RESULT.png by checking latest folders (more efficient)"""
+        try:
+            # Get shadowgraph base path from config or use LaCie drive detection
+            try:
+                from config_loader import get_imaging_config
+                config = get_imaging_config()
+                shadowgraph_base = config.get('output_root', None)
+                if shadowgraph_base:
+                    shadowgraph_base = resolve_path(shadowgraph_base)
+            except:
+                shadowgraph_base = None
+            
+            # If not in config, try to find it using LaCie drive
+            if not shadowgraph_base or not os.path.exists(shadowgraph_base):
+                lacie_base = find_lacie_drive()
+                if lacie_base:
+                    shadowgraph_base = os.path.join(lacie_base, "Shadowgraph")
+                else:
+                    # Fallback to D:\Shadowgraph
+                    shadowgraph_base = "D:\\Shadowgraph"
+            
+            if not os.path.exists(shadowgraph_base):
+                print(f"[DEBUG] Shadowgraph base path does not exist: {shadowgraph_base}")
+                return None
+            
+            # Find latest month folder (by modification time)
+            month_folders = []
+            for item in os.listdir(shadowgraph_base):
+                month_path = os.path.join(shadowgraph_base, item)
+                if os.path.isdir(month_path):
+                    month_folders.append((month_path, os.path.getmtime(month_path)))
+            
+            if not month_folders:
+                print(f"[DEBUG] No month folders found in {shadowgraph_base}")
+                return None
+            
+            # Sort by modification time (latest first)
+            month_folders.sort(key=lambda x: x[1], reverse=True)
+            
+            # Check each month folder (starting with latest) until we find a result
+            for month_path, _ in month_folders:
+                # Find latest day folder in this month
+                day_folders = []
+                for item in os.listdir(month_path):
+                    day_path = os.path.join(month_path, item)
+                    if os.path.isdir(day_path):
+                        day_folders.append((day_path, os.path.getmtime(day_path)))
+                
+                if not day_folders:
+                    continue
+                
+                # Sort by modification time (latest first)
+                day_folders.sort(key=lambda x: x[1], reverse=True)
+                
+                # Check each day folder (starting with latest)
+                for day_path, _ in day_folders:
+                    # Find latest timestamp folder in this day
+                    timestamp_folders = []
+                    for item in os.listdir(day_path):
+                        timestamp_path = os.path.join(day_path, item)
+                        if os.path.isdir(timestamp_path):
+                            timestamp_folders.append((timestamp_path, os.path.getmtime(timestamp_path)))
+                    
+                    if not timestamp_folders:
+                        continue
+                    
+                    # Sort by modification time (latest first)
+                    timestamp_folders.sort(key=lambda x: x[1], reverse=True)
+                    
+                    # Check each timestamp folder (starting with latest)
+                    for timestamp_path, _ in timestamp_folders:
+                        # Check for Outputs subfolder and FINAL_OPTIMIZED_RESULT.png
+                        outputs_path = os.path.join(timestamp_path, "Outputs")
+                        if os.path.isdir(outputs_path):
+                            result_file = os.path.join(outputs_path, "FINAL_OPTIMIZED_RESULT.png")
+                            if os.path.exists(result_file):
+                                print(f"[DEBUG] Found latest shadowgraph result: {result_file}")
+                                return result_file
+            
+            print(f"[DEBUG] No FINAL_OPTIMIZED_RESULT.png found in {shadowgraph_base}")
+            return None
+            
+        except Exception as e:
+            print(f"Error finding latest shadowgraph result: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def create_shadowgraph_image_panel(self, parent):
+        """Create left panel to display latest shadowgraph result image"""
+        # Left column frame for image display
+        image_panel = ctk.CTkFrame(parent, width=500)
+        image_panel.pack(side="left", fill="y", padx=(0, 10), pady=5)
+        image_panel.pack_propagate(False)  # Maintain fixed width
+        
+        # Title at the top
+        title = ctk.CTkLabel(image_panel, text="Latest Shadowgraph Result", 
+                            font=ctk.CTkFont(size=12, weight="bold"))
+        title.pack(pady=(10, 5))
+        
+        # Refresh button
+        refresh_btn = ctk.CTkButton(image_panel, text="Refresh", 
+                                   command=self.refresh_shadowgraph_image,
+                                   width=100, height=30)
+        refresh_btn.pack(pady=(0, 10))
+        
+        # Image display frame below title and button - fills width
+        image_frame = ctk.CTkFrame(image_panel)
+        image_frame.pack(fill="x", padx=5, pady=(0, 10))
+        
+        # Label to display image (will be updated) - fills width
+        self.shadowgraph_image_label = ctk.CTkLabel(image_frame, text="Loading...")
+        self.shadowgraph_image_label.pack(fill="x", padx=0, pady=0)
+        
+        # Store reference to image panel for updates
+        self.shadowgraph_image_panel = image_panel
+        
+        # Load initial image
+        self.refresh_shadowgraph_image()
+
+    def refresh_shadowgraph_image(self):
+        """Refresh the shadowgraph result image display"""
+        try:
+            latest_file = self.find_latest_shadowgraph_result()
+            
+            if latest_file and os.path.exists(latest_file):
+                # Load and resize image for display
+                pil_image = Image.open(latest_file)
+                
+                # Get the size of the image panel (fixed width - column is 500px)
+                panel_width = 490  # Column width (500px) minus padding (10px total)
+                max_height = 800  # Maximum height for display
+                
+                # Calculate scaling to fit width while maintaining aspect ratio
+                img_width, img_height = pil_image.size
+                scale_w = panel_width / img_width  # Scale to fill width
+                scale_h = max_height / img_height
+                scale = min(scale_w, scale_h)  # Use width scaling to fill column width
+                
+                new_width = int(img_width * scale)
+                new_height = int(img_height * scale)
+                
+                # Resize image
+                pil_image = pil_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                
+                # Convert to CTkImage for display
+                ctk_image = ctk.CTkImage(light_image=pil_image, dark_image=pil_image, size=(new_width, new_height))
+                
+                # Store reference to prevent garbage collection
+                self.shadowgraph_image_label.image = ctk_image
+                
+                # Get timestamp folder name for display
+                timestamp_folder = os.path.basename(os.path.dirname(os.path.dirname(latest_file)))
+                
+                # Update label with image (no text when image is displayed)
+                self.shadowgraph_image_label.configure(image=ctk_image, text="")
+                
+                print(f"Displaying shadowgraph result from: {timestamp_folder}")
+                
+            else:
+                self.shadowgraph_image_label.configure(
+                    image=None, 
+                    text="No shadowgraph result found\n\nCheck D:\\Shadowgraph folder\n\nClick Refresh to update"
+                )
+                if hasattr(self.shadowgraph_image_label, 'image'):
+                    self.shadowgraph_image_label.image = None
+                
+        except Exception as e:
+            print(f"Error refreshing shadowgraph image: {e}")
+            import traceback
+            traceback.print_exc()
+            self.shadowgraph_image_label.configure(
+                image=None,
+                text=f"Error loading image:\n{str(e)}"
+            )
+            if hasattr(self.shadowgraph_image_label, 'image'):
+                self.shadowgraph_image_label.image = None
 
     def create_arduino_section(self, parent):
         # Arduino Connection Frame - smaller
@@ -2256,8 +2446,11 @@ class ModernExperimentControlApp:
             messagebox.showerror("Input Error", "Please enter an output path")
             return
         
+        # Resolve any placeholders (like {lacie_drive}) in the path
+        resolved_path = resolve_path(out)
+        
         # Store output path and duration for saving later
-        self.cam_output_path = out
+        self.cam_output_path = resolved_path
         self.cam_seconds_to_record = seconds
         
         try:
@@ -2406,8 +2599,37 @@ class ModernExperimentControlApp:
             print(f"Waiting {wait_time:.2f} seconds for recording to complete...")
             time.sleep(wait_time)
             
-            # Save the recording
-            output_path = getattr(self, 'cam_output_path', './camera_settings/captures/run')
+            # Get the base path (either from user input or default)
+            raw_output_path = getattr(self, 'cam_output_path', None)
+            if raw_output_path:
+                # User specified a path - resolve it and use as base for timestamped folders
+                base_path = resolve_path(raw_output_path)
+                # If it looks like a full path with filename, use the directory as base
+                if os.path.basename(base_path) and os.path.basename(base_path) != os.path.dirname(base_path):
+                    # Has a filename component, use parent directory as base
+                    base_path = os.path.dirname(base_path) if os.path.dirname(base_path) else base_path
+            else:
+                # Use default base path
+                base_path = self.get_camera_output_base_path()
+            
+            # Create timestamped folder structure for this video (matching shadowgraph structure)
+            # This creates: {base}/Month_Year/Day_Month/Timestamp/run.cine
+            now = datetime.now()
+            month_folder = now.strftime("%b_%Y")  # e.g., "Jan_2024"
+            day_folder = now.strftime("%d_%b")    # e.g., "15_Jan"
+            timestamp_folder = now.strftime("%b_%d_%Y_%H_%M_%S")  # e.g., "Jan_15_2024_14_30_45"
+            
+            # Build full path structure
+            month_path = os.path.join(base_path, month_folder)
+            day_path = os.path.join(month_path, day_folder)
+            timestamp_path = os.path.join(day_path, timestamp_folder)
+            
+            # Create all folders
+            os.makedirs(timestamp_path, exist_ok=True)
+            
+            # Return path with filename (without extension - save_recording will add .cine)
+            output_path = os.path.join(timestamp_path, "run")
+            print(f"Created timestamped camera output folder: {timestamp_path}")
             
             # Get the cine to check how many frames were actually recorded
             try:
@@ -2481,6 +2703,66 @@ class ModernExperimentControlApp:
             import traceback
             traceback.print_exc()
 
+    def get_camera_output_base_path(self):
+        """Get base path for camera videos (without timestamped folders)"""
+        try:
+            # Try to find LaCie drive and use Phantom/Video folder
+            lacie_base = find_lacie_drive()
+            if lacie_base:
+                # Use LaCie drive with Phantom/Video base path
+                base_path = resolve_path("{lacie_drive}/Phantom/Video", lacie_base)
+                return base_path
+            else:
+                # Fallback: use local captures folder
+                return './camera_settings/captures'
+        except Exception as e:
+            print(f"Warning: Could not determine camera output base path: {e}")
+            return './camera_settings/captures'
+    
+    def get_timestamped_camera_output_path(self):
+        """Get timestamped folder path for camera video (matching shadowgraph structure)"""
+        try:
+            # Get base path
+            base_path = self.get_camera_output_base_path()
+            
+            # Create timestamped folder structure (same as shadowgraph)
+            now = datetime.now()
+            month_folder = now.strftime("%b_%Y")  # e.g., "Jan_2024"
+            day_folder = now.strftime("%d_%b")    # e.g., "15_Jan"
+            timestamp_folder = now.strftime("%b_%d_%Y_%H_%M_%S")  # e.g., "Jan_15_2024_14_30_45"
+            
+            # Build full path structure
+            month_path = os.path.join(base_path, month_folder)
+            day_path = os.path.join(month_path, day_folder)
+            timestamp_path = os.path.join(day_path, timestamp_folder)
+            
+            # Create all folders
+            os.makedirs(timestamp_path, exist_ok=True)
+            
+            # Return path with filename (without extension - save_recording will add .cine)
+            output_path = os.path.join(timestamp_path, "run")
+            print(f"Created timestamped camera output folder: {timestamp_path}")
+            return output_path
+        except Exception as e:
+            print(f"Warning: Could not create timestamped camera output path: {e}")
+            import traceback
+            traceback.print_exc()
+            # Fallback to simple path
+            fallback_path = './camera_settings/captures/run'
+            os.makedirs(os.path.dirname(fallback_path), exist_ok=True)
+            return fallback_path
+    
+    def get_default_camera_output_path(self):
+        """Get default camera output path for display in GUI (base path)"""
+        try:
+            # Return base path for display - actual save will use timestamped folders
+            # Users can see where videos will be saved, but each video gets its own timestamped folder
+            base_path = self.get_camera_output_base_path()
+            return base_path
+        except Exception as e:
+            print(f"Warning: Could not determine camera output path: {e}")
+            return './camera_settings/captures'
+
     def save_camera_settings(self):
         """Save camera settings to JSON file"""
         try:
@@ -2529,7 +2811,37 @@ class ModernExperimentControlApp:
                     self.cam_seconds.set(f"{seconds:.3f}")
                 else:
                     self.cam_seconds.set('0.02')
-                self.cam_output.set(data.get('output', './camera_settings/captures/run'))
+                # Prioritize LaCie drive path if available, otherwise use saved path
+                try:
+                    lacie_drive = find_lacie_drive()
+                    print(f"[DEBUG] LaCie drive detection result: {lacie_drive}")
+                    if lacie_drive:
+                        # LaCie drive found - use it (preferred location)
+                        default_path = self.get_default_camera_output_path()
+                        print(f"[DEBUG] Setting camera output to LaCie path: {default_path}")
+                        self.cam_output.set(default_path)
+                    else:
+                        # No LaCie drive - use saved path or fallback
+                        saved_output = data.get('output', None)
+                        if saved_output:
+                            # Resolve any placeholders in saved path
+                            resolved = resolve_path(saved_output)
+                            print(f"[DEBUG] No LaCie drive found, using saved path: {resolved}")
+                            self.cam_output.set(resolved)
+                        else:
+                            fallback = self.get_default_camera_output_path()
+                            print(f"[DEBUG] No LaCie drive found, using fallback: {fallback}")
+                            self.cam_output.set(fallback)
+                except Exception as e:
+                    print(f"[ERROR] Error detecting LaCie drive: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    # Fallback to saved path
+                    saved_output = data.get('output', None)
+                    if saved_output:
+                        self.cam_output.set(resolve_path(saved_output))
+                    else:
+                        self.cam_output.set(self.get_default_camera_output_path())
             else:
                 # reasonable defaults
                 self.cam_ip.set('100.100.100.1')
@@ -2538,7 +2850,7 @@ class ModernExperimentControlApp:
                 self.cam_width.set('640')
                 self.cam_height.set('480')
                 self.cam_seconds.set('0.02')  # 20 frames at 1000 fps = 0.02 seconds
-                self.cam_output.set('./camera_settings/captures/run')
+                self.cam_output.set(self.get_default_camera_output_path())
         except Exception as e:
             print(f"Camera settings load error: {e}")
 

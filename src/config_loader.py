@@ -5,8 +5,15 @@ Automatically detects OS and LaCie drive location.
 """
 import os
 import platform
-import yaml
 from pathlib import Path
+
+# Make yaml import optional - drive detection doesn't need it
+try:
+    import yaml
+    YAML_AVAILABLE = True
+except ImportError:
+    YAML_AVAILABLE = False
+    print("[WARNING] PyYAML not installed - config file loading will be disabled")
 
 # Get the project root (parent of src/)
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -44,19 +51,28 @@ def find_lacie_drive():
                 # Check if it's a LaCie drive by looking for common LaCie folder names
                 try:
                     # Check for LaCie-specific folders or volume label
-                    if (drive_path / "LaCie").exists() or \
-                       (drive_path / "Phantom").exists() or \
-                       (drive_path / "Shadowgraph").exists():
+                    has_lacie = (drive_path / "LaCie").exists()
+                    has_phantom = (drive_path / "Phantom").exists()
+                    has_shadowgraph = (drive_path / "Shadowgraph").exists()
+                    
+                    print(f"[DEBUG] Checking drive {drive_letter}:\\ - LaCie: {has_lacie}, Phantom: {has_phantom}, Shadowgraph: {has_shadowgraph}")
+                    
+                    if has_lacie or has_phantom or has_shadowgraph:
+                        print(f"[DEBUG] LaCie drive detected at {drive_letter}:\\")
                         return f"{drive_letter}:\\"
                     # Also check volume label (Windows-specific)
                     try:
                         import win32api
                         volume_label = win32api.GetVolumeInformation(f"{drive_letter}:\\")[0]
+                        print(f"[DEBUG] Drive {drive_letter}:\\ volume label: '{volume_label}'")
                         if "lacie" in volume_label.lower():
+                            print(f"[DEBUG] LaCie drive detected by volume label at {drive_letter}:\\")
                             return f"{drive_letter}:\\"
-                    except (ImportError, Exception):
+                    except (ImportError, Exception) as e:
+                        print(f"[DEBUG] Could not check volume label for {drive_letter}:\\ - {e}")
                         pass  # win32api not available, skip volume label check
-                except (PermissionError, OSError):
+                except (PermissionError, OSError) as e:
+                    print(f"[DEBUG] Permission/OS error checking drive {drive_letter}:\\ - {e}")
                     continue  # Can't access this drive, try next
     
     # Linux/other - check /media and /mnt
@@ -188,6 +204,11 @@ def load_config():
     else:
         system = detect_os()
         print(f"[WARNING] LaCie drive not found (OS: {system}). Using OS-specific defaults.")
+    
+    if not YAML_AVAILABLE:
+        # If yaml is not available, use OS-aware defaults
+        print("[WARNING] PyYAML not available - using OS-aware defaults")
+        return get_os_default_paths(lacie_base)
     
     if config_file.exists():
         with open(config_file, 'r') as f:
