@@ -55,6 +55,12 @@ float currentPressure = 0.0;  // Current pressure reading in BAR
 float targetPressure = 0.0;   // Target pressure in BAR
 bool pressureControlEnabled = false;
 
+// Pressure smoothing: rolling average over last 1 second
+const int PRESSURE_BUFFER_SIZE = 4;  // 4 readings at 0.25s intervals = 1 second
+float pressureBuffer[PRESSURE_BUFFER_SIZE] = {0};
+int pressureBufferIndex = 0;
+int pressureBufferCount = 0;  // Track how many readings we've collected
+
 // Stall detection variables
 long lastPosition = 0;
 unsigned long lastPositionChangeTime = 0;
@@ -109,12 +115,44 @@ float readPressure() {
   // Read ADC value (0-4095 for 12-bit)
   int adcValue = analogRead(PRESSURE_ADC_PIN);
   
-  // Convert ADC to voltage (0-3.3V range from LLC)
+  // Convert ADC to voltage (0-3.3V range)
   float voltage = (adcValue / (float)(1 << 12)) * PORTENTA_VOLTAGE_MAX;
   
-  // Convert voltage to pressure (LLC converts 5V to 3.3V, so scale accordingly)
-  // The AliCat outputs 0-5V for 0-30 BAR, LLC scales it to 0-3.3V
-  currentPressure = (voltage / PORTENTA_VOLTAGE_MAX) * MAX_PRESSURE_BAR;
+  // Voltage-to-pressure mapping based on actual measured values:
+  // 0.48V = 0 BAR (or Off)
+  // 2.4V = 50 BAR
+  // Linear interpolation: pressure = (voltage - 0.48) / (2.4 - 0.48) * 50
+  const float VOLTAGE_MIN = 0.48;  // Voltage at 0 BAR
+  const float VOLTAGE_MAX = 2.4;    // Voltage at 50 BAR
+  const float PRESSURE_FULL_SCALE = 50.0;  // Full scale pressure (BAR)
+  
+  float pressure;
+  if (voltage <= VOLTAGE_MIN) {
+    // Below minimum voltage = 0 BAR (off)
+    pressure = 0.0;
+  } else if (voltage >= VOLTAGE_MAX) {
+    // At or above maximum voltage = 50 BAR (but we'll clamp to MAX_PRESSURE_BAR for display)
+    pressure = PRESSURE_FULL_SCALE;
+  } else {
+    // Linear interpolation between 0.48V and 2.4V
+    pressure = ((voltage - VOLTAGE_MIN) / (VOLTAGE_MAX - VOLTAGE_MIN)) * PRESSURE_FULL_SCALE;
+  }
+  
+  // Apply linear correction based on calibration measurements:
+  // Measured: 0 BAR reads as 0.6 BAR, 5 BAR reads as 5.7 BAR, 10 BAR reads as 11 BAR, 25 BAR reads as 26.4 BAR
+  // Linear fit: Reading = 1.032 * Actual + 0.6
+  // Therefore: Actual = (Reading - 0.6) / 1.032
+  const float CORRECTION_OFFSET = 0.6;
+  const float CORRECTION_GAIN = 1.032;
+  pressure = (pressure - CORRECTION_OFFSET) / CORRECTION_GAIN;
+  
+  // Ensure pressure doesn't go negative after correction
+  if (pressure < 0.0) {
+    pressure = 0.0;
+  }
+  
+  // Clamp to maximum setpoint range (0-26.4 BAR) for display
+  currentPressure = constrain(pressure, 0.0, MAX_PRESSURE_BAR);
   
   return currentPressure;
 }
@@ -216,11 +254,29 @@ void loop() {
     lastHandshake = millis();
   }
   
-  // Read pressure periodically (every 500ms)
+  // Read pressure periodically (every 250ms) and apply rolling average
   static unsigned long lastPressureRead = 0;
-  if (millis() - lastPressureRead > 500) {
-    float pressure = readPressure();
-    Serial.println("PRESSURE_READING:" + String(pressure, 2));
+  if (millis() - lastPressureRead > 250) {
+    // Read raw pressure
+    float rawPressure = readPressure();
+    
+    // Add to rolling buffer
+    pressureBuffer[pressureBufferIndex] = rawPressure;
+    pressureBufferIndex = (pressureBufferIndex + 1) % PRESSURE_BUFFER_SIZE;
+    if (pressureBufferCount < PRESSURE_BUFFER_SIZE) {
+      pressureBufferCount++;
+    }
+    
+    // Calculate average of buffer (last 1 second = 4 readings)
+    float sum = 0.0;
+    for (int i = 0; i < pressureBufferCount; i++) {
+      sum += pressureBuffer[i];
+    }
+    float averagedPressure = sum / pressureBufferCount;
+    
+    // Update current pressure and send averaged value
+    currentPressure = averagedPressure;
+    Serial.println("PRESSURE_READING:" + String(averagedPressure, 2));
     lastPressureRead = millis();
   }
 

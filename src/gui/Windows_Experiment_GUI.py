@@ -1094,6 +1094,9 @@ class ModernExperimentControlApp:
         self.ax.set_ylabel('Pressure (BAR)', fontsize=8)
         self.ax.grid(True, alpha=0.3)
         
+        # Remove x-axis tick labels for live display (but keep them in Excel export)
+        self.ax.tick_params(axis='x', labelbottom=False)
+        
         # Initialize empty line
         self.pressure_line, = self.ax.plot([], [], 'b-', linewidth=2, label='Pressure')
         self.ax.legend(fontsize=8)
@@ -1585,6 +1588,9 @@ class ModernExperimentControlApp:
         self.ax.set_xlabel('Time (s)', fontsize=8)
         self.ax.set_ylabel('Pressure (BAR)', fontsize=8)
         self.ax.grid(True, alpha=0.3)
+        
+        # Remove x-axis tick labels for live display (but keep them in Excel export)
+        self.ax.tick_params(axis='x', labelbottom=False)
         
         # Initialize empty line
         self.pressure_line, = self.ax.plot([], [], 'b-', linewidth=2, label='Pressure')
@@ -3017,36 +3023,58 @@ class ModernExperimentControlApp:
             print(f"Camera settings load error: {e}")
 
     def auto_save_pressure_graph(self):
-        """Auto-save pressure data when experiment completes - saves CSV data instead of graph"""
+        """Auto-save pressure data when experiment completes - saves CSV data for Excel graph"""
         if len(self.pressure_data['experiment_data']['timestamps']) > 0:
             try:
-                # Create pressure_graphs folder if it doesn't exist
-                graphs_folder = "pressure_graphs"
-                os.makedirs(graphs_folder, exist_ok=True)
-                
                 # Use the exact TIMESTAMP column format for title and filename (sanitize for filename)
                 timestamp_display = datetime.now().strftime("%d-%b-%Y %H:%M:%S")
                 timestamp_file = timestamp_display.replace(":", "-").replace(" ", "_")
-
-                # Save data as CSV instead of creating a graph
-                csv_filename = os.path.join(graphs_folder, f"test_pressure_data_{timestamp_file}.csv")
                 
                 # Create CSV with time and pressure data
                 import csv
-                with open(csv_filename, 'w', newline='') as csvfile:
-                    writer = csv.writer(csvfile)
-                    writer.writerow(['Time (s)', 'Pressure (BAR)'])  # Header
-                    for i in range(len(self.pressure_data['experiment_data']['timestamps'])):
-                        writer.writerow([
-                            f"{self.pressure_data['experiment_data']['timestamps'][i]:.1f}",
-                            f"{self.pressure_data['experiment_data']['pressures'][i]:.2f}"
-                        ])
+                csv_data = []
+                csv_data.append(['Time (s)', 'Pressure (BAR)'])  # Header
+                for i in range(len(self.pressure_data['experiment_data']['timestamps'])):
+                    csv_data.append([
+                        f"{self.pressure_data['experiment_data']['timestamps'][i]:.1f}",
+                        f"{self.pressure_data['experiment_data']['pressures'][i]:.2f}"
+                    ])
                 
-                self.pressure_data['saved_graph_filename'] = csv_filename
-                print(f"Pressure data saved as CSV: {csv_filename}")
+                # Determine save location: E:\Experiments\PressureData (or LaCie if available)
+                try:
+                    # Try to find LaCie drive first
+                    lacie_drive = find_lacie_drive()
+                    if lacie_drive:
+                        # Use LaCie drive
+                        pressure_data_folder = os.path.join(lacie_drive, "Experiments", "PressureData")
+                        print(f"LaCie drive found at {lacie_drive}, using LaCie path: {pressure_data_folder}")
+                    else:
+                        # Fallback to E:\Experiments\PressureData
+                        pressure_data_folder = r"E:\Experiments\PressureData"
+                        print(f"No LaCie drive found, using default path: {pressure_data_folder}")
+                    
+                    # Create directory if it doesn't exist
+                    os.makedirs(pressure_data_folder, exist_ok=True)
+                    
+                    # Save CSV with timestamp as filename (matching Excel timestamp format)
+                    csv_filename = os.path.join(pressure_data_folder, f"{timestamp_file}.csv")
+                    with open(csv_filename, 'w', newline='') as csvfile:
+                        writer = csv.writer(csvfile)
+                        writer.writerows(csv_data)
+                    
+                    # Store filename for Excel graph creation
+                    self.pressure_data['saved_graph_filename'] = csv_filename
+                    print(f"Full experiment pressure data saved to: {csv_filename}")
+                    
+                except Exception as e2:
+                    print(f"Error saving pressure data to Experiments/PressureData folder: {e2}")
+                    import traceback
+                    traceback.print_exc()
                 
             except Exception as e:
                 print(f"Error saving pressure data: {e}")
+                import traceback
+                traceback.print_exc()
         else:
             print("No experiment pressure data to save")
 
@@ -3071,6 +3099,9 @@ class ModernExperimentControlApp:
             
             # Set fixed window for live display (last 6 seconds)
             self.ax.set_xlim(window_start, current_time + 1)  # 1 second buffer
+            
+            # Ensure x-axis tick labels remain hidden for live display
+            self.ax.tick_params(axis='x', labelbottom=False)
             
             # Y-axis: Scale to 1.2x the maximum pressure in the window
             if window_pressures:
