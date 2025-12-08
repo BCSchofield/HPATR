@@ -1,13 +1,7 @@
-# HPATR Configuration File
-# Copy this file to paths.yaml and update with your actual paths
-#
-# PATH PLACEHOLDERS:
-#   Use {lacie_drive} to automatically detect the LaCie drive on your system
+# {lacie_drive} automatically detects the LaCie drive
 #   - Mac: /Volumes/LaCie
-#   - Windows: D:\ or E:\ (auto-detected)
+#   - Windows: D:\ or E:\ (should be able to auto-detect and choose correctly)
 #   - If LaCie drive not found, OS-specific defaults will be used
-#
-# You can also use absolute paths directly (they will be normalized for your OS)
 
 imaging:
   # Default input directory for flashed output TIFF files (from mp4_to_tiff conversion)
@@ -26,15 +20,13 @@ gui:
   serial_log_file: "serial_log.txt"
   # Camera settings file path
   camera_settings_file: "src/gui/camera_settings.json"
-  # Phantom SDK path (if needed - usually installed via pip)
-  # Note: Phantom SDK is typically installed via pip (pyphantom package)
-  # If you need to point to specific DLLs, set this path:
-  phantom_sdk_path: ""  # Leave empty if using pip-installed pyphantom
+  # Phantom SDK path (if needed - usually installed via pip, but chance their PC hasnt got it. NEEDS WINDOWS THO)
+  phantom_sdk_path: ""  # Leave empty if using pip-installed pyphantom, gets more complicated if you dont.
 
 mp4_to_tiff:
-  # Default video input path
+  # Default video input path. Might need to change this to a .cine file in the future, depends what expansion_detection.py stuff ends up being able to use.
   default_video_path: "{lacie_drive}/Phantom/Video/Shadowgraph_Video.mp4"
-  # Default TIFF output folder
+  # Default TIFF output folder. Might be able to get the phantom camera to literally just output TIFF files, but would need to test.
   default_tiff_folder: "{lacie_drive}/Phantom/TIFF_Output"
   # Default flashed output folder (brightest frame)
   default_flashed_output: "{lacie_drive}/Phantom/Flashed_Output"
