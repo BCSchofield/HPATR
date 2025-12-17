@@ -24,3 +24,6 @@ pyserial>=3.5
 # Config file handling
 PyYAML>=5.4.0
 
+# COCO annotation format
+pycocotools>=2.0.0
+
