@@ -49,7 +49,10 @@ from pycocotools import mask as coco_mask
 # ============================================================================
 
 # Number of images to generate (adjust for testing)
-NUM_IMAGES = 10
+NUM_IMAGES = 5000
+
+# Save to LaCie drive? (True = save to /Volumes/LaCie/Experiments/TrainingData, False = save to script directory)
+SAVE_TO_LACIE = True
 
 # Image dimensions
 IMAGE_WIDTH = 1280
@@ -1223,6 +1226,7 @@ def generate_dataset(
     
     print(f"Generating {num_images} synthetic images...")
     print(f"Output directory: {output_dir}")
+    print(f"{'='*60}")
     
     # Initialize COCO dataset structure
     coco_dataset = {
@@ -1236,6 +1240,10 @@ def generate_dataset(
     
     # Initialize random number generator
     rng = np.random.default_rng()
+    
+    # Calculate progress reporting intervals (every 1%)
+    progress_interval = max(1, int(num_images / 100))  # Report every 1%
+    last_reported_percent = -1
     
     # Generate images
     for i in range(num_images):
@@ -1261,8 +1269,11 @@ def generate_dataset(
         vis_path = visualizations_dir / f"blur_image_{image_id:04d}_vis.png"
         visualize_instances(image, instances, str(vis_path))
         
-        if (i + 1) % 10 == 0:
-            print(f"  Generated {i + 1}/{num_images} images...")
+        # Report progress every 1%
+        current_percent = int((image_id / num_images) * 100)
+        if current_percent > last_reported_percent or image_id == num_images:
+            print(f"  Progress: {current_percent}% ({image_id}/{num_images} images)")
+            last_reported_percent = current_percent
     
     # Save COCO annotations
     annotations_path = output_dir / "blur_annotations.json"
@@ -1290,11 +1301,18 @@ def generate_dataset(
 # ============================================================================
 
 if __name__ == "__main__":
-    # Get the script directory
-    script_dir = Path(__file__).parent
+    # Determine output directory based on LACIE setting
+    if SAVE_TO_LACIE:
+        output_base_dir = Path("/Volumes/LaCie/Experiments/TrainingData")
+        # Create directory if it doesn't exist
+        output_base_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Saving to LaCie: {output_base_dir}")
+    else:
+        output_base_dir = Path(__file__).parent
+        print(f"Saving to script directory: {output_base_dir}")
     
     # Generate dataset
-    results = generate_dataset(NUM_IMAGES, str(script_dir))
+    results = generate_dataset(NUM_IMAGES, str(output_base_dir))
     
     print(f"\n{'='*60}")
     print(f"Summary:")
