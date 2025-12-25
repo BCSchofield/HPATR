@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 from typing import Dict, List, Tuple
+from datetime import datetime
 import numpy as np
 import pandas as pd
 from pycocotools.coco import COCO
@@ -22,7 +23,7 @@ import cv2
 from detectron2.engine import DefaultPredictor
 from detectron2.config import get_cfg
 from detectron2.data import MetadataCatalog
-from detectron2.utils.visualizer import Visualizer
+from detectron2.utils.visualizer import Visualizer, ColorMode
 from detectron2.structures import BoxMode
 import torch
 
@@ -132,8 +133,17 @@ def evaluate_image(
             if gt_idx in matched_gt:
                 continue
             
-            # Only match if same category
-            if pred['category_id'] != gt['category_id']:
+            # Match categories (handle 0-indexed vs 1-indexed)
+            # Predictions are 0-indexed (0=droplet, 1=ligament)
+            # GT might be 1-indexed (1=droplet, 2=ligament) or 0-indexed
+            pred_cat = pred['category_id']
+            gt_cat = gt['category_id']
+            
+            # Convert GT to 0-indexed if needed (if GT uses 1-indexed)
+            if gt_cat > 1:
+                gt_cat = gt_cat - 1  # Convert 1,2 to 0,1
+            
+            if pred_cat != gt_cat:
                 continue
             
             # Compute IoU
@@ -160,11 +170,24 @@ def evaluate_image(
     # Average IoU for matched instances
     avg_iou = np.mean([iou for _, _, iou in matches]) if matches else 0.0
     
-    # Count by category
-    pred_droplets = sum(1 for p in pred_instances if p['category_id'] == 1)
-    pred_ligaments = sum(1 for p in pred_instances if p['category_id'] == 2)
-    gt_droplets = sum(1 for g in gt_instances if g['category_id'] == 1)
-    gt_ligaments = sum(1 for g in gt_instances if g['category_id'] == 2)
+    # Count by category (Detectron2 uses 0-indexed: 0=droplet, 1=ligament)
+    # Note: Ground truth might use 1-indexed (1=droplet, 2=ligament) from COCO format
+    pred_droplets = sum(1 for p in pred_instances if p['category_id'] == 0)
+    pred_ligaments = sum(1 for p in pred_instances if p['category_id'] == 1)
+    # GT might be 1-indexed (COCO format) or 0-indexed - check first entry
+    if gt_instances:
+        gt_first_cat = gt_instances[0].get('category_id', 0)
+        if gt_first_cat == 0:
+            # 0-indexed
+            gt_droplets = sum(1 for g in gt_instances if g['category_id'] == 0)
+            gt_ligaments = sum(1 for g in gt_instances if g['category_id'] == 1)
+        else:
+            # 1-indexed (COCO format: 1=droplet, 2=ligament)
+            gt_droplets = sum(1 for g in gt_instances if g['category_id'] == 1)
+            gt_ligaments = sum(1 for g in gt_instances if g['category_id'] == 2)
+    else:
+        gt_droplets = 0
+        gt_ligaments = 0
     
     # Area statistics
     pred_total_area = sum(p['area'] for p in pred_instances)
@@ -193,6 +216,31 @@ def evaluate_image(
     }
 
 
+def get_validation_base_dir() -> Path:
+    """
+    Get the base validation directory (works on both Windows and Mac).
+    Returns D:\Experiments\Validation_100 on Windows, or equivalent on Mac.
+    """
+    # Try Windows path first
+    windows_path = Path(r"D:\Experiments\Validation_100")
+    if windows_path.exists():
+        return windows_path
+    
+    # Try Mac paths (common locations)
+    mac_paths = [
+        Path("/Volumes/LaCie/Experiments/Validation_100"),
+        Path("/Users") / os.getenv("USER", "benschofield") / "Experiments" / "Validation_100",
+        Path.home() / "Experiments" / "Validation_100",
+    ]
+    
+    for mac_path in mac_paths:
+        if mac_path.exists():
+            return mac_path
+    
+    # If neither exists, create Windows path (will work if D: drive exists)
+    return windows_path
+
+
 def evaluate_model(
     config_path: str,
     weights_path: str,
@@ -200,7 +248,8 @@ def evaluate_model(
     images_dir: str,
     output_path: str,
     model_name: str = "Model",
-    score_threshold: float = 0.5
+    score_threshold: float = 0.5,
+    save_visualizations: bool = True
 ) -> None:
     """
     Evaluate a trained model and export results to Excel.
@@ -210,19 +259,41 @@ def evaluate_model(
         weights_path: Path to trained model weights
         annotations_path: Path to ground truth annotations JSON
         images_dir: Directory containing validation images
-        output_path: Path to output Excel file (if just filename, saves in images_dir)
+        output_path: Path to output Excel file (saves to GitHub folder/current directory)
         model_name: Name of the model (for labeling in Excel)
         score_threshold: Minimum confidence score for predictions
+        save_visualizations: Whether to save visualization images and JSON
     """
-    # If output_path is just a filename (no directory), save it in the images_dir
-    output_path_obj = Path(output_path)
-    if not output_path_obj.parent or str(output_path_obj.parent) == '.':
-        # Just a filename, save in images_dir
-        images_dir_path = Path(images_dir)
-        output_path = str(images_dir_path / output_path)
+    # Create timestamped folder in Validation_100 for this test
+    # Extract model name from the .pth file path
+    model_path_obj = Path(weights_path)
+    # Get the parent folder name (e.g., "training_2025_12_25_15_43_57" from "D:\...\training_2025_12_25_15_43_57\model_final.pth")
+    # Or use the model filename without extension if parent is generic
+    if model_path_obj.parent.name and model_path_obj.parent.name not in ["", ".", "models"]:
+        model_folder_name = model_path_obj.parent.name
     else:
-        # Full path provided, use as-is
-        output_path = str(output_path_obj)
+        # Fall back to model filename without extension
+        model_folder_name = model_path_obj.stem
+    
+    validation_base = get_validation_base_dir()
+    timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+    test_output_dir = validation_base / f"{model_folder_name}_{timestamp}"
+    test_output_dir.mkdir(parents=True, exist_ok=True)
+    
+    print(f"Test output directory: {test_output_dir}")
+    print(f"  (Based on model: {model_folder_name})")
+    
+    # Excel file goes to GitHub folder (current working directory or specified path)
+    output_path_obj = Path(output_path)
+    if not output_path_obj.is_absolute():
+        # Relative path - save to current working directory (GitHub folder)
+        excel_path = Path.cwd() / output_path
+    else:
+        # Absolute path provided, use as-is
+        excel_path = output_path_obj
+    
+    excel_path.parent.mkdir(parents=True, exist_ok=True)
+    print(f"Excel file will be saved to: {excel_path}")
     
     print(f"Loading ground truth annotations from {annotations_path}...")
     gt_data = load_ground_truth(annotations_path)
@@ -295,8 +366,11 @@ def evaluate_model(
     
     predictor = DefaultPredictor(cfg)
     
-    # Category mapping
-    category_names = {1: 'droplet', 2: 'ligament'}
+    # Register metadata for visualization
+    MetadataCatalog.get("spray_train").set(thing_classes=["droplet", "ligament"])
+    
+    # Category mapping (Detectron2 uses 0-indexed: 0=droplet, 1=ligament)
+    category_names = {0: 'droplet', 1: 'ligament'}
     
     # Get list of images
     images_dir = Path(images_dir)
@@ -307,6 +381,13 @@ def evaluate_model(
     # Evaluate each image
     results = []
     all_instance_details = []
+    
+    # Create subdirectories for outputs
+    if save_visualizations:
+        vis_dir = test_output_dir / "visualizations"
+        vis_dir.mkdir(exist_ok=True)
+        json_dir = test_output_dir / "json"
+        json_dir.mkdir(exist_ok=True)
     
     for img_file in image_files:
         # Find corresponding image_id in ground truth
@@ -324,6 +405,79 @@ def evaluate_model(
             result = evaluate_image(predictor, img_file, gt_annotations, image_id, category_names)
             results.append(result)
             
+            # Save visualization and JSON for this image if requested
+            if save_visualizations:
+                # Save visualization
+                vis_image = cv2.imread(str(img_file))
+                if vis_image is not None:
+                    v = Visualizer(
+                        vis_image[:, :, ::-1],  # BGR to RGB
+                        MetadataCatalog.get("spray_train"),
+                        scale=1.0,
+                        instance_mode=ColorMode.IMAGE_BW
+                    )
+                    # Create instances from predictions for visualization
+                    from detectron2.structures import Instances, Boxes
+                    vis_instances = Instances(vis_image.shape[:2])
+                    if len(result['pred_instances']) > 0:
+                        # Re-run prediction to get visualization (or reconstruct from saved data)
+                        pred_outputs = predictor(vis_image)
+                        vis_output = v.draw_instance_predictions(pred_outputs["instances"].to("cpu"))
+                        vis_path = vis_dir / f"{Path(img_file).stem}_result.png"
+                        cv2.imwrite(str(vis_path), vis_output.get_image()[:, :, ::-1])
+                
+                # Save JSON with detailed results for this image
+                json_path = json_dir / f"{Path(img_file).stem}_results.json"
+                
+                # Helper function to convert numpy types
+                def to_native(val):
+                    if isinstance(val, (np.integer, np.int64, np.int32)):
+                        return int(val)
+                    elif isinstance(val, (np.floating, np.float64, np.float32)):
+                        return float(val)
+                    elif isinstance(val, np.ndarray):
+                        return val.tolist()
+                    return val
+                
+                image_result_json = {
+                    'image_id': int(image_id),
+                    'image_name': str(img_name),
+                    'model': str(model_name),
+                    'score_threshold': float(score_threshold),
+                    'timestamp': datetime.now().isoformat(),
+                    'metrics': {
+                        'tp': int(result['tp']),
+                        'fp': int(result['fp']),
+                        'fn': int(result['fn']),
+                        'precision': float(result['precision']),
+                        'recall': float(result['recall']),
+                        'f1': float(result['f1']),
+                        'avg_iou': float(result['avg_iou'])
+                    },
+                    'predictions': [
+                        {
+                            'category_id': int(p['category_id']),
+                            'category': str(category_names.get(p['category_id'], 'unknown')),
+                            'score': float(p['score']),
+                            'area': int(p['area']),
+                            'matched': bool(any(m[0] == idx for m in result['matches'])),
+                            'iou': float(next((m[2] for m in result['matches'] if m[0] == idx), 0.0))
+                        }
+                        for idx, p in enumerate(result['pred_instances'])
+                    ],
+                    'ground_truth': [
+                        {
+                            'category_id': int(to_native(gt.get('category_id', 0))),
+                            'category': str(category_names.get(to_native(gt.get('category_id', 0)), 'unknown')),
+                            'area': int(to_native(gt.get('area', gt['mask'].sum() if 'mask' in gt else 0))),
+                            'matched': bool(any(m[1] == idx for m in result['matches']))
+                        }
+                        for idx, gt in enumerate(result['gt_instances'])
+                    ]
+                }
+                with open(json_path, 'w') as f:
+                    json.dump(image_result_json, f, indent=2)
+            
             # Add instance-level details
             for pred_idx, pred in enumerate(result['pred_instances']):
                 # Check if this prediction was matched
@@ -334,6 +488,7 @@ def evaluate_model(
                     'image_id': image_id,
                     'image_name': img_name,
                     'model': model_name,
+                    'score_threshold': score_threshold,
                     'instance_type': 'prediction',
                     'category_id': pred['category_id'],
                     'category': category_names.get(pred['category_id'], 'unknown'),
@@ -351,6 +506,7 @@ def evaluate_model(
                     'image_id': image_id,
                     'image_name': img_name,
                     'model': model_name,
+                    'score_threshold': score_threshold,
                     'instance_type': 'ground_truth',
                     'category_id': gt['category_id'],
                     'category': category_names.get(gt['category_id'], 'unknown'),
@@ -375,6 +531,7 @@ def evaluate_model(
     # 1. Per-image results
     per_image_df = pd.DataFrame([{
         'model': model_name,
+        'score_threshold': score_threshold,
         'image_id': r['image_id'],
         'image_name': r['image_name'],
         'tp': r['tp'],
@@ -396,6 +553,7 @@ def evaluate_model(
     # 2. Model summary
     summary_data = {
         'model': model_name,
+        'score_threshold': score_threshold,
         'num_images': len(results),
         'avg_precision': per_image_df['precision'].mean(),
         'avg_recall': per_image_df['recall'].mean(),
@@ -417,15 +575,51 @@ def evaluate_model(
     # 3. Instance details
     instance_df = pd.DataFrame(all_instance_details)
     
-    # Export to Excel
-    print(f"Exporting results to {output_path}...")
-    with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+    # Save summary JSON to test output directory
+    if save_visualizations:
+        summary_json_path = test_output_dir / "summary.json"
+        
+        # Convert numpy types to native Python types for JSON serialization
+        def convert_to_native(obj):
+            """Recursively convert numpy types to native Python types"""
+            if isinstance(obj, (np.integer, np.int64, np.int32)):
+                return int(obj)
+            elif isinstance(obj, (np.floating, np.float64, np.float32)):
+                return float(obj)
+            elif isinstance(obj, np.ndarray):
+                return obj.tolist()
+            elif isinstance(obj, dict):
+                return {key: convert_to_native(value) for key, value in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_to_native(item) for item in obj]
+            else:
+                return obj
+        
+        summary_json = {
+            'model': model_name,
+            'score_threshold': float(score_threshold),
+            'timestamp': datetime.now().isoformat(),
+            'model_path': str(weights_path),
+            'validation_images_dir': str(images_dir),
+            'num_images_evaluated': int(len(results)),
+            'summary_metrics': convert_to_native(summary_data)
+        }
+        with open(summary_json_path, 'w') as f:
+            json.dump(summary_json, f, indent=2)
+        print(f"Summary JSON saved to: {summary_json_path}")
+    
+    # Export to Excel (saved to GitHub folder)
+    print(f"Exporting results to {excel_path}...")
+    with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
         summary_df.to_excel(writer, sheet_name='Model Summary', index=False)
         per_image_df.to_excel(writer, sheet_name='Per Image Results', index=False)
         instance_df.to_excel(writer, sheet_name='Instance Details', index=False)
     
-    print(f"Evaluation complete! Results saved to {output_path}")
-    print(f"\nSummary for {model_name}:")
+    print(f"Evaluation complete!")
+    print(f"  Excel file saved to: {excel_path}")
+    if save_visualizations:
+        print(f"  Visualizations and JSON saved to: {test_output_dir}")
+    print(f"\nSummary for {model_name} (score threshold: {score_threshold}):")
     print(f"  Average Precision: {summary_data['avg_precision']:.3f}")
     print(f"  Average Recall: {summary_data['avg_recall']:.3f}")
     print(f"  Average F1: {summary_data['avg_f1']:.3f}")
@@ -455,9 +649,8 @@ def auto_detect_paths(model_path: str, validation_dir: str = None) -> Dict[str, 
     config_candidates = [
         training_dir / "config.yaml",
         training_dir.parent / "config.yaml",
-        Path("/Users/benschofield/Documents/GitHub/HPATR/AI") / "config.yaml",
-        Path("/Volumes/LaCie/Experiments/AI") / "config.yaml",
-        Path("/Users/benschofield/Documents/GitHub/HPATR") / "config.yaml",
+        Path(r"D:\Experiments\AI") / "config.yaml",
+        Path(r"C:\Users\BenSc\Documents\GitHub\HPATR") / "config.yaml",
     ]
     
     config_path = None
@@ -476,9 +669,13 @@ def auto_detect_paths(model_path: str, validation_dir: str = None) -> Dict[str, 
     # Find validation directory
     if validation_dir is None:
         validation_candidates = [
-            Path("/Users/benschofield/Documents/GitHub/HPATR/AI/Validation_100"),
-            Path("/Volumes/LaCie/Experiments/AI/Validation_100"),
+            Path(r"D:\Experiments\Validation_100"),  # User's preferred location
+            Path(r"D:\Experiments\AI\Validation_100"),
+            Path(r"C:\Users\BenSc\Documents\GitHub\HPATR\AI\Validation_100"),
             training_dir.parent / "Validation_100",
+            Path(r"D:\Experiments\TrainingData") / "Validation_100",
+            # Mac paths
+            Path("/Volumes/LaCie/Experiments/Validation_100"),
         ]
         
         validation_dir = None
@@ -531,10 +728,10 @@ if __name__ == "__main__":
         epilog="""
 Examples:
   # Auto-detect all paths (recommended)
-  python evaluate_model.py --model /Volumes/LaCie/Experiments/AI/training_2025_12_25_15_43_57/model_final.pth
+  python AI/evaluate_model.py --model "D:\Experiments\AI\training_2025_12_25_15_43_57\model_final.pth"
   
   # Specify all paths manually
-  python evaluate_model.py --config config.yaml --weights model.pth --annotations annotations.json --images Validation_100 --output results.xlsx
+  python AI/evaluate_model.py --config config.yaml --weights model.pth --annotations annotations.json --images Validation_100 --output results.xlsx
         """
     )
     
@@ -585,5 +782,6 @@ Examples:
         images_dir,
         args.output,
         args.model_name,
-        args.score_threshold
+        args.score_threshold,
+        save_visualizations=True
     )
