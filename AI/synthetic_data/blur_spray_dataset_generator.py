@@ -52,18 +52,18 @@ from pycocotools import mask as coco_mask
 # ============================================================================
 
 # Number of images to generate (adjust for testing)
-NUM_IMAGES = 20000
+NUM_IMAGES = 100
 
 # Create side-by-side image/mask visualizations? (True/False)
-CREATE_SIDEBYSIDE_VIS = False
+CREATE_SIDEBYSIDE_VIS = True
 
 # Output Detectron2 essentials only? (True = only images + annotations.json, False = all outputs)
 # When True: Skips visualizations and sidebyside to save time/space for large datasets
-OUTPUT_DETECTRON_ONLY = True
+OUTPUT_DETECTRON_ONLY = False
 
 # Custom output folder name (None = use default "blur_timestamp" format)
 # Set to a string to use a custom name (e.g., "Detectron_Trial_2")
-CUSTOM_OUTPUT_FOLDER = "Detectron_Trial_2"
+CUSTOM_OUTPUT_FOLDER = None
 
 # Multiprocessing settings
 # Number of worker processes (None = use all CPU cores, or set to specific number)
