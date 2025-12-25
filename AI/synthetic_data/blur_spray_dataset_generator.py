@@ -34,6 +34,7 @@ REALISM IMPROVEMENTS FOR SHADOWGRAPH IMAGING:
 import json
 import math
 import os
+import platform
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
@@ -51,21 +52,31 @@ from pycocotools import mask as coco_mask
 # ============================================================================
 
 # Number of images to generate (adjust for testing)
-NUM_IMAGES = 10
+NUM_IMAGES = 20000
 
 # Create side-by-side image/mask visualizations? (True/False)
-CREATE_SIDEBYSIDE_VIS = True
+CREATE_SIDEBYSIDE_VIS = False
 
 # Output Detectron2 essentials only? (True = only images + annotations.json, False = all outputs)
 # When True: Skips visualizations and sidebyside to save time/space for large datasets
-OUTPUT_DETECTRON_ONLY = False
+OUTPUT_DETECTRON_ONLY = True
+
+# Custom output folder name (None = use default "blur_timestamp" format)
+# Set to a string to use a custom name (e.g., "Detectron_Trial_2")
+CUSTOM_OUTPUT_FOLDER = "Detectron_Trial_2"
 
 # Multiprocessing settings
 # Number of worker processes (None = use all CPU cores, or set to specific number)
 NUM_WORKERS = None  # None = auto-detect (uses all cores), or set to e.g. 4, 8, etc.
 
 # Output directory (will create timestamped folders here)
-OUTPUT_BASE_DIR = r"D:\Experiments\TrainingData"
+# Auto-detect OS and set appropriate path
+if platform.system() == "Windows":
+    OUTPUT_BASE_DIR = r"D:\Experiments\TrainingData"
+elif platform.system() == "Darwin":  # macOS
+    OUTPUT_BASE_DIR = "/Volumes/LaCie/Experiments/TrainingData"
+else:  # Linux or other
+    OUTPUT_BASE_DIR = str(Path(__file__).parent)  # Fallback to script directory
 
 # Image dimensions
 IMAGE_WIDTH = 1280
@@ -129,8 +140,19 @@ BACKGROUND_DROPLET_BLUR_SIGMA_MAX = 8.0  # Heavy blur for out-of-focus
 BACKGROUND_DROPLET_OPACITY = 0.6  # Slightly transparent to blend with background
 # Probability that a background droplet is in-focus (crisp, should be annotated)
 BACKGROUND_DROPLET_IN_FOCUS_PROB = 0.15  # 15% of background droplets are in-focus
-# Minimum blur sigma to be considered "in-focus" (crisp edges)
-BACKGROUND_DROPLET_IN_FOCUS_BLUR_THRESHOLD = 1.5  # Below this, droplet is considered in-focus
+# Maximum blur sigma to be considered "in-focus" (crisp edges)
+# Increased to detect slightly more blurred droplets
+BACKGROUND_DROPLET_IN_FOCUS_BLUR_THRESHOLD = 8.0  # Below this, droplet is considered in-focus (increased to 8.0 to allow more blurred background droplets)
+
+# Droplet circularity threshold (for classification)
+# Only droplets with circularity >= this value are classified as droplets
+# Stretched ellipses (circularity < threshold) are classified as ligaments
+DROPLET_CIRCULARITY_THRESHOLD = 0.85  # 85% circular minimum
+
+# Droplet visibility and size thresholds (to avoid false positives)
+MIN_DROPLET_DIAMETER = 15.0  # Minimum diameter in pixels to annotate (reduced from 20)
+MIN_DROPLET_VISIBILITY_RATIO = 0.15  # At least 15% must be visible (reduced from 20%)
+MIN_DROPLET_CONTRAST = 2.0  # Minimum intensity difference from background to be visible (reduced from 3)
 
 # Category IDs
 CATEGORY_DROPLET = 1
@@ -421,6 +443,28 @@ def get_droplet_diameter(params: Dict) -> float:
         return (params['axes'][0] + params['axes'][1])
 
 
+def get_droplet_circularity(params: Dict) -> float:
+    """
+    Calculate the circularity of a droplet (ratio of minor to major axis).
+    Perfect circle = 1.0, stretched ellipse < 1.0.
+    
+    Args:
+        params: Droplet parameters dictionary
+        
+    Returns:
+        Circularity value between 0.0 and 1.0 (1.0 = perfect circle)
+    """
+    if params['type'] == 'circular':
+        return 1.0  # Perfect circle
+    else:  # elliptical
+        # Circularity = minor_axis / major_axis
+        major_axis = max(params['axes'][0], params['axes'][1])
+        minor_axis = min(params['axes'][0], params['axes'][1])
+        if major_axis == 0:
+            return 0.0
+        return minor_axis / major_axis
+
+
 def generate_droplet_parameters(
     rng: np.random.Generator,
     image_shape: Tuple[int, int]
@@ -489,7 +533,7 @@ def draw_straight_ligament_realistic(
     base_intensity: float,
     background_intensity: float,
     rng: np.random.Generator
-) -> np.ndarray:
+) -> Tuple[np.ndarray, np.ndarray]:
     """
     Draw a realistic straight ligament as a stretched droplet (transparent unit).
     REALISM: Uses absorption-style intensity profile like droplets, creating a cohesive transparent unit.
@@ -504,7 +548,7 @@ def draw_straight_ligament_realistic(
         rng: Random number generator
         
     Returns:
-        Modified image array
+        Tuple of (modified image array, binary mask of the drawn ligament)
     """
     height, width = image.shape
     
@@ -514,7 +558,7 @@ def draw_straight_ligament_realistic(
     length = np.sqrt(dx**2 + dy**2)
     
     if length < 1:
-        return image
+        return image, np.zeros((height, width), dtype=np.uint8)
     
     # Create a capsule-shaped mask (rectangle with rounded ends)
     mask = np.zeros((height, width), dtype=np.uint8)
@@ -528,15 +572,34 @@ def draw_straight_ligament_realistic(
     center_y = (start[1] + end[1]) / 2.0
     center = (int(center_x), int(center_y))
     
-    # Create capsule: ellipse with major axis = length, minor axis = 2 * thickness
-    axes = (int(length / 2), base_thickness)
+    # REALISM: Vary thickness along the length for more realistic appearance
+    # Create multiple segments with varying thickness
+    num_segments = max(10, int(length / 5))  # Segment every ~5 pixels
+    segment_length = length / num_segments
     
-    # Draw filled ellipse (capsule shape)
-    cv2.ellipse(mask, center, axes, angle_deg, 0, 360, 255, -1)
+    # Generate thickness variation along length (can be very thin to full thickness)
+    t_values = np.linspace(0, 1, num_segments + 1)
+    # More dramatic variation: can go from 20% to 100% of base thickness
+    thickness_variation = 0.2 + 0.8 * (0.5 + 0.5 * np.sin(2 * np.pi * rng.uniform(0.5, 2.5) * t_values))
+    thickness_variation += 0.3 * rng.normal(0, 0.4, len(t_values))  # Random variation
+    thickness_variation = np.clip(thickness_variation, 0.15, 1.0)  # 15% to 100% of base
+    
+    # Draw segments with varying thickness
+    for i in range(num_segments):
+        t1, t2 = t_values[i], t_values[i + 1]
+        seg_start = (int(start[0] + t1 * dx), int(start[1] + t1 * dy))
+        seg_end = (int(start[0] + t2 * dx), int(start[1] + t2 * dy))
+        
+        seg_thickness = max(1, int(base_thickness * thickness_variation[i]))
+        cv2.line(mask, seg_start, seg_end, 255, seg_thickness * 2)
+    
+    # Add rounded caps at the ends
+    cv2.circle(mask, start, int(base_thickness * thickness_variation[0]), 255, -1)
+    cv2.circle(mask, end, int(base_thickness * thickness_variation[-1]), 255, -1)
     
     # REALISM: Use distance transform to create radial intensity profile (like droplets)
     dist_transform = cv2.distanceTransform(mask, cv2.DIST_L2, 5)
-    # Normalize by thickness (radius)
+    # Normalize by average thickness (radius) - use base_thickness for normalization
     normalized_dist = dist_transform / (base_thickness + 1e-6)
     normalized_dist = np.clip(normalized_dist, 0, 1)
     
@@ -568,7 +631,7 @@ def draw_straight_ligament_realistic(
             255
         ).astype(np.uint8)
     
-    return image
+    return image, mask
 
 
 def draw_curved_ligament_realistic(
@@ -578,7 +641,7 @@ def draw_curved_ligament_realistic(
     base_intensity: float,
     background_intensity: float,
     rng: np.random.Generator
-) -> np.ndarray:
+) -> Tuple[np.ndarray, np.ndarray]:
     """
     Draw a realistic curved ligament as a stretched droplet (transparent unit).
     REALISM: Uses absorption-style intensity profile like droplets, following the curve path.
@@ -592,10 +655,11 @@ def draw_curved_ligament_realistic(
         rng: Random number generator
         
     Returns:
-        Modified image array
+        Tuple of (modified image array, binary mask of the drawn ligament)
     """
     if len(control_points) < 2:
-        return image
+        height, width = image.shape
+        return image, np.zeros((height, width), dtype=np.uint8)
     
     # Convert to numpy array for easier manipulation
     points = np.array(control_points, dtype=np.int32)
@@ -625,20 +689,28 @@ def draw_curved_ligament_realistic(
             point += coeff * np.array(p)
         curve_points.append(point.astype(int))
     
-    # Create mask by drawing thick curve (capsule segments along the path)
+    # Create mask by drawing thick curve with varying thickness along the path
     mask = np.zeros((height, width), dtype=np.uint8)
     
-    # Draw capsule segments along the curve
+    # REALISM: Vary thickness along the curve for more realistic appearance
+    # More dramatic variation: can go from 20% to 100% of base thickness
+    t_values_curve = np.linspace(0, 1, len(curve_points))
+    thickness_variation = 0.2 + 0.8 * (0.5 + 0.5 * np.sin(2 * np.pi * rng.uniform(0.5, 2.5) * t_values_curve))
+    thickness_variation += 0.3 * rng.normal(0, 0.4, len(t_values_curve))  # Random variation
+    thickness_variation = np.clip(thickness_variation, 0.15, 1.0)  # 15% to 100% of base
+    
+    # Draw capsule segments along the curve with varying thickness
     for i in range(len(curve_points) - 1):
         p1 = tuple(curve_points[i])
         p2 = tuple(curve_points[i + 1])
         
-        # Draw thick line segment
-        cv2.line(mask, p1, p2, 255, base_thickness * 2)
+        # Use average thickness for this segment
+        seg_thickness = max(1, int(base_thickness * (thickness_variation[i] + thickness_variation[i+1]) / 2))
+        cv2.line(mask, p1, p2, 255, seg_thickness * 2)
     
-    # Add rounded caps at the ends
-    cv2.circle(mask, tuple(curve_points[0]), base_thickness, 255, -1)
-    cv2.circle(mask, tuple(curve_points[-1]), base_thickness, 255, -1)
+    # Add rounded caps at the ends with varying thickness
+    cv2.circle(mask, tuple(curve_points[0]), int(base_thickness * thickness_variation[0]), 255, -1)
+    cv2.circle(mask, tuple(curve_points[-1]), int(base_thickness * thickness_variation[-1]), 255, -1)
     
     # Fill any gaps by dilating slightly
     kernel_size = max(3, base_thickness // 2)
@@ -649,7 +721,7 @@ def draw_curved_ligament_realistic(
     
     # REALISM: Use distance transform to create radial intensity profile (like droplets)
     dist_transform = cv2.distanceTransform(mask, cv2.DIST_L2, 5)
-    # Normalize by thickness (radius)
+    # Normalize by average thickness (radius) - use base_thickness for normalization
     normalized_dist = dist_transform / (base_thickness + 1e-6)
     normalized_dist = np.clip(normalized_dist, 0, 1)
     
@@ -681,7 +753,7 @@ def draw_curved_ligament_realistic(
             255
         ).astype(np.uint8)
     
-    return image
+    return image, mask
 
 
 def generate_ligament_parameters(
@@ -798,18 +870,71 @@ def generate_ligament_parameters(
 # INSTANCE MASK GENERATION
 # ============================================================================
 
+def remove_entirely_covered_instances(
+    instances: List[Dict],
+    new_mask: np.ndarray,
+    image_shape: Tuple[int, int]
+) -> List[Dict]:
+    """
+    Remove any instances that are entirely covered by a newly drawn object.
+    
+    Args:
+        instances: List of previously annotated instances (including the new one at the end)
+        new_mask: Binary mask of the newly drawn object
+        image_shape: (height, width) of the image
+        
+    Returns:
+        Filtered list of instances (with entirely covered ones removed, but keeps the new one)
+    """
+    if len(instances) == 0:
+        return instances
+    
+    filtered_instances = []
+    # The last instance in the list is the newly added one - we want to keep it
+    new_instance = instances[-1]
+    
+    # Check all instances EXCEPT the last one (the new one we just added)
+    for instance in instances[:-1]:
+        existing_mask = instance['mask']
+        
+        # Check if existing instance is entirely contained within new_mask
+        # If new_mask covers >98% of existing_mask, remove the existing instance
+        existing_area = np.sum(existing_mask > 0)
+        if existing_area == 0:
+            # Empty mask, keep it (shouldn't happen but safe)
+            filtered_instances.append(instance)
+            continue
+        
+        # Check overlap: pixels that are in both existing_mask and new_mask
+        covered_area = np.sum((existing_mask > 0) & (new_mask > 0))
+        coverage_ratio = covered_area / existing_area if existing_area > 0 else 0.0
+        
+        # If new object covers >90% of existing object, remove existing object
+        # (it's entirely behind the new object)
+        if coverage_ratio < 0.90:  # At least 10% must be outside new_mask
+            filtered_instances.append(instance)
+        # else: existing instance is entirely covered, don't include it
+    
+    # Always add the new instance at the end (it's the one we just drew)
+    filtered_instances.append(new_instance)
+    
+    return filtered_instances
+
 def create_instance_mask(
     shape: Tuple[int, int],
     instance_type: str,
-    params: Dict
+    params: Dict,
+    rng: Optional[np.random.Generator] = None
 ) -> np.ndarray:
     """
     Create a binary mask for a single instance.
+    For ligaments, matches the varying thickness pattern used in drawing.
     
     Args:
         shape: (height, width) of the mask
         instance_type: 'droplet' or 'ligament'
         params: Parameters dictionary for the instance
+        rng: Optional random number generator for thickness variation (required for ligaments)
         
     Returns:
         Binary mask (255 for instance, 0 for background)
@@ -825,42 +950,81 @@ def create_instance_mask(
     
     elif instance_type == 'ligament':
         if params['type'] == 'straight':
-            # Match the drawing method: capsule shape (ellipse)
+            # Match the drawing method with varying thickness
             start = params['start']
             end = params['end']
-            thickness = params['thickness']
+            base_thickness = params['thickness']
             
-            # Calculate length and angle
+            # Calculate length and direction
             dx = end[0] - start[0]
             dy = end[1] - start[1]
             length = np.sqrt(dx**2 + dy**2)
-            angle_deg = np.degrees(np.arctan2(dy, dx))
             
-            # Center point
-            center_x = (start[0] + end[0]) / 2.0
-            center_y = (start[1] + end[1]) / 2.0
-            center = (int(center_x), int(center_y))
+            if length < 1:
+                return mask
             
-            # Create capsule: ellipse with major axis = length, minor axis = 2 * thickness
-            axes = (int(length / 2), thickness)
-            cv2.ellipse(mask, center, axes, angle_deg, 0, 360, 255, -1)
+            # REALISM: Vary thickness along the length (same as drawing function)
+            num_segments = max(10, int(length / 5))  # Segment every ~5 pixels
+            t_values = np.linspace(0, 1, num_segments + 1)
+            
+            if rng is not None:
+                # More dramatic variation: can go from 20% to 100% of base thickness
+                thickness_variation = 0.2 + 0.8 * (0.5 + 0.5 * np.sin(2 * np.pi * rng.uniform(0.5, 2.5) * t_values))
+                thickness_variation += 0.3 * rng.normal(0, 0.4, len(t_values))  # Random variation
+                thickness_variation = np.clip(thickness_variation, 0.15, 1.0)  # 15% to 100% of base
+            else:
+                # Fallback: uniform thickness if no RNG provided
+                thickness_variation = np.ones(len(t_values))
+            
+            # Draw segments with varying thickness
+            for i in range(num_segments):
+                t1, t2 = t_values[i], t_values[i + 1]
+                seg_start = (int(start[0] + t1 * dx), int(start[1] + t1 * dy))
+                seg_end = (int(start[0] + t2 * dx), int(start[1] + t2 * dy))
+                
+                seg_thickness = max(1, int(base_thickness * thickness_variation[i]))
+                cv2.line(mask, seg_start, seg_end, 255, seg_thickness * 2)
+            
+            # Add rounded caps at the ends
+            cv2.circle(mask, start, int(base_thickness * thickness_variation[0]), 255, -1)
+            cv2.circle(mask, end, int(base_thickness * thickness_variation[-1]), 255, -1)
+            
         else:  # curved
             control_points = params['control_points']
-            thickness = params['thickness']
+            base_thickness = params['thickness']
             
             if len(control_points) == 2:
-                # Simple line - use capsule shape
+                # Simple line - use varying thickness method
                 start = control_points[0]
                 end = control_points[1]
                 dx = end[0] - start[0]
                 dy = end[1] - start[1]
                 length = np.sqrt(dx**2 + dy**2)
-                angle_deg = np.degrees(np.arctan2(dy, dx))
-                center = ((start[0] + end[0]) // 2, (start[1] + end[1]) // 2)
-                axes = (int(length / 2), thickness)
-                cv2.ellipse(mask, center, axes, angle_deg, 0, 360, 255, -1)
+                
+                if length < 1:
+                    return mask
+                
+                num_segments = max(10, int(length / 5))
+                t_values = np.linspace(0, 1, num_segments + 1)
+                
+                if rng is not None:
+                    thickness_variation = 0.2 + 0.8 * (0.5 + 0.5 * np.sin(2 * np.pi * rng.uniform(0.5, 2.5) * t_values))
+                    thickness_variation += 0.3 * rng.normal(0, 0.4, len(t_values))
+                    thickness_variation = np.clip(thickness_variation, 0.15, 1.0)
+                else:
+                    thickness_variation = np.ones(len(t_values))
+                
+                for i in range(num_segments):
+                    t1, t2 = t_values[i], t_values[i + 1]
+                    seg_start = (int(start[0] + t1 * dx), int(start[1] + t1 * dy))
+                    seg_end = (int(start[0] + t2 * dx), int(start[1] + t2 * dy))
+                    seg_thickness = max(1, int(base_thickness * thickness_variation[i]))
+                    cv2.line(mask, seg_start, seg_end, 255, seg_thickness * 2)
+                
+                cv2.circle(mask, start, int(base_thickness * thickness_variation[0]), 255, -1)
+                cv2.circle(mask, end, int(base_thickness * thickness_variation[-1]), 255, -1)
             else:
-                # Draw curved ligament on mask - match the drawing method
+                # Draw curved ligament on mask - match the drawing method with varying thickness
                 # Generate Bezier curve with more points
                 t_values = np.linspace(0, 1, max(100, int(np.linalg.norm(
                     np.array(control_points[-1]) - np.array(control_points[0])) / 2)))
@@ -876,19 +1040,29 @@ def create_instance_mask(
                         point += coeff * np.array(p)
                     curve_points.append(point.astype(int))
                 
-                # Draw capsule segments along the curve (match drawing method)
+                # REALISM: Vary thickness along the curve (same as drawing function)
+                t_values_curve = np.linspace(0, 1, len(curve_points))
+                if rng is not None:
+                    thickness_variation = 0.2 + 0.8 * (0.5 + 0.5 * np.sin(2 * np.pi * rng.uniform(0.5, 2.5) * t_values_curve))
+                    thickness_variation += 0.3 * rng.normal(0, 0.4, len(t_values_curve))
+                    thickness_variation = np.clip(thickness_variation, 0.15, 1.0)
+                else:
+                    thickness_variation = np.ones(len(t_values_curve))
+                
+                # Draw capsule segments along the curve with varying thickness
                 for i in range(len(curve_points) - 1):
                     p1 = tuple(curve_points[i])
                     p2 = tuple(curve_points[i + 1])
-                    # Draw thick line segment (thickness * 2 to match drawing)
-                    cv2.line(mask, p1, p2, 255, thickness * 2)
+                    # Use average thickness for this segment
+                    seg_thickness = max(1, int(base_thickness * (thickness_variation[i] + thickness_variation[i+1]) / 2))
+                    cv2.line(mask, p1, p2, 255, seg_thickness * 2)
                 
-                # Add rounded caps at the ends
-                cv2.circle(mask, tuple(curve_points[0]), thickness, 255, -1)
-                cv2.circle(mask, tuple(curve_points[-1]), thickness, 255, -1)
+                # Add rounded caps at the ends with varying thickness
+                cv2.circle(mask, tuple(curve_points[0]), int(base_thickness * thickness_variation[0]), 255, -1)
+                cv2.circle(mask, tuple(curve_points[-1]), int(base_thickness * thickness_variation[-1]), 255, -1)
                 
                 # Fill any gaps by dilating slightly (match drawing method)
-                kernel_size = max(3, thickness // 2)
+                kernel_size = max(3, base_thickness // 2)
                 if kernel_size % 2 == 0:
                     kernel_size += 1
                 kernel = np.ones((kernel_size, kernel_size), np.uint8)
@@ -1226,12 +1400,24 @@ def generate_synthetic_image(
         if is_in_focus:
             # Create mask for annotation
             mask = create_instance_mask(image_shape, 'droplet', params)
-            background_instances.append({
-                'type': 'droplet',
-                'params': params,
-                'mask': mask,
-                'category_id': CATEGORY_DROPLET
-            })
+            # Check circularity - only classify as droplet if >= threshold
+            circularity = get_droplet_circularity(params)
+            if circularity >= DROPLET_CIRCULARITY_THRESHOLD:
+                # Circular enough to be a droplet
+                background_instances.append({
+                    'type': 'droplet',
+                    'params': params,
+                    'mask': mask,
+                    'category_id': CATEGORY_DROPLET
+                })
+            else:
+                # Not circular enough - classify as ligament
+                background_instances.append({
+                    'type': 'ligament',
+                    'params': params,
+                    'mask': mask,
+                    'category_id': CATEGORY_LIGAMENT
+                })
     
     # Generate instances (in-focus foreground droplets, in-focus background droplets, and ligaments)
     instances = []
@@ -1243,9 +1429,9 @@ def generate_synthetic_image(
     for _ in range(num_droplets):
         params = generate_droplet_parameters(rng, image_shape)
         
-        # Filter out small droplets (< 20px diameter) - don't annotate them
+        # Filter out small droplets - don't annotate them
         diameter = get_droplet_diameter(params)
-        if diameter < 20.0:
+        if diameter < MIN_DROPLET_DIAMETER:
             # Still draw the droplet in the image, but don't annotate it
             if params['type'] == 'circular':
                 image = draw_circular_droplet_realistic(
@@ -1279,37 +1465,131 @@ def generate_synthetic_image(
         mask = create_instance_mask(image_shape, 'droplet', params)
         
         # Check if droplet is completely occluded by previously drawn objects
-        # A droplet is occluded if all its pixels are already covered
+        # A droplet is occluded if all its pixels are already covered by something drawn BEFORE it
+        # Since we draw sequentially, occlusion_mask tracks what was drawn before this droplet
         visible_area = np.sum((mask > 0) & (occlusion_mask == 0))
         total_area = np.sum(mask > 0)
         
-        # Only annotate if at least some area is visible (not completely occluded)
-        if visible_area > 0 and total_area > 0:
-            # Check if enough is visible (at least 10% visible to avoid tiny slivers)
-            visibility_ratio = visible_area / total_area
-            if visibility_ratio >= 0.1:
-                instances.append({
-                    'type': 'droplet',
-                    'params': params,
-                    'mask': mask,
-                    'category_id': CATEGORY_DROPLET
-                })
-                # Update occlusion mask
-                occlusion_mask = np.maximum(occlusion_mask, mask)
+        # Skip entirely if droplet has no area
+        if total_area == 0:
+            continue
+        
+        # Calculate visibility ratio (how much of droplet is NOT covered by previous objects)
+        visibility_ratio = visible_area / total_area if total_area > 0 else 0.0
+        
+        # EXCLUDE droplets that are entirely or almost entirely covered (>98% occluded)
+        # These are droplets that are completely hidden behind objects drawn before them
+        # Since we draw sequentially, if >98% is covered, the droplet is entirely behind something
+        if visibility_ratio < 0.02:  # Less than 2% visible = entirely covered
+            # Still update occlusion mask (draw it in image) but don't annotate
+            occlusion_mask = np.maximum(occlusion_mask, mask)
+            continue  # Skip annotation for entirely covered droplets
+        
+        # Only annotate if enough area is visible
+        if visibility_ratio >= MIN_DROPLET_VISIBILITY_RATIO:
+                # Check if droplet has sufficient contrast to be actually visible
+                # Use the actual image pixels in the droplet region (even if overlapping)
+                # The droplet is visible if it has sufficient contrast, regardless of overlap
+                center_y, center_x = int(params['center'][1]), int(params['center'][0])
+                if (0 <= center_y < image_shape[0] and 0 <= center_x < image_shape[1]):
+                    # Get minimum intensity in the droplet region (darkest part)
+                    # Use all pixels in the mask, not just unoccluded ones, since the droplet
+                    # is still visible even when overlapping with other objects
+                    droplet_pixels = image[mask > 0]
+                    if len(droplet_pixels) > 0:
+                        min_droplet_intensity = float(np.min(droplet_pixels))
+                        intensity_diff = float(bg_intensity) - min_droplet_intensity
+                    else:
+                        # Fallback to center if no pixels in mask
+                        droplet_intensity = float(image[center_y, center_x])
+                        intensity_diff = float(bg_intensity) - droplet_intensity
+                    
+                    # Only annotate if contrast is high enough to be clearly visible
+                    if intensity_diff >= MIN_DROPLET_CONTRAST:
+                        # Check circularity - only classify as droplet if >= threshold
+                        # Stretched ellipses (low circularity) are classified as ligaments
+                        circularity = get_droplet_circularity(params)
+                        if circularity >= DROPLET_CIRCULARITY_THRESHOLD:
+                            # Circular enough to be a droplet
+                            new_instance = {
+                                'type': 'droplet',
+                                'params': params,
+                                'mask': mask,
+                                'category_id': CATEGORY_DROPLET
+                            }
+                            instances.append(new_instance)
+                            # Check if this new droplet entirely covers any previously annotated objects
+                            instances = remove_entirely_covered_instances(instances, mask, image_shape)
+                        else:
+                            # Not circular enough - classify as ligament
+                            new_instance = {
+                                'type': 'ligament',
+                                'params': params,
+                                'mask': mask,
+                                'category_id': CATEGORY_LIGAMENT
+                            }
+                            instances.append(new_instance)
+                            # Check if this new ligament entirely covers any previously annotated objects
+                            instances = remove_entirely_covered_instances(instances, mask, image_shape)
+                        # Update occlusion mask
+                        occlusion_mask = np.maximum(occlusion_mask, mask)
     
     # Add in-focus background droplets to instances (filter small ones and check occlusion)
     for bg_instance in background_instances:
         diameter = get_droplet_diameter(bg_instance['params'])
-        if diameter >= 20.0:  # Only annotate if >= 20px diameter
+        if diameter >= MIN_DROPLET_DIAMETER:  # Only annotate if >= minimum diameter
             mask = bg_instance['mask']
             # Check occlusion
             visible_area = np.sum((mask > 0) & (occlusion_mask == 0))
             total_area = np.sum(mask > 0)
-            if visible_area > 0 and total_area > 0:
-                visibility_ratio = visible_area / total_area
-                if visibility_ratio >= 0.1:
-                    instances.append(bg_instance)
-                    occlusion_mask = np.maximum(occlusion_mask, mask)
+            
+            # Skip entirely if droplet has no area
+            if total_area == 0:
+                continue
+            
+            # Calculate visibility ratio
+            visibility_ratio = visible_area / total_area if total_area > 0 else 0.0
+            
+            # EXCLUDE droplets that are entirely or almost entirely covered (>95% occluded)
+            # These are droplets on the "back plane" that are completely hidden
+            if visibility_ratio < 0.05:  # Less than 5% visible = entirely covered
+                # Still update occlusion mask (draw it) but don't annotate
+                occlusion_mask = np.maximum(occlusion_mask, mask)
+                continue  # Skip annotation for entirely covered droplets
+            
+            # Only annotate if enough area is visible
+            if visibility_ratio >= MIN_DROPLET_VISIBILITY_RATIO:
+                    # Check if droplet has sufficient contrast to be actually visible
+                    center_y, center_x = int(bg_instance['params']['center'][1]), int(bg_instance['params']['center'][0])
+                    if (0 <= center_y < image_shape[0] and 0 <= center_x < image_shape[1]):
+                        # Get minimum intensity in the visible droplet region (darkest part)
+                        visible_droplet_pixels = image[(mask > 0) & (occlusion_mask == 0)]
+                        if len(visible_droplet_pixels) > 0:
+                            min_droplet_intensity = float(np.min(visible_droplet_pixels))
+                            intensity_diff = float(bg_intensity) - min_droplet_intensity
+                        else:
+                            # Fallback to center if no visible pixels
+                            droplet_intensity = float(image[center_y, center_x])
+                            intensity_diff = float(bg_intensity) - droplet_intensity
+                        
+                        # Only annotate if contrast is high enough to be clearly visible
+                        if intensity_diff >= MIN_DROPLET_CONTRAST:
+                            # Check circularity - only classify as droplet if >= threshold
+                            # Stretched ellipses (low circularity) are classified as ligaments
+                            circularity = get_droplet_circularity(bg_instance['params'])
+                            if circularity >= DROPLET_CIRCULARITY_THRESHOLD:
+                                # Circular enough to be a droplet - keep original category
+                                instances.append(bg_instance)
+                                # Check if this new droplet entirely covers any previously annotated objects
+                                instances = remove_entirely_covered_instances(instances, mask, image_shape)
+                            else:
+                                # Not circular enough - reclassify as ligament
+                                bg_instance['type'] = 'ligament'
+                                bg_instance['category_id'] = CATEGORY_LIGAMENT
+                                instances.append(bg_instance)
+                                # Check if this new ligament entirely covers any previously annotated objects
+                                instances = remove_entirely_covered_instances(instances, mask, image_shape)
+                            occlusion_mask = np.maximum(occlusion_mask, mask)
     
     # Generate ligaments - REALISM: Varying thickness and intensity
     num_ligaments = rng.poisson(LIGAMENT_POISSON_LAMBDA)
@@ -1322,31 +1602,38 @@ def generate_synthetic_image(
         )
         
         # REALISM: Draw realistic ligament with varying properties
+        # The drawing functions now return both the image and the mask
         if params['type'] == 'straight':
-            image = draw_straight_ligament_realistic(
+            image, mask = draw_straight_ligament_realistic(
                 image, params['start'], params['end'], 
                 params['thickness'], base_intensity_drop, 
                 float(bg_intensity), rng
             )
         else:
-            image = draw_curved_ligament_realistic(
+            image, mask = draw_curved_ligament_realistic(
                 image, params['control_points'], 
                 params['thickness'], base_intensity_drop,
                 float(bg_intensity), rng
             )
         
-        # Create mask for annotation (exact binary mask matching the drawn shape)
-        mask = create_instance_mask(image_shape, 'ligament', params)
+        # Use the mask returned from the drawing function (includes dilation for blurred edges)
         
-        instances.append({
+        new_instance = {
             'type': 'ligament',
             'params': params,
             'mask': mask,
             'category_id': CATEGORY_LIGAMENT
-        })
+        }
+        instances.append(new_instance)
+        
+        # Check if this new ligament entirely covers any previously annotated objects
+        instances = remove_entirely_covered_instances(instances, mask, image_shape)
         
         # Update occlusion mask (ligaments can occlude future droplets)
         occlusion_mask = np.maximum(occlusion_mask, mask)
+    
+    # Note: We no longer need a final pass because we check after each object is drawn
+    # The remove_entirely_covered_instances function handles this incrementally
     
     # Convert back to uint8
     image = np.clip(image, 0, 255).astype(np.uint8)
@@ -1531,8 +1818,11 @@ def generate_single_image_worker(args):
     visualizations_dir = Path(visualizations_dir_str) if visualizations_dir_str else None
     sidebyside_dir = Path(sidebyside_dir_str) if sidebyside_dir_str else None
     
-    # Create independent RNG for this worker (seed based on image_id for reproducibility)
-    rng = np.random.default_rng(seed=image_id)
+    # Create independent RNG for this worker
+    # Use base_seed + image_id to ensure different images each run, but unique per image
+    # base_seed is passed via config dict
+    base_seed = config.get('base_seed', 0) if config else 0
+    rng = np.random.default_rng(seed=base_seed + image_id)
     
     # Generate synthetic image
     image, instances = generate_synthetic_image(rng, image_shape, config)
@@ -1560,7 +1850,7 @@ def generate_single_image_worker(args):
         
         # Create side-by-side visualization if enabled
         if create_sidebyside and sidebyside_dir:
-            sidebyside_path = sidebyside_dir / f"blur_image_{image_id:04d}_sidebyside.png"
+            sidebyside_path = sidebyside_dir / f"blur_image_{image_id:05d}_sidebyside.png"
             create_sidebyside_visualization(image, instances, str(sidebyside_path))
     
     return result
@@ -1592,9 +1882,12 @@ def generate_dataset(
     if config is None:
         config = {}
     
-    # Create timestamped folder with "blur_" prefix
-    timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
-    output_dir = Path(base_output_dir) / f"blur_{timestamp}"
+    # Create output folder - use custom name if specified, otherwise use timestamped format
+    if CUSTOM_OUTPUT_FOLDER:
+        output_dir = Path(base_output_dir) / CUSTOM_OUTPUT_FOLDER
+    else:
+        timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+        output_dir = Path(base_output_dir) / f"blur_{timestamp}"
     images_dir = output_dir / "images"
     
     images_dir.mkdir(parents=True, exist_ok=True)
@@ -1615,6 +1908,9 @@ def generate_dataset(
     print(f"Output directory: {output_dir}")
     print(f"{'='*60}")
     
+    # Generate a random base seed for this run (ensures different images each time)
+    base_seed = np.random.randint(0, 2**31)
+    
     # Initialize COCO dataset structure
     coco_dataset = {
         'images': [],
@@ -1634,12 +1930,18 @@ def generate_dataset(
         print(f"Using {num_workers} worker process(es) for parallel generation")
         
         # Prepare arguments for workers (convert Path objects to strings for multiprocessing)
+        # Pass base_seed in config so each worker can use it
+        if config is None:
+            config = {}
+        config_with_seed = config.copy()
+        config_with_seed['base_seed'] = base_seed
+        
         worker_args = []
         for i in range(num_images):
             image_id = i + 1
-            image_filename = f"blur_image_{image_id:04d}.png"
+            image_filename = f"blur_image_{image_id:05d}.png"
             worker_args.append((
-                image_id, image_filename, str(images_dir), IMAGE_SHAPE, config,
+                image_id, image_filename, str(images_dir), IMAGE_SHAPE, config_with_seed,
                 detectron_only, 
                 str(visualizations_dir) if visualizations_dir else None,
                 str(sidebyside_dir) if sidebyside_dir else None,
@@ -1650,7 +1952,16 @@ def generate_dataset(
         print(f"Starting parallel generation of {num_images} images...")
         try:
             with Pool(processes=num_workers) as pool:
-                results = pool.map(generate_single_image_worker, worker_args)
+                # Use imap_unordered for progress tracking
+                results = []
+                last_reported_percent = -1
+                for idx, result in enumerate(pool.imap_unordered(generate_single_image_worker, worker_args), 1):
+                    results.append(result)
+                    # Report progress every 1%
+                    current_percent = int((idx / num_images) * 100)
+                    if current_percent > last_reported_percent or idx == num_images:
+                        print(f"  Progress: {current_percent}% ({idx}/{num_images} images)")
+                        last_reported_percent = current_percent
             
             # Collect and merge results
             print("Collecting results and generating annotations...")
@@ -1665,14 +1976,18 @@ def generate_dataset(
     # Sequential generation (for single worker or fallback)
     if num_workers == 1:
         print("Using sequential generation (single process)")
-        rng = np.random.default_rng()
+        # Use base_seed for sequential generation too
+        if config is None:
+            config = {}
+        config['base_seed'] = base_seed
+        rng = np.random.default_rng(seed=base_seed)
         
         # Calculate progress reporting intervals (every 1%)
         last_reported_percent = -1
         
         for i in range(num_images):
             image_id = i + 1
-            image_filename = f"blur_image_{image_id:04d}.png"
+            image_filename = f"blur_image_{image_id:05d}.png"
             image_path = images_dir / image_filename
             
             # Generate synthetic image
@@ -1697,7 +2012,7 @@ def generate_dataset(
                 
                 # Create side-by-side visualization if enabled
                 if create_sidebyside and sidebyside_dir:
-                    sidebyside_path = sidebyside_dir / f"blur_image_{image_id:04d}_sidebyside.png"
+                    sidebyside_path = sidebyside_dir / f"blur_image_{image_id:05d}_sidebyside.png"
                     create_sidebyside_visualization(image, instances, str(sidebyside_path))
             
             # Report progress every 1%
