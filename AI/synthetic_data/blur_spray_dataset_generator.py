@@ -52,18 +52,18 @@ from pycocotools import mask as coco_mask
 # ============================================================================
 
 # Number of images to generate (adjust for testing)
-NUM_IMAGES = 100
+NUM_IMAGES = 10000
 
 # Create side-by-side image/mask visualizations? (True/False)
-CREATE_SIDEBYSIDE_VIS = True
+CREATE_SIDEBYSIDE_VIS = False
 
 # Output Detectron2 essentials only? (True = only images + annotations.json, False = all outputs)
 # When True: Skips visualizations and sidebyside to save time/space for large datasets
-OUTPUT_DETECTRON_ONLY = False
+OUTPUT_DETECTRON_ONLY = True
 
 # Custom output folder name (None = use default "blur_timestamp" format)
 # Set to a string to use a custom name (e.g., "Detectron_Trial_2")
-CUSTOM_OUTPUT_FOLDER = None
+CUSTOM_OUTPUT_FOLDER = "Detectron_Trial_3"
 
 # Multiprocessing settings
 # Number of worker processes (None = use all CPU cores, or set to specific number)
@@ -104,7 +104,7 @@ LIGAMENT_LENGTH_MIN = 30
 LIGAMENT_LENGTH_MAX = 600
 LIGAMENT_THICKNESS_MIN = 3
 LIGAMENT_THICKNESS_MAX = 50
-LIGAMENT_POISSON_LAMBDA = 5  # Average number of ligaments per image
+LIGAMENT_POISSON_LAMBDA = 6  # Average number of ligaments per image (1.2x increase from 5)
 
 # Domain randomization parameters
 GAUSSIAN_BLUR_SIGMA_MIN = 0.5
@@ -1477,62 +1477,75 @@ def generate_synthetic_image(
         # Calculate visibility ratio (how much of droplet is NOT covered by previous objects)
         visibility_ratio = visible_area / total_area if total_area > 0 else 0.0
         
-        # EXCLUDE droplets that are entirely or almost entirely covered (>98% occluded)
-        # These are droplets that are completely hidden behind objects drawn before them
-        # Since we draw sequentially, if >98% is covered, the droplet is entirely behind something
-        if visibility_ratio < 0.02:  # Less than 2% visible = entirely covered
-            # Still update occlusion mask (draw it in image) but don't annotate
-            occlusion_mask = np.maximum(occlusion_mask, mask)
-            continue  # Skip annotation for entirely covered droplets
-        
-        # Only annotate if enough area is visible
-        if visibility_ratio >= MIN_DROPLET_VISIBILITY_RATIO:
-                # Check if droplet has sufficient contrast to be actually visible
-                # Use the actual image pixels in the droplet region (even if overlapping)
-                # The droplet is visible if it has sufficient contrast, regardless of overlap
-                center_y, center_x = int(params['center'][1]), int(params['center'][0])
-                if (0 <= center_y < image_shape[0] and 0 <= center_x < image_shape[1]):
-                    # Get minimum intensity in the droplet region (darkest part)
-                    # Use all pixels in the mask, not just unoccluded ones, since the droplet
-                    # is still visible even when overlapping with other objects
-                    droplet_pixels = image[mask > 0]
-                    if len(droplet_pixels) > 0:
-                        min_droplet_intensity = float(np.min(droplet_pixels))
-                        intensity_diff = float(bg_intensity) - min_droplet_intensity
+        # IMPORTANT: Check if droplet is actually visible in the final rendered image
+        # Even if it's entirely inside another droplet (visibility_ratio = 0), if it was drawn
+        # AFTER the larger droplet, it's in FRONT and should be annotated if it has sufficient contrast
+        center_y, center_x = int(params['center'][1]), int(params['center'][0])
+        if (0 <= center_y < image_shape[0] and 0 <= center_x < image_shape[1]):
+            # Get minimum intensity in the droplet region (darkest part)
+            # Use all pixels in the mask - if droplet is in front, it will have its own intensity
+            droplet_pixels = image[mask > 0]
+            if len(droplet_pixels) > 0:
+                min_droplet_intensity = float(np.min(droplet_pixels))
+                intensity_diff = float(bg_intensity) - min_droplet_intensity
+            else:
+                # Fallback to center if no pixels in mask
+                droplet_intensity = float(image[center_y, center_x])
+                intensity_diff = float(bg_intensity) - droplet_intensity
+            
+            # Check if droplet has sufficient contrast to be visible
+            # This works even for droplets entirely inside others (they're in front if drawn later)
+            if intensity_diff >= MIN_DROPLET_CONTRAST:
+                # Droplet is visible in the image - annotate it regardless of occlusion
+                # Since we draw sequentially, if it's drawn now and has contrast, it's in front
+                
+                # For droplets entirely inside others (visibility_ratio < 0.02), we still annotate
+                # if they have sufficient contrast, because they're drawn on top (in front)
+                # For partially visible droplets, we check the visibility ratio threshold
+                should_annotate = False
+                if visibility_ratio < 0.02:
+                    # Entirely inside another object - but if it has contrast, it's in front
+                    # Still annotate it (it's a separate instance in front)
+                    should_annotate = True
+                elif visibility_ratio >= MIN_DROPLET_VISIBILITY_RATIO:
+                    # Partially visible - normal case
+                    should_annotate = True
+                
+                if should_annotate:
+                    # Droplet passed all checks - proceed to annotate
+                    # Check circularity - only classify as droplet if >= threshold
+                    # Stretched ellipses (low circularity) are classified as ligaments
+                    circularity = get_droplet_circularity(params)
+                    if circularity >= DROPLET_CIRCULARITY_THRESHOLD:
+                        # Circular enough to be a droplet
+                        new_instance = {
+                            'type': 'droplet',
+                            'params': params,
+                            'mask': mask,
+                            'category_id': CATEGORY_DROPLET
+                        }
+                        instances.append(new_instance)
+                        # Check if this new droplet entirely covers any previously annotated objects
+                        instances = remove_entirely_covered_instances(instances, mask, image_shape)
                     else:
-                        # Fallback to center if no pixels in mask
-                        droplet_intensity = float(image[center_y, center_x])
-                        intensity_diff = float(bg_intensity) - droplet_intensity
-                    
-                    # Only annotate if contrast is high enough to be clearly visible
-                    if intensity_diff >= MIN_DROPLET_CONTRAST:
-                        # Check circularity - only classify as droplet if >= threshold
-                        # Stretched ellipses (low circularity) are classified as ligaments
-                        circularity = get_droplet_circularity(params)
-                        if circularity >= DROPLET_CIRCULARITY_THRESHOLD:
-                            # Circular enough to be a droplet
-                            new_instance = {
-                                'type': 'droplet',
-                                'params': params,
-                                'mask': mask,
-                                'category_id': CATEGORY_DROPLET
-                            }
-                            instances.append(new_instance)
-                            # Check if this new droplet entirely covers any previously annotated objects
-                            instances = remove_entirely_covered_instances(instances, mask, image_shape)
-                        else:
-                            # Not circular enough - classify as ligament
-                            new_instance = {
-                                'type': 'ligament',
-                                'params': params,
-                                'mask': mask,
-                                'category_id': CATEGORY_LIGAMENT
-                            }
-                            instances.append(new_instance)
-                            # Check if this new ligament entirely covers any previously annotated objects
-                            instances = remove_entirely_covered_instances(instances, mask, image_shape)
-                        # Update occlusion mask
-                        occlusion_mask = np.maximum(occlusion_mask, mask)
+                        # Not circular enough - classify as ligament
+                        new_instance = {
+                            'type': 'ligament',
+                            'params': params,
+                            'mask': mask,
+                            'category_id': CATEGORY_LIGAMENT
+                        }
+                        instances.append(new_instance)
+                        # Check if this new ligament entirely covers any previously annotated objects
+                        instances = remove_entirely_covered_instances(instances, mask, image_shape)
+                    # Update occlusion mask
+                    occlusion_mask = np.maximum(occlusion_mask, mask)
+                else:
+                    # Not enough visible AND visibility ratio too low - skip
+                    occlusion_mask = np.maximum(occlusion_mask, mask)
+            else:
+                # Not enough contrast - skip annotation
+                occlusion_mask = np.maximum(occlusion_mask, mask)
     
     # Add in-focus background droplets to instances (filter small ones and check occlusion)
     for bg_instance in background_instances:
