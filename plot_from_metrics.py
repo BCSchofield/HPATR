@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 # Path to metrics file
-METRICS_FILE = Path(r"D:\Experiments\AI\training_2025_12_25_15_43_57\metrics.json")
+METRICS_FILE = Path(r"D:\Experiments\AI\training_2025_12_26_10_03_18\metrics.json")
 OUTPUT_PLOT = METRICS_FILE.parent / "plots" / "loss_curve.png"
 
 def plot_from_metrics():

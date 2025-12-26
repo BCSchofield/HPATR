@@ -219,7 +219,7 @@ def evaluate_image(
 def get_validation_base_dir() -> Path:
     """
     Get the base validation directory (works on both Windows and Mac).
-    Returns D:\Experiments\Validation_100 on Windows, or equivalent on Mac.
+    Returns D:\\Experiments\\Validation_100 on Windows, or equivalent on Mac.
     """
     # Try Windows path first
     windows_path = Path(r"D:\Experiments\Validation_100")
@@ -728,7 +728,7 @@ if __name__ == "__main__":
         epilog="""
 Examples:
   # Auto-detect all paths (recommended)
-  python AI/evaluate_model.py --model "D:\Experiments\AI\training_2025_12_25_15_43_57\model_final.pth"
+  python AI/evaluate_model.py --model "D:\\Experiments\\AI\\training_2025_12_25_15_43_57\\model_final.pth"
   
   # Specify all paths manually
   python AI/evaluate_model.py --config config.yaml --weights model.pth --annotations annotations.json --images Validation_100 --output results.xlsx

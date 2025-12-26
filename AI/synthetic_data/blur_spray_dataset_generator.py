@@ -52,18 +52,18 @@ from pycocotools import mask as coco_mask
 # ============================================================================
 
 # Number of images to generate (adjust for testing)
-NUM_IMAGES = 100
+NUM_IMAGES = 1000
 
 # Create side-by-side image/mask visualizations? (True/False)
-CREATE_SIDEBYSIDE_VIS = True
+CREATE_SIDEBYSIDE_VIS = False
 
 # Output Detectron2 essentials only? (True = only images + annotations.json, False = all outputs)
 # When True: Skips visualizations and sidebyside to save time/space for large datasets
-OUTPUT_DETECTRON_ONLY = False
+OUTPUT_DETECTRON_ONLY = True
 
 # Custom output folder name (None = use default "blur_timestamp" format)
 # Set to a string to use a custom name (e.g., "Detectron_Trial_2")
-CUSTOM_OUTPUT_FOLDER = None
+CUSTOM_OUTPUT_FOLDER = "Detectron_Trial_4"
 
 # Multiprocessing settings
 # Number of worker processes (None = use all CPU cores, or set to specific number)
@@ -93,7 +93,7 @@ LIQUID_INTENSITY_MAX = 80
 # Droplet parameters - REALISM: Heavy-tailed size distribution
 DROPLET_RADIUS_MIN = 2  # Many very small droplets
 DROPLET_RADIUS_MAX = 50
-DROPLET_POISSON_LAMBDA = 70  # Doubled from 35 - many more droplets per image
+DROPLET_POISSON_LAMBDA = 10  # Reduced for 80/20 split (20% of instances should be droplets)
 # Size distribution: log-normal with heavy tail for small droplets
 # REALISM: 25% larger average droplet size (2.0 * 1.25 = 2.5)
 DROPLET_SIZE_MU = 2.5  # Log-normal mean (in log space) - 25% larger than 2.0
@@ -104,7 +104,7 @@ LIGAMENT_LENGTH_MIN = 30
 LIGAMENT_LENGTH_MAX = 600
 LIGAMENT_THICKNESS_MIN = 3
 LIGAMENT_THICKNESS_MAX = 50
-LIGAMENT_POISSON_LAMBDA = 5  # Average number of ligaments per image
+LIGAMENT_POISSON_LAMBDA = 20  # Reduced by 75% from 40 (25% of original: 40 * 0.25 = 10)
 
 # Domain randomization parameters
 GAUSSIAN_BLUR_SIGMA_MIN = 0.5

@@ -25,12 +25,12 @@ import matplotlib.pyplot as plt
 
 # Model path (update after training)
 # Use the final model from your latest training run
-MODEL_PATH = r"D:\Experiments\AI\training_2025_12_24_19_37_46\model_final.pth"
+MODEL_PATH = r"D:\Experiments\AI\training_2025_12_25_15_43_57\model_final.pth"
 
 # Detection threshold (0.0 to 1.0)
 # Lower = more detections (but more false positives)
 # Higher = fewer detections (but more accurate)
-SCORE_THRESHOLD = 0.001
+SCORE_THRESHOLD = 0.5
 
 # Output directories
 OUTPUT_DIR = Path("./inference_results")

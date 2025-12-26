@@ -35,29 +35,29 @@ from tqdm import tqdm
 
 # Dataset paths
 DATASET_NAME = "spray_train"
-ANNOTATIONS_PATH = r"D:\Experiments\TrainingData\Detectron_Trial_2\blur_annotations.json"
-IMAGES_PATH = r"D:\Experiments\TrainingData\Detectron_Trial_2\images"
+ANNOTATIONS_PATH = r"D:\Experiments\TrainingData\Detectron_Trial_4\blur_annotations.json"
+IMAGES_PATH = r"D:\Experiments\TrainingData\Detectron_Trial_4\images"
 
 # Training settings (optimized for RTX 2070 - 8GB VRAM)
 BATCH_SIZE = 2  # Start with 1, increase to 2 if memory allows
-BASE_LEARNING_RATE = 0.00025
-NUM_EPOCHS = 3  # Number of times to iterate through the entire training dataset
+BASE_LEARNING_RATE = 0.00020  # Increased for better fine-tuning performance
+NUM_EPOCHS = 1  # Number of times to iterate through the entire training dataset
 # MAX_ITER will be calculated dynamically based on dataset size
 MAX_ITER = None  # Will be set after loading dataset
 LEARNING_RATE_DECAY_STEPS = None  # Will be calculated based on MAX_ITER
 
 # Output base directory (timestamped folders will be created here)
 OUTPUT_BASE_DIR = r"D:\Experiments\AI"
-CHECKPOINT_INTERVAL = 2000  # Save checkpoint every N iterations
+CHECKPOINT_INTERVAL = 250  # Save checkpoint every N iterations
 
 # Validation settings
-VALIDATION_SPLIT = 0.2  # 20% of data for validation (80% for training)
-VALIDATION_INTERVAL = 4000  # Evaluate on validation set every N iterations
+VALIDATION_SPLIT = 0.1  # 10% of data for validation (90% for training)
+VALIDATION_INTERVAL = 250  # Evaluate on validation set every N iterations
 
 # Resume training from existing model (set to None to start from scratch)
 # Set this to your model path to continue training from that checkpoint
 # Example: RESUME_FROM_MODEL = r"D:\Experiments\AI\training_2025_12_25_15_43_57\model_final.pth"
-RESUME_FROM_MODEL = None  # Set to model path to continue training, or None to start fresh
+RESUME_FROM_MODEL = r"D:\Experiments\AI\Benedict\Benedict.pth"  # Continue training from Benedict model
 
 # ============================================================================
 # SETUP
@@ -355,12 +355,20 @@ class ProgressTracker:
             print(f"  [INFO] Not enough data points yet ({len(self.train_losses)} < 2), skipping plot")
             return
         
+        # Try multiple save locations to ensure it works
+        save_paths = [
+            self.plots_dir / "loss_curve.png",
+            self.output_dir / "loss_curve.png",
+            self.output_dir / "plots" / "loss_curve.png"
+        ]
+        
         try:
             # Ensure plots directory exists - use absolute path
             plots_dir_abs = Path(self.plots_dir).resolve()
             plots_dir_abs.mkdir(parents=True, exist_ok=True)
             
             print(f"  [DEBUG] Attempting to save plot to: {plots_dir_abs}")
+            print(f"  [DEBUG] Train losses: {len(self.train_losses)}, Val losses: {len(self.val_losses)}")
             
             # Verify directory is writable
             if not plots_dir_abs.exists():
@@ -445,65 +453,83 @@ class ProgressTracker:
             
             plt.tight_layout()
             
-            # Use absolute path for saving
-            plot_path = plots_dir_abs / "loss_curve.png"
-            plot_path_str = str(plot_path)
+            # Try to save to all locations - ensure at least one works
+            saved = False
+            saved_path = None
             
-            print(f"  [DEBUG] Saving plot to: {plot_path_str}")
+            for plot_path in save_paths:
+                try:
+                    plot_path.parent.mkdir(parents=True, exist_ok=True)
+                    plot_path_str = str(plot_path.resolve())
+                    
+                    print(f"  [DEBUG] Trying to save plot to: {plot_path_str}")
+                    
+                    # Force save with explicit format
+                    fig.savefig(plot_path_str, dpi=150, bbox_inches='tight', format='png', facecolor='white')
+                    
+                    # Force matplotlib to flush
+                    fig.canvas.draw()
+                    fig.canvas.flush_events()
+                    
+                    # Wait and verify
+                    import time
+                    time.sleep(0.2)
+                    
+                    if plot_path.exists() and plot_path.stat().st_size > 0:
+                        file_size = plot_path.stat().st_size
+                        print(f"  [OK] Loss plot saved: {plot_path_str} ({file_size/1024:.1f} KB)")
+                        saved = True
+                        saved_path = plot_path
+                        break
+                    else:
+                        print(f"  [WARNING] Plot file not created or empty at: {plot_path_str}")
+                except Exception as e:
+                    print(f"  [WARNING] Failed to save to {plot_path}: {e}")
+                    continue
             
-            # Force save with explicit format and flush
-            fig.savefig(plot_path_str, dpi=150, bbox_inches='tight', format='png', facecolor='white')
             plt.close(fig)
             
-            # Force flush to ensure file is written
-            import sys
-            sys.stdout.flush()
-            
-            # Wait a moment and verify file was actually created
-            import time
-            time.sleep(0.1)
-            
-            if plot_path.exists():
-                file_size = plot_path.stat().st_size
-                print(f"  [OK] Loss plot saved: {plot_path_str} ({file_size/1024:.1f} KB)")
+            if not saved:
+                print(f"  [ERROR] Failed to save plot to any location!")
+                print(f"  Tried: {[str(p) for p in save_paths]}")
+                print(f"  Attempting simple fallback plot...")
                 
-                # Also save a backup copy in the root output directory
-                backup_path = self.output_dir / "loss_curve.png"
+                # Last resort: very simple plot
                 try:
-                    import shutil
-                    shutil.copy2(plot_path_str, str(backup_path))
-                    print(f"  [OK] Backup plot saved: {backup_path}")
-                except Exception as e:
-                    print(f"  [WARNING] Could not save backup plot: {e}")
-            else:
-                print(f"  [ERROR] Plot file was not created at: {plot_path_str}")
-                print(f"  [DEBUG] Plots directory exists: {plots_dir_abs.exists()}")
-                print(f"  [DEBUG] Plots directory is writable: {os.access(plots_dir_abs, os.W_OK)}")
-                
-                # Try saving directly to output directory as fallback
-                try:
-                    fallback_path = self.output_dir / "loss_curve_fallback.png"
-                    fig2, (ax1_fb, ax2_fb) = plt.subplots(2, 1, figsize=(14, 10))
-                    ax1_fb.plot(self.train_iterations, self.train_losses, 'b-', linewidth=2, label='Training Loss', alpha=0.7)
+                    simple_path = self.output_dir / "loss_curve_simple.png"
+                    simple_path.parent.mkdir(parents=True, exist_ok=True)
+                    
+                    fig_simple, ax_simple = plt.subplots(1, 1, figsize=(10, 6))
+                    ax_simple.plot(self.train_iterations, self.train_losses, 'b-', linewidth=2, label='Training Loss')
                     if len(self.val_losses) > 0:
-                        ax1_fb.plot(self.val_iterations, self.val_losses, 'r-', linewidth=2, label='Validation Loss', marker='o', markersize=5)
-                    ax1_fb.set_xlabel('Iteration')
-                    ax1_fb.set_ylabel('Loss')
-                    ax1_fb.set_title('Training vs Validation Loss')
-                    ax1_fb.grid(True, alpha=0.3)
-                    ax1_fb.legend()
-                    ax2_fb.plot(self.train_iterations, self.train_losses, 'b-', linewidth=2, label='Training Loss')
-                    ax2_fb.set_xlabel('Iteration')
-                    ax2_fb.set_ylabel('Loss')
-                    ax2_fb.set_title('Training Loss')
-                    ax2_fb.grid(True, alpha=0.3)
-                    ax2_fb.legend()
+                        ax_simple.plot(self.val_iterations, self.val_losses, 'r-', linewidth=2, label='Validation Loss', marker='o')
+                    ax_simple.set_xlabel('Iteration')
+                    ax_simple.set_ylabel('Loss')
+                    ax_simple.set_title('Training Loss Curve')
+                    ax_simple.grid(True, alpha=0.3)
+                    ax_simple.legend()
                     plt.tight_layout()
-                    fig2.savefig(str(fallback_path), dpi=150, bbox_inches='tight', format='png')
-                    plt.close(fig2)
-                    print(f"  [OK] Fallback plot saved to: {fallback_path}")
-                except Exception as e2:
-                    print(f"  [ERROR] Fallback plot also failed: {e2}")
+                    fig_simple.savefig(str(simple_path), dpi=100, bbox_inches='tight', format='png')
+                    plt.close(fig_simple)
+                    
+                    if simple_path.exists():
+                        print(f"  [OK] Simple plot saved to: {simple_path}")
+                    else:
+                        print(f"  [ERROR] Even simple plot failed to save!")
+                except Exception as e_simple:
+                    import traceback
+                    print(f"  [ERROR] Simple plot also failed: {e_simple}")
+                    print(f"  Traceback: {traceback.format_exc()}")
+            else:
+                # If we saved successfully, try to copy to other locations as backups
+                for backup_path in save_paths:
+                    if backup_path != saved_path:
+                        try:
+                            import shutil
+                            backup_path.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(str(saved_path), str(backup_path))
+                        except Exception:
+                            pass  # Backup copy failed, but main save worked
         except Exception as e:
             import traceback
             print(f"  [ERROR] Failed to save plot: {e}")
@@ -701,6 +727,7 @@ class ProgressTrainer(DefaultTrainer):
     def __init__(self, cfg, progress_tracker=None):
         super().__init__(cfg)
         self.progress_tracker = progress_tracker
+        self.last_val_iter = -1  # Track last iteration we ran validation on
     
     def run_step(self):
         """Override to track progress"""
@@ -716,9 +743,23 @@ class ProgressTrainer(DefaultTrainer):
         # Check if it's time for validation
         # Use the validation interval from config
         val_interval = self.cfg.TEST.EVAL_PERIOD
-        if self.progress_tracker and self.iter % val_interval == 0 and self.iter > 0:
+        
+        # Only run validation if:
+        # 1. We have a progress tracker
+        # 2. It's the right iteration (divisible by interval)
+        # 3. We haven't already run validation for this iteration
+        # 4. We're past iteration 0
+        if (self.progress_tracker and 
+            self.iter % val_interval == 0 and 
+            self.iter > 0 and 
+            self.iter != self.last_val_iter):
+            
+            # Mark that we're running validation for this iteration
+            self.last_val_iter = self.iter
+            
             # Run validation evaluation
             try:
+                print(f"\n  [INFO] Running validation at iteration {self.iter}...")
                 val_results = self._run_validation()
                 if val_results:
                     self.progress_tracker.update_validation(self.iter, val_results)
