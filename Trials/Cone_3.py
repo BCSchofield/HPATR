@@ -98,9 +98,10 @@ def preprocess_image(gray: np.ndarray) -> np.ndarray:
     
     # Clear image borders to prevent detecting frame as contour
     # Set border pixels to background (255 = white background)
+    # Note: Don't clear top border - cone should start at the top
     h, w = closed.shape
     border_px = max(5, min(w, h) // 100)  # At least 5 pixels, or 1% of smaller dimension
-    closed[:border_px, :] = 255  # Top border
+    # closed[:border_px, :] = 255  # Top border - DISABLED to allow top of cone
     closed[-border_px:, :] = 255  # Bottom border
     closed[:, :border_px] = 255  # Left border
     closed[:, -border_px:] = 255  # Right border
@@ -152,9 +153,12 @@ def find_spray_contour(binary: np.ndarray, border_px: int = 5) -> np.ndarray:
         
         # Reject contours that touch image borders (likely frame artifacts)
         # Use margin based on border_px used in preprocessing
+        # Note: Allow touching top border - cone should start at top
         margin = max(5, border_px + 2)  # Small margin
-        touches_border = (x <= margin or y <= margin or 
-                         x + cw >= w - margin or y + ch >= h - margin)
+        touches_border = (x <= margin or  # Left border
+                         x + cw >= w - margin or  # Right border
+                         y + ch >= h - margin)  # Bottom border
+        # Don't check top border (y <= margin) - cone can start at top
         
         if touches_border:
             continue
@@ -178,9 +182,12 @@ def find_spray_contour(binary: np.ndarray, border_px: int = 5) -> np.ndarray:
             x, y, cw, ch = cv2.boundingRect(c)
             
             # More relaxed border check - only reject if clearly on border
+            # Note: Allow touching top border - cone should start at top
             margin = 2
-            touches_border = (x <= margin or y <= margin or 
-                             x + cw >= w - margin or y + ch >= h - margin)
+            touches_border = (x <= margin or  # Left border
+                             x + cw >= w - margin or  # Right border
+                             y + ch >= h - margin)  # Bottom border
+            # Don't check top border (y <= margin) - cone can start at top
             
             if touches_border:
                 continue
@@ -221,10 +228,100 @@ def find_spray_contour(binary: np.ndarray, border_px: int = 5) -> np.ndarray:
         print(f"[Cone_3] All {len(contours)} contours were rejected")
         raise RuntimeError(f"No suitable contours found after all filtering attempts (area: {min_area:.0f}-{max_area:.0f}, not touching borders)")
     
-    # Select the largest contour from filtered set
-    largest_contour = max(filtered_contours, key=cv2.contourArea)
+    # Handle disconnected contours (e.g., void in middle of cone)
+    # If multiple contours, try to combine vertically-aligned ones or select topmost
+    if len(filtered_contours) > 1:
+        print(f"[Cone_3] Found {len(filtered_contours)} filtered contours - checking for vertical alignment...")
+        
+        # Sort contours by topmost Y coordinate (top of bounding box)
+        contours_with_tops = []
+        for c in filtered_contours:
+            x, y, cw, ch = cv2.boundingRect(c)
+            top_y = y
+            contours_with_tops.append((top_y, c))
+        
+        # Sort by top Y (ascending - topmost first)
+        contours_with_tops.sort(key=lambda x: x[0])
+        
+        # Check if contours are vertically aligned (likely top and bottom parts of same cone)
+        # Two contours are aligned if their X ranges overlap significantly
+        def x_overlap(rect1, rect2):
+            x1, y1, w1, h1 = rect1
+            x2, y2, w2, h2 = rect2
+            x1_end = x1 + w1
+            x2_end = x2 + w2
+            overlap_start = max(x1, x2)
+            overlap_end = min(x1_end, x2_end)
+            if overlap_end <= overlap_start:
+                return 0
+            overlap_width = overlap_end - overlap_start
+            min_width = min(w1, w2)
+            return overlap_width / min_width if min_width > 0 else 0
+        
+        # Try to combine vertically-aligned contours
+        combined_contours = []
+        used = set()
+        
+        for i, (top_y1, c1) in enumerate(contours_with_tops):
+            if i in used:
+                continue
+            
+            rect1 = cv2.boundingRect(c1)
+            combined = [c1]
+            used.add(i)
+            
+            # Look for other contours that are vertically aligned
+            for j, (top_y2, c2) in enumerate(contours_with_tops[i+1:], start=i+1):
+                if j in used:
+                    continue
+                
+                rect2 = cv2.boundingRect(c2)
+                overlap_ratio = x_overlap(rect1, rect2)
+                
+                # If X ranges overlap significantly (>50%) and vertically separated, combine
+                if overlap_ratio > 0.5:
+                    # Check vertical separation - should have gap but not too far
+                    y1_bottom = rect1[1] + rect1[3]
+                    y2_top = rect2[1]
+                    gap = y2_top - y1_bottom
+                    max_gap = h * 0.3  # Allow gap up to 30% of image height
+                    
+                    if 0 <= gap <= max_gap:
+                        print(f"[Cone_3]   Combining contours {i} and {j} (X overlap: {overlap_ratio:.2f}, gap: {gap:.0f}px)")
+                        combined.append(c2)
+                        used.add(j)
+                        # Update rect1 to include both
+                        x1, y1, w1, h1 = rect1
+                        x2, y2, w2, h2 = rect2
+                        x_min = min(x1, x2)
+                        y_min = min(y1, y2)
+                        x_max = max(x1 + w1, x2 + w2)
+                        y_max = max(y1 + h1, y2 + h2)
+                        rect1 = (x_min, y_min, x_max - x_min, y_max - y_min)
+            
+            # Combine all contours in this group
+            if len(combined) > 1:
+                # Concatenate all points
+                all_points = np.vstack([c.reshape(-1, 2) for c in combined])
+                # Create new contour from combined points
+                combined_contour = all_points.reshape(-1, 1, 2).astype(np.int32)
+                combined_contours.append(combined_contour)
+            else:
+                combined_contours.append(combined[0])
+        
+        if combined_contours:
+            print(f"[Cone_3] Combined into {len(combined_contours)} contour(s)")
+            # Select the topmost combined contour (should include the top part)
+            topmost_combined = min(combined_contours, key=lambda c: cv2.boundingRect(c)[1])
+            return topmost_combined
+        else:
+            # Fallback: select topmost contour
+            print(f"[Cone_3]   No vertical alignment found, selecting topmost contour")
+            topmost_contour = contours_with_tops[0][1]
+            return topmost_contour
     
-    return largest_contour
+    # Single contour - return it
+    return filtered_contours[0]
 
 
 def split_contour_edges(contour: np.ndarray, nozzle_x: float | None = None) -> tuple[np.ndarray, np.ndarray]:
@@ -266,6 +363,72 @@ def split_contour_edges(contour: np.ndarray, nozzle_x: float | None = None) -> t
         raise ValueError(f"Right edge has too few points: {len(right_points)}")
     
     return left_points, right_points
+
+
+def extract_outermost_points(points: np.ndarray, is_left_edge: bool) -> np.ndarray:
+    """
+    Extract the outermost points from an edge (leftmost for left edge, rightmost for right edge).
+    This helps fit lines to the actual outer boundary rather than the average of all points.
+    
+    Args:
+        points: Array of edge points (N, 2)
+        is_left_edge: True for left edge (extract leftmost), False for right edge (extract rightmost)
+        
+    Returns:
+        Array of outermost points (M, 2) where M <= N
+    """
+    if len(points) == 0:
+        return points
+    
+    # Bin points by y-coordinate to find outermost at each y-level
+    # Use bins to handle multiple points at similar y-levels
+    y_min, y_max = points[:, 1].min(), points[:, 1].max()
+    num_bins = max(20, int((y_max - y_min) / 10))  # At least 20 bins, or 1 bin per 10 pixels
+    num_bins = min(num_bins, len(points) // 2)  # Don't over-bin
+    
+    if num_bins < 2:
+        # Too few points or too small range - just return outermost overall
+        if is_left_edge:
+            return points[np.argmin(points[:, 0])].reshape(1, -1)
+        else:
+            return points[np.argmax(points[:, 0])].reshape(1, -1)
+    
+    bin_edges = np.linspace(y_min, y_max, num_bins + 1)
+    outermost_points = []
+    
+    for i in range(num_bins):
+        # Find points in this y-bin
+        y_low = bin_edges[i]
+        y_high = bin_edges[i + 1]
+        mask = (points[:, 1] >= y_low) & (points[:, 1] < y_high)
+        bin_points = points[mask]
+        
+        if len(bin_points) == 0:
+            continue
+        
+        # For left edge: find leftmost (minimum x)
+        # For right edge: find rightmost (maximum x)
+        if is_left_edge:
+            outer_idx = np.argmin(bin_points[:, 0])
+        else:
+            outer_idx = np.argmax(bin_points[:, 0])
+        
+        outermost_points.append(bin_points[outer_idx])
+    
+    # Handle last bin (include upper edge)
+    mask = points[:, 1] >= bin_edges[-2]
+    bin_points = points[mask]
+    if len(bin_points) > 0:
+        if is_left_edge:
+            outer_idx = np.argmin(bin_points[:, 0])
+        else:
+            outer_idx = np.argmax(bin_points[:, 0])
+        outermost_points.append(bin_points[outer_idx])
+    
+    if len(outermost_points) == 0:
+        return points
+    
+    return np.array(outermost_points)
 
 
 def compute_pca_direction(points: np.ndarray) -> tuple[np.ndarray, float]:
@@ -359,6 +522,13 @@ def detect_cone_angle(image_path: Path, nozzle_x: float | None = None) -> tuple[
     """
     # Load and preprocess
     gray = load_image(image_path)
+    
+    # Crop top 5% of image to remove artifacts before any processing
+    h_original, w_original = gray.shape
+    top_crop_px = int(h_original * 0.05)
+    gray = gray[top_crop_px:, :]  # Remove top 5%, keep rest
+    print(f"[Cone_3] Cropped top {top_crop_px} pixels ({100*top_crop_px/h_original:.1f}%) from image")
+    
     binary = preprocess_image(gray)
     
     # Store early debug info (always available)
@@ -385,9 +555,16 @@ def detect_cone_angle(image_path: Path, nozzle_x: float | None = None) -> tuple[
     # Split into edges
     left_points, right_points = split_contour_edges(contour, nozzle_x)
     
-    # Compute PCA directions
-    left_dir, left_var = compute_pca_direction(left_points)
-    right_dir, right_var = compute_pca_direction(right_points)
+    # Extract outermost points from each edge to fit to the actual outer boundary
+    # This gives a better fit than using all points (which may be conservative)
+    left_outer = extract_outermost_points(left_points, is_left_edge=True)
+    right_outer = extract_outermost_points(right_points, is_left_edge=False)
+    
+    print(f"[Cone_3] Using {len(left_outer)}/{len(left_points)} left outermost points, {len(right_outer)}/{len(right_points)} right outermost points")
+    
+    # Compute PCA directions on outermost points (top 5% already cropped from image, so all points are valid)
+    left_dir, left_var = compute_pca_direction(left_outer)
+    right_dir, right_var = compute_pca_direction(right_outer)
     
     # Compute cone angle
     angle_deg = compute_cone_angle(left_dir, right_dir)
@@ -398,17 +575,18 @@ def detect_cone_angle(image_path: Path, nozzle_x: float | None = None) -> tuple[
     h, w = gray.shape
     
     # Draw lines along the actual contour edges
-    # Find the topmost point (apex) for each edge
-    left_top_idx = np.argmin(left_points[:, 1])  # Minimum y = top
-    right_top_idx = np.argmin(right_points[:, 1])
+    # Find the topmost point (apex) for each edge using outermost points
+    # (consistent with PCA which uses outermost points)
+    left_top_idx = np.argmin(left_outer[:, 1])  # Minimum y = top
+    right_top_idx = np.argmin(right_outer[:, 1])
     
-    # Get topmost points (apex)
-    left_top = left_points[left_top_idx]
-    right_top = right_points[right_top_idx]
+    # Get topmost points (apex) from outermost points
+    left_top = left_outer[left_top_idx]
+    right_top = right_outer[right_top_idx]
     
-    # Calculate line positions for middle 80% of image (top 10% and bottom 10% free)
-    top_y = h * 0.10  # Start at 10% from top
-    bottom_y = h * 0.90  # End at 90% from top (10% from bottom)
+    # Calculate line positions - span from top to bottom of image
+    top_y = 0  # Start at top of image
+    bottom_y = h  # End at bottom of image
     
     # Project lines from apex along PCA direction to the desired y positions
     # left_dir and right_dir are normalized direction vectors pointing downward
@@ -457,6 +635,12 @@ def detect_cone_angle(image_path: Path, nozzle_x: float | None = None) -> tuple[
         for pt in right_points[::max(1, len(right_points)//100)]:  # Sample points for visibility
             cv2.circle(annotated, (int(pt[0]), int(pt[1])), 2, (255, 0, 255), -1)
         
+        # Draw outermost points used for PCA (larger, brighter circles)
+        for pt in left_outer:
+            cv2.circle(annotated, (int(pt[0]), int(pt[1])), 3, (0, 255, 255), -1)  # Bright cyan
+        for pt in right_outer:
+            cv2.circle(annotated, (int(pt[0]), int(pt[1])), 3, (255, 255, 0), -1)  # Bright yellow
+        
         # Draw PCA vectors (longer arrows)
         vec_length = min(w, h) * 0.15
         # Left PCA vector (bright green)
@@ -490,6 +674,8 @@ def detect_cone_angle(image_path: Path, nozzle_x: float | None = None) -> tuple[
         "contour_area": cv2.contourArea(contour),
         "left_points_count": len(left_points),
         "right_points_count": len(right_points),
+        "left_outer_count": len(left_outer),
+        "right_outer_count": len(right_outer),
         "left_variance_explained": left_var,
         "right_variance_explained": right_var,
         "left_direction": left_dir.tolist(),
@@ -499,6 +685,8 @@ def detect_cone_angle(image_path: Path, nozzle_x: float | None = None) -> tuple[
         "contour": contour,
         "left_points": left_points,
         "right_points": right_points,
+        "left_outer": left_outer,
+        "right_outer": right_outer,
         "left_center": left_center,
         "right_center": right_center,
         "left_dir": left_dir,
