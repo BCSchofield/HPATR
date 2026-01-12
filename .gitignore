@@ -1,0 +1,16 @@
+# macOS junk
+.DS_Store
+
+# Logs
+*.log
+serial_logs/
+logs/
+
+# Debug / scratch
+debug_*
+scratch/
+tmp/
+
+# Python
+__pycache__/
+*.pyc
