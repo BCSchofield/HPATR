@@ -1,16 +1,7 @@
-# macOS system files
-.DS_Store
+# This is a comment - will be ignored
 
-# Logs
-*.log
-serial_logs/
-logs/
+/Volumes/LaCie/Experiments/AI/Anthony/Anthony.pth
+/Volumes/LaCie/Experiments/AI/Benedict/Benedict.pth
+/Volumes/LaCie/Experiments/AI/Claudia/Claudia.pth
 
-# Debug / scratch
-debug_*
-scratch/
-tmp/
-
-# Python
-__pycache__/
-*.pyc
+# Empty lines are also ignored
