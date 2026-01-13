@@ -4,7 +4,7 @@
 [2025-12-04 09:15:53] Response: PRESSURE_READING:25.54
 [2025-12-04 09:15:53] Response: PRESSURE_READING:25.41
 [2025-12-04 09:15:54] Response: PRESSURE_READING:25.45
-[2025-12-04 09:15:54] Response: PRESSURE_READING:25.65
+[2025-12-04 09:15:54] Response: PRESSURE_READING:25.65 
 [2025-12-04 09:15:55] Response: PRESSURE_READING:25.34
 [2025-12-04 09:15:56] Response: PRESSURE_READING:25.50
 [2025-12-04 09:15:56] Response: ARDUINO_READY
@@ -14210,7 +14210,8 @@
 [2025-12-04 12:35:18] Response: DEBUG: Checking completion - Current: 136000, Target: 136000, Traveled: 68000
 [2025-12-04 12:35:18] Response: DEBUG: Movement completed! Distance traveled: 68000 steps
 [2025-12-04 12:35:18] Response: MOVEMENT_COMPLETE
-[2025-12-04 12:35:18] Response: ARDUINO_RDDEBUG: Movement marked as complete, ready for next command
+[2025-12-04 12:35:18] Response: ARDUINO_RD
+DEBUG: Movement marked as complete, ready for next command
 [2025-12-04 12:35:18] Response: PRESSURE_READING:7.90
 [2025-12-04 12:35:18] Response: DEBUG: Received char: E
 [2025-12-04 12:35:18] Response: DEBUG: Received char: S
@@ -14806,7 +14807,8 @@
 [2025-12-04 12:37:23] Arduino response: DEBUG: Input string length: 17
 [2025-12-04 12:37:23] Arduino response: DEBUG: Movement command received - parsing speed and distance
 [2025-12-04 12:37:23] Response: G:Sed nex ,isaeidx 0
-[2025-12-04 12:37:23] Arduino response: DEBU peid:0 Dtnc ne:1DEBUG: Parsed values - Speed: 5000, Distance: 5
+[2025-12-04 12:37:23] Arduino response: DEBU peid:0 Dtnc ne:1
+DEBUG: Parsed values - Speed: 5000, Distance: 5
 [2025-12-04 12:37:23] Arduino response: Received speed: 5000
 [2025-12-04 12:37:23] Arduino response: Received distance: 5
 [2025-12-04 12:37:23] Arduino response: DEBUG: Calling executeMovement function
@@ -14826,7 +14828,8 @@
 [2025-12-04 12:37:23] Arduino response: DEBUG: Movement progress: 7%
 [2025-12-04 12:37:23] Arduino response: PRESSURE_READING:9.92
 [2025-12-04 12:37:23] Response: ors %
-[2025-12-04 12:37:23] Arduino response: DEBUG: Movement prges:8DEBUG: Movement progress: 10%
+[2025-12-04 12:37:23] Arduino response: DEBUG: Movement prges:8
+DEBUG: Movement progress: 10%
 [2025-12-04 12:37:23] Arduino response: DEBUG: Movement progress: 11%
 [2025-12-04 12:37:23] Arduino response: PRESSURE_READING:10.10
 [2025-12-04 12:37:23] Arduino response: DEBUG: Movement progress: 13%
@@ -17107,7 +17110,8 @@
 [2025-12-04 12:45:33] Arduino response: PRESSURE_READING:10.10
 [2025-12-04 12:45:33] Arduino response: DEBUG: Movement progress: 5%
 [2025-12-04 12:45:33] Arduino response: DEBUG: Movement poe:7
-[2025-12-04 12:45:33] Response: rgrss %PRESSURE_READING:9.98
+[2025-12-04 12:45:33] Response: rgrss %
+PRESSURE_READING:9.98
 [2025-12-04 12:45:33] Arduino response: DEBUG: Movement progress: 8%
 [2025-12-04 12:45:33] Arduino response: DEBUG: Movement progress: 10%
 [2025-12-04 12:45:33] Arduino response: DEBUG: Movement progress: 11%
