@@ -1,0 +1,239 @@
+================================================================================
+HYPERPARAMETER SWEEP CONTEXT SUMMARY
+================================================================================
+Generated: 2026-01-19
+Script: hyperparameter_sweep.py
+
+================================================================================
+OVERVIEW
+================================================================================
+
+The hyperparameter sweep script (hyperparameter_sweep.py) systematically tests
+different combinations of learning rates and anchor sizes to find the optimal
+configuration for Detectron2 Mask R-CNN training on spray droplet/ligament
+detection.
+
+================================================================================
+KEY CONFIGURATIONS
+================================================================================
+
+HYPERPARAMETERS TESTED:
+- Learning Rates: [0.001, 0.0025, 0.005, 0.01]
+- Anchor Sizes: 
+  - [[8, 16, 32, 64]]
+  - [[8, 16, 32, 64, 128]]
+  - [[16, 32, 64, 128]]
+  - [[32, 64, 128, 256]]
+  Total combinations: 16 (4 learning rates × 4 anchor configurations)
+
+OPTIMIZATIONS FOR FAST SWEEPS:
+- Uses 25% of training images (SWEEP_TRAIN_FRACTION = 0.25)
+- Trains for 25% of full epochs (SWEEP_EPOCH_FRACTION = 0.25)
+- Uses 1% validation split (~200 images instead of 2000)
+- Validation interval: Every 150 iterations (reduced frequency)
+- Result: ~32x faster than full training while still providing reliable
+  hyperparameter comparisons
+
+VALIDATION SETTINGS:
+- VALIDATION_SPLIT = 0.01 (1% = ~200 images)
+- VALIDATION_INTERVAL = 150 iterations
+- Each validation run takes ~15 minutes
+
+TRAINING SETTINGS:
+- Batch size: 1
+- Max iterations per run: ~562 iterations (25% of full training)
+- Expected time per run: ~1-2 hours
+- Total sweep time: ~12-16 hours for all 16 combinations
+
+================================================================================
+HOW IT WORKS
+================================================================================
+
+1. TRAINING PHASE:
+   - For each hyperparameter combination:
+     * Creates a timestamped output folder
+     * Configures Detectron2 with specific learning rate and anchor sizes
+     * Trains model for reduced number of iterations (~562)
+     * Updates training loss plot every 25 iterations
+     * Saves plots to file (non-interactive backend)
+
+2. VALIDATION PHASE:
+   - Runs validation every 150 iterations
+   - Uses COCOEvaluator to compute mAP metrics
+   - Captures: segm/AP, segm/AP50, bbox/AP, bbox/AP50
+   - Updates validation AP plot after each validation
+   - Saves validation results to JSON files
+
+3. RESULTS CAPTURE:
+   - Saves results incrementally to CSV (sweep_results.csv)
+   - Each run gets its own timestamped folder
+   - Final summary CSV created at end (sweep_summary.csv)
+   - Comparison plots generated automatically
+
+================================================================================
+OUTPUT STRUCTURE
+================================================================================
+
+D:\Experiments\AI\Hyperparameters\
+└── sweep_YYYY_MM_DD_HH_MM_SS\          (Main sweep folder)
+    ├── sweep_results.csv                (Detailed results, updated incrementally)
+    ├── sweep_summary.csv                (Summary with best AP values)
+    ├── plots/
+    │   └── sweep_comparison.png         (Visual comparison of all runs)
+    └── lr0_XXXX_anchorsXXX_YYYY_MM_DD_HH_MM_SS\  (Individual run folders)
+        ├── metrics.json                 (Training losses per iteration)
+        ├── plots/
+        │   └── *_training_curve_live.png (Training/validation plots)
+        ├── validation_eval/
+        │   └── coco_instances_results.json  (Validation AP metrics)
+        └── model_*.pth                  (Checkpoints)
+
+================================================================================
+VALIDATION METRICS EXTRACTION
+================================================================================
+
+ISSUE RESOLVED:
+- Initial runs showed validation AP values as 0 in CSV
+- Fixed by properly capturing validation results from Detectron2's built-in
+  validation system
+- Results are captured in test() method override
+- Fallback validation added if automatic validation fails
+- Final validation run added if no metrics captured during training
+
+METRICS LOCATIONS:
+1. CSV files: final_val_ap, best_val_ap, best_val_iter
+2. JSON files: validation_eval/coco_instances_results.json
+   - Contains: segm/AP, segm/AP50, bbox/AP, bbox/AP50
+3. Plot tracker: Tracks validation AP over iterations
+
+================================================================================
+PLOTTING SYSTEM
+================================================================================
+
+BACKEND: Non-interactive (matplotlib.use('Agg'))
+- No popup windows
+- All plots saved to file
+- Updates every 25 iterations (training loss)
+- Updates immediately after each validation (validation AP)
+
+PLOT FILES:
+- Individual runs: plots/{run_name}_training_curve_live.png
+- Comparison: plots/sweep_comparison.png
+- Final plots: plots/{run_name}_training_curve.png
+
+PLOT CONTENT:
+- Top subplot: Training loss over iterations
+- Bottom subplot: Validation AP over iterations
+- X-axis: Always starts at 0 (fixed negative number issue)
+- Y-axis: Auto-scales
+
+================================================================================
+USAGE INSTRUCTIONS
+================================================================================
+
+RUNNING THE SWEEP:
+1. Ensure Conda environment "Detectron" is activated
+2. Run: python hyperparameter_sweep.py
+3. Script will:
+   - Create timestamped sweep folder
+   - Check for existing runs (resume capability)
+   - Run all new hyperparameter combinations
+   - Save results incrementally to CSV
+
+RUNNING OVERNIGHT:
+1. Set Windows power settings:
+   - Sleep: Never (when plugged in)
+   - Hibernate: Never
+   - Monitor: Can be turned off (doesn't affect training)
+2. Start the sweep
+3. Turn off monitors if desired
+4. PC will continue running, GPU will keep training
+
+CHECKING PROGRESS:
+- Monitor sweep_results.csv (updates after each run)
+- Check individual run folders for plots
+- Terminal will show progress for each run
+
+AFTER COMPLETION:
+1. Open sweep_summary.csv in Excel
+2. Sort by "best_val_ap" (descending) to find best configuration
+3. Check sweep_comparison.png for visual comparison
+4. Best configuration will be printed in console at end
+
+================================================================================
+RESUME CAPABILITY
+================================================================================
+
+The script automatically:
+- Checks for existing runs in sweep_results.csv
+- Skips hyperparameter combinations that were already completed
+- Allows resuming interrupted sweeps
+- Each run is independent (timestamped folders)
+
+To resume after interruption:
+- Simply run the script again
+- It will skip completed runs and continue with remaining combinations
+
+================================================================================
+VALIDATION SCHEDULE
+================================================================================
+
+For each run (~562 iterations):
+- Validation runs at iterations: 150, 300, 450, 562 (final)
+- Total validations per run: ~4
+- Each validation takes ~15 minutes
+- Validation metrics saved to:
+  * Live plot tracker (for CSV)
+  * validation_eval/coco_instances_results.json (for later extraction)
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+
+ISSUE: Validation metrics showing as 0
+- FIXED: Validation capture system improved
+- If still 0: Check validation_eval/coco_instances_results.json files
+- Can extract metrics from JSON files later if needed
+
+ISSUE: Plot not updating
+- FIXED: Switched to non-interactive backend
+- Plots save to file every 25 iterations
+- Check plot files directly (don't wait for popup)
+
+ISSUE: Negative numbers on x-axis
+- FIXED: Explicitly set x-axis limits to start at 0
+- autoscale_view(scalex=False, scaley=True) prevents x-axis override
+
+ISSUE: PC going to sleep
+- Solution: Set Windows power settings to never sleep
+- Monitors can be turned off (doesn't affect training)
+
+================================================================================
+KEY FILES AND PATHS
+================================================================================
+
+Script: hyperparameter_sweep.py
+Dataset: D:\Experiments\TrainingData\Detectron_Trial_4\
+Output: D:\Experiments\AI\Hyperparameters\
+Conda Environment: Detectron
+
+Dataset Configuration:
+- ANNOTATIONS_PATH: Points to Detectron_Trial_4 annotations
+- IMAGES_PATH: Points to Detectron_Trial_4 images
+- DATASET_NAME: "spray_train"
+
+================================================================================
+NOTES
+================================================================================
+
+- The sweep is designed to be fast (~12 hours) while still providing reliable
+  hyperparameter comparisons
+- Full training would take ~32x longer but uses same hyperparameter values
+- Results from sweep can be used to select best configuration for full training
+- Each run is completely independent (can run in parallel if needed, but
+  currently runs sequentially)
+- CSV files are updated incrementally for safety (won't lose data if interrupted)
+
+================================================================================
+END OF CONTEXT SUMMARY
+================================================================================
