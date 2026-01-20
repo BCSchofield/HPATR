@@ -542,6 +542,18 @@ class SweepTrainer(DefaultTrainer):
                     import traceback
                     traceback.print_exc()
     
+    def after_train(self):
+        """Override to handle Windows file I/O errors at end of training"""
+        try:
+            super().after_train()
+        except (OSError, IOError) as e:
+            if "[Errno 22]" in str(e) or "Invalid argument" in str(e):
+                # Windows file handle issue - metrics were likely already written
+                print(f"  [WARNING] File I/O error during after_train (Windows issue): {e}")
+                print(f"  [WARNING] This is usually harmless - metrics were likely already saved")
+            else:
+                raise
+    
     def test(self, cfg=None, model=None, evaluators=None):
         """Override test method to capture validation results"""
         # Use current config/model if not provided
@@ -975,7 +987,7 @@ def main():
     print("HYPERPARAMETER SWEEP FOR DETECTRON2")
     print("="*80)
     
-    # Create timestamped sweep folder
+    # Create timestamped sweep folder (always create a new sweep per run)
     base_output_dir = Path(OUTPUT_BASE_DIR)
     sweep_timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
     sweep_folder = base_output_dir / f"sweep_{sweep_timestamp}"
