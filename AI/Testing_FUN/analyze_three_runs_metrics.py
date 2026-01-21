@@ -1,5 +1,6 @@
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 
 import matplotlib
@@ -297,6 +298,10 @@ def main():
     # Directory that contains this script: .../HPATR/AI/Testing_FUN
     script_dir = Path(__file__).resolve().parent
 
+    # Timestamped output folder inside Hyperparameter_Tests
+    timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+    output_root = script_dir / "Hyperparameter_Tests" / f"sweep_{timestamp}"
+
     # Automatically discover all run folders
     print("Discovering hyperparameter runs...")
     runs = discover_runs(script_dir)
@@ -322,8 +327,8 @@ def main():
         print("No valid metrics files found!")
         return
 
-    # Create comparison plot in this folder's plots subdirectory
-    out_plot = script_dir / "plots/hyperparameter_sweep_comparison.png"
+    # Create comparison plot in this sweep's folder
+    out_plot = output_root / "hyperparameter_sweep_comparison.png"
     plot_runs(run_stats, out_plot)
     print(f"\nSaved comparison plot to: {out_plot}")
 
@@ -333,8 +338,8 @@ def main():
         summary = summarize_validation(stats)
         summaries[label] = summary
 
-    # Save CSV summary
-    csv_path = script_dir / "plots/hyperparameter_sweep_summary.csv"
+    # Save CSV summary alongside the plot
+    csv_path = output_root / "hyperparameter_sweep_summary.csv"
     save_summary_csv(run_stats, summaries, csv_path)
     print(f"Saved summary CSV to: {csv_path}")
 
