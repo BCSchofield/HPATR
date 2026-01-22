@@ -295,16 +295,17 @@ def save_summary_csv(run_stats, summaries, out_path: Path):
 
 
 def main():
-    # Directory that contains this script: .../HPATR/AI/Testing_FUN
-    script_dir = Path(__file__).resolve().parent
+    # Directory containing the sweep results
+    input_dir = Path(r"d:\Experiments\AI\Hyperparameters\sweep_2026_01_21_21_39_37")
 
-    # Timestamped output folder inside Hyperparameter_Tests
+    # Timestamp for output files
     timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
-    output_root = script_dir / "Hyperparameter_Tests" / f"sweep_{timestamp}"
+    # Save outputs in the same folder as the input data
+    output_root = input_dir
 
     # Automatically discover all run folders
     print("Discovering hyperparameter runs...")
-    runs = discover_runs(script_dir)
+    runs = discover_runs(input_dir)
 
     if not runs:
         print("No run folders found! Expected pattern: lr*_anchors*_YYYY_MM_DD_HH_MM_SS")
@@ -328,7 +329,7 @@ def main():
         return
 
     # Create comparison plot in this sweep's folder
-    out_plot = output_root / "hyperparameter_sweep_comparison.png"
+    out_plot = output_root / f"hyperparameter_sweep_comparison_{timestamp}.png"
     plot_runs(run_stats, out_plot)
     print(f"\nSaved comparison plot to: {out_plot}")
 
@@ -339,7 +340,7 @@ def main():
         summaries[label] = summary
 
     # Save CSV summary alongside the plot
-    csv_path = output_root / "hyperparameter_sweep_summary.csv"
+    csv_path = output_root / f"hyperparameter_sweep_summary_{timestamp}.csv"
     save_summary_csv(run_stats, summaries, csv_path)
     print(f"Saved summary CSV to: {csv_path}")
 

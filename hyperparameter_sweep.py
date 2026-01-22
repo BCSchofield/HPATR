@@ -2,11 +2,16 @@
 Hyperparameter Sweep for Detectron2 Training
 Sweeps over learning rates and anchor sizes, reusing existing training infrastructure
 
-OPTIMIZATIONS FOR FAST SWEEPS:
-- Uses 25% of training images (SWEEP_TRAIN_FRACTION = 0.25)
-- Trains for 25% of full epochs (SWEEP_EPOCH_FRACTION = 0.25)
-- Uses 2% validation split (~400 images instead of 2000)
-- Result: ~16x faster than full training while still providing reliable hyperparameter comparisons
+CURRENT CONFIGURATION (with SWEEP_MAX_ITER set):
+- Uses fixed iteration count (SWEEP_MAX_ITER = 7000 iterations)
+- Uses exactly 14,000 training images (7000 iterations × batch size 2)
+- Uses 2% validation split (~400 images)
+- Validates every 500 iterations
+- Result: Each hyperparameter combination trains for exactly 7,000 iterations
+
+FALLBACK MODE (if SWEEP_MAX_ITER = None):
+- Uses fraction of training images (SWEEP_TRAIN_FRACTION = 0.25)
+- Trains for fraction of epochs (SWEEP_EPOCH_FRACTION = 0.25)
 """
 
 import os
@@ -24,6 +29,7 @@ import torch
 from detectron2.engine import DefaultTrainer
 from detectron2.config import get_cfg
 from detectron2 import model_zoo
+from functools import wraps
 from detectron2.data import MetadataCatalog, DatasetCatalog
 from detectron2.data.datasets import register_coco_instances
 from detectron2.data import DatasetMapper
@@ -45,6 +51,69 @@ from tqdm import tqdm
 # We'll define them here to avoid import issues, but structure matches train_detectron2.py
 
 # ============================================================================
+# RETRY UTILITY FOR FILE I/O OPERATIONS
+# ============================================================================
+
+def retry_file_io(max_retries=5, delay=1.0, backoff=2.0):
+    """
+    Decorator to retry file I/O operations on failure.
+    Handles temporary drive disconnections and Windows file I/O errors.
+    
+    Args:
+        max_retries: Maximum number of retry attempts
+        delay: Initial delay between retries (seconds)
+        backoff: Multiplier for delay after each retry
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            last_exception = None
+            current_delay = delay
+            
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except (OSError, IOError, PermissionError, FileNotFoundError) as e:
+                    last_exception = e
+                    error_str = str(e)
+                    
+                    # Check if it's a retryable error
+                    is_retryable = (
+                        "[Errno 9]" in error_str or  # Bad file descriptor
+                        "[Errno 22]" in error_str or  # Invalid argument
+                        "Bad file descriptor" in error_str or
+                        "Invalid argument" in error_str or
+                        "Permission denied" in error_str or
+                        "No such file or directory" in error_str or
+                        isinstance(e, FileNotFoundError)  # Temporary file not found
+                    )
+                    
+                    if not is_retryable:
+                        # Not a retryable error, raise immediately
+                        raise
+                    
+                    if attempt < max_retries - 1:
+                        print(f"  [RETRY] File I/O error (attempt {attempt + 1}/{max_retries}): {error_str}")
+                        print(f"  [RETRY] Retrying in {current_delay:.1f} seconds...")
+                        time.sleep(current_delay)
+                        current_delay *= backoff
+                    else:
+                        # Last attempt failed
+                        print(f"  [ERROR] File I/O failed after {max_retries} attempts: {error_str}")
+                        raise
+                except Exception as e:
+                    # Non-retryable errors (syntax errors, etc.) - raise immediately
+                    raise
+            
+            # Should never reach here, but just in case
+            if last_exception:
+                raise last_exception
+        
+        return wrapper
+    return decorator
+
+
+# ============================================================================
 # CONFIGURATION
 # ============================================================================
 
@@ -56,19 +125,43 @@ IMAGES_PATH = r"D:\Experiments\TrainingData\Detectron_Trial_2\images"
 # Training settings
 BATCH_SIZE = 2
 NUM_EPOCHS = 1  # Base number of epochs (will be reduced for sweep)
-SWEEP_EPOCH_FRACTION = 0.25  # Train for 25% of full epochs (20-30% range)
-SWEEP_TRAIN_FRACTION = 0.25  # Use 25% of training images for sweeps (20-30% range for faster sweeps)
+# These are only used if SWEEP_MAX_ITER = None (fallback mode)
+SWEEP_EPOCH_FRACTION = 0.25  # Train for 25% of full epochs (only used if SWEEP_MAX_ITER is None)
+SWEEP_TRAIN_FRACTION = 0.25  # Use 25% of training images (only used if SWEEP_MAX_ITER is None)
 
-# Hyperparameter sweep ranges
-LEARNING_RATES = [0.005, 0.0025, 0.001, 0.0005]
-ANCHOR_SIZES = [
-    [[8, 16, 32, 64]],
-    [[8, 16, 32, 64, 128]],
-    [[16, 32, 64, 128]]
-]
+# ============================================================================
+# QUICK TEST MODE (for debugging - set to True for fast testing)
+# ============================================================================
+QUICK_TEST_MODE = True  # Set to False for full sweep
+
+# Fixed iteration count (set based on convergence test results)
+# If set to None, will calculate from epochs/fractions (old behavior)
+# If set to a number (e.g., 15000), will use that exact iteration count for all sweep runs
+# This allows you to use the convergence iteration count directly from convergence_test.py
+if QUICK_TEST_MODE:
+    SWEEP_MAX_ITER = 100  # Only 100 iterations per run (vs 6000)
+    # Hyperparameter sweep ranges (keep all combinations for full workflow test)
+    LEARNING_RATES = [0.005, 0.0025, 0.001, 0.0005]  # All 4 learning rates
+    ANCHOR_SIZES = [
+        [[8, 16, 32, 64]],
+        [[8, 16, 32, 64, 128]],
+        [[16, 32, 64, 128]]
+    ]  # All 3 anchor configs = 12 total combinations
+else:
+    SWEEP_MAX_ITER = 6000  # Set to 15000 (or whatever your convergence test found) to use fixed iterations
+    # Hyperparameter sweep ranges
+    LEARNING_RATES = [0.005, 0.0025, 0.001, 0.0005]
+    ANCHOR_SIZES = [
+        [[8, 16, 32, 64]],
+        [[8, 16, 32, 64, 128]],
+        [[16, 32, 64, 128]]
+    ]
 
 # Output directories
 OUTPUT_BASE_DIR = r"D:\Experiments\AI\Hyperparameters"
+# Resume from existing sweep folder (set to None to create a new sweep)
+# Example: RESUME_SWEEP_FOLDER = r"D:\Experiments\AI\Hyperparameters\sweep_2026_01_21_21_39_37"
+RESUME_SWEEP_FOLDER = None  # Set to None to create a new timestamped sweep folder
 # CSV paths will be set dynamically in main() after creating timestamped sweep folder
 SWEEP_RESULTS_CSV = None
 SWEEP_SUMMARY_CSV = None
@@ -78,16 +171,19 @@ SWEEP_SUMMARY_CSV = None
 # With ~20,000 total images:
 #   0.1 = 2000 images (TOO SLOW for sweeps! ~2 hours per validation)
 #   0.05 = 1000 images (still slow, ~1 hour per validation)
-#   0.02 = 400 images (~45 minutes per validation - still slow!)
-#   0.01 = 200 images (~20-25 minutes per validation - much better for sweeps)
-VALIDATION_SPLIT = 0.01  # 1% = ~200 images (faster validation, still enough for reliable metrics)
-# Validation interval: For sweeps, validate less frequently to save time
-# Options:
-#   - 150 = 3-4 validations per run (12 hours total for all combinations)
-#   - 9999 = Only validate at the end (12 validations total = ~3 hours, but less monitoring)
-#   - 50 = Frequent validation (33 hours total - TOO SLOW!)
-VALIDATION_INTERVAL = 150  # Evaluate every N iterations (reduced frequency for faster sweeps)
-# Set to 9999 to only validate at the end of each run (fastest, but no mid-training metrics)
+#   0.02 = 400 images (~45 minutes per validation - good balance for sweeps)
+#   0.01 = 200 images (~20-25 minutes per validation - faster but still reliable)
+#   0.005 = 100 images (~10-15 minutes per validation - faster but less reliable)
+#   0.002 = 40 images (~4-5 minutes per validation - VERY FAST but noisy/inaccurate)
+if QUICK_TEST_MODE:
+    VALIDATION_SPLIT = 0.002  # Only 40 images for very fast validation (~2-3 min each)
+    VALIDATION_INTERVAL = 25  # Validate at 25, 50, 75, 100 (4 validations per run)
+else:
+    VALIDATION_SPLIT = 0.01  # 1% = ~200 images (good balance: faster but still reliable)
+    # Validation interval: More frequent = smoother curves
+    #   250 = Validates every 250 iterations (28 validations for 7000 iterations = smooth curves!)
+    #   500 = Validates every 500 iterations (14 validations for 7000 iterations = fewer points)
+    VALIDATION_INTERVAL = 250  # Evaluate every N iterations (more frequent = smoother curves)
 
 # Resume from pre-trained model (set to None to start from COCO weights)
 RESUME_FROM_MODEL = None  # Can be set to a model path if needed
@@ -139,12 +235,27 @@ def setup_dataset():
     train_dicts = [dataset_dicts[i] for i in train_indices]
     val_dicts = [dataset_dicts[i] for i in val_indices]
     
-    # For hyperparameter sweeps, use a subset of training images to speed up training
-    # This is fine for hyperparameter comparison - we just need relative performance
-    if SWEEP_TRAIN_FRACTION < 1.0:
+    # For hyperparameter sweeps, use enough images for the fixed iteration count
+    # With SWEEP_MAX_ITER = 7000 and BATCH_SIZE = 2, we need 14,000 images (7000 * 2)
+    # This ensures we use exactly one epoch worth of data for the iteration count
+    if SWEEP_MAX_ITER is not None:
+        required_images = SWEEP_MAX_ITER * BATCH_SIZE
+        original_train_count = len(train_dicts)
+        
+        if required_images <= original_train_count:
+            # Use exactly the number of images needed for the iteration count
+            train_dicts = train_dicts[:required_images]
+            print(f"[SWEEP] Using {required_images} training images (exactly {SWEEP_MAX_ITER} iterations with batch size {BATCH_SIZE})")
+            print(f"[SWEEP] This is {required_images/original_train_count*100:.1f}% of available training images")
+        else:
+            # Not enough images - use all available (will cycle through dataset)
+            print(f"[SWEEP] WARNING: Need {required_images} images but only have {original_train_count}")
+            print(f"[SWEEP] Will cycle through dataset {required_images/original_train_count:.2f} times")
+            print(f"[SWEEP] Using all {original_train_count} training images")
+    elif SWEEP_TRAIN_FRACTION < 1.0:
+        # Old behavior: use fraction of images
         original_train_count = len(train_dicts)
         train_subset_size = int(len(train_dicts) * SWEEP_TRAIN_FRACTION)
-        # Use first N images from shuffled training set (already randomized)
         train_dicts = train_dicts[:train_subset_size]
         print(f"[SWEEP] Using {SWEEP_TRAIN_FRACTION*100:.0f}% of training images for faster sweeps")
         print(f"[SWEEP] Training images: {len(train_dicts)} (reduced from {original_train_count})")
@@ -252,12 +363,14 @@ class LivePlotTracker:
         # Metric storage
         self.train_losses = []
         self.train_iterations = []
-        self.val_aps = []  # Validation AP (segmentation mAP)
+        self.val_segm_aps = []  # Validation segmentation AP
+        self.val_bbox_aps = []  # Validation bbox AP
         self.val_iterations = []
         self.start_time = time.time()
         
-        # Best metrics tracking
-        self.best_val_ap = 0.0
+        # Best metrics tracking (for both segm and bbox)
+        self.best_val_segm_ap = 0.0
+        self.best_val_bbox_ap = 0.0
         self.best_val_iter = 0
         
         # Setup matplotlib figure for live plotting
@@ -273,12 +386,13 @@ class LivePlotTracker:
         self.ax1.legend()
         self.ax1.set_xlim(0, max_iter)  # Initialize x-axis to start at 0
         
-        # Plot 2: Validation AP
+        # Plot 2: Validation AP (both segm and bbox)
         self.ax2.set_xlabel('Iteration')
         self.ax2.set_ylabel('Validation AP')
         self.ax2.set_title('Validation Average Precision (mAP)')
         self.ax2.grid(True, alpha=0.3)
-        self.line2, = self.ax2.plot([], [], 'r-o', linewidth=2, markersize=6, label='Validation AP')
+        self.line2_segm, = self.ax2.plot([], [], 'r-o', linewidth=2, markersize=6, label='segm/AP')
+        self.line2_bbox, = self.ax2.plot([], [], 'b-s', linewidth=2, markersize=6, label='bbox/AP')
         self.ax2.axhline(y=0, color='k', linestyle='--', alpha=0.3)
         self.ax2.legend()
         self.ax2.set_xlim(0, max_iter)  # Initialize x-axis to start at 0
@@ -288,6 +402,17 @@ class LivePlotTracker:
         # Create plots directory FIRST (before trying to save)
         self.plots_dir = self.output_dir / "plots"
         self.plots_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Setup CSV file for live updates (matching convergence_test.py)
+        self.csv_path = self.output_dir / f"{self.run_name}_live.csv"
+        with open(self.csv_path, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                'iteration', 'training_loss', 'validation_segm_ap', 'validation_bbox_ap',
+                'best_segm_ap', 'best_bbox_ap', 'best_ap_iter', 'timestamp'
+            ])
+        print(f"[OK] Live CSV will be saved to: {self.csv_path}")
+        print(f"     Open this file in Excel/CSV viewer to watch progress!")
         
         # Save initial empty plot so user knows where to look
         self.plot_path = self.plots_dir / f"{self.run_name}_training_curve_live.png"
@@ -319,104 +444,141 @@ class LivePlotTracker:
         self.train_losses.append(total_loss)
         self.train_iterations.append(iteration)
         
-        # Print progress every 25 iterations to show it's working
+        # Update plot and CSV every 25 iterations (matching convergence_test.py)
         if iteration % 25 == 0:
-            print(f"\n  [Plot Tracker] Training loss at iter {iteration}: {total_loss:.4f} (total points: {len(self.train_losses)})")
-        
-        # Update plot
-        self.line1.set_data(self.train_iterations, self.train_losses)
-        self.ax1.relim()
-        
-        # Set x-axis limits BEFORE autoscale to ensure it starts at 0
-        if len(self.train_iterations) > 0:
-            max_iter_val = max(self.max_iter, max(self.train_iterations))
-            self.ax1.set_xlim(0, max_iter_val)
-        else:
-            self.ax1.set_xlim(0, self.max_iter)
-        
-        # Then autoscale only the y-axis (not x-axis)
-        self.ax1.autoscale_view(scalex=False, scaley=True)
-        
-        # Save plot to file every 25 iterations (so you can always check the file)
-        if iteration % 25 == 0 and self.plot_path is not None:
-            try:
-                self.fig.savefig(str(self.plot_path), dpi=150, bbox_inches='tight')
-                if iteration % 50 == 0:  # Print path every 50 iterations
-                    print(f"  [Plot] ✓ Saved live plot to: {self.plot_path}")
-            except Exception as e:
-                if iteration % 50 == 0:
-                    print(f"  [Plot] ✗ Could not save live plot: {e}")
-                    import traceback
-                    traceback.print_exc()
+            self.line1.set_data(self.train_iterations, self.train_losses)
+            self.ax1.relim()
+            self.ax1.autoscale_view()
+            
+            if self.plot_path:
+                try:
+                    self.fig.savefig(str(self.plot_path), dpi=150, bbox_inches='tight')
+                except Exception:
+                    pass
+            
+            # Update CSV
+            self._update_csv(iteration, total_loss, None, None)
     
     def update_validation(self, iteration: int, val_metrics: Dict):
         """Update validation metrics and refresh plot"""
         if val_metrics is None:
             return
         
-        # Extract AP (prefer segm/AP, fallback to bbox/AP)
-        ap = None
-        if 'segm/AP' in val_metrics:
-            ap = float(val_metrics['segm/AP'])
-        elif 'bbox/AP' in val_metrics:
-            ap = float(val_metrics['bbox/AP'])
-        elif 'segm/AP50' in val_metrics:
-            ap = float(val_metrics['segm/AP50'])
-        elif 'bbox/AP50' in val_metrics:
-            ap = float(val_metrics['bbox/AP50'])
+        # Extract both segm/AP and bbox/AP
+        segm_ap = None
+        bbox_ap = None
         
-        if ap is not None:
-            self.val_aps.append(ap)
-            self.val_iterations.append(iteration)
-            
-            # Update best AP
-            if ap > self.best_val_ap:
-                self.best_val_ap = ap
+        if 'segm/AP' in val_metrics:
+            segm_ap = float(val_metrics['segm/AP'])
+        elif 'segm/AP50' in val_metrics:
+            segm_ap = float(val_metrics['segm/AP50'])
+        
+        if 'bbox/AP' in val_metrics:
+            bbox_ap = float(val_metrics['bbox/AP'])
+        elif 'bbox/AP50' in val_metrics:
+            bbox_ap = float(val_metrics['bbox/AP50'])
+        
+        if segm_ap is None and bbox_ap is None:
+            print(f"  [WARNING] Could not extract AP from validation metrics")
+            return
+        
+        # Store both metrics
+        if segm_ap is not None:
+            self.val_segm_aps.append(segm_ap)
+        else:
+            self.val_segm_aps.append(0.0)  # Placeholder if missing
+        
+        if bbox_ap is not None:
+            self.val_bbox_aps.append(bbox_ap)
+        else:
+            self.val_bbox_aps.append(0.0)  # Placeholder if missing
+        
+        self.val_iterations.append(iteration)
+        
+        # Update best APs
+        if segm_ap is not None and segm_ap > self.best_val_segm_ap:
+            self.best_val_segm_ap = segm_ap
+            self.best_val_iter = iteration
+        
+        if bbox_ap is not None and bbox_ap > self.best_val_bbox_ap:
+            self.best_val_bbox_ap = bbox_ap
+            if segm_ap is None or bbox_ap > segm_ap:
                 self.best_val_iter = iteration
+        
+        # Update plot (both segm and bbox)
+        if len(self.val_segm_aps) > 0:
+            self.line2_segm.set_data(self.val_iterations, self.val_segm_aps)
+        if len(self.val_bbox_aps) > 0:
+            self.line2_bbox.set_data(self.val_iterations, self.val_bbox_aps)
+        
+        self.ax2.relim()
+        self.ax2.autoscale_view()
+        
+        # Add best AP annotation
+        if len(self.val_segm_aps) > 0 or len(self.val_bbox_aps) > 0:
+            # Remove old annotation
+            for txt in self.ax2.texts:
+                if txt.get_text().startswith('Best'):
+                    txt.remove()
             
-            # Update plot
-            self.line2.set_data(self.val_iterations, self.val_aps)
-            self.ax2.relim()
-            
-            # Set x-axis limits BEFORE autoscale to ensure it starts at 0
-            if len(self.val_iterations) > 0:
-                max_iter_val = max(self.max_iter, max(self.val_iterations))
-                self.ax2.set_xlim(0, max_iter_val)
-            else:
-                self.ax2.set_xlim(0, self.max_iter)
-            
-            # Then autoscale only the y-axis (not x-axis)
-            self.ax2.autoscale_view(scalex=False, scaley=True)
-            
-            # Add best AP annotation
-            if len(self.val_aps) > 0:
-                # Remove old annotation if exists
-                for txt in self.ax2.texts:
-                    if txt.get_text().startswith('Best'):
-                        txt.remove()
-                
-                # Add new annotation
-                self.ax2.text(0.02, 0.98, f'Best AP: {self.best_val_ap:.4f} @ iter {self.best_val_iter}',
-                            transform=self.ax2.transAxes, fontsize=10,
-                            verticalalignment='top', bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.5))
-            
-            # Refresh display
-            print(f"\n  [Plot] Updating validation plot at iter {iteration}...")
-            print(f"  [Plot] AP value: {ap:.4f}, Best AP: {self.best_val_ap:.4f}")
-            print(f"  [Plot] Total validation points: {len(self.val_aps)}")
-            
-            # Always save plot to file when validation updates
-            if self.plot_path is not None:
-                try:
-                    self.fig.savefig(str(self.plot_path), dpi=150, bbox_inches='tight')
-                    print(f"  [Plot] ✓ Plot saved to: {self.plot_path}")
-                except Exception as e:
-                    print(f"  [Plot] ✗ Could not save plot: {e}")
-                    import traceback
-                    traceback.print_exc()
-            else:
-                print(f"  [Plot] ⚠ Plot path not set, skipping save")
+            # Add new annotation with both metrics
+            annotation_text = f'Best segm/AP: {self.best_val_segm_ap:.4f}\nBest bbox/AP: {self.best_val_bbox_ap:.4f}\n@ iter {self.best_val_iter}'
+            self.ax2.text(0.02, 0.98, annotation_text,
+                        transform=self.ax2.transAxes, fontsize=10,
+                        verticalalignment='top',
+                        bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.5))
+        
+        # Save plot
+        if self.plot_path:
+            try:
+                self._save_plot_with_retry()
+            except Exception as e:
+                # Don't let plot errors stop training
+                if self.iter % 50 == 0:  # Only print occasionally
+                    print(f"  [WARNING] Plot save failed: {e}")
     
+    @retry_file_io(max_retries=3, delay=0.5)
+    def _save_plot_with_retry(self):
+        """Save plot with retry logic"""
+        self.fig.savefig(str(self.plot_path), dpi=150, bbox_inches='tight')
+        
+        # Update CSV after validation
+        current_loss = self.train_losses[-1] if self.train_losses else None
+        self._update_csv(iteration, current_loss, segm_ap, bbox_ap)
+        
+        # Also write validation results to Detectron2's metrics.json via EventStorage
+        # This ensures they're available in metrics.json for later analysis
+        # Use smoothing_hint=False to match Detectron2's evaluation hook behavior
+        from detectron2.utils.events import get_event_storage
+        storage = get_event_storage()
+        if storage is not None:
+            if segm_ap is not None:
+                storage.put_scalar('segm/AP', segm_ap, smoothing_hint=False)
+            if bbox_ap is not None:
+                storage.put_scalar('bbox/AP', bbox_ap, smoothing_hint=False)
+    
+    @retry_file_io(max_retries=5, delay=1.0)
+    def _update_csv(self, iteration, training_loss, validation_segm_ap, validation_bbox_ap):
+        """Update CSV file with current metrics"""
+        try:
+            with open(self.csv_path, 'a', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    iteration,
+                    training_loss if training_loss is not None else '',
+                    validation_segm_ap if validation_segm_ap is not None else '',
+                    validation_bbox_ap if validation_bbox_ap is not None else '',
+                    self.best_val_segm_ap,
+                    self.best_val_bbox_ap,
+                    self.best_val_iter,
+                    datetime.now().isoformat()
+                ])
+        except Exception as e:
+            # Don't let CSV errors stop training
+            if iteration % 100 == 0:  # Only print occasionally
+                print(f"  [WARNING] CSV update failed: {e}")
+    
+    @retry_file_io(max_retries=3, delay=0.5)
     def save_plot(self):
         """Save final plot to file"""
         try:
@@ -430,11 +592,14 @@ class LivePlotTracker:
         """Get final metrics for CSV export"""
         elapsed_time = time.time() - self.start_time
         
-        final_val_ap = self.val_aps[-1] if len(self.val_aps) > 0 else 0.0
+        final_val_segm_ap = self.val_segm_aps[-1] if len(self.val_segm_aps) > 0 else 0.0
+        final_val_bbox_ap = self.val_bbox_aps[-1] if len(self.val_bbox_aps) > 0 else 0.0
         
         return {
-            'final_val_ap': final_val_ap,
-            'best_val_ap': self.best_val_ap,
+            'final_val_segm_ap': final_val_segm_ap,
+            'final_val_bbox_ap': final_val_bbox_ap,
+            'best_val_segm_ap': self.best_val_segm_ap,
+            'best_val_bbox_ap': self.best_val_bbox_ap,
             'best_val_iter': self.best_val_iter,
             'training_time_seconds': elapsed_time,
             'training_time_minutes': elapsed_time / 60.0
@@ -505,49 +670,49 @@ class SweepTrainer(DefaultTrainer):
         return loss_dict
     
     def after_step(self):
-        """Override to capture validation results from Detectron2's built-in validation"""
-        val_interval = self.cfg.TEST.EVAL_PERIOD
+        """Override to run validation manually (avoiding double validation)"""
+        # Use our custom validation interval (stored in config)
+        val_interval = getattr(self.cfg.TEST, 'EVAL_PERIOD_CUSTOM', 500)
         
-        # Let Detectron2 handle validation automatically via cfg.TEST.EVAL_PERIOD
-        # We'll capture results in the test() method override
-        try:
-            super().after_step()
-        except (OSError, IOError) as e:
-            if "[Errno 22]" in str(e) or "Invalid argument" in str(e):
-                pass
-            else:
-                raise
-        
-        # Fallback: If validation should have run but we haven't captured results yet,
-        # manually trigger it (this handles cases where test() override isn't called)
+        # Run validation manually
         if (self.plot_tracker and 
             self.iter % val_interval == 0 and 
             self.iter > 0 and 
             self.iter != self.last_val_iter):
             
-            # Check if validation results were already captured
-            if len(self.plot_tracker.val_aps) == 0 or self.plot_tracker.val_iterations[-1] != self.iter:
-                print(f"\n  [Plot Tracker] Validation should have run at iter {self.iter}, but results not captured.")
-                print(f"  [Plot Tracker] Manually running validation...")
-                self.last_val_iter = self.iter
-                try:
-                    val_results = self._run_validation()
-                    if val_results and isinstance(val_results, dict) and len(val_results) > 0:
-                        self.plot_tracker.update_validation(self.iter, val_results)
-                        print(f"  [Plot Tracker] Manual validation complete and plot updated!")
-                    else:
-                        print(f"  [WARNING] Manual validation returned empty results!")
-                except Exception as e:
-                    print(f"  [ERROR] Manual validation failed: {e}")
-                    import traceback
-                    traceback.print_exc()
+            self.last_val_iter = self.iter
+            
+            try:
+                print(f"\n  [Validation] Running at iteration {self.iter}...")
+                val_results = self._run_validation()
+                print(f"  [Validation] Results keys: {list(val_results.keys()) if val_results else 'None'}")
+                if val_results and isinstance(val_results, dict) and len(val_results) > 0:
+                    self.plot_tracker.update_validation(self.iter, val_results)
+                    print(f"  [Validation] ✓ Validation results captured!")
+                else:
+                    print(f"  [WARNING] Validation returned empty results!")
+            except Exception as e:
+                print(f"  [ERROR] Validation failed: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        try:
+            super().after_step()
+        except (OSError, IOError) as e:
+            # Catch Windows file I/O errors (Errno 22 and Errno 9 - Bad file descriptor)
+            if "[Errno 22]" in str(e) or "[Errno 9]" in str(e) or "Invalid argument" in str(e) or "Bad file descriptor" in str(e):
+                # Ignore Windows file handle issues - metrics are usually already saved
+                pass
+            else:
+                raise
     
     def after_train(self):
         """Override to handle Windows file I/O errors at end of training"""
         try:
             super().after_train()
         except (OSError, IOError) as e:
-            if "[Errno 22]" in str(e) or "Invalid argument" in str(e):
+            # Catch Windows file I/O errors (Errno 22 and Errno 9 - Bad file descriptor)
+            if "[Errno 22]" in str(e) or "[Errno 9]" in str(e) or "Invalid argument" in str(e) or "Bad file descriptor" in str(e):
                 # Windows file handle issue - metrics were likely already written
                 print(f"  [WARNING] File I/O error during after_train (Windows issue): {e}")
                 print(f"  [WARNING] This is usually harmless - metrics were likely already saved")
@@ -555,35 +720,11 @@ class SweepTrainer(DefaultTrainer):
                 raise
     
     def test(self, cfg=None, model=None, evaluators=None):
-        """Override test method to capture validation results"""
-        # Use current config/model if not provided
-        if cfg is None:
-            cfg = self.cfg
-        if model is None:
-            model = self.model
-        
-        # Call parent test method - this runs validation automatically
-        results = super().test(cfg, model, evaluators)
-        
-        # Capture results for plot tracker
-        if self.plot_tracker and hasattr(self, 'iter') and results:
-            print(f"\n  [Plot Tracker] Validation completed at iter {self.iter}")
-            print(f"  [Plot Tracker] Results keys: {list(results.keys())}")
-            
-            # Extract AP value for logging
-            ap_value = None
-            if 'segm/AP' in results:
-                ap_value = results['segm/AP']
-                print(f"  [Plot Tracker] Segmentation mAP: {ap_value:.4f}")
-            elif 'bbox/AP' in results:
-                ap_value = results['bbox/AP']
-                print(f"  [Plot Tracker] Bbox mAP: {ap_value:.4f}")
-            
-            # Update plot tracker with validation results
-            self.plot_tracker.update_validation(self.iter, results)
-            print(f"  [Plot Tracker] Plot updated successfully!")
-        
-        return results
+        """Override test method - but we handle validation manually in after_step()"""
+        # Since we disabled built-in validation (EVAL_PERIOD = 999999), 
+        # this method shouldn't be called during training
+        # But if it is called (e.g., manually), just pass through to parent
+        return super().test(cfg, model, evaluators)
     
     def _run_validation(self):
         """Run validation evaluation and return metrics"""
@@ -604,10 +745,32 @@ class SweepTrainer(DefaultTrainer):
             # Run inference - this will print progress automatically
             results = inference_on_dataset(self.model, test_loader, evaluator)
             
+            # Safety check: ensure results is a dict
+            if results is None:
+                print(f"    [WARNING] inference_on_dataset returned None")
+                return {}
+            
+            # Results are nested: {'bbox': {'AP': ...}, 'segm': {'AP': ...}}
+            # Flatten to match expected format: {'segm/AP': ..., 'bbox/AP': ...}
+            flattened_results = {}
+            if isinstance(results, dict):
+                if 'segm' in results and isinstance(results['segm'], dict):
+                    for key, value in results['segm'].items():
+                        flattened_results[f'segm/{key}'] = value
+                if 'bbox' in results and isinstance(results['bbox'], dict):
+                    for key, value in results['bbox'].items():
+                        flattened_results[f'bbox/{key}'] = value
+                
+                # Also check if already flattened (for compatibility)
+                if not flattened_results and any('/' in k for k in results.keys()):
+                    flattened_results = results
+            
+            # Use flattened results (or original if flattening didn't work)
+            results = flattened_results if flattened_results else results
+            
             # Print all results for debugging
             print(f"\n    [Validation] Inference complete!")
             print(f"    [Validation] Results dictionary keys: {list(results.keys())}")
-            print(f"    [Validation] Full results: {results}")
             
             # Extract and print AP metrics
             if 'segm/AP' in results:
@@ -652,15 +815,25 @@ def setup_config_for_sweep(
 ) -> Tuple:
     """Configure Detectron2 for a specific hyperparameter combination"""
     
-    # Calculate MAX_ITER (reduced for sweep)
-    iterations_per_epoch = num_train_images // BATCH_SIZE
-    max_iter_full = NUM_EPOCHS * iterations_per_epoch
-    max_iter_sweep = int(max_iter_full * SWEEP_EPOCH_FRACTION)
+    # Calculate MAX_ITER
+    if SWEEP_MAX_ITER is not None:
+        # Use fixed iteration count from convergence test
+        max_iter_sweep = SWEEP_MAX_ITER
+        print(f"[SWEEP] Using fixed iteration count: {max_iter_sweep} (from convergence test)")
+    else:
+        # Calculate from epochs/fractions (old behavior)
+        iterations_per_epoch = num_train_images // BATCH_SIZE
+        max_iter_full = NUM_EPOCHS * iterations_per_epoch
+        max_iter_sweep = int(max_iter_full * SWEEP_EPOCH_FRACTION)
+        print(f"[SWEEP] Calculated iteration count: {max_iter_sweep} (from {NUM_EPOCHS} epochs × {SWEEP_EPOCH_FRACTION} fraction)")
     
     # Learning rate decay at 60% and 80% of training
     decay_step_1 = int(max_iter_sweep * 0.6)
     decay_step_2 = int(max_iter_sweep * 0.8)
     learning_rate_decay_steps = (decay_step_1, decay_step_2)
+    
+    print(f"[SWEEP] Learning rate decay steps: {decay_step_1} (60%) and {decay_step_2} (80%)")
+    print(f"[SWEEP] Note: Detectron2's default config includes warm-up (typically 1000 iterations)")
     
     cfg = get_cfg()
     cfg.merge_from_file(
@@ -693,8 +866,17 @@ def setup_config_for_sweep(
     cfg.MODEL.ANCHOR_GENERATOR.SIZES = anchor_sizes
     
     # Validation evaluation
-    val_interval = min(VALIDATION_INTERVAL, iterations_per_epoch)
-    cfg.TEST.EVAL_PERIOD = val_interval
+    # Disable Detectron2's built-in validation (set to very high number so it never triggers)
+    # We handle validation manually in our custom after_step() to avoid double validation
+    cfg.TEST.EVAL_PERIOD = 999999  # Disable built-in validation
+    # Store our desired interval for use in after_step()
+    if SWEEP_MAX_ITER is not None:
+        # Fixed iteration count - use validation interval directly
+        cfg.TEST.EVAL_PERIOD_CUSTOM = VALIDATION_INTERVAL
+    else:
+        # Calculated iterations - cap by epoch length
+        val_interval = min(VALIDATION_INTERVAL, iterations_per_epoch)
+        cfg.TEST.EVAL_PERIOD_CUSTOM = val_interval
     
     # ROI heads
     cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = 128
@@ -783,17 +965,36 @@ def run_single_sweep(
         print("\n\nTraining interrupted by user. Saving checkpoint...")
         trainer.checkpointer.save("model_interrupted")
         print("Checkpoint saved!")
+    except (OSError, IOError) as e:
+        # Catch Windows file I/O errors that might occur during training
+        if "[Errno 9]" in str(e) or "Bad file descriptor" in str(e):
+            print(f"\n  [WARNING] Windows file I/O error during training: {e}")
+            print(f"  [WARNING] Training will continue - this is usually harmless")
+            # Training should continue, but if it stopped, we need to handle it
+            # The error was likely already caught in after_step/after_train, so this is a safety net
+        else:
+            raise
     
     training_time = time.time() - start_time
     
-    # Run final validation if no validation has been run yet
-    if len(plot_tracker.val_aps) == 0:
+    # Always run final validation to ensure CSV has the actual final model performance
+    # Check if we need to run final validation (either no validation yet, or last validation wasn't at final iteration)
+    final_iter = trainer.iter
+    needs_final_validation = False
+    
+    if len(plot_tracker.val_segm_aps) == 0 and len(plot_tracker.val_bbox_aps) == 0:
         print(f"\n  [Final Validation] No validation metrics captured during training.")
-        print(f"  [Final Validation] Running final validation now...")
+        needs_final_validation = True
+    elif len(plot_tracker.val_iterations) > 0 and plot_tracker.val_iterations[-1] != final_iter:
+        print(f"\n  [Final Validation] Last validation was at iter {plot_tracker.val_iterations[-1]}, but training ended at iter {final_iter}.")
+        needs_final_validation = True
+    
+    if needs_final_validation:
+        print(f"  [Final Validation] Running final validation at iter {final_iter}...")
         try:
             val_results = trainer._run_validation()
             if val_results and isinstance(val_results, dict) and len(val_results) > 0:
-                plot_tracker.update_validation(trainer.iter, val_results)
+                plot_tracker.update_validation(final_iter, val_results)
                 print(f"  [Final Validation] ✓ Validation complete and metrics captured!")
             else:
                 print(f"  [WARNING] Final validation returned empty results!")
@@ -801,9 +1002,25 @@ def run_single_sweep(
             print(f"  [ERROR] Final validation failed: {e}")
             import traceback
             traceback.print_exc()
+    else:
+        print(f"\n  [Final Validation] Validation already run at final iteration ({final_iter}). Using existing metrics.")
     
     # Get final metrics
     final_metrics = plot_tracker.get_final_metrics()
+    
+    # Debug: Print what we're about to save (before closing plot tracker)
+    print(f"\n  [CSV Debug] Metrics to be saved:")
+    num_val_runs = max(len(plot_tracker.val_segm_aps), len(plot_tracker.val_bbox_aps))
+    print(f"    Final Val segm/AP: {final_metrics['final_val_segm_ap']:.4f}")
+    print(f"    Final Val bbox/AP: {final_metrics['final_val_bbox_ap']:.4f}")
+    print(f"    Best Val segm/AP: {final_metrics['best_val_segm_ap']:.4f}")
+    print(f"    Best Val bbox/AP: {final_metrics['best_val_bbox_ap']:.4f}")
+    print(f"    (from {num_val_runs} validation runs)")
+    print(f"    Best AP @ iter: {final_metrics['best_val_iter']}")
+    if len(plot_tracker.val_iterations) > 0:
+        print(f"    Last validation at iter: {plot_tracker.val_iterations[-1]}")
+        print(f"    Training ended at iter: {final_iter}")
+    
     plot_tracker.save_plot()
     plot_tracker.close()
     
@@ -812,8 +1029,10 @@ def run_single_sweep(
         'run_name': run_name,
         'learning_rate': learning_rate,
         'anchor_sizes': str(anchor_sizes),
-        'final_val_ap': final_metrics['final_val_ap'],
-        'best_val_ap': final_metrics['best_val_ap'],
+        'final_val_segm_ap': final_metrics['final_val_segm_ap'],
+        'final_val_bbox_ap': final_metrics['final_val_bbox_ap'],
+        'best_val_segm_ap': final_metrics['best_val_segm_ap'],
+        'best_val_bbox_ap': final_metrics['best_val_bbox_ap'],
         'best_val_iter': final_metrics['best_val_iter'],
         'training_time_seconds': final_metrics['training_time_seconds'],
         'training_time_minutes': final_metrics['training_time_minutes'],
@@ -823,30 +1042,35 @@ def run_single_sweep(
     
     # Save to CSV immediately (append mode for resume safety)
     save_run_to_csv(results)
+    print(f"  [CSV] ✓ Results saved to: {SWEEP_RESULTS_CSV}")
     
     print(f"\n{'='*80}")
     print(f"RUN {run_number}/{total_runs} COMPLETE")
     print(f"{'='*80}")
-    print(f"Final Validation AP: {final_metrics['final_val_ap']:.4f}")
-    print(f"Best Validation AP: {final_metrics['best_val_ap']:.4f} @ iter {final_metrics['best_val_iter']}")
+    print(f"Final Validation segm/AP: {final_metrics['final_val_segm_ap']:.4f}")
+    print(f"Final Validation bbox/AP: {final_metrics['final_val_bbox_ap']:.4f}")
+    print(f"Best Validation segm/AP: {final_metrics['best_val_segm_ap']:.4f} @ iter {final_metrics['best_val_iter']}")
+    print(f"Best Validation bbox/AP: {final_metrics['best_val_bbox_ap']:.4f} @ iter {final_metrics['best_val_iter']}")
     print(f"Training time: {final_metrics['training_time_minutes']:.1f} minutes")
     print(f"{'='*80}\n")
     
     return results
 
 
+@retry_file_io(max_retries=5, delay=1.0)
 def save_run_to_csv(results: Dict):
     """Append a single run's results to the CSV file"""
     csv_path = SWEEP_RESULTS_CSV
     
     # Create file with headers if it doesn't exist
-    file_exists = csv_path.exists()
+    file_exists = _path_exists_with_retry(csv_path)
     
     with open(csv_path, 'a', newline='') as f:
         fieldnames = [
-            'run_name', 'learning_rate', 'anchor_sizes', 'final_val_ap',
-            'best_val_ap', 'best_val_iter', 'training_time_seconds',
-            'training_time_minutes', 'max_iter', 'output_dir', 'timestamp'
+            'run_name', 'learning_rate', 'anchor_sizes', 
+            'final_val_segm_ap', 'final_val_bbox_ap',
+            'best_val_segm_ap', 'best_val_bbox_ap', 'best_val_iter',
+            'training_time_seconds', 'training_time_minutes', 'max_iter', 'output_dir', 'timestamp'
         ]
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         
@@ -864,28 +1088,9 @@ def create_summary(results_list: List[Dict]):
     print("CREATING SWEEP SUMMARY")
     print(f"{'='*80}\n")
     
-    # Save summary CSV
+    # Save summary CSV (with retry)
     summary_path = SWEEP_SUMMARY_CSV
-    with open(summary_path, 'w', newline='') as f:
-        fieldnames = [
-            'run_name', 'learning_rate', 'anchor_sizes', 'final_val_ap',
-            'best_val_ap', 'best_val_iter', 'training_time_minutes'
-        ]
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        
-        for results in results_list:
-            writer.writerow({
-                'run_name': results['run_name'],
-                'learning_rate': results['learning_rate'],
-                'anchor_sizes': results['anchor_sizes'],
-                'final_val_ap': results['final_val_ap'],
-                'best_val_ap': results['best_val_ap'],
-                'best_val_iter': results['best_val_iter'],
-                'training_time_minutes': results['training_time_minutes']
-            })
-    
-    print(f"[OK] Summary CSV saved: {summary_path}")
+    _write_summary_csv_with_retry(summary_path, results_list)
     
     # Create comparison plots
     create_comparison_plots(results_list)
@@ -896,82 +1101,324 @@ def create_summary(results_list: List[Dict]):
 
 
 def create_comparison_plots(results_list: List[Dict]):
-    """Create comparison plots for all runs"""
+    """Create comparison plots for all runs - showing both segm/AP and bbox/AP"""
     plots_dir = Path(OUTPUT_BASE_DIR) / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
     
-    # Extract data
+    # Extract data (with fallback for old format)
     learning_rates = [r['learning_rate'] for r in results_list]
     anchor_sizes_str = [r['anchor_sizes'] for r in results_list]
-    best_aps = [r['best_val_ap'] for r in results_list]
-    final_aps = [r['final_val_ap'] for r in results_list]
     
-    # Create figure with subplots
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+    # Extract segm and bbox APs (with fallback for old format)
+    best_segm_aps = [r.get('best_val_segm_ap', r.get('best_val_ap', 0.0)) for r in results_list]
+    best_bbox_aps = [r.get('best_val_bbox_ap', r.get('best_val_ap', 0.0)) for r in results_list]
+    final_segm_aps = [r.get('final_val_segm_ap', r.get('final_val_ap', 0.0)) for r in results_list]
+    final_bbox_aps = [r.get('final_val_bbox_ap', r.get('final_val_ap', 0.0)) for r in results_list]
     
-    # Plot 1: AP vs Learning Rate
-    ax1.scatter(learning_rates, best_aps, s=100, alpha=0.7, label='Best AP', c='blue')
-    ax1.scatter(learning_rates, final_aps, s=100, alpha=0.7, label='Final AP', c='red', marker='x')
-    ax1.set_xlabel('Learning Rate', fontsize=12)
-    ax1.set_ylabel('Validation AP', fontsize=12)
-    ax1.set_title('Validation AP vs Learning Rate', fontsize=14, fontweight='bold')
-    ax1.set_xscale('log')
-    ax1.grid(True, alpha=0.3)
-    ax1.legend()
+    # Create figure with subplots (2 rows, 2 columns: segm and bbox for each comparison)
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    ax1_segm, ax1_bbox = axes[0]  # Top row: AP vs Learning Rate
+    ax2_segm, ax2_bbox = axes[1]  # Bottom row: AP vs Anchor Configuration
     
-    # Add annotations for anchor sizes
-    for i, (lr, ap, anchor_str) in enumerate(zip(learning_rates, best_aps, anchor_sizes_str)):
-        ax1.annotate(f"Anchors:\n{anchor_str[:30]}", 
-                    xy=(lr, ap), xytext=(5, 5), textcoords='offset points',
-                    fontsize=8, alpha=0.7)
+    # Plot 1a: segm/AP vs Learning Rate
+    ax1_segm.scatter(learning_rates, best_segm_aps, s=100, alpha=0.7, label='Best segm/AP', c='blue', marker='o')
+    ax1_segm.scatter(learning_rates, final_segm_aps, s=100, alpha=0.7, label='Final segm/AP', c='red', marker='x')
+    ax1_segm.set_xlabel('Learning Rate', fontsize=12)
+    ax1_segm.set_ylabel('Validation segm/AP', fontsize=12)
+    ax1_segm.set_title('Validation segm/AP vs Learning Rate', fontsize=14, fontweight='bold')
+    ax1_segm.set_xscale('log')
+    ax1_segm.grid(True, alpha=0.3)
+    ax1_segm.legend()
     
-    # Plot 2: AP vs Anchor Configuration (grouped by anchor size)
-    # Create unique anchor configurations
+    # Plot 1b: bbox/AP vs Learning Rate
+    ax1_bbox.scatter(learning_rates, best_bbox_aps, s=100, alpha=0.7, label='Best bbox/AP', c='green', marker='s')
+    ax1_bbox.scatter(learning_rates, final_bbox_aps, s=100, alpha=0.7, label='Final bbox/AP', c='orange', marker='x')
+    ax1_bbox.set_xlabel('Learning Rate', fontsize=12)
+    ax1_bbox.set_ylabel('Validation bbox/AP', fontsize=12)
+    ax1_bbox.set_title('Validation bbox/AP vs Learning Rate', fontsize=14, fontweight='bold')
+    ax1_bbox.set_xscale('log')
+    ax1_bbox.grid(True, alpha=0.3)
+    ax1_bbox.legend()
+    
+    # Plot 2a: segm/AP vs Anchor Configuration
     unique_anchors = list(set(anchor_sizes_str))
     anchor_indices = {anchor: i for i, anchor in enumerate(unique_anchors)}
-    
     x_positions = [anchor_indices[anchor] for anchor in anchor_sizes_str]
     
-    ax2.scatter(x_positions, best_aps, s=100, alpha=0.7, label='Best AP', c='blue')
-    ax2.scatter(x_positions, final_aps, s=100, alpha=0.7, label='Final AP', c='red', marker='x')
-    ax2.set_xlabel('Anchor Configuration', fontsize=12)
-    ax2.set_ylabel('Validation AP', fontsize=12)
-    ax2.set_title('Validation AP vs Anchor Configuration', fontsize=14, fontweight='bold')
-    ax2.set_xticks(range(len(unique_anchors)))
-    ax2.set_xticklabels([f"Config {i+1}" for i in range(len(unique_anchors))], rotation=45, ha='right')
-    ax2.grid(True, alpha=0.3)
-    ax2.legend()
+    ax2_segm.scatter(x_positions, best_segm_aps, s=100, alpha=0.7, label='Best segm/AP', c='blue', marker='o')
+    ax2_segm.scatter(x_positions, final_segm_aps, s=100, alpha=0.7, label='Final segm/AP', c='red', marker='x')
+    ax2_segm.set_xlabel('Anchor Configuration', fontsize=12)
+    ax2_segm.set_ylabel('Validation segm/AP', fontsize=12)
+    ax2_segm.set_title('Validation segm/AP vs Anchor Configuration', fontsize=14, fontweight='bold')
+    ax2_segm.set_xticks(range(len(unique_anchors)))
+    ax2_segm.set_xticklabels([f"Config {i+1}" for i in range(len(unique_anchors))], rotation=45, ha='right')
+    ax2_segm.grid(True, alpha=0.3)
+    ax2_segm.legend()
     
-    # Add legend for anchor configurations
+    # Plot 2b: bbox/AP vs Anchor Configuration
+    ax2_bbox.scatter(x_positions, best_bbox_aps, s=100, alpha=0.7, label='Best bbox/AP', c='green', marker='s')
+    ax2_bbox.scatter(x_positions, final_bbox_aps, s=100, alpha=0.7, label='Final bbox/AP', c='orange', marker='x')
+    ax2_bbox.set_xlabel('Anchor Configuration', fontsize=12)
+    ax2_bbox.set_ylabel('Validation bbox/AP', fontsize=12)
+    ax2_bbox.set_title('Validation bbox/AP vs Anchor Configuration', fontsize=14, fontweight='bold')
+    ax2_bbox.set_xticks(range(len(unique_anchors)))
+    ax2_bbox.set_xticklabels([f"Config {i+1}" for i in range(len(unique_anchors))], rotation=45, ha='right')
+    ax2_bbox.grid(True, alpha=0.3)
+    ax2_bbox.legend()
+    
+    # Add legend for anchor configurations (on the right side)
     legend_text = "\n".join([f"Config {i+1}: {anchor[:50]}" for i, anchor in enumerate(unique_anchors)])
-    ax2.text(1.02, 0.5, legend_text, transform=ax2.transAxes, fontsize=8,
+    ax2_segm.text(1.02, 0.5, legend_text, transform=ax2_segm.transAxes, fontsize=8,
             verticalalignment='center', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
     
     plt.tight_layout()
     
-    # Save plot
+    # Save plot with retry
     plot_path = plots_dir / "sweep_comparison.png"
-    fig.savefig(str(plot_path), dpi=150, bbox_inches='tight')
+    _save_plot_fig_with_retry(fig, plot_path)
     plt.close(fig)
     
     print(f"[OK] Comparison plot saved: {plot_path}")
 
 
+@retry_file_io(max_retries=3, delay=0.5)
+def _path_exists_with_retry(path: Path) -> bool:
+    """Check if path exists with retry logic"""
+    return path.exists()
+
+@retry_file_io(max_retries=3, delay=0.5)
+def _read_csv_with_retry(csv_path: Path):
+    """Read CSV file with retry logic"""
+    with open(csv_path, 'r') as f:
+        reader = csv.DictReader(f)
+        return list(reader)
+
+@retry_file_io(max_retries=3, delay=0.5)
+def _read_json_with_retry(json_path: Path):
+    """Read JSON file with retry logic"""
+    import json
+    with open(json_path, 'r') as f:
+        return json.load(f)
+
+@retry_file_io(max_retries=3, delay=0.5)
+def _write_summary_csv_with_retry(summary_path: Path, results_list: List[Dict]):
+    """Write summary CSV with retry logic"""
+    with open(summary_path, 'w', newline='') as f:
+        fieldnames = [
+            'run_name', 'learning_rate', 'anchor_sizes', 
+            'final_val_segm_ap', 'final_val_bbox_ap',
+            'best_val_segm_ap', 'best_val_bbox_ap', 'best_val_iter', 'training_time_minutes'
+        ]
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        
+        for results in results_list:
+            writer.writerow({
+                'run_name': results['run_name'],
+                'learning_rate': results['learning_rate'],
+                'anchor_sizes': results['anchor_sizes'],
+                'final_val_segm_ap': results.get('final_val_segm_ap', 0.0),
+                'final_val_bbox_ap': results.get('final_val_bbox_ap', 0.0),
+                'best_val_segm_ap': results.get('best_val_segm_ap', 0.0),
+                'best_val_bbox_ap': results.get('best_val_bbox_ap', 0.0),
+                'best_val_iter': results['best_val_iter'],
+                'training_time_minutes': results['training_time_minutes']
+            })
+    print(f"[OK] Summary CSV saved: {summary_path}")
+
+@retry_file_io(max_retries=3, delay=0.5)
+def _save_plot_fig_with_retry(fig, plot_path: Path):
+    """Save matplotlib figure with retry logic"""
+    fig.savefig(str(plot_path), dpi=150, bbox_inches='tight')
+
+@retry_file_io(max_retries=3, delay=0.5)
 def check_existing_runs() -> List[Dict]:
     """Check for existing runs in CSV to enable resume"""
-    if SWEEP_RESULTS_CSV is None or not SWEEP_RESULTS_CSV.exists():
-        return []
-    
     existing_runs = []
-    with open(SWEEP_RESULTS_CSV, 'r') as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            existing_runs.append({
-                'learning_rate': float(row['learning_rate']),
-                'anchor_sizes': ast.literal_eval(row['anchor_sizes'])  # Safe parsing for list
-            })
+    
+    # First, check CSV if it exists
+    if SWEEP_RESULTS_CSV is not None and _path_exists_with_retry(SWEEP_RESULTS_CSV):
+        with open(SWEEP_RESULTS_CSV, 'r') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                existing_runs.append({
+                    'learning_rate': float(row['learning_rate']),
+                    'anchor_sizes': ast.literal_eval(row['anchor_sizes'])  # Safe parsing for list
+                })
     
     return existing_runs
+
+
+def find_completed_runs_in_folders(sweep_folder: Path) -> List[Dict]:
+    """Scan sweep folder for completed run directories and extract their metrics"""
+    completed_runs = []
+    
+    if not sweep_folder.exists():
+        return completed_runs
+    
+    # Pattern: lr0_0050_anchors8_16_32_64_2026_01_22_17_14_52
+    import re
+    
+    for run_dir in sweep_folder.iterdir():
+        if not run_dir.is_dir():
+            continue
+        
+        run_name = run_dir.name
+        
+        # Check if this looks like a run folder (starts with lr)
+        if not run_name.startswith('lr'):
+            continue
+        
+        # Check if run completed (has model_final.pth)
+        model_final = run_dir / "model_final.pth"
+        if not _path_exists_with_retry(model_final):
+            continue
+        
+        # Parse run name to extract learning rate and anchor sizes
+        # Pattern: lr0_0050_anchors8_16_32_64_2026_01_22_17_14_52
+        match = re.match(r'lr([\d_]+)_anchors([\d_]+)(?:_\d{4}_\d{2}_\d{2}_\d{2}_\d{2}_\d{2})?', run_name)
+        if not match:
+            continue
+        
+        # Extract learning rate (convert 0_0050 to 0.0050)
+        lr_str = match.group(1).replace('_', '.')
+        try:
+            learning_rate = float(lr_str)
+        except ValueError:
+            continue
+        
+        # Extract anchor sizes (convert "8_16_32_64" to [[8, 16, 32, 64]])
+        anchor_str = match.group(2)
+        anchor_parts = [int(x) for x in anchor_str.split('_') if x.isdigit()]
+        if not anchor_parts:
+            continue
+        
+        # Detectron2 anchor sizes are grouped by aspect ratio, but we store them as a flat list
+        # We need to reconstruct the original format - typically it's one list per aspect ratio
+        # For simplicity, assume single aspect ratio with these sizes
+        anchor_sizes = [anchor_parts]  # Wrap in list to match expected format
+        
+        # Try to extract metrics from the run folder
+        metrics = extract_metrics_from_completed_run(run_dir, run_name)
+        
+        if metrics:
+            completed_runs.append({
+                'learning_rate': learning_rate,
+                'anchor_sizes': anchor_sizes,
+                'run_name': run_name,
+                'run_dir': run_dir,
+                'metrics': metrics
+            })
+    
+    return completed_runs
+
+
+def extract_metrics_from_completed_run(run_dir: Path, run_name: str) -> Optional[Dict]:
+    """Extract final metrics from a completed run folder"""
+    metrics = {}
+    
+    # Try to load from live CSV first (most accurate)
+    live_csv = run_dir / f"{run_name}_live.csv"
+    if _path_exists_with_retry(live_csv):
+        try:
+            # Read CSV manually (no pandas dependency) - with retry
+            rows = _read_csv_with_retry(live_csv)
+            
+            if len(rows) > 0:
+                # Find rows with validation data
+                val_rows = []
+                for row in rows:
+                    if (row.get('validation_segm_ap', '').strip() and row['validation_segm_ap'] != '') or \
+                       (row.get('validation_bbox_ap', '').strip() and row['validation_bbox_ap'] != ''):
+                        val_rows.append(row)
+                
+                if len(val_rows) > 0:
+                    # Get final validation metrics
+                    last_val = val_rows[-1]
+                    try:
+                        metrics['final_val_segm_ap'] = float(last_val.get('validation_segm_ap', 0) or 0)
+                    except (ValueError, TypeError):
+                        metrics['final_val_segm_ap'] = 0.0
+                    
+                    try:
+                        metrics['final_val_bbox_ap'] = float(last_val.get('validation_bbox_ap', 0) or 0)
+                    except (ValueError, TypeError):
+                        metrics['final_val_bbox_ap'] = 0.0
+                    
+                    try:
+                        metrics['best_val_iter'] = int(last_val.get('iteration', 0) or 0)
+                    except (ValueError, TypeError):
+                        metrics['best_val_iter'] = 0
+                    
+                    # Find best APs
+                    segm_aps = []
+                    bbox_aps = []
+                    for row in val_rows:
+                        try:
+                            segm_val = float(row.get('validation_segm_ap', 0) or 0)
+                            if segm_val > 0:
+                                segm_aps.append(segm_val)
+                        except (ValueError, TypeError):
+                            pass
+                        try:
+                            bbox_val = float(row.get('validation_bbox_ap', 0) or 0)
+                            if bbox_val > 0:
+                                bbox_aps.append(bbox_val)
+                        except (ValueError, TypeError):
+                            pass
+                    
+                    if segm_aps:
+                        metrics['best_val_segm_ap'] = max(segm_aps)
+                    if bbox_aps:
+                        metrics['best_val_bbox_ap'] = max(bbox_aps)
+                    
+                    # Get max iteration from all rows
+                    max_iter = 0
+                    for row in rows:
+                        try:
+                            iter_val = int(row.get('iteration', 0) or 0)
+                            max_iter = max(max_iter, iter_val)
+                        except (ValueError, TypeError):
+                            pass
+                    metrics['max_iter'] = max_iter
+                    
+                    return metrics
+        except Exception as e:
+            print(f"  [WARNING] Could not read live CSV for {run_name}: {e}")
+    
+    # Fallback: try to extract from validation_eval results
+    val_results = run_dir / "validation_eval" / "coco_instances_results.json"
+    if _path_exists_with_retry(val_results):
+        try:
+            results = _read_json_with_retry(val_results)
+            
+            # Extract AP from results (format varies)
+            if isinstance(results, list) and len(results) > 0:
+                # This is detection results, need to evaluate
+                pass  # Would need COCO evaluator to compute AP
+            elif isinstance(results, dict):
+                # Try to find AP values
+                if 'segm' in results and 'AP' in results['segm']:
+                    metrics['final_val_segm_ap'] = float(results['segm']['AP'])
+                if 'bbox' in results and 'AP' in results['bbox']:
+                    metrics['final_val_bbox_ap'] = float(results['bbox']['AP'])
+        except Exception as e:
+            print(f"  [WARNING] Could not read validation results for {run_name}: {e}")
+    
+    # If we got at least some metrics, return them
+    if metrics:
+        # Set defaults for missing values
+        metrics.setdefault('final_val_segm_ap', 0.0)
+        metrics.setdefault('final_val_bbox_ap', 0.0)
+        metrics.setdefault('best_val_segm_ap', metrics.get('final_val_segm_ap', 0.0))
+        metrics.setdefault('best_val_bbox_ap', metrics.get('final_val_bbox_ap', 0.0))
+        metrics.setdefault('best_val_iter', metrics.get('max_iter', 0))
+        metrics.setdefault('training_time_seconds', 0)
+        metrics.setdefault('training_time_minutes', 0)
+        metrics.setdefault('max_iter', SWEEP_MAX_ITER if SWEEP_MAX_ITER else 0)
+        return metrics
+    
+    return None
 
 
 # ============================================================================
@@ -987,11 +1434,34 @@ def main():
     print("HYPERPARAMETER SWEEP FOR DETECTRON2")
     print("="*80)
     
-    # Create timestamped sweep folder (always create a new sweep per run)
-    base_output_dir = Path(OUTPUT_BASE_DIR)
-    sweep_timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
-    sweep_folder = base_output_dir / f"sweep_{sweep_timestamp}"
-    sweep_folder.mkdir(parents=True, exist_ok=True)
+    # Show quick test mode status
+    if QUICK_TEST_MODE:
+        print("\n" + "="*80)
+        print("⚠️  QUICK TEST MODE ENABLED ⚠️")
+        print("="*80)
+        print(f"  Iterations per run: {SWEEP_MAX_ITER} (vs 6000 in full mode)")
+        print(f"  Validation interval: {VALIDATION_INTERVAL} (vs 250 in full mode)")
+        print(f"  Validation images: ~{int(20000 * VALIDATION_SPLIT)} (vs ~200 in full mode)")
+        print(f"  Total combinations: {len(LEARNING_RATES) * len(ANCHOR_SIZES)}")
+        print(f"  Estimated time: ~{len(LEARNING_RATES) * len(ANCHOR_SIZES) * 15} minutes total")
+        print("="*80 + "\n")
+    
+    # Check if resuming from existing sweep folder
+    if RESUME_SWEEP_FOLDER is not None:
+        sweep_folder = Path(RESUME_SWEEP_FOLDER)
+        if not sweep_folder.exists():
+            print(f"ERROR: Resume folder does not exist: {sweep_folder}")
+            print("Please set RESUME_SWEEP_FOLDER = None to create a new sweep, or fix the path.")
+            return
+        print(f"[RESUME] Continuing from existing sweep folder: {sweep_folder}")
+        print(f"[RESUME] Will skip already completed runs and continue with remaining combinations")
+    else:
+        # Create timestamped sweep folder (new sweep)
+        base_output_dir = Path(OUTPUT_BASE_DIR)
+        sweep_timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+        sweep_folder = base_output_dir / f"sweep_{sweep_timestamp}"
+        sweep_folder.mkdir(parents=True, exist_ok=True)
+        print(f"[NEW] Creating new sweep folder: {sweep_folder}")
     
     # Update global OUTPUT_BASE_DIR and CSV paths to point to this sweep folder
     OUTPUT_BASE_DIR = str(sweep_folder)
@@ -1001,7 +1471,11 @@ def main():
     print(f"Start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Sweep folder: {sweep_folder}")
     print(f"Dataset: {ANNOTATIONS_PATH}")
-    print(f"Training fraction: {SWEEP_EPOCH_FRACTION*100:.0f}% of full training")
+    if SWEEP_MAX_ITER is not None:
+        print(f"Iterations per run: {SWEEP_MAX_ITER} (fixed)")
+        print(f"Training images per run: {SWEEP_MAX_ITER * BATCH_SIZE} (exactly one epoch)")
+    else:
+        print(f"Training fraction: {SWEEP_EPOCH_FRACTION*100:.0f}% of full training")
     print("="*80 + "\n")
     
     # Setup dataset (only once)
@@ -1011,6 +1485,60 @@ def main():
     # Check for existing runs (for resume capability)
     existing_runs = check_existing_runs()
     print(f"Found {len(existing_runs)} existing runs in CSV (will skip if duplicate)\n")
+    
+    # Also check for completed runs in folders that might not be in CSV (e.g., crashed before CSV write)
+    print(f"[RESUME] Scanning sweep folder for completed runs...")
+    completed_runs_in_folders = find_completed_runs_in_folders(sweep_folder)
+    
+    if completed_runs_in_folders:
+        print(f"[RESUME] Found {len(completed_runs_in_folders)} completed runs in folders")
+        
+        # Add completed runs to CSV if not already there
+        for completed_run in completed_runs_in_folders:
+            lr = completed_run['learning_rate']
+            anchors = completed_run['anchor_sizes']
+            
+            # Check if already in CSV
+            already_in_csv = False
+            for existing in existing_runs:
+                if (abs(existing['learning_rate'] - lr) < 1e-6 and 
+                    existing['anchor_sizes'] == anchors):
+                    already_in_csv = True
+                    break
+            
+            if not already_in_csv:
+                print(f"  [RECOVER] Recovering metrics for: LR={lr}, Anchors={anchors}")
+                metrics = completed_run['metrics']
+                
+                # Create results dict in same format as run_single_sweep
+                results = {
+                    'run_name': completed_run['run_name'],
+                    'learning_rate': lr,
+                    'anchor_sizes': str(anchors),
+                    'final_val_segm_ap': metrics.get('final_val_segm_ap', 0.0),
+                    'final_val_bbox_ap': metrics.get('final_val_bbox_ap', 0.0),
+                    'best_val_segm_ap': metrics.get('best_val_segm_ap', metrics.get('final_val_segm_ap', 0.0)),
+                    'best_val_bbox_ap': metrics.get('best_val_bbox_ap', metrics.get('final_val_bbox_ap', 0.0)),
+                    'best_val_iter': metrics.get('best_val_iter', metrics.get('max_iter', 0)),
+                    'training_time_seconds': metrics.get('training_time_seconds', 0),
+                    'training_time_minutes': metrics.get('training_time_minutes', 0),
+                    'max_iter': metrics.get('max_iter', SWEEP_MAX_ITER if SWEEP_MAX_ITER else 0),
+                    'output_dir': str(completed_run['run_dir'])
+                }
+                
+                # Add to CSV
+                save_run_to_csv(results)
+                print(f"    [OK] Added to CSV: segm/AP={results['final_val_segm_ap']:.4f}, bbox/AP={results['final_val_bbox_ap']:.4f}")
+                
+                # Add to existing_runs so it gets skipped
+                existing_runs.append({
+                    'learning_rate': lr,
+                    'anchor_sizes': anchors
+                })
+            else:
+                print(f"  [SKIP] Already in CSV: LR={lr}, Anchors={anchors}")
+        
+        print()  # Blank line
     
     # Generate all hyperparameter combinations
     all_combinations = []
