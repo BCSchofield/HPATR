@@ -132,7 +132,7 @@ SWEEP_TRAIN_FRACTION = 0.25  # Use 25% of training images (only used if SWEEP_MA
 # ============================================================================
 # QUICK TEST MODE (for debugging - set to True for fast testing)
 # ============================================================================
-QUICK_TEST_MODE = True  # Set to False for full sweep
+QUICK_TEST_MODE = False  # Set to False for full sweep
 
 # Fixed iteration count (set based on convergence test results)
 # If set to None, will calculate from epochs/fractions (old behavior)
@@ -161,7 +161,7 @@ else:
 OUTPUT_BASE_DIR = r"D:\Experiments\AI\Hyperparameters"
 # Resume from existing sweep folder (set to None to create a new sweep)
 # Example: RESUME_SWEEP_FOLDER = r"D:\Experiments\AI\Hyperparameters\sweep_2026_01_21_21_39_37"
-RESUME_SWEEP_FOLDER = None  # Set to None to create a new timestamped sweep folder
+RESUME_SWEEP_FOLDER = r"D:\Experiments\AI\Hyperparameters\sweep_2026_01_22_21_57_39"  # Resuming from existing sweep
 # CSV paths will be set dynamically in main() after creating timestamped sweep folder
 SWEEP_RESULTS_CSV = None
 SWEEP_SUMMARY_CSV = None
@@ -1240,11 +1240,22 @@ def check_existing_runs() -> List[Dict]:
     if SWEEP_RESULTS_CSV is not None and _path_exists_with_retry(SWEEP_RESULTS_CSV):
         with open(SWEEP_RESULTS_CSV, 'r') as f:
             reader = csv.DictReader(f)
-            for row in reader:
-                existing_runs.append({
-                    'learning_rate': float(row['learning_rate']),
-                    'anchor_sizes': ast.literal_eval(row['anchor_sizes'])  # Safe parsing for list
-                })
+            for row_num, row in enumerate(reader, start=2):  # Start at 2 (row 1 is header)
+                # Skip rows with empty or missing required fields
+                if not row.get('learning_rate') or not row.get('anchor_sizes'):
+                    print(f"  [SKIP] Row {row_num} in CSV has empty learning_rate or anchor_sizes, skipping")
+                    continue
+                
+                try:
+                    lr = float(row['learning_rate'])
+                    anchors = ast.literal_eval(row['anchor_sizes'])  # Safe parsing for list
+                    existing_runs.append({
+                        'learning_rate': lr,
+                        'anchor_sizes': anchors
+                    })
+                except (ValueError, SyntaxError) as e:
+                    print(f"  [SKIP] Row {row_num} in CSV has invalid data (learning_rate='{row.get('learning_rate')}', anchor_sizes='{row.get('anchor_sizes')}'): {e}")
+                    continue
     
     return existing_runs
 

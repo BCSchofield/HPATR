@@ -295,8 +295,8 @@ def save_summary_csv(run_stats, summaries, out_path: Path):
 
 
 def main():
-    # Directory containing the sweep results
-    input_dir = Path(r"d:\Experiments\AI\Hyperparameters\sweep_2026_01_21_21_39_37")
+    # Directory containing the sweep results (LR + Anchor sweep)
+    input_dir = Path(r"d:\Experiments\AI\Hyperparameters\LR_Anchor_Sweep_Final")
 
     # Timestamp for output files
     timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")

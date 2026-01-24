@@ -228,6 +228,19 @@ def extract_run_metrics(run_folder: Path) -> Optional[Dict]:
         if best_bbox_ap > 0:
             print(f"    [INFO] Using bbox/AP from final validation results: {best_bbox_ap:.4f}")
     
+    # If we have final APs from validation_eval but no validation history (e.g. LivePlotTracker
+    # bug prevented CSV/metrics.json from being written), add a single point so the run appears
+    # on the validation plots alongside the other runs.
+    val_iters = list(json_metrics['val_iters'])
+    val_segm_aps = list(json_metrics['val_segm_aps'])
+    val_bbox_aps = list(json_metrics['val_bbox_aps'])
+    if len(val_iters) == 0 and (best_segm_ap > 0 or best_bbox_ap > 0):
+        last_train_iter = json_metrics['train_iters'][-1] if json_metrics['train_iters'] else 6000
+        val_iters = [last_train_iter]
+        val_segm_aps = [best_segm_ap]
+        val_bbox_aps = [best_bbox_ap]
+        print(f"    [INFO] No validation history; using final eval as single point (iter {last_train_iter})")
+
     # Create label for plotting
     anchors_display = ",".join(map(str, anchor_sizes))
     label = f"lr{learning_rate:.4f}_anchors[{anchors_display}]"
@@ -241,22 +254,51 @@ def extract_run_metrics(run_folder: Path) -> Optional[Dict]:
         'final_val_bbox_ap': final_bbox_ap,
         'best_val_segm_ap': best_segm_ap,
         'best_val_bbox_ap': best_bbox_ap,
-        'best_val_iter': max(best_segm_iter, best_bbox_iter) if json_metrics['val_iters'] else 0,
-        'num_validations': len(json_metrics['val_iters']),
+        'best_val_iter': max(best_segm_iter, best_bbox_iter) if val_iters else 0,
+        'num_validations': len(val_iters),
         # Full metrics for plotting
         'train_iters': json_metrics['train_iters'],
         'train_loss': json_metrics['train_loss'],
         'train_mask_acc': json_metrics['train_mask_acc'],
-        'val_iters': json_metrics['val_iters'],
-        'val_segm_aps': json_metrics['val_segm_aps'],
-        'val_bbox_aps': json_metrics['val_bbox_aps']
+        'val_iters': val_iters,
+        'val_segm_aps': val_segm_aps,
+        'val_bbox_aps': val_bbox_aps
     }
 
 
-def plot_runs(run_stats: Dict[str, Dict], out_path: Path):
+def load_sweep_results_for_bars(sweep_folder: Path) -> tuple:
     """
-    Create comparison plots similar to analyze_three_runs_metrics.py
-    run_stats: dict[label] -> metrics dict with train/val data
+    Load final_val_segm_ap and final_val_bbox_ap from sweep_results.csv.
+    Returns (run_numbers, final_segm_aps, final_bbox_aps) or ([], [], []) if not found.
+    """
+    csv_path = sweep_folder / "sweep_results.csv"
+    if not csv_path.exists():
+        return [], [], []
+    run_numbers = []
+    final_segm_aps = []
+    final_bbox_aps = []
+    try:
+        with csv_path.open("r") as f:
+            reader = csv.DictReader(f)
+            for i, row in enumerate(reader):
+                try:
+                    segm = float(row.get("final_val_segm_ap") or 0)
+                    bbox = float(row.get("final_val_bbox_ap") or 0)
+                except (ValueError, TypeError):
+                    segm, bbox = 0.0, 0.0
+                run_numbers.append(i + 1)
+                final_segm_aps.append(segm)
+                final_bbox_aps.append(bbox)
+    except Exception as e:
+        print(f"  [WARNING] Could not read sweep_results.csv: {e}")
+        return [], [], []
+    return run_numbers, final_segm_aps, final_bbox_aps
+
+
+def plot_runs(run_stats: Dict[str, Dict], out_path: Path, sweep_folder: Optional[Path] = None):
+    """
+    Create comparison plots: top row = training curves; bottom row = bar charts of
+    final segm/AP and final bbox/AP by run number (from sweep_results.csv).
     """
     out_path.parent.mkdir(parents=True, exist_ok=True)
     
@@ -271,12 +313,13 @@ def plot_runs(run_stats: Dict[str, Dict], out_path: Path):
     else:
         colors = plt.cm.tab20(np.linspace(0, 1, num_runs))
     
-    fig, axes = plt.subplots(2, 2, figsize=(16, 12), sharex="col")
+    # Don't share x between top (iteration) and bottom (run number)
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
     
     ax_loss, ax_mask_acc = axes[0]
     ax_val_segm, ax_val_bbox = axes[1]
     
-    # Training curves
+    # Training curves (top row)
     for (label, stats), color in zip(run_stats.items(), colors):
         if stats.get('train_iters') and len(stats['train_iters']) > 0:
             ax_loss.plot(
@@ -308,54 +351,43 @@ def plot_runs(run_stats: Dict[str, Dict], out_path: Path):
     ax_mask_acc.set_xlim(left=0)
     ax_mask_acc.grid(True, linestyle="--", alpha=0.4)
     
-    # Validation AP curves (discrete points)
-    for (label, stats), color in zip(run_stats.items(), colors):
-        if stats.get('val_iters') and len(stats['val_iters']) > 0:
-            ax_val_segm.plot(
-                stats['val_iters'],
-                stats['val_segm_aps'],
-                marker="o",
-                linestyle="-",
-                label=label,
-                color=color,
-                alpha=0.8,
-                markersize=6,
-            )
-            ax_val_bbox.plot(
-                stats['val_iters'],
-                stats['val_bbox_aps'],
-                marker="o",
-                linestyle="-",
-                label=label,
-                color=color,
-                alpha=0.8,
-                markersize=6,
-            )
+    # Bottom row: bar charts from sweep_results.csv (final segm/AP and final bbox/AP by run number)
+    run_numbers, final_segm_aps, final_bbox_aps = [], [], []
+    if sweep_folder:
+        run_numbers, final_segm_aps, final_bbox_aps = load_sweep_results_for_bars(sweep_folder)
     
-    ax_val_segm.set_title("Validation segm/AP vs iteration", fontsize=12)
-    ax_val_segm.set_xlabel("Iteration")
-    ax_val_segm.set_ylabel("segm/AP")
-    ax_val_segm.set_xlim(left=0)
-    ax_val_segm.grid(True, linestyle="--", alpha=0.4)
+    if run_numbers and final_segm_aps is not None and final_bbox_aps is not None:
+        n_bars = len(run_numbers)
+        x = np.arange(1, n_bars + 1)
+        width = 0.6
+        bar_colors = plt.cm.tab10(np.linspace(0, 1, max(n_bars, 1)))[:n_bars] if n_bars <= 10 else plt.cm.tab20(np.linspace(0, 1, max(n_bars, 1)))[:n_bars]
+        ax_val_segm.bar(x, final_segm_aps, width=width, color=bar_colors, edgecolor="gray", linewidth=0.5)
+        ax_val_bbox.bar(x, final_bbox_aps, width=width, color=bar_colors, edgecolor="gray", linewidth=0.5)
+        ax_val_segm.set_ylim(60, 90)
+        ax_val_bbox.set_ylim(60, 90)
+    else:
+        ax_val_segm.text(0.5, 0.5, "sweep_results.csv\nnot found or empty", ha="center", va="center", transform=ax_val_segm.transAxes, fontsize=12)
+        ax_val_bbox.text(0.5, 0.5, "sweep_results.csv\nnot found or empty", ha="center", va="center", transform=ax_val_bbox.transAxes, fontsize=12)
+        ax_val_segm.set_ylim(60, 90)
+        ax_val_bbox.set_ylim(60, 90)
     
-    ax_val_bbox.set_title("Validation bbox/AP vs iteration", fontsize=12)
-    ax_val_bbox.set_xlabel("Iteration")
-    ax_val_bbox.set_ylabel("bbox/AP")
-    ax_val_bbox.set_xlim(left=0)
-    ax_val_bbox.grid(True, linestyle="--", alpha=0.4)
+    ax_val_segm.set_title("Final segm/AP by run (sweep_results.csv)", fontsize=12)
+    ax_val_segm.set_xlabel("Run number")
+    ax_val_segm.set_ylabel("Final segm/AP")
+    ax_val_segm.grid(True, axis="y", linestyle="--", alpha=0.4)
     
-    # Place legends - use smaller font and outside if many runs
+    ax_val_bbox.set_title("Final bbox/AP by run (sweep_results.csv)", fontsize=12)
+    ax_val_bbox.set_xlabel("Run number")
+    ax_val_bbox.set_ylabel("Final bbox/AP")
+    ax_val_bbox.grid(True, axis="y", linestyle="--", alpha=0.4)
+    
+    # Legends for top row only
     if num_runs <= 8:
         ax_loss.legend(loc="upper right", fontsize=8)
         ax_mask_acc.legend(loc="lower right", fontsize=8)
-        ax_val_segm.legend(loc="upper left", fontsize=8)
-        ax_val_bbox.legend(loc="upper left", fontsize=8)
     else:
-        # For many runs, put legend outside or use compact format
         ax_loss.legend(loc="upper right", fontsize=6, ncol=1)
         ax_mask_acc.legend(loc="lower right", fontsize=6, ncol=1)
-        ax_val_segm.legend(loc="upper left", fontsize=6, ncol=1)
-        ax_val_bbox.legend(loc="upper left", fontsize=6, ncol=1)
     
     plt.tight_layout()
     fig.suptitle(f"Hyperparameter Sweep Comparison ({num_runs} runs)", fontsize=14, y=0.995)
@@ -368,7 +400,7 @@ def plot_runs(run_stats: Dict[str, Dict], out_path: Path):
 
 def main():
     """Extract metrics from all runs in a sweep folder"""
-    sweep_folder = Path(r"D:\Experiments\AI\Hyperparameters\sweep_2026_01_21_21_39_37")
+    sweep_folder = Path(r"D:\Experiments\AI\Hyperparameters\LR_Anchor_Sweep_Final")
     
     if not sweep_folder.exists():
         print(f"ERROR: Sweep folder not found: {sweep_folder}")
@@ -428,7 +460,7 @@ def main():
     timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
     plot_path = sweep_folder / f"extracted_metrics_comparison_{timestamp}.png"
     print("\nCreating comparison plot...")
-    plot_runs(run_stats, plot_path)
+    plot_runs(run_stats, plot_path, sweep_folder=sweep_folder)
     
     # Save to CSV (use append mode if file exists and is locked)
     output_csv = sweep_folder / "extracted_metrics.csv"
