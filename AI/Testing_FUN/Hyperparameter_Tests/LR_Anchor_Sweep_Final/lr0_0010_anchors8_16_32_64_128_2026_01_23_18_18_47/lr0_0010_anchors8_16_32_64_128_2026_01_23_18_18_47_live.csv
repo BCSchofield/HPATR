@@ -1,0 +1,1 @@
+iteration,training_loss,validation_segm_ap,validation_bbox_ap,best_segm_ap,best_bbox_ap,best_ap_iter,timestamp
