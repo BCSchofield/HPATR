@@ -25,7 +25,7 @@ import matplotlib.pyplot as plt
 
 # Model path (update after training)
 # Use the final model from your latest training run
-MODEL_PATH = r"D:\Experiments\AI\training_2025_12_25_15_43_57\model_final.pth"
+MODEL_PATH = r"D:\Experiments\AI\Claudia\Claudia.pth"
 
 # Detection threshold (0.0 to 1.0)
 # Lower = more detections (but more false positives)
@@ -33,7 +33,8 @@ MODEL_PATH = r"D:\Experiments\AI\training_2025_12_25_15_43_57\model_final.pth"
 SCORE_THRESHOLD = 0.5
 
 # Output directories
-OUTPUT_DIR = Path("./inference_results")
+# Output to the same folder as the model file
+OUTPUT_DIR = Path(MODEL_PATH).parent
 VISUALIZATIONS_DIR = OUTPUT_DIR / "visualizations"
 MASKS_DIR = OUTPUT_DIR / "masks"
 DATA_DIR = OUTPUT_DIR / "data"
@@ -42,8 +43,43 @@ DATA_DIR = OUTPUT_DIR / "data"
 # SETUP
 # ============================================================================
 
-def setup_predictor(model_path: str, score_threshold: float = 0.5, nms_threshold: float = 0.3):
-    """Load trained model and create predictor"""
+def detect_anchor_config(model_path: str) -> List[List[int]]:
+    """
+    Detect which anchor configuration a model was trained with.
+    This is critical because anchor sizes affect the RPN head architecture.
+    
+    Returns:
+        Anchor sizes configuration (list of lists)
+    """
+    model_path_lower = model_path.lower()
+    
+    # Check if it's Dennis or Early_Dennis (uses [8, 16, 32, 64] anchors)
+    if "dennis" in model_path_lower or "early_dennis" in model_path_lower:
+        print(f"[INFO] Detected Dennis/Early_Dennis model - using anchors [8, 16, 32, 64]")
+        return [[8, 16, 32, 64]]
+    
+    # Check if it's Claudia (uses default COCO anchors)
+    if "claudia" in model_path_lower:
+        print(f"[INFO] Detected Claudia model - using default COCO anchors")
+        return None  # None means use default
+    
+    # Default: assume it uses [8, 16, 32, 64] if it's in the current training setup
+    # You can add more detection logic here based on model folder names, etc.
+    print(f"[INFO] Model type not detected - assuming default COCO anchors")
+    print(f"[WARNING] If model fails to load, it may need [8, 16, 32, 64] anchors")
+    return None
+
+def setup_predictor(model_path: str, score_threshold: float = 0.5, nms_threshold: float = 0.3, anchor_sizes: List[List[int]] = None):
+    """
+    Load trained model and create predictor.
+    
+    Args:
+        model_path: Path to model checkpoint
+        score_threshold: Detection score threshold
+        nms_threshold: NMS threshold
+        anchor_sizes: Anchor sizes configuration. If None, uses default COCO anchors.
+                      If provided (e.g., [[8, 16, 32, 64]]), uses custom anchors.
+    """
     print(f"\n{'='*60}")
     print("Loading Model")
     print(f"{'='*60}")
@@ -59,7 +95,20 @@ def setup_predictor(model_path: str, score_threshold: float = 0.5, nms_threshold
         model_zoo.get_config_file("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml")
     )
     
-    # Set model weights
+    # CRITICAL: Set anchor sizes BEFORE loading model weights!
+    # Anchor sizes determine the RPN head architecture, so they must match training
+    if anchor_sizes is None:
+        # Use default COCO anchors (different size per FPN level)
+        # Default is typically [[32], [64], [128], [256], [512]] for 5 FPN levels
+        print(f"[OK] Using default COCO anchor configuration")
+    else:
+        # Use custom anchor sizes (same sizes for all FPN levels)
+        cfg.MODEL.ANCHOR_GENERATOR.SIZES = anchor_sizes
+        print(f"[OK] Using custom anchor sizes: {anchor_sizes}")
+        print(f"[OK] This means all 5 FPN levels use the same {len(anchor_sizes[0])} anchor sizes")
+        print(f"[OK] With 3 aspect ratios, that's {len(anchor_sizes[0]) * 3} anchors per spatial location")
+    
+    # Set model weights (must be AFTER setting anchor sizes!)
     cfg.MODEL.WEIGHTS = model_path
     cfg.MODEL.ROI_HEADS.NUM_CLASSES = 2  # droplet and ligament
     cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = score_threshold
@@ -174,7 +223,8 @@ def run_inference(
     pixels_per_mm: float = None,
     save_visualization: bool = True,
     save_masks: bool = True,
-    save_data: bool = True
+    save_data: bool = True,
+    output_prefix: str = None
 ) -> Dict:
     """
     Run inference on a single image.
@@ -218,7 +268,8 @@ def run_inference(
     
     # Save visualization
     if save_visualization:
-        vis_path = output_dir / "visualizations" / f"{Path(image_path).stem}_result.png"
+        prefix = f"{output_prefix}_" if output_prefix else ""
+        vis_path = output_dir / "visualizations" / f"{prefix}{Path(image_path).stem}_result.png"
         vis_path.parent.mkdir(parents=True, exist_ok=True)
         
         v = Visualizer(
@@ -233,7 +284,8 @@ def run_inference(
     
     # Save individual masks
     if save_masks:
-        masks_subdir = output_dir / "masks" / Path(image_path).stem
+        prefix = f"{output_prefix}_" if output_prefix else ""
+        masks_subdir = output_dir / "masks" / f"{prefix}{Path(image_path).stem}"
         masks_subdir.mkdir(parents=True, exist_ok=True)
         
         for i, detection in enumerate(detections):
@@ -246,7 +298,8 @@ def run_inference(
     
     # Save numerical data
     if save_data:
-        data_path = output_dir / "data" / f"{Path(image_path).stem}_results.json"
+        prefix = f"{output_prefix}_" if output_prefix else ""
+        data_path = output_dir / "data" / f"{prefix}{Path(image_path).stem}_results.json"
         data_path.parent.mkdir(parents=True, exist_ok=True)
         
         results = {
@@ -274,9 +327,16 @@ def process_images(
     output_dir: Path,
     score_threshold: float = 0.5,
     nms_threshold: float = 0.3,
-    pixels_per_mm: float = None
+    pixels_per_mm: float = None,
+    anchor_sizes: List[List[int]] = None,
+    output_prefix: str = None
 ):
-    """Process multiple images"""
+    """
+    Process multiple images
+    
+    Args:
+        anchor_sizes: Anchor configuration. If None, will auto-detect from model path.
+    """
     
     # Create output directories
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -284,8 +344,12 @@ def process_images(
     (output_dir / "masks").mkdir(exist_ok=True)
     (output_dir / "data").mkdir(exist_ok=True)
     
+    # Auto-detect anchor configuration if not provided
+    if anchor_sizes is None:
+        anchor_sizes = detect_anchor_config(model_path)
+    
     # Setup predictor
-    predictor, cfg = setup_predictor(model_path, score_threshold, nms_threshold)
+    predictor, cfg = setup_predictor(model_path, score_threshold, nms_threshold, anchor_sizes)
     
     # Process each image
     all_results = []
@@ -295,14 +359,16 @@ def process_images(
                 predictor,
                 image_path,
                 output_dir,
-                pixels_per_mm=pixels_per_mm
+                pixels_per_mm=pixels_per_mm,
+                output_prefix=output_prefix
             )
             all_results.append(result)
         except Exception as e:
             print(f"  ERROR processing {image_path}: {e}")
     
     # Save summary
-    summary_path = output_dir / "summary.json"
+    prefix = f"{output_prefix}_" if output_prefix else ""
+    summary_path = output_dir / f"{prefix}summary.json"
     summary = {
         'timestamp': datetime.now().isoformat(),
         'model_path': model_path,
@@ -345,8 +411,25 @@ def main():
                        help="NMS threshold for removing overlapping detections (0.0-1.0, lower=more aggressive)")
     parser.add_argument("--pixels-per-mm", type=float, default=None,
                        help="Calibration: pixels per millimeter (for size calculation)")
+    parser.add_argument("--anchor-sizes", type=str, default=None,
+                       help="Anchor sizes (e.g., '8,16,32,64' for Dennis, or 'default' for COCO). Auto-detected if not specified.")
     
     args = parser.parse_args()
+    
+    # Parse anchor sizes if provided
+    anchor_sizes = None
+    if args.anchor_sizes:
+        if args.anchor_sizes.lower() == "default":
+            anchor_sizes = None  # Use default
+        else:
+            # Parse comma-separated values like "8,16,32,64"
+            try:
+                sizes = [int(x.strip()) for x in args.anchor_sizes.split(",")]
+                anchor_sizes = [sizes]  # Wrap in list for FPN format
+            except ValueError:
+                print(f"ERROR: Invalid anchor sizes format: {args.anchor_sizes}")
+                print("Expected format: '8,16,32,64' or 'default'")
+                return
     
     # Collect image paths and determine input folder name
     image_paths = []
@@ -398,9 +481,47 @@ def main():
         output_dir,
         args.threshold,
         args.nms_threshold,
-        args.pixels_per_mm
+        args.pixels_per_mm,
+        anchor_sizes
     )
 
 if __name__ == "__main__":
-    main()
+    # Quick test mode: use specific model and image
+    import sys
+    
+    # If no arguments provided, use quick test defaults
+    if len(sys.argv) == 1:
+        print("Running quick test with Dennis model...")
+        test_image = r"D:\Experiments\AI\Dennis\input.jpg"
+        test_model = r"D:\Experiments\AI\Dennis\Dennis.pth"
+        test_output = Path(test_model).parent
+        
+        # Verify files exist
+        if not Path(test_image).exists():
+            print(f"ERROR: Image not found: {test_image}")
+            sys.exit(1)
+        if not Path(test_model).exists():
+            print(f"ERROR: Model not found: {test_model}")
+            sys.exit(1)
+        
+        print(f"Model: {test_model}")
+        print(f"Image: {test_image}")
+        print(f"Output: {test_output}")
+        
+        # Auto-detect anchor configuration for the model
+        anchor_config = detect_anchor_config(test_model)
+        
+        # Process the single image with Dennis prefix
+        process_images(
+            [test_image],
+            test_model,
+            test_output,
+            score_threshold=SCORE_THRESHOLD,
+            nms_threshold=0.3,
+            pixels_per_mm=None,
+            anchor_sizes=anchor_config,
+            output_prefix="Dennis"
+        )
+    else:
+        main()
 

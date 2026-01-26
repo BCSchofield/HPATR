@@ -12,6 +12,7 @@ Usage:
 import argparse
 import json
 import os
+import csv
 from pathlib import Path
 from typing import Dict, List, Tuple
 from datetime import datetime
@@ -26,6 +27,17 @@ from detectron2.data import MetadataCatalog
 from detectron2.utils.visualizer import Visualizer, ColorMode
 from detectron2.structures import BoxMode
 import torch
+
+# ============================================================================
+# CONFIGURATION
+# ============================================================================
+
+# Score threshold for predictions (change this to easily adjust)
+SCORE_THRESHOLD = 0.1
+
+# CSV file path for appending evaluation results (all runs)
+# Will be set dynamically based on validation base directory
+EVALUATION_CSV_FILENAME = "evaluation_results.csv"
 
 
 def load_ground_truth(annotations_path: str) -> Dict:
@@ -239,6 +251,80 @@ def get_validation_base_dir() -> Path:
     
     # If neither exists, create Windows path (will work if D: drive exists)
     return windows_path
+
+
+def append_evaluation_to_csv(
+    csv_path: Path,
+    model_name: str,
+    model_path: str,
+    score_threshold: float,
+    summary_data: Dict,
+    timestamp: str = None
+) -> None:
+    """
+    Append evaluation results to CSV file (creates file with headers if it doesn't exist).
+    
+    Args:
+        csv_path: Path to CSV file
+        model_name: Name of the model
+        model_path: Path to model file
+        score_threshold: Score threshold used
+        summary_data: Dictionary with summary metrics
+        timestamp: Timestamp string (defaults to current time)
+    """
+    if timestamp is None:
+        timestamp = datetime.now().isoformat()
+    
+    # Ensure parent directory exists
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Check if file exists to determine if we need headers
+    file_exists = csv_path.exists()
+    
+    # Prepare row data
+    row = {
+        'timestamp': timestamp,
+        'model_name': model_name,
+        'model_path': str(model_path),
+        'score_threshold': float(score_threshold),
+        'num_images': int(summary_data.get('num_images', 0)),
+        'avg_precision': float(summary_data.get('avg_precision', 0.0)),
+        'avg_recall': float(summary_data.get('avg_recall', 0.0)),
+        'avg_f1': float(summary_data.get('avg_f1', 0.0)),
+        'avg_iou': float(summary_data.get('avg_iou', 0.0)),
+        'overall_precision': float(summary_data.get('overall_precision', 0.0)),
+        'overall_recall': float(summary_data.get('overall_recall', 0.0)),
+        'total_tp': int(summary_data.get('total_tp', 0)),
+        'total_fp': int(summary_data.get('total_fp', 0)),
+        'total_fn': int(summary_data.get('total_fn', 0)),
+        'avg_pred_droplets': float(summary_data.get('avg_pred_droplets', 0.0)),
+        'avg_pred_ligaments': float(summary_data.get('avg_pred_ligaments', 0.0)),
+        'avg_gt_droplets': float(summary_data.get('avg_gt_droplets', 0.0)),
+        'avg_gt_ligaments': float(summary_data.get('avg_gt_ligaments', 0.0)),
+        'avg_area_ratio': float(summary_data.get('avg_area_ratio', 0.0))
+    }
+    
+    # Define column order
+    fieldnames = [
+        'timestamp', 'model_name', 'model_path', 'score_threshold', 'num_images',
+        'avg_precision', 'avg_recall', 'avg_f1', 'avg_iou',
+        'overall_precision', 'overall_recall',
+        'total_tp', 'total_fp', 'total_fn',
+        'avg_pred_droplets', 'avg_pred_ligaments',
+        'avg_gt_droplets', 'avg_gt_ligaments',
+        'avg_area_ratio'
+    ]
+    
+    # Append to CSV
+    try:
+        with open(csv_path, 'a', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow(row)
+        print(f"  Results appended to CSV: {csv_path}")
+    except Exception as e:
+        print(f"  Warning: Failed to append to CSV: {e}")
 
 
 def evaluate_model(
@@ -615,8 +701,22 @@ def evaluate_model(
         per_image_df.to_excel(writer, sheet_name='Per Image Results', index=False)
         instance_df.to_excel(writer, sheet_name='Instance Details', index=False)
     
-    print(f"Evaluation complete!")
+    # Append to CSV file (for tracking multiple runs)
+    validation_base = get_validation_base_dir()
+    csv_path = validation_base / EVALUATION_CSV_FILENAME
+    print(f"\nAppending results to CSV...")
+    append_evaluation_to_csv(
+        csv_path=csv_path,
+        model_name=model_name,
+        model_path=weights_path,
+        score_threshold=score_threshold,
+        summary_data=summary_data,
+        timestamp=datetime.now().isoformat()
+    )
+    
+    print(f"\nEvaluation complete!")
     print(f"  Excel file saved to: {excel_path}")
+    print(f"  CSV results appended to: {csv_path}")
     if save_visualizations:
         print(f"  Visualizations and JSON saved to: {test_output_dir}")
     print(f"\nSummary for {model_name} (score threshold: {score_threshold}):")
@@ -727,7 +827,10 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Auto-detect all paths (recommended)
+  # Use default Dennis model (no arguments needed)
+  python AI/evaluate_model.py
+  
+  # Auto-detect all paths with a different model
   python AI/evaluate_model.py --model "D:\\Experiments\\AI\\training_2025_12_25_15_43_57\\model_final.pth"
   
   # Specify all paths manually
@@ -736,7 +839,7 @@ Examples:
     )
     
     # Auto-detect mode
-    parser.add_argument("--model", help="Path to model_final.pth (auto-detects other paths)")
+    parser.add_argument("--model", default=r"D:\Experiments\AI\Dennis\Early_Dennis.pth", help="Path to model_final.pth (auto-detects other paths, default: Early_Dennis model)")
     parser.add_argument("--validation-dir", help="Path to Validation_100 directory (auto-detected if not specified)")
     
     # Manual mode
@@ -747,8 +850,8 @@ Examples:
     
     # Common options
     parser.add_argument("--output", default="evaluation_results.xlsx", help="Path to output Excel file (default: evaluation_results.xlsx)")
-    parser.add_argument("--model-name", default="Model", help="Name of the model")
-    parser.add_argument("--score-threshold", type=float, default=0.5, help="Minimum confidence score")
+    parser.add_argument("--model-name", default="Early_Dennis", help="Name of the model")
+    parser.add_argument("--score-threshold", type=float, default=SCORE_THRESHOLD, help=f"Minimum confidence score (default: {SCORE_THRESHOLD} from config)")
     
     args = parser.parse_args()
     

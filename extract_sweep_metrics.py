@@ -143,7 +143,7 @@ def extract_run_metrics(run_folder: Path) -> Optional[Dict]:
     if not run_folder.is_dir():
         return None
     
-    # Try to parse run name for learning rate and anchors
+    # Try to parse run name for learning rate, anchors, and optional warmup/decay
     run_name = run_folder.name
     match = re.match(r'^lr0_(\d{4})_anchors(.+?)_\d{4}_\d{2}_\d{2}_\d{2}_\d{2}_\d{2}$', run_name)
     if not match:
@@ -157,6 +157,12 @@ def extract_run_metrics(run_folder: Path) -> Optional[Dict]:
     
     anchors_str = match.group(2)
     anchor_sizes = [int(x) for x in anchors_str.split("_") if x.isdigit()]
+    
+    # Optional: extract warmup and decay for label (e.g. warmup500_decaycosine)
+    warmup_decay_suffix = ""
+    wd = re.search(r"_warmup(\d+)_decay(\w+)", run_name)
+    if wd:
+        warmup_decay_suffix = f"_w{wd.group(1)}_d{wd.group(2)}"
     
     # Load metrics from different sources
     metrics_json = run_folder / "metrics.json"
@@ -241,9 +247,9 @@ def extract_run_metrics(run_folder: Path) -> Optional[Dict]:
         val_bbox_aps = [best_bbox_ap]
         print(f"    [INFO] No validation history; using final eval as single point (iter {last_train_iter})")
 
-    # Create label for plotting
+    # Create label for plotting (include warmup/decay when present)
     anchors_display = ",".join(map(str, anchor_sizes))
-    label = f"lr{learning_rate:.4f}_anchors[{anchors_display}]"
+    label = f"lr{learning_rate:.4f}_a[{anchors_display}]{warmup_decay_suffix}"
     
     return {
         'run_name': run_name,
@@ -395,12 +401,12 @@ def plot_runs(run_stats: Dict[str, Dict], out_path: Path, sweep_folder: Optional
     
     fig.savefig(out_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
-    print(f"  ✓ Comparison plot saved: {out_path}")
+    print(f"  [OK] Comparison plot saved: {out_path}")
 
 
 def main():
     """Extract metrics from all runs in a sweep folder"""
-    sweep_folder = Path(r"D:\Experiments\AI\Hyperparameters\LR_Anchor_Sweep_Final")
+    sweep_folder = Path(r"D:\Experiments\AI\Hyperparameters\Warmup_Decay_Final")
     
     if not sweep_folder.exists():
         print(f"ERROR: Sweep folder not found: {sweep_folder}")
@@ -426,17 +432,17 @@ def main():
         metrics = extract_run_metrics(run_folder)
         if metrics:
             all_metrics.append(metrics)
-            print(f"  ✓ Final segm/AP: {metrics['final_val_segm_ap']:.4f}")
-            print(f"  ✓ Final bbox/AP: {metrics['final_val_bbox_ap']:.4f}")
-            print(f"  ✓ Best segm/AP: {metrics['best_val_segm_ap']:.4f}")
-            print(f"  ✓ Best bbox/AP: {metrics['best_val_bbox_ap']:.4f}")
-            print(f"  ✓ Validations: {metrics['num_validations']}")
+            print(f"  [OK] Final segm/AP: {metrics['final_val_segm_ap']:.4f}")
+            print(f"  [OK] Final bbox/AP: {metrics['final_val_bbox_ap']:.4f}")
+            print(f"  [OK] Best segm/AP: {metrics['best_val_segm_ap']:.4f}")
+            print(f"  [OK] Best bbox/AP: {metrics['best_val_bbox_ap']:.4f}")
+            print(f"  [OK] Validations: {metrics['num_validations']}")
             if metrics['num_validations'] > 0:
-                print(f"  ✓ Val iterations: {metrics['val_iters'][:5]}..." if len(metrics['val_iters']) > 5 else f"  ✓ Val iterations: {metrics['val_iters']}")
-                print(f"  ✓ Val segm/APs: {[f'{x:.2f}' for x in metrics['val_segm_aps'][:5]]}..." if len(metrics['val_segm_aps']) > 5 else f"  ✓ Val segm/APs: {[f'{x:.2f}' for x in metrics['val_segm_aps']]}")
-                print(f"  ✓ Val bbox/APs: {[f'{x:.2f}' for x in metrics['val_bbox_aps'][:5]]}..." if len(metrics['val_bbox_aps']) > 5 else f"  ✓ Val bbox/APs: {[f'{x:.2f}' for x in metrics['val_bbox_aps']]}")
+                print(f"  [OK] Val iterations: {metrics['val_iters'][:5]}..." if len(metrics['val_iters']) > 5 else f"  [OK] Val iterations: {metrics['val_iters']}")
+                print(f"  [OK] Val segm/APs: {[f'{x:.2f}' for x in metrics['val_segm_aps'][:5]]}..." if len(metrics['val_segm_aps']) > 5 else f"  [OK] Val segm/APs: {[f'{x:.2f}' for x in metrics['val_segm_aps']]}")
+                print(f"  [OK] Val bbox/APs: {[f'{x:.2f}' for x in metrics['val_bbox_aps'][:5]]}..." if len(metrics['val_bbox_aps']) > 5 else f"  [OK] Val bbox/APs: {[f'{x:.2f}' for x in metrics['val_bbox_aps']]}")
         else:
-            print(f"  ✗ Could not extract metrics")
+            print(f"  [SKIP] Could not extract metrics")
         print()
     
     if not all_metrics:
@@ -485,9 +491,9 @@ def main():
         print(f"  The plot was still created successfully.")
     
     print("="*80)
-    print(f"✓ Extracted metrics from {len(all_metrics)} runs")
-    print(f"✓ Saved CSV to: {output_csv}")
-    print(f"✓ Saved plot to: {plot_path}")
+    print(f"[OK] Extracted metrics from {len(all_metrics)} runs")
+    print(f"[OK] Saved CSV to: {output_csv}")
+    print(f"[OK] Saved plot to: {plot_path}")
     print("\nSummary:")
     print("-"*80)
     

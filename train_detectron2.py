@@ -3,11 +3,13 @@ Detectron2 Training Script with Progress Visualization
 Trains Mask R-CNN on synthetic spray droplet dataset
 """
 
+import csv
 import os
 import json
 import time
 from datetime import datetime
 from pathlib import Path
+from functools import wraps
 
 import numpy as np
 import torch
@@ -22,7 +24,9 @@ from detectron2.data.transforms import apply_transform_gens
 from detectron2.structures import BitMasks, Instances, Boxes
 from detectron2.utils.logger import setup_logger
 from detectron2.evaluation import COCOEvaluator, inference_on_dataset
-from detectron2.data import build_detection_test_loader
+from detectron2.data import build_detection_test_loader, get_detection_dataset_dicts
+from detectron2.utils.visualizer import Visualizer
+from PIL import Image
 from pycocotools import mask as coco_mask
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend to avoid display issues
@@ -30,34 +34,115 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 # ============================================================================
+# RETRY UTILITY FOR FILE I/O OPERATIONS
+# ============================================================================
+
+def retry_file_io(max_retries=5, delay=1.0, backoff=2.0):
+    """
+    Decorator to retry file I/O operations on failure.
+    Handles temporary drive disconnections and Windows file I/O errors.
+
+    Args:
+        max_retries: Maximum number of retry attempts
+        delay: Initial delay between retries (seconds)
+        backoff: Multiplier for delay after each retry
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            last_exception = None
+            current_delay = delay
+
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except (OSError, IOError, PermissionError, FileNotFoundError) as e:
+                    last_exception = e
+                    error_str = str(e)
+
+                    # Check if it's a retryable error
+                    is_retryable = (
+                        "[Errno 9]" in error_str or  # Bad file descriptor
+                        "[Errno 22]" in error_str or  # Invalid argument
+                        "Bad file descriptor" in error_str or
+                        "Invalid argument" in error_str or
+                        "Permission denied" in error_str or
+                        "No such file or directory" in error_str or
+                        isinstance(e, FileNotFoundError)  # Temporary file not found
+                    )
+
+                    if not is_retryable:
+                        raise
+
+                    if attempt < max_retries - 1:
+                        print(f"  [RETRY] File I/O error (attempt {attempt + 1}/{max_retries}): {error_str}")
+                        print(f"  [RETRY] Retrying in {current_delay:.1f} seconds...")
+                        time.sleep(current_delay)
+                        current_delay *= backoff
+                    else:
+                        print(f"  [ERROR] File I/O failed after {max_retries} attempts: {error_str}")
+                        raise
+                except Exception:
+                    raise
+
+            if last_exception:
+                raise last_exception
+
+        return wrapper
+    return decorator
+
+
+@retry_file_io(max_retries=3, delay=0.5)
+def _path_exists_with_retry(path: Path) -> bool:
+    """Check if path exists with retry logic"""
+    return path.exists()
+
+
+@retry_file_io(max_retries=3, delay=0.5)
+def _savefig_with_retry(fig, path, **kwargs):
+    """Save matplotlib figure with retry logic"""
+    fig.savefig(str(path), **kwargs)
+
+
+# ============================================================================
 # CONFIGURATION
 # ============================================================================
 
-# Dataset paths
+# --- Final training options (from hyperparameter sweep) ---
+BATCH_SIZE = 2
+BASE_LEARNING_RATE = 0.0025
+ANCHOR_SIZES = [[8, 16, 32, 64]]  # FPN anchor sizes (one list per level; same for all here)
+WARMUP_ITERS = 1000
+# LR decay: "cosine" | "step" (drops at 60% and 80%) | "none" (constant after warmup)
+LR_DECAY_TYPE = "cosine"
+
+# --- Dataset paths ---
 DATASET_NAME = "spray_train"
-ANNOTATIONS_PATH = r"D:\Experiments\TrainingData\Detectron_Trial_4\blur_annotations.json"
-IMAGES_PATH = r"D:\Experiments\TrainingData\Detectron_Trial_4\images"
+ANNOTATIONS_PATH = r"D:\Experiments\TrainingData\Detectron_Trial_2\blur_annotations.json"
+IMAGES_PATH = r"D:\Experiments\TrainingData\Detectron_Trial_2\images"
 
-# Training settings (optimized for RTX 2070 - 8GB VRAM)
-BATCH_SIZE = 2  # Start with 1, increase to 2 if memory allows
-BASE_LEARNING_RATE = 0.00020  # Increased for better fine-tuning performance
-NUM_EPOCHS = 1  # Number of times to iterate through the entire training dataset
-# MAX_ITER will be calculated dynamically based on dataset size
-MAX_ITER = None  # Will be set after loading dataset
-LEARNING_RATE_DECAY_STEPS = None  # Will be calculated based on MAX_ITER
-
-# Output base directory (timestamped folders will be created here)
+# --- Training length and output ---
+NUM_EPOCHS = 1  # Used only when MAX_ITER is None: total iters = NUM_EPOCHS * (num_train // BATCH_SIZE)
+# Set MAX_ITER to fix total iterations (e.g. 20000 for your final run). None = use NUM_EPOCHS formula.
+MAX_ITER = 78000  # ~80k full run; None = derived from NUM_EPOCHS
+# Quick test: overrides everything. 500 for ~15 min test; None for real run.
+QUICK_TEST_ITERATIONS = None  # 500 for quick test; None for real run
 OUTPUT_BASE_DIR = r"D:\Experiments\AI"
-CHECKPOINT_INTERVAL = 250  # Save checkpoint every N iterations
+CHECKPOINT_INTERVAL = 10000  # Save checkpoint every N iterations
 
-# Validation settings
-VALIDATION_SPLIT = 0.1  # 10% of data for validation (90% for training)
-VALIDATION_INTERVAL = 250  # Evaluate on validation set every N iterations
+# --- Validation ---
+VALIDATION_SPLIT = 0.1  # Used only when VALIDATION_SIZE is None: fraction for validation
+VALIDATION_INTERVAL = 500  # Evaluate every N iterations
+# Total validation images. When set, exactly this many are held out for val (rest for train). None = use VALIDATION_SPLIT.
+VALIDATION_SIZE = 20
+# Fixed validation images to use for visualization at each validation (first N of the val set; e.g. 5 of the 20)
+NUM_VIZ_IMAGES = 5
+# Score threshold for drawings (drop low-confidence detections for clearer viz)
+VIZ_SCORE_THRESHOLD = 0.5
 
-# Resume training from existing model (set to None to start from scratch)
-# Set this to your model path to continue training from that checkpoint
+# --- Resume (set to None to start from COCO weights) ---
+RESUME_FROM_MODEL = None
 # Example: RESUME_FROM_MODEL = r"D:\Experiments\AI\training_2025_12_25_15_43_57\model_final.pth"
-RESUME_FROM_MODEL = r"D:\Experiments\AI\Benedict\Benedict.pth"  # Continue training from Benedict model
 
 # ============================================================================
 # SETUP
@@ -112,20 +197,34 @@ def setup_dataset():
     indices = np.arange(len(dataset_dicts))
     rng.shuffle(indices)
     
-    split_idx = int(len(dataset_dicts) * (1 - VALIDATION_SPLIT))
-    train_indices = indices[:split_idx]
-    val_indices = indices[split_idx:]
+    if VALIDATION_SIZE is not None and VALIDATION_SIZE > 0:
+        # Exactly VALIDATION_SIZE images for validation, rest for train
+        n_val = min(VALIDATION_SIZE, len(indices) - 1)  # keep at least 1 for train
+        if n_val < 1:
+            n_val = 1
+        val_indices = indices[-n_val:]
+        train_indices = indices[:-n_val]
+        print(f"[OK] Validation: exactly {n_val} images (VALIDATION_SIZE={VALIDATION_SIZE})")
+    else:
+        split_idx = int(len(dataset_dicts) * (1 - VALIDATION_SPLIT))
+        train_indices = indices[:split_idx]
+        val_indices = indices[split_idx:]
     
-    # Create train and validation datasets
+    # Create train and validation datasets (disjoint: no image in both)
     train_dicts = [dataset_dicts[i] for i in train_indices]
     val_dicts = [dataset_dicts[i] for i in val_indices]
     
-    # Register validation dataset
+    # Register TRAIN-only dataset (so the model never sees val images during training)
+    TRAIN_DATASET_NAME = f"{DATASET_NAME}_train"
+    DatasetCatalog.register(TRAIN_DATASET_NAME, lambda t=train_dicts: t)
+    MetadataCatalog.get(TRAIN_DATASET_NAME).set(thing_classes=["droplet", "ligament"])
+    
+    # Register validation dataset (held out, never used for training)
     VAL_DATASET_NAME = f"{DATASET_NAME}_val"
-    DatasetCatalog.register(VAL_DATASET_NAME, lambda: val_dicts)
+    DatasetCatalog.register(VAL_DATASET_NAME, lambda v=val_dicts: v)
     MetadataCatalog.get(VAL_DATASET_NAME).set(thing_classes=["droplet", "ligament"])
     
-    print(f"[OK] Training images: {len(train_dicts)} ({len(train_dicts)/len(dataset_dicts)*100:.1f}%)")
+    print(f"[OK] Training images: {len(train_dicts)} (held out from val, no overlap)")
     print(f"[OK] Validation images: {len(val_dicts)} ({len(val_dicts)/len(dataset_dicts)*100:.1f}%)")
     
     # Verify a few image files exist (check first few)
@@ -146,24 +245,35 @@ def setup_config(output_dir, num_train_images, resume_from=None):
     print("Setting up Configuration")
     print(f"{'='*60}")
     
-    # Calculate MAX_ITER based on dataset size, number of epochs, and batch size
-    # Each iteration processes BATCH_SIZE images
-    # So NUM_EPOCHS * (num_train_images / BATCH_SIZE) = total iterations needed
-    global MAX_ITER, LEARNING_RATE_DECAY_STEPS
+    # MAX_ITER: 1) QUICK_TEST_ITERATIONS if set, 2) else MAX_ITER if set, 3) else NUM_EPOCHS * (num_train // BATCH_SIZE)
+    global MAX_ITER
     iterations_per_epoch = num_train_images // BATCH_SIZE
-    MAX_ITER = NUM_EPOCHS * iterations_per_epoch
+    if QUICK_TEST_ITERATIONS is not None:
+        MAX_ITER = QUICK_TEST_ITERATIONS
+        print(f"[OK] Quick test: MAX_ITER = {MAX_ITER}")
+    elif MAX_ITER is not None:
+        print(f"[OK] MAX_ITER set explicitly: {MAX_ITER}")
+    else:
+        MAX_ITER = NUM_EPOCHS * iterations_per_epoch
     
-    # Learning rate decay at 60% and 80% of training
-    decay_step_1 = int(MAX_ITER * 0.6)
-    decay_step_2 = int(MAX_ITER * 0.8)
-    LEARNING_RATE_DECAY_STEPS = (decay_step_1, decay_step_2)
+    # Decay steps for "step" LR schedule (60% and 80% of training)
+    if LR_DECAY_TYPE == "step":
+        decay_step_1 = int(MAX_ITER * 0.6)
+        decay_step_2 = int(MAX_ITER * 0.8)
     
     print(f"[OK] Training dataset size: {num_train_images} images")
     print(f"[OK] Batch size: {BATCH_SIZE} images per iteration")
     print(f"[OK] Iterations per epoch: {iterations_per_epoch} ({num_train_images} images / {BATCH_SIZE})")
     print(f"[OK] Number of epochs: {NUM_EPOCHS}")
-    print(f"[OK] Total iterations: {MAX_ITER} ({NUM_EPOCHS} epochs × {iterations_per_epoch} iterations)")
-    print(f"[OK] Learning rate decay at: {decay_step_1} and {decay_step_2} iterations")
+    print(f"[OK] Total iterations: {MAX_ITER} ({NUM_EPOCHS} epochs x {iterations_per_epoch} iterations)")
+    print(f"[OK] Anchors: {ANCHOR_SIZES}")
+    print(f"[OK] Warmup: {WARMUP_ITERS} iterations")
+    if LR_DECAY_TYPE == "step":
+        print(f"[OK] LR decay: step at {decay_step_1} and {decay_step_2} iterations")
+    elif LR_DECAY_TYPE == "cosine":
+        print(f"[OK] LR decay: cosine")
+    else:
+        print(f"[OK] LR decay: none (constant after warmup)")
     
     cfg = get_cfg()
     
@@ -172,9 +282,9 @@ def setup_config(output_dir, num_train_images, resume_from=None):
         model_zoo.get_config_file("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml")
     )
     
-    # Dataset configuration
-    cfg.DATASETS.TRAIN = (DATASET_NAME,)
-    cfg.DATASETS.TEST = (f"{DATASET_NAME}_val",)  # Validation dataset
+    # Dataset configuration (train = only train images; val = held-out, never seen during training)
+    cfg.DATASETS.TRAIN = (f"{DATASET_NAME}_train",)
+    cfg.DATASETS.TEST = (f"{DATASET_NAME}_val",)
     
     # Data loading
     cfg.DATALOADER.NUM_WORKERS = 2
@@ -199,18 +309,29 @@ def setup_config(output_dir, num_train_images, resume_from=None):
     cfg.SOLVER.IMS_PER_BATCH = BATCH_SIZE
     cfg.SOLVER.BASE_LR = BASE_LEARNING_RATE
     cfg.SOLVER.MAX_ITER = MAX_ITER
-    cfg.SOLVER.STEPS = LEARNING_RATE_DECAY_STEPS
-    cfg.SOLVER.GAMMA = 0.1  # Learning rate decay factor
+    cfg.SOLVER.WARMUP_ITERS = WARMUP_ITERS
+    
+    # LR schedule: cosine, step (60%/80%), or none
+    if LR_DECAY_TYPE == "cosine":
+        cfg.SOLVER.LR_SCHEDULER_NAME = "WarmupCosineLR"
+        cfg.SOLVER.STEPS = ()
+        cfg.SOLVER.GAMMA = 0.1  # ignored by cosine
+    elif LR_DECAY_TYPE == "step":
+        cfg.SOLVER.STEPS = (decay_step_1, decay_step_2)
+        cfg.SOLVER.GAMMA = 0.1
+    else:  # "none"
+        cfg.SOLVER.STEPS = ()
+        cfg.SOLVER.GAMMA = 0.1
     
     # Checkpoint saving
-    cfg.SOLVER.CHECKPOINT_PERIOD = CHECKPOINT_INTERVAL  # Save checkpoint every N iterations
+    cfg.SOLVER.CHECKPOINT_PERIOD = CHECKPOINT_INTERVAL
     
-    # Validation evaluation - adjust interval based on dataset size
-    # Evaluate roughly every epoch or every 500 iterations, whichever is smaller
+    # Validation - every N iterations
     val_interval = min(VALIDATION_INTERVAL, iterations_per_epoch)
     cfg.TEST.EVAL_PERIOD = val_interval
     
-    # ROI heads
+    # Anchors and ROI heads
+    cfg.MODEL.ANCHOR_GENERATOR.SIZES = ANCHOR_SIZES
     cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = 128
     cfg.MODEL.ROI_HEADS.NUM_CLASSES = 2  # droplet and ligament
     
@@ -218,7 +339,6 @@ def setup_config(output_dir, num_train_images, resume_from=None):
     cfg.OUTPUT_DIR = output_dir
     os.makedirs(output_dir, exist_ok=True)
     
-    print(f"[OK] Batch size: {BATCH_SIZE}")
     print(f"[OK] Learning rate: {BASE_LEARNING_RATE}")
     print(f"[OK] Max iterations: {MAX_ITER}")
     print(f"[OK] Output directory: {output_dir}")
@@ -226,6 +346,63 @@ def setup_config(output_dir, num_train_images, resume_from=None):
     print(f"[OK] Validation interval: {val_interval} iterations")
     
     return cfg
+
+
+def plot_learning_rate_schedule(output_dir):
+    """
+    Plot the learning rate schedule (warmup + decay) at the start of the run.
+    Saves to output_dir/plots/learning_rate_schedule.png
+    """
+    output_dir = Path(output_dir)
+    plots_dir = output_dir / "plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+
+    base = BASE_LEARNING_RATE
+    warmup = WARMUP_ITERS
+    max_iter = MAX_ITER
+    decay_type = LR_DECAY_TYPE
+    gamma = 0.1
+
+    iters = np.arange(0, max_iter + 1, dtype=np.int32)
+    lrs = np.zeros(len(iters), dtype=np.float64)
+
+    for i, it in enumerate(iters):
+        if warmup > 0 and it < warmup:
+            # Linear warmup: 0 -> base
+            lrs[i] = base * (it / warmup)
+        else:
+            if decay_type == "cosine":
+                # Cosine decay from base to 0 over (max_iter - warmup) iters
+                denom = max(1, max_iter - warmup)
+                progress = (it - warmup) / denom
+                progress = min(1.0, progress)  # clamp in case it > max_iter
+                lrs[i] = base * 0.5 * (1.0 + np.cos(np.pi * progress))
+            elif decay_type == "step":
+                s1 = int(max_iter * 0.6)
+                s2 = int(max_iter * 0.8)
+                if it < s1:
+                    lrs[i] = base
+                elif it < s2:
+                    lrs[i] = base * gamma
+                else:
+                    lrs[i] = base * gamma * gamma
+            else:  # "none"
+                lrs[i] = base
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(iters, lrs, linewidth=1.5, color="steelblue")
+    ax.set_xlabel("Iteration")
+    ax.set_ylabel("Learning rate")
+    ax.set_title("Learning rate schedule (warmup=%d, decay=%s)" % (warmup, decay_type))
+    ax.set_xlim(0, max_iter)
+    ax.set_ylim(bottom=0)
+    ax.grid(True, linestyle="--", alpha=0.5)
+    fig.tight_layout()
+    out = plots_dir / "learning_rate_schedule.png"
+    _savefig_with_retry(fig, out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[OK] Learning rate schedule plot: {out}")
+
 
 # ============================================================================
 # PROGRESS MONITORING
@@ -240,8 +417,17 @@ class ProgressTracker:
         self.val_losses = []
         self.val_iterations = []
         self.train_iterations = []
+        self.val_segm_aps = []   # segm/AP per validation (same order as val_iterations)
+        self.val_bbox_aps = []   # bbox/AP per validation
+        self.best_val_segm_ap = 0.0
+        self.best_val_bbox_ap = 0.0
+        self.best_val_iter = 0
         self.start_time = time.time()
         self.last_log_time = time.time()
+        # For ETA after each validation: last validation wall time, last val iter, total val time
+        self.last_validation_wall_time = self.start_time
+        self.last_val_iteration_done = 0
+        self.total_validation_duration = 0.0
         
         # Create plots directory early and verify it exists
         self.plots_dir = self.output_dir / "plots"
@@ -304,8 +490,9 @@ class ProgressTracker:
             self.save_metrics()
             print(f"  Plot and metrics saved!\n")
     
-    def update_validation(self, iteration, val_metrics):
-        """Update validation metrics"""
+    def update_validation(self, iteration, val_metrics, validation_duration=None,
+                          training_block_time=None, training_iters_in_block=None, val_interval=None):
+        """Update validation metrics. Optional ETA: pass validation_duration, training_block_time, training_iters_in_block, val_interval."""
         if val_metrics is None or len(val_metrics) == 0:
             return
         
@@ -318,7 +505,7 @@ class ProgressTracker:
                 val_loss = float(val_metrics.get('loss_box_reg', 0) + 
                                val_metrics.get('loss_mask', 0) + 
                                val_metrics.get('loss_cls', 0) +
-                               val_metrics.get('loss_rpn_cls', 0) +
+                               val_metrics.get('loss_rpn_cls', 0) + 
                                val_metrics.get('loss_rpn_loc', 0))
             elif 'segm/AP' in val_metrics:
                 # Use mAP as proxy (convert to loss-like: lower AP = higher "loss")
@@ -345,9 +532,75 @@ class ProgressTracker:
             if key not in ['total_loss', 'segm/AP', 'bbox/AP', 'num_batches_evaluated']:
                 print(f"  {key}: {float(value):.4f}")
         
-        # Save plot after validation
+        # Append to validation CSV and store segm/AP, bbox/AP for metrics.json
+        training_loss = self.train_losses[-1] if self.train_losses else None
+        segm_ap = val_metrics.get('segm/AP')
+        bbox_ap = val_metrics.get('bbox/AP')
+        self.val_segm_aps.append(segm_ap)
+        self.val_bbox_aps.append(bbox_ap)
+        if segm_ap is not None and segm_ap > self.best_val_segm_ap:
+            self.best_val_segm_ap = segm_ap
+            self.best_val_iter = iteration
+        if bbox_ap is not None and bbox_ap > self.best_val_bbox_ap:
+            self.best_val_bbox_ap = bbox_ap
+            if segm_ap is None or bbox_ap >= segm_ap:
+                self.best_val_iter = iteration
+        self._append_validation_csv(iteration, training_loss, segm_ap, bbox_ap)
+        
+        # Save plot and validation AP curve after validation
         self.save_plot()
         self.save_metrics()
+        self.save_validation_AP_plot()
+        
+        # ETA: estimate remaining time from last training block and last validation run
+        if (validation_duration is not None and training_block_time is not None and
+                training_iters_in_block is not None):
+            self.total_validation_duration += validation_duration
+            self.last_validation_wall_time = time.time()
+            self.last_val_iteration_done = iteration
+            
+            remaining_iters = MAX_ITER - iteration
+            if remaining_iters <= 0:
+                print(f"  [ETA] Final validation, no time remaining.")
+            else:
+                vi = val_interval if val_interval is not None else VALIDATION_INTERVAL
+                remaining_validations = remaining_iters // max(1, vi)
+                if training_iters_in_block > 0:
+                    avg_training = training_block_time / training_iters_in_block
+                else:
+                    elapsed = time.time() - self.start_time
+                    avg_training = (elapsed - self.total_validation_duration) / max(1, iteration)
+                eta_training = remaining_iters * avg_training
+                eta_validation = remaining_validations * validation_duration
+                eta_total = eta_training + eta_validation
+                h = int(eta_total // 3600)
+                m = int((eta_total % 3600) // 60)
+                st = f"{int(eta_training//3600)} h {int((eta_training%3600)//60)} min" if eta_training >= 60 else f"{eta_training:.1f} s"
+                sv = f"{int(eta_validation//3600)} h {int((eta_validation%3600)//60)} min" if eta_validation >= 60 else f"{eta_validation:.1f} s"
+                print(f"  [ETA] ~{h} h {m} min remaining (training: {st}, validation: {sv})")
+    
+    @retry_file_io(max_retries=3, delay=0.5)
+    def _append_validation_csv(self, iteration, training_loss, segm_ap, bbox_ap):
+        """Append one row to validation_results.csv: iteration, training_loss, segm_AP, bbox_AP, timestamp."""
+        csv_path = self.output_dir / "validation_results.csv"
+        file_existed = csv_path.exists()
+        try:
+            with open(csv_path, 'a', newline='') as f:
+                writer = csv.writer(f)
+                if not file_existed:
+                    writer.writerow(['iteration', 'training_loss', 'segm_AP', 'bbox_AP', 'timestamp'])
+                writer.writerow([
+                    iteration,
+                    training_loss if training_loss is not None else '',
+                    segm_ap if segm_ap is not None else '',
+                    bbox_ap if bbox_ap is not None else '',
+                    datetime.now().isoformat()
+                ])
+            print(f"  [OK] Validation results appended to: {csv_path}")
+        except Exception as e:
+            if isinstance(e, (OSError, IOError, PermissionError, FileNotFoundError)):
+                raise
+            print(f"  [WARNING] Failed to append to validation CSV: {e}")
     
     def save_plot(self):
         """Save loss curve plot with training and validation"""
@@ -464,8 +717,8 @@ class ProgressTracker:
                     
                     print(f"  [DEBUG] Trying to save plot to: {plot_path_str}")
                     
-                    # Force save with explicit format
-                    fig.savefig(plot_path_str, dpi=150, bbox_inches='tight', format='png', facecolor='white')
+                    # Force save with explicit format (retried on I/O errors)
+                    _savefig_with_retry(fig, plot_path_str, dpi=150, bbox_inches='tight', format='png', facecolor='white')
                     
                     # Force matplotlib to flush
                     fig.canvas.draw()
@@ -509,7 +762,7 @@ class ProgressTracker:
                     ax_simple.grid(True, alpha=0.3)
                     ax_simple.legend()
                     plt.tight_layout()
-                    fig_simple.savefig(str(simple_path), dpi=100, bbox_inches='tight', format='png')
+                    _savefig_with_retry(fig_simple, simple_path, dpi=100, bbox_inches='tight', format='png')
                     plt.close(fig_simple)
                     
                     if simple_path.exists():
@@ -535,19 +788,33 @@ class ProgressTracker:
             print(f"  [ERROR] Failed to save plot: {e}")
             print(f"  Traceback: {traceback.format_exc()}")
     
+    @retry_file_io(max_retries=3, delay=0.5)
     def save_metrics(self):
-        """Save metrics to JSON file for later analysis"""
+        """Save metrics to JSON file for later analysis (includes segm/AP and bbox/AP)
+        
+        Note: Uses 'progress_metrics.json' to avoid conflict with Detectron2's default
+        JSONL format 'metrics.json' file. Both files will exist - metrics.json has
+        per-iteration data in JSONL format, progress_metrics.json has aggregated data.
+        """
         try:
-            metrics_path = self.output_dir / "metrics.json"
+            metrics_path = self.output_dir / "progress_metrics.json"
             metrics_data = {
                 'train_iterations': self.train_iterations,
                 'train_losses': self.train_losses,
                 'val_iterations': self.val_iterations,
                 'val_losses': self.val_losses,
+                'val_segm_aps': self.val_segm_aps,
+                'val_bbox_aps': self.val_bbox_aps,
                 'total_train_iterations': len(self.train_iterations),
                 'total_val_evaluations': len(self.val_losses),
                 'last_update': datetime.now().isoformat()
             }
+            
+            # Latest validation APs (so they survive Ctrl+C and are easy to find)
+            if len(self.val_segm_aps) > 0 and self.val_segm_aps[-1] is not None:
+                metrics_data['latest_segm_AP'] = float(self.val_segm_aps[-1])
+            if len(self.val_bbox_aps) > 0 and self.val_bbox_aps[-1] is not None:
+                metrics_data['latest_bbox_AP'] = float(self.val_bbox_aps[-1])
             
             # Calculate generalization metrics
             if len(self.val_losses) > 0 and len(self.train_losses) > 0:
@@ -565,7 +832,47 @@ class ProgressTracker:
             with open(metrics_path, 'w') as f:
                 json.dump(metrics_data, f, indent=2)
         except Exception as e:
+            if isinstance(e, (OSError, IOError, PermissionError, FileNotFoundError)):
+                raise
             print(f"  [WARNING] Failed to save metrics JSON: {e}")
+
+    def save_validation_AP_plot(self):
+        """Save segm/AP and bbox/AP vs iteration (updated every validation, like hyperparameter sweep)."""
+        segm_ok = [v for v in self.val_segm_aps if v is not None]
+        bbox_ok = [v for v in self.val_bbox_aps if v is not None]
+        if len(segm_ok) == 0 and len(bbox_ok) == 0:
+            return
+        segm_iters = [self.val_iterations[i] for i in range(len(self.val_segm_aps)) if self.val_segm_aps[i] is not None]
+        segm_vals = segm_ok
+        bbox_iters = [self.val_iterations[i] for i in range(len(self.val_bbox_aps)) if self.val_bbox_aps[i] is not None]
+        bbox_vals = bbox_ok
+        fig, ax = plt.subplots(1, 1, figsize=(12, 6))
+        ax.set_xlabel('Iteration', fontsize=12)
+        ax.set_ylabel('Validation AP', fontsize=12)
+        ax.set_title('Validation Average Precision (mAP)', fontsize=14, fontweight='bold')
+        ax.grid(True, alpha=0.3)
+        if len(segm_iters) > 0:
+            ax.plot(segm_iters, segm_vals, 'r-o', linewidth=2, markersize=6, label='segm/AP')
+        if len(bbox_iters) > 0:
+            ax.plot(bbox_iters, bbox_vals, 'b-s', linewidth=2, markersize=6, label='bbox/AP')
+        ax.axhline(y=0, color='k', linestyle='--', alpha=0.3)
+        ax.legend(fontsize=11)
+        ax.set_xlim(0, MAX_ITER)
+        ax.set_ylim(bottom=0)
+        if self.best_val_segm_ap > 0 or self.best_val_bbox_ap > 0:
+            ann = f'Best segm/AP: {self.best_val_segm_ap:.4f}\nBest bbox/AP: {self.best_val_bbox_ap:.4f}\n@ iter {self.best_val_iter}'
+            ax.text(0.02, 0.98, ann, transform=ax.transAxes, fontsize=10, verticalalignment='top',
+                    bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.5))
+        plt.tight_layout()
+        out = self.plots_dir / "validation_AP_curve.png"
+        try:
+            _savefig_with_retry(fig, str(out), dpi=150, bbox_inches='tight', format='png', facecolor='white')
+            plt.close(fig)
+            if out.exists():
+                print(f"  [OK] Validation AP curve: {out}")
+        except Exception as e:
+            plt.close(fig)
+            print(f"  [WARNING] Failed to save validation AP curve: {e}")
 
 # ============================================================================
 # CUSTOM DATASET MAPPER FOR RLE FORMAT
@@ -757,12 +1064,22 @@ class ProgressTrainer(DefaultTrainer):
             # Mark that we're running validation for this iteration
             self.last_val_iter = self.iter
             
-            # Run validation evaluation
+            # Run validation evaluation (time it for ETA)
             try:
                 print(f"\n  [INFO] Running validation at iteration {self.iter}...")
+                t0 = time.time()
                 val_results = self._run_validation()
+                validation_duration = time.time() - t0
+                training_block_time = t0 - self.progress_tracker.last_validation_wall_time
+                training_iters_in_block = self.iter - self.progress_tracker.last_val_iteration_done
                 if val_results:
-                    self.progress_tracker.update_validation(self.iter, val_results)
+                    self.progress_tracker.update_validation(
+                        self.iter, val_results,
+                        validation_duration=validation_duration,
+                        training_block_time=training_block_time,
+                        training_iters_in_block=training_iters_in_block,
+                        val_interval=val_interval
+                    )
             except Exception as e:
                 print(f"  [WARNING] Validation evaluation failed: {e}")
                 import traceback
@@ -789,9 +1106,7 @@ class ProgressTrainer(DefaultTrainer):
         """Run validation evaluation and return metrics"""
         from detectron2.evaluation import COCOEvaluator, inference_on_dataset
         
-        # Get validation dataset name
         val_dataset_name = f"{DATASET_NAME}_val"
-        
         # Create a temporary directory for COCO evaluator output
         # COCOEvaluator requires output_dir even for COCO format datasets
         eval_output_dir = Path(self.cfg.OUTPUT_DIR) / "validation_eval"
@@ -825,7 +1140,76 @@ class ProgressTrainer(DefaultTrainer):
             # If no AP available, set a default
             results['total_loss'] = None
         
+        # Save visualizations on the same fixed images at this validation
+        self._save_validation_visualizations(self.iter)
+
         return results
+
+    def _save_validation_visualizations(self, iteration):
+        """
+        Run the model on a fixed set of validation images and save prediction visualizations.
+        Uses the first NUM_VIZ_IMAGES (e.g. 5) from the val set, same every time.
+        """
+        val_dataset_name = f"{DATASET_NAME}_val"
+        output_dir = Path(self.cfg.OUTPUT_DIR) / "validation_visualizations"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # On first run, pick and cache the first NUM_VIZ_IMAGES (file_name, height, width only).
+        # Same images are used for every validation so you can see the model improving over time.
+        if not hasattr(self, "_viz_info"):
+            dicts = get_detection_dataset_dicts([val_dataset_name])
+            self._viz_info = [
+                {"file_name": d["file_name"], "height": d.get("height", 800), "width": d.get("width", 1280)}
+                for d in dicts[:NUM_VIZ_IMAGES]
+            ]
+            if not self._viz_info:
+                print(f"  [WARNING] No validation images for visualization")
+                return
+            print(f"  [INFO] Cached {len(self._viz_info)} fixed validation images for all future viz runs")
+            # Write which source image is img_0, img_1, ... (one-time)
+            try:
+                src_path = output_dir / "_sources.txt"
+                with open(src_path, "w") as f:
+                    f.write("# Same fixed images used for all validation visualizations\n")
+                    for i, info in enumerate(self._viz_info):
+                        f.write(f"img_{i}: {info['file_name']}\n")
+            except Exception as e:
+                print(f"  [WARNING] Could not write _sources.txt: {e}")
+
+        if not self._viz_info:
+            return
+
+        mapper = RLEDatasetMapper(self.cfg, is_train=False)
+        metadata = MetadataCatalog.get(val_dataset_name)
+
+        was_training = self.model.training
+        self.model.eval()
+        try:
+            with torch.no_grad():
+                for i, info in enumerate(self._viz_info):
+                    try:
+                        d = dict(info)
+                        mapped = mapper(d)
+                        pred = self.model([mapped])
+                        if not pred or "instances" not in pred[0]:
+                            continue
+                        inst = pred[0]["instances"].to("cpu")
+                        # Filter by score so early-training clutter is reduced
+                        if hasattr(inst, "scores") and inst.has("scores") and len(inst) > 0:
+                            inst = inst[inst.scores >= VIZ_SCORE_THRESHOLD]
+                        img = mapped["image"].permute(1, 2, 0).cpu().numpy()
+                        img = np.clip(img, 0, 255).astype(np.uint8)
+                        v = Visualizer(img, metadata=metadata, scale=1.0)
+                        out = v.draw_instance_predictions(inst)
+                        vis = out.get_image()
+                        base = Path(info["file_name"]).stem
+                        path = output_dir / f"iter_{iteration:07d}_img_{i}_{base}.png"
+                        Image.fromarray(vis).save(path)
+                    except Exception as e:
+                        print(f"  [WARNING] Visualization failed for image {i}: {e}")
+            print(f"  [OK] Validation visualizations: {output_dir} (iter {iteration}, same {len(self._viz_info)} images)")
+        finally:
+            self.model.train(was_training)
 
 # ============================================================================
 # MAIN
@@ -848,6 +1232,9 @@ def main():
     setup_logger()
     train_dicts, val_dicts, num_train_images = setup_dataset()
     cfg = setup_config(str(OUTPUT_DIR), num_train_images, resume_from=RESUME_FROM_MODEL)
+
+    # Plot learning rate schedule (warmup + decay) at start of run
+    plot_learning_rate_schedule(OUTPUT_DIR)
     
     # Initialize progress tracker
     progress_tracker = ProgressTracker(OUTPUT_DIR)
@@ -871,18 +1258,27 @@ def main():
     try:
         trainer.train()
     except KeyboardInterrupt:
-        print("\n\nTraining interrupted by user. Saving final checkpoint...")
+        print("\n\nTraining interrupted by user. Saving final checkpoint and metrics...")
         trainer.checkpointer.save("model_interrupted")
-        print("Checkpoint saved!")
+        progress_tracker.save_metrics()
+        progress_tracker.save_validation_AP_plot()
+        print("Checkpoint and progress_metrics.json saved!")
+        print("Note: Detectron2's metrics.json (JSONL format) contains per-iteration data.")
     
-    # Final plot
+    # Final plot, metrics and validation AP curve (again if we didn't Ctrl+C, so they have latest)
     progress_tracker.save_plot()
+    progress_tracker.save_metrics()
+    progress_tracker.save_validation_AP_plot()
     
     print(f"\n{'='*60}")
     print("Training Complete!")
     print(f"{'='*60}")
     print(f"Final model: {OUTPUT_DIR}/model_final.pth")
     print(f"Loss plot: {OUTPUT_DIR}/plots/loss_curve.png")
+    print(f"Validation AP curve: {OUTPUT_DIR}/plots/validation_AP_curve.png")
+    print(f"Learning rate schedule: {OUTPUT_DIR}/plots/learning_rate_schedule.png")
+    print(f"Validation results CSV: {OUTPUT_DIR}/validation_results.csv")
+    print(f"Validation visualizations: {OUTPUT_DIR}/validation_visualizations/ (same fixed images each run)")
     print(f"All outputs saved to: {OUTPUT_DIR}")
     print(f"End time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*60}\n")

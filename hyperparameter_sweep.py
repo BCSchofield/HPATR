@@ -138,30 +138,26 @@ QUICK_TEST_MODE = False  # Set to False for full sweep
 # If set to None, will calculate from epochs/fractions (old behavior)
 # If set to a number (e.g., 15000), will use that exact iteration count for all sweep runs
 # This allows you to use the convergence iteration count directly from convergence_test.py
+# Fixed hyperparameters for this sweep (LR and anchors)
+FIXED_LR = 0.0025
+FIXED_ANCHORS = [[8, 16, 32, 64]]
+
+# Sweep dimensions: Warmup x LR decay (None, Step 60%/80%, Cosine) = 9 runs
+DECAY_OPTIONS = ["none", "step", "cosine"]
+
 if QUICK_TEST_MODE:
     SWEEP_MAX_ITER = 100  # Only 100 iterations per run (vs 6000)
-    # Hyperparameter sweep ranges (keep all combinations for full workflow test)
-    LEARNING_RATES = [0.005, 0.0025, 0.001, 0.0005]  # All 4 learning rates
-    ANCHOR_SIZES = [
-        [[8, 16, 32, 64]],
-        [[8, 16, 32, 64, 128]],
-        [[16, 32, 64, 128]]
-    ]  # All 3 anchor configs = 12 total combinations
+    # Scale warmup to fit 100 iters: 0, 10 (~10%), 25 (~25%). Full sweep uses 0, 500, 1000.
+    WARMUP_OPTIONS = [0, 10, 25]
 else:
-    SWEEP_MAX_ITER = 6000  # Set to 15000 (or whatever your convergence test found) to use fixed iterations
-    # Hyperparameter sweep ranges
-    LEARNING_RATES = [0.005, 0.0025, 0.001, 0.0005]
-    ANCHOR_SIZES = [
-        [[8, 16, 32, 64]],
-        [[8, 16, 32, 64, 128]],
-        [[16, 32, 64, 128]]
-    ]
+    SWEEP_MAX_ITER = 5000  # Fixed iterations per run
+    WARMUP_OPTIONS = [0, 500, 1000]
 
 # Output directories
 OUTPUT_BASE_DIR = r"D:\Experiments\AI\Hyperparameters"
 # Resume from existing sweep folder (set to None to create a new sweep)
 # Example: RESUME_SWEEP_FOLDER = r"D:\Experiments\AI\Hyperparameters\sweep_2026_01_21_21_39_37"
-RESUME_SWEEP_FOLDER = r"D:\Experiments\AI\Hyperparameters\sweep_2026_01_22_21_57_39"  # Resuming from existing sweep
+RESUME_SWEEP_FOLDER = r"D:\Experiments\AI\Hyperparameters\sweep_2026_01_25_00_02_27"  # Continue final 2 steps: warmup1000+decaystep, warmup1000+decaycosine
 # CSV paths will be set dynamically in main() after creating timestamped sweep folder
 SWEEP_RESULTS_CSV = None
 SWEEP_SUMMARY_CSV = None
@@ -262,11 +258,16 @@ def setup_dataset():
     else:
         print(f"[OK] Using full training set ({len(train_dicts)} images)")
     
+    # Register TRAIN-only (model must never see val images during training)
+    TRAIN_DATASET_NAME = f"{DATASET_NAME}_train"
+    DatasetCatalog.register(TRAIN_DATASET_NAME, lambda t=train_dicts: t)
+    MetadataCatalog.get(TRAIN_DATASET_NAME).set(thing_classes=["droplet", "ligament"])
+    
     VAL_DATASET_NAME = f"{DATASET_NAME}_val"
-    DatasetCatalog.register(VAL_DATASET_NAME, lambda: val_dicts)
+    DatasetCatalog.register(VAL_DATASET_NAME, lambda v=val_dicts: v)
     MetadataCatalog.get(VAL_DATASET_NAME).set(thing_classes=["droplet", "ligament"])
     
-    print(f"[OK] Training images: {len(train_dicts)} ({len(train_dicts)/len(dataset_dicts)*100:.1f}% of total)")
+    print(f"[OK] Training images: {len(train_dicts)} (held out from val, no overlap)")
     print(f"[OK] Validation images: {len(val_dicts)} ({len(val_dicts)/len(dataset_dicts)*100:.1f}% of total)")
     
     return train_dicts, val_dicts, len(train_dicts)
@@ -421,7 +422,7 @@ class LivePlotTracker:
             # Verify file was created
             if self.plot_path.exists():
                 file_size = self.plot_path.stat().st_size
-                print(f"  [Plot] ✓ Plot file created: {self.plot_path}")
+                print(f"  [Plot] OK Plot file created: {self.plot_path}")
                 print(f"  [Plot]   File size: {file_size:,} bytes")
                 print(f"  [Plot]   - Updates every 25 iterations (training loss)")
                 print(f"  [Plot]   - Updates after each validation (validation AP)")
@@ -533,22 +534,14 @@ class LivePlotTracker:
             try:
                 self._save_plot_with_retry()
             except Exception as e:
-                # Don't let plot errors stop training
-                if self.iter % 50 == 0:  # Only print occasionally
+                if iteration % 50 == 0:
                     print(f"  [WARNING] Plot save failed: {e}")
-    
-    @retry_file_io(max_retries=3, delay=0.5)
-    def _save_plot_with_retry(self):
-        """Save plot with retry logic"""
-        self.fig.savefig(str(self.plot_path), dpi=150, bbox_inches='tight')
         
-        # Update CSV after validation
+        # Update CSV after validation (with current loss and validation APs)
         current_loss = self.train_losses[-1] if self.train_losses else None
         self._update_csv(iteration, current_loss, segm_ap, bbox_ap)
         
-        # Also write validation results to Detectron2's metrics.json via EventStorage
-        # This ensures they're available in metrics.json for later analysis
-        # Use smoothing_hint=False to match Detectron2's evaluation hook behavior
+        # Write validation results to Detectron2's metrics.json via EventStorage
         from detectron2.utils.events import get_event_storage
         storage = get_event_storage()
         if storage is not None:
@@ -556,6 +549,11 @@ class LivePlotTracker:
                 storage.put_scalar('segm/AP', segm_ap, smoothing_hint=False)
             if bbox_ap is not None:
                 storage.put_scalar('bbox/AP', bbox_ap, smoothing_hint=False)
+    
+    @retry_file_io(max_retries=3, delay=0.5)
+    def _save_plot_with_retry(self):
+        """Save plot with retry logic"""
+        self.fig.savefig(str(self.plot_path), dpi=150, bbox_inches='tight')
     
     @retry_file_io(max_retries=5, delay=1.0)
     def _update_csv(self, iteration, training_loss, validation_segm_ap, validation_bbox_ap):
@@ -595,12 +593,18 @@ class LivePlotTracker:
         final_val_segm_ap = self.val_segm_aps[-1] if len(self.val_segm_aps) > 0 else 0.0
         final_val_bbox_ap = self.val_bbox_aps[-1] if len(self.val_bbox_aps) > 0 else 0.0
         
+        # Training loss summary (already collected; no extra cost)
+        final_training_loss = float(self.train_losses[-1]) if self.train_losses else None
+        mean_training_loss = (sum(self.train_losses) / len(self.train_losses)) if self.train_losses else None
+        
         return {
             'final_val_segm_ap': final_val_segm_ap,
             'final_val_bbox_ap': final_val_bbox_ap,
             'best_val_segm_ap': self.best_val_segm_ap,
             'best_val_bbox_ap': self.best_val_bbox_ap,
             'best_val_iter': self.best_val_iter,
+            'final_training_loss': final_training_loss,
+            'mean_training_loss': mean_training_loss,
             'training_time_seconds': elapsed_time,
             'training_time_minutes': elapsed_time / 60.0
         }
@@ -688,7 +692,7 @@ class SweepTrainer(DefaultTrainer):
                 print(f"  [Validation] Results keys: {list(val_results.keys()) if val_results else 'None'}")
                 if val_results and isinstance(val_results, dict) and len(val_results) > 0:
                     self.plot_tracker.update_validation(self.iter, val_results)
-                    print(f"  [Validation] ✓ Validation results captured!")
+                    print(f"  [Validation] OK Validation results captured!")
                 else:
                     print(f"  [WARNING] Validation returned empty results!")
             except Exception as e:
@@ -811,37 +815,39 @@ def setup_config_for_sweep(
     num_train_images: int,
     learning_rate: float,
     anchor_sizes: List[List[int]],
+    warmup_iters: int,
+    decay_type: str,
     resume_from: Optional[str] = None
 ) -> Tuple:
-    """Configure Detectron2 for a specific hyperparameter combination"""
+    """Configure Detectron2 for a specific hyperparameter combination.
+    decay_type: 'none' (constant LR after warmup), 'step' (drops at 60% and 80%), 'cosine'.
+    """
     
     # Calculate MAX_ITER
     if SWEEP_MAX_ITER is not None:
-        # Use fixed iteration count from convergence test
         max_iter_sweep = SWEEP_MAX_ITER
-        print(f"[SWEEP] Using fixed iteration count: {max_iter_sweep} (from convergence test)")
+        print(f"[SWEEP] Using fixed iteration count: {max_iter_sweep}")
     else:
-        # Calculate from epochs/fractions (old behavior)
         iterations_per_epoch = num_train_images // BATCH_SIZE
         max_iter_full = NUM_EPOCHS * iterations_per_epoch
         max_iter_sweep = int(max_iter_full * SWEEP_EPOCH_FRACTION)
         print(f"[SWEEP] Calculated iteration count: {max_iter_sweep} (from {NUM_EPOCHS} epochs × {SWEEP_EPOCH_FRACTION} fraction)")
     
-    # Learning rate decay at 60% and 80% of training
+    # Decay steps for 'step' decay (60% and 80%)
     decay_step_1 = int(max_iter_sweep * 0.6)
     decay_step_2 = int(max_iter_sweep * 0.8)
-    learning_rate_decay_steps = (decay_step_1, decay_step_2)
     
-    print(f"[SWEEP] Learning rate decay steps: {decay_step_1} (60%) and {decay_step_2} (80%)")
-    print(f"[SWEEP] Note: Detectron2's default config includes warm-up (typically 1000 iterations)")
+    print(f"[SWEEP] Warmup: {warmup_iters} iters | Decay: {decay_type}")
+    if decay_type == "step":
+        print(f"[SWEEP] Step decay at {decay_step_1} (60%) and {decay_step_2} (80%)")
     
     cfg = get_cfg()
     cfg.merge_from_file(
         model_zoo.get_config_file("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml")
     )
     
-    # Dataset configuration
-    cfg.DATASETS.TRAIN = (DATASET_NAME,)
+    # Dataset configuration (train-only; val held out and never seen during training)
+    cfg.DATASETS.TRAIN = (f"{DATASET_NAME}_train",)
     cfg.DATASETS.TEST = (f"{DATASET_NAME}_val",)
     
     # Data loading
@@ -859,8 +865,18 @@ def setup_config_for_sweep(
     cfg.SOLVER.IMS_PER_BATCH = BATCH_SIZE
     cfg.SOLVER.BASE_LR = learning_rate
     cfg.SOLVER.MAX_ITER = max_iter_sweep
-    cfg.SOLVER.STEPS = learning_rate_decay_steps
-    cfg.SOLVER.GAMMA = 0.1
+    cfg.SOLVER.WARMUP_ITERS = warmup_iters
+    
+    if decay_type == "none":
+        cfg.SOLVER.STEPS = ()  # No step decay; LR constant after warmup
+        cfg.SOLVER.GAMMA = 0.1
+    elif decay_type == "step":
+        cfg.SOLVER.STEPS = (decay_step_1, decay_step_2)
+        cfg.SOLVER.GAMMA = 0.1
+    else:  # cosine
+        cfg.SOLVER.LR_SCHEDULER_NAME = "WarmupCosineLR"
+        cfg.SOLVER.STEPS = ()  # Cosine ignores STEPS
+        cfg.SOLVER.GAMMA = 0.1
     
     # Anchor generator sizes (hyperparameter)
     cfg.MODEL.ANCHOR_GENERATOR.SIZES = anchor_sizes
@@ -889,12 +905,18 @@ def setup_config_for_sweep(
     return cfg, max_iter_sweep
 
 
-def create_run_name(learning_rate: float, anchor_sizes: List[List[int]], include_timestamp: bool = True) -> str:
+def create_run_name(
+    learning_rate: float,
+    anchor_sizes: List[List[int]],
+    warmup_iters: int,
+    decay_type: str,
+    include_timestamp: bool = True
+) -> str:
     """Create a descriptive name for this hyperparameter combination"""
     lr_str = f"lr{learning_rate:.4f}".replace('.', '_')
     anchor_str = "_".join([str(s) for sizes in anchor_sizes for s in sizes])
     anchor_str = anchor_str.replace('[', '').replace(']', '').replace(',', '')
-    base_name = f"{lr_str}_anchors{anchor_str}"
+    base_name = f"{lr_str}_anchors{anchor_str}_warmup{warmup_iters}_decay{decay_type}"
     
     if include_timestamp:
         timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
@@ -905,6 +927,8 @@ def create_run_name(learning_rate: float, anchor_sizes: List[List[int]], include
 def run_single_sweep(
     learning_rate: float,
     anchor_sizes: List[List[int]],
+    warmup_iters: int,
+    decay_type: str,
     train_dicts: List,
     val_dicts: List,
     num_train_images: int,
@@ -916,18 +940,19 @@ def run_single_sweep(
     print(f"\n{'='*80}")
     print(f"SWEEP RUN {run_number}/{total_runs}")
     print(f"{'='*80}")
-    print(f"Learning Rate: {learning_rate}")
-    print(f"Anchor Sizes: {anchor_sizes}")
+    print(f"Learning Rate: {learning_rate} | Anchors: {anchor_sizes}")
+    print(f"Warmup: {warmup_iters} iters | Decay: {decay_type}")
     print(f"{'='*80}\n")
     
     # Create run name and output directory (with timestamp)
-    run_name = create_run_name(learning_rate, anchor_sizes, include_timestamp=True)
+    run_name = create_run_name(learning_rate, anchor_sizes, warmup_iters, decay_type, include_timestamp=True)
     output_dir = Path(OUTPUT_BASE_DIR) / run_name
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Setup config
     cfg, max_iter = setup_config_for_sweep(
-        str(output_dir), num_train_images, learning_rate, anchor_sizes, RESUME_FROM_MODEL
+        str(output_dir), num_train_images, learning_rate, anchor_sizes,
+        warmup_iters, decay_type, RESUME_FROM_MODEL
     )
     
     print(f"Output directory: {output_dir}")
@@ -942,7 +967,7 @@ def run_single_sweep(
     # Show user where to find the plot
     plot_file = output_dir / "plots" / f"{run_name}_training_curve_live.png"
     print(f"\n  {'='*60}")
-    print(f"  📊 PLOT LOCATION:")
+    print(f"  [PLOT] PLOT LOCATION:")
     print(f"  {'='*60}")
     print(f"  File: {plot_file}")
     print(f"  - Updates every 25 iterations (training loss)")
@@ -995,7 +1020,7 @@ def run_single_sweep(
             val_results = trainer._run_validation()
             if val_results and isinstance(val_results, dict) and len(val_results) > 0:
                 plot_tracker.update_validation(final_iter, val_results)
-                print(f"  [Final Validation] ✓ Validation complete and metrics captured!")
+                print(f"  [Final Validation] OK Validation complete and metrics captured!")
             else:
                 print(f"  [WARNING] Final validation returned empty results!")
         except Exception as e:
@@ -1024,16 +1049,21 @@ def run_single_sweep(
     plot_tracker.save_plot()
     plot_tracker.close()
     
-    # Prepare results dictionary
+    best_val_ap = (final_metrics['best_val_segm_ap'] + final_metrics['best_val_bbox_ap']) / 2.0
     results = {
         'run_name': run_name,
         'learning_rate': learning_rate,
         'anchor_sizes': str(anchor_sizes),
+        'warmup_iters': warmup_iters,
+        'decay_type': decay_type,
         'final_val_segm_ap': final_metrics['final_val_segm_ap'],
         'final_val_bbox_ap': final_metrics['final_val_bbox_ap'],
         'best_val_segm_ap': final_metrics['best_val_segm_ap'],
         'best_val_bbox_ap': final_metrics['best_val_bbox_ap'],
+        'best_val_ap': best_val_ap,
         'best_val_iter': final_metrics['best_val_iter'],
+        'final_training_loss': final_metrics.get('final_training_loss'),
+        'mean_training_loss': final_metrics.get('mean_training_loss'),
         'training_time_seconds': final_metrics['training_time_seconds'],
         'training_time_minutes': final_metrics['training_time_minutes'],
         'max_iter': max_iter,
@@ -1042,7 +1072,7 @@ def run_single_sweep(
     
     # Save to CSV immediately (append mode for resume safety)
     save_run_to_csv(results)
-    print(f"  [CSV] ✓ Results saved to: {SWEEP_RESULTS_CSV}")
+    print(f"  [CSV] OK Results saved to: {SWEEP_RESULTS_CSV}")
     
     print(f"\n{'='*80}")
     print(f"RUN {run_number}/{total_runs} COMPLETE")
@@ -1067,17 +1097,15 @@ def save_run_to_csv(results: Dict):
     
     with open(csv_path, 'a', newline='') as f:
         fieldnames = [
-            'run_name', 'learning_rate', 'anchor_sizes', 
+            'run_name', 'learning_rate', 'anchor_sizes', 'warmup_iters', 'decay_type',
             'final_val_segm_ap', 'final_val_bbox_ap',
-            'best_val_segm_ap', 'best_val_bbox_ap', 'best_val_iter',
+            'best_val_segm_ap', 'best_val_bbox_ap', 'best_val_ap', 'best_val_iter',
+            'final_training_loss', 'mean_training_loss',
             'training_time_seconds', 'training_time_minutes', 'max_iter', 'output_dir', 'timestamp'
         ]
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
         if not file_exists:
             writer.writeheader()
-        
-        # Add timestamp
         results['timestamp'] = datetime.now().isoformat()
         writer.writerow(results)
 
@@ -1101,75 +1129,63 @@ def create_summary(results_list: List[Dict]):
 
 
 def create_comparison_plots(results_list: List[Dict]):
-    """Create comparison plots for all runs - showing both segm/AP and bbox/AP"""
+    """Create comparison plots for all runs - AP vs Warmup and vs Decay (segm and bbox)."""
     plots_dir = Path(OUTPUT_BASE_DIR) / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
     
-    # Extract data (with fallback for old format)
-    learning_rates = [r['learning_rate'] for r in results_list]
-    anchor_sizes_str = [r['anchor_sizes'] for r in results_list]
+    warmup_iters = [r.get('warmup_iters', 0) for r in results_list]
+    decay_type = [r.get('decay_type', '') for r in results_list]
+    decay_map = {'none': 0, 'step': 1, 'cosine': 2}
+    decay_positions = [decay_map.get(d, -1) for d in decay_type]
     
-    # Extract segm and bbox APs (with fallback for old format)
     best_segm_aps = [r.get('best_val_segm_ap', r.get('best_val_ap', 0.0)) for r in results_list]
     best_bbox_aps = [r.get('best_val_bbox_ap', r.get('best_val_ap', 0.0)) for r in results_list]
     final_segm_aps = [r.get('final_val_segm_ap', r.get('final_val_ap', 0.0)) for r in results_list]
     final_bbox_aps = [r.get('final_val_bbox_ap', r.get('final_val_ap', 0.0)) for r in results_list]
     
-    # Create figure with subplots (2 rows, 2 columns: segm and bbox for each comparison)
-    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
-    ax1_segm, ax1_bbox = axes[0]  # Top row: AP vs Learning Rate
-    ax2_segm, ax2_bbox = axes[1]  # Bottom row: AP vs Anchor Configuration
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    ax1_segm, ax1_bbox = axes[0]  # Top: AP vs Warmup (iters)
+    ax2_segm, ax2_bbox = axes[1]  # Bottom: AP vs Decay
     
-    # Plot 1a: segm/AP vs Learning Rate
-    ax1_segm.scatter(learning_rates, best_segm_aps, s=100, alpha=0.7, label='Best segm/AP', c='blue', marker='o')
-    ax1_segm.scatter(learning_rates, final_segm_aps, s=100, alpha=0.7, label='Final segm/AP', c='red', marker='x')
-    ax1_segm.set_xlabel('Learning Rate', fontsize=12)
+    # Plot 1a: segm/AP vs Warmup (iters)
+    ax1_segm.scatter(warmup_iters, best_segm_aps, s=100, alpha=0.7, label='Best segm/AP', c='blue', marker='o')
+    ax1_segm.scatter(warmup_iters, final_segm_aps, s=100, alpha=0.7, label='Final segm/AP', c='red', marker='x')
+    ax1_segm.set_xlabel('Warmup (iters)', fontsize=12)
     ax1_segm.set_ylabel('Validation segm/AP', fontsize=12)
-    ax1_segm.set_title('Validation segm/AP vs Learning Rate', fontsize=14, fontweight='bold')
-    ax1_segm.set_xscale('log')
+    ax1_segm.set_title('Validation segm/AP vs Warmup', fontsize=14, fontweight='bold')
     ax1_segm.grid(True, alpha=0.3)
     ax1_segm.legend()
     
-    # Plot 1b: bbox/AP vs Learning Rate
-    ax1_bbox.scatter(learning_rates, best_bbox_aps, s=100, alpha=0.7, label='Best bbox/AP', c='green', marker='s')
-    ax1_bbox.scatter(learning_rates, final_bbox_aps, s=100, alpha=0.7, label='Final bbox/AP', c='orange', marker='x')
-    ax1_bbox.set_xlabel('Learning Rate', fontsize=12)
+    # Plot 1b: bbox/AP vs Warmup
+    ax1_bbox.scatter(warmup_iters, best_bbox_aps, s=100, alpha=0.7, label='Best bbox/AP', c='green', marker='s')
+    ax1_bbox.scatter(warmup_iters, final_bbox_aps, s=100, alpha=0.7, label='Final bbox/AP', c='orange', marker='x')
+    ax1_bbox.set_xlabel('Warmup (iters)', fontsize=12)
     ax1_bbox.set_ylabel('Validation bbox/AP', fontsize=12)
-    ax1_bbox.set_title('Validation bbox/AP vs Learning Rate', fontsize=14, fontweight='bold')
-    ax1_bbox.set_xscale('log')
+    ax1_bbox.set_title('Validation bbox/AP vs Warmup', fontsize=14, fontweight='bold')
     ax1_bbox.grid(True, alpha=0.3)
     ax1_bbox.legend()
     
-    # Plot 2a: segm/AP vs Anchor Configuration
-    unique_anchors = list(set(anchor_sizes_str))
-    anchor_indices = {anchor: i for i, anchor in enumerate(unique_anchors)}
-    x_positions = [anchor_indices[anchor] for anchor in anchor_sizes_str]
-    
-    ax2_segm.scatter(x_positions, best_segm_aps, s=100, alpha=0.7, label='Best segm/AP', c='blue', marker='o')
-    ax2_segm.scatter(x_positions, final_segm_aps, s=100, alpha=0.7, label='Final segm/AP', c='red', marker='x')
-    ax2_segm.set_xlabel('Anchor Configuration', fontsize=12)
+    # Plot 2a: segm/AP vs Decay (None, Step, Cosine)
+    ax2_segm.scatter(decay_positions, best_segm_aps, s=100, alpha=0.7, label='Best segm/AP', c='blue', marker='o')
+    ax2_segm.scatter(decay_positions, final_segm_aps, s=100, alpha=0.7, label='Final segm/AP', c='red', marker='x')
+    ax2_segm.set_xlabel('LR Decay', fontsize=12)
     ax2_segm.set_ylabel('Validation segm/AP', fontsize=12)
-    ax2_segm.set_title('Validation segm/AP vs Anchor Configuration', fontsize=14, fontweight='bold')
-    ax2_segm.set_xticks(range(len(unique_anchors)))
-    ax2_segm.set_xticklabels([f"Config {i+1}" for i in range(len(unique_anchors))], rotation=45, ha='right')
+    ax2_segm.set_title('Validation segm/AP vs LR Decay', fontsize=14, fontweight='bold')
+    ax2_segm.set_xticks([0, 1, 2])
+    ax2_segm.set_xticklabels(['None', 'Step (60%/80%)', 'Cosine'])
     ax2_segm.grid(True, alpha=0.3)
     ax2_segm.legend()
     
-    # Plot 2b: bbox/AP vs Anchor Configuration
-    ax2_bbox.scatter(x_positions, best_bbox_aps, s=100, alpha=0.7, label='Best bbox/AP', c='green', marker='s')
-    ax2_bbox.scatter(x_positions, final_bbox_aps, s=100, alpha=0.7, label='Final bbox/AP', c='orange', marker='x')
-    ax2_bbox.set_xlabel('Anchor Configuration', fontsize=12)
+    # Plot 2b: bbox/AP vs Decay
+    ax2_bbox.scatter(decay_positions, best_bbox_aps, s=100, alpha=0.7, label='Best bbox/AP', c='green', marker='s')
+    ax2_bbox.scatter(decay_positions, final_bbox_aps, s=100, alpha=0.7, label='Final bbox/AP', c='orange', marker='x')
+    ax2_bbox.set_xlabel('LR Decay', fontsize=12)
     ax2_bbox.set_ylabel('Validation bbox/AP', fontsize=12)
-    ax2_bbox.set_title('Validation bbox/AP vs Anchor Configuration', fontsize=14, fontweight='bold')
-    ax2_bbox.set_xticks(range(len(unique_anchors)))
-    ax2_bbox.set_xticklabels([f"Config {i+1}" for i in range(len(unique_anchors))], rotation=45, ha='right')
+    ax2_bbox.set_title('Validation bbox/AP vs LR Decay', fontsize=14, fontweight='bold')
+    ax2_bbox.set_xticks([0, 1, 2])
+    ax2_bbox.set_xticklabels(['None', 'Step (60%/80%)', 'Cosine'])
     ax2_bbox.grid(True, alpha=0.3)
     ax2_bbox.legend()
-    
-    # Add legend for anchor configurations (on the right side)
-    legend_text = "\n".join([f"Config {i+1}: {anchor[:50]}" for i, anchor in enumerate(unique_anchors)])
-    ax2_segm.text(1.02, 0.5, legend_text, transform=ax2_segm.transAxes, fontsize=8,
-            verticalalignment='center', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
     
     plt.tight_layout()
     
@@ -1205,9 +1221,10 @@ def _write_summary_csv_with_retry(summary_path: Path, results_list: List[Dict]):
     """Write summary CSV with retry logic"""
     with open(summary_path, 'w', newline='') as f:
         fieldnames = [
-            'run_name', 'learning_rate', 'anchor_sizes', 
+            'run_name', 'learning_rate', 'anchor_sizes', 'warmup_iters', 'decay_type',
             'final_val_segm_ap', 'final_val_bbox_ap',
-            'best_val_segm_ap', 'best_val_bbox_ap', 'best_val_iter', 'training_time_minutes'
+            'best_val_segm_ap', 'best_val_bbox_ap', 'best_val_ap', 'best_val_iter',
+            'final_training_loss', 'mean_training_loss', 'training_time_minutes'
         ]
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
@@ -1217,11 +1234,16 @@ def _write_summary_csv_with_retry(summary_path: Path, results_list: List[Dict]):
                 'run_name': results['run_name'],
                 'learning_rate': results['learning_rate'],
                 'anchor_sizes': results['anchor_sizes'],
+                'warmup_iters': results.get('warmup_iters', 0),
+                'decay_type': results.get('decay_type', ''),
                 'final_val_segm_ap': results.get('final_val_segm_ap', 0.0),
                 'final_val_bbox_ap': results.get('final_val_bbox_ap', 0.0),
                 'best_val_segm_ap': results.get('best_val_segm_ap', 0.0),
                 'best_val_bbox_ap': results.get('best_val_bbox_ap', 0.0),
+                'best_val_ap': results.get('best_val_ap', (results.get('best_val_segm_ap', 0) + results.get('best_val_bbox_ap', 0)) / 2),
                 'best_val_iter': results['best_val_iter'],
+                'final_training_loss': results.get('final_training_loss'),
+                'mean_training_loss': results.get('mean_training_loss'),
                 'training_time_minutes': results['training_time_minutes']
             })
     print(f"[OK] Summary CSV saved: {summary_path}")
@@ -1233,29 +1255,34 @@ def _save_plot_fig_with_retry(fig, plot_path: Path):
 
 @retry_file_io(max_retries=3, delay=0.5)
 def check_existing_runs() -> List[Dict]:
-    """Check for existing runs in CSV to enable resume"""
+    """Check for existing runs in CSV to enable resume. Only includes rows with warmup_iters and decay_type (this sweep's format)."""
     existing_runs = []
     
-    # First, check CSV if it exists
-    if SWEEP_RESULTS_CSV is not None and _path_exists_with_retry(SWEEP_RESULTS_CSV):
-        with open(SWEEP_RESULTS_CSV, 'r') as f:
-            reader = csv.DictReader(f)
-            for row_num, row in enumerate(reader, start=2):  # Start at 2 (row 1 is header)
-                # Skip rows with empty or missing required fields
-                if not row.get('learning_rate') or not row.get('anchor_sizes'):
-                    print(f"  [SKIP] Row {row_num} in CSV has empty learning_rate or anchor_sizes, skipping")
-                    continue
-                
-                try:
-                    lr = float(row['learning_rate'])
-                    anchors = ast.literal_eval(row['anchor_sizes'])  # Safe parsing for list
-                    existing_runs.append({
-                        'learning_rate': lr,
-                        'anchor_sizes': anchors
-                    })
-                except (ValueError, SyntaxError) as e:
-                    print(f"  [SKIP] Row {row_num} in CSV has invalid data (learning_rate='{row.get('learning_rate')}', anchor_sizes='{row.get('anchor_sizes')}'): {e}")
-                    continue
+    if SWEEP_RESULTS_CSV is None or not _path_exists_with_retry(SWEEP_RESULTS_CSV):
+        return existing_runs
+    
+    with open(SWEEP_RESULTS_CSV, 'r') as f:
+        reader = csv.DictReader(f)
+        for row_num, row in enumerate(reader, start=2):
+            if not row.get('learning_rate') or not row.get('anchor_sizes'):
+                continue
+            dt = (row.get('decay_type') or '').strip()
+            if dt not in ('none', 'step', 'cosine'):
+                continue
+            wi = row.get('warmup_iters')
+            if wi is None or str(wi).strip() == '':
+                continue
+            try:
+                lr = float(row['learning_rate'])
+                anchors = ast.literal_eval(row['anchor_sizes'])
+                existing_runs.append({
+                    'learning_rate': lr,
+                    'anchor_sizes': anchors,
+                    'warmup_iters': int(float(wi)),
+                    'decay_type': dt
+                })
+            except (ValueError, SyntaxError):
+                continue
     
     return existing_runs
 
@@ -1267,55 +1294,49 @@ def find_completed_runs_in_folders(sweep_folder: Path) -> List[Dict]:
     if not sweep_folder.exists():
         return completed_runs
     
-    # Pattern: lr0_0050_anchors8_16_32_64_2026_01_22_17_14_52
+    # New pattern: lr0_0025_anchors8_16_32_64_warmup500_decaystep_2026_01_23_12_00_00
     import re
     
     for run_dir in sweep_folder.iterdir():
         if not run_dir.is_dir():
             continue
-        
         run_name = run_dir.name
-        
-        # Check if this looks like a run folder (starts with lr)
         if not run_name.startswith('lr'):
             continue
-        
-        # Check if run completed (has model_final.pth)
         model_final = run_dir / "model_final.pth"
         if not _path_exists_with_retry(model_final):
             continue
         
-        # Parse run name to extract learning rate and anchor sizes
-        # Pattern: lr0_0050_anchors8_16_32_64_2026_01_22_17_14_52
-        match = re.match(r'lr([\d_]+)_anchors([\d_]+)(?:_\d{4}_\d{2}_\d{2}_\d{2}_\d{2}_\d{2})?', run_name)
+        # Require _warmupN_decayX for this sweep's runs
+        match = re.match(
+            r'lr([\d_]+)_anchors([\d_]+)_warmup(\d+)_decay(\w+)(?:_\d{4}_\d{2}_\d{2}_\d{2}_\d{2}_\d{2})?$',
+            run_name
+        )
         if not match:
             continue
         
-        # Extract learning rate (convert 0_0050 to 0.0050)
         lr_str = match.group(1).replace('_', '.')
         try:
             learning_rate = float(lr_str)
         except ValueError:
             continue
-        
-        # Extract anchor sizes (convert "8_16_32_64" to [[8, 16, 32, 64]])
         anchor_str = match.group(2)
         anchor_parts = [int(x) for x in anchor_str.split('_') if x.isdigit()]
         if not anchor_parts:
             continue
+        anchor_sizes = [anchor_parts]
+        warmup_iters = int(match.group(3))
+        decay_type = match.group(4).lower()
+        if decay_type not in ('none', 'step', 'cosine'):
+            continue
         
-        # Detectron2 anchor sizes are grouped by aspect ratio, but we store them as a flat list
-        # We need to reconstruct the original format - typically it's one list per aspect ratio
-        # For simplicity, assume single aspect ratio with these sizes
-        anchor_sizes = [anchor_parts]  # Wrap in list to match expected format
-        
-        # Try to extract metrics from the run folder
         metrics = extract_metrics_from_completed_run(run_dir, run_name)
-        
         if metrics:
             completed_runs.append({
                 'learning_rate': learning_rate,
                 'anchor_sizes': anchor_sizes,
+                'warmup_iters': warmup_iters,
+                'decay_type': decay_type,
                 'run_name': run_name,
                 'run_dir': run_dir,
                 'metrics': metrics
@@ -1393,6 +1414,22 @@ def extract_metrics_from_completed_run(run_dir: Path, run_name: str) -> Optional
                             pass
                     metrics['max_iter'] = max_iter
                     
+                    # Training loss: final (last) and mean from training_loss column
+                    loss_vals = []
+                    for row in rows:
+                        v = row.get('training_loss', '') or ''
+                        if isinstance(v, str):
+                            v = v.strip()
+                        if v == '':
+                            continue
+                        try:
+                            loss_vals.append(float(v))
+                        except (ValueError, TypeError):
+                            pass
+                    if loss_vals:
+                        metrics['final_training_loss'] = loss_vals[-1]
+                        metrics['mean_training_loss'] = sum(loss_vals) / len(loss_vals)
+                    
                     return metrics
         except Exception as e:
             print(f"  [WARNING] Could not read live CSV for {run_name}: {e}")
@@ -1427,6 +1464,8 @@ def extract_metrics_from_completed_run(run_dir: Path, run_name: str) -> Optional
         metrics.setdefault('training_time_seconds', 0)
         metrics.setdefault('training_time_minutes', 0)
         metrics.setdefault('max_iter', SWEEP_MAX_ITER if SWEEP_MAX_ITER else 0)
+        metrics.setdefault('final_training_loss', None)
+        metrics.setdefault('mean_training_loss', None)
         return metrics
     
     return None
@@ -1448,13 +1487,14 @@ def main():
     # Show quick test mode status
     if QUICK_TEST_MODE:
         print("\n" + "="*80)
-        print("⚠️  QUICK TEST MODE ENABLED ⚠️")
+        print("[WARNING] QUICK TEST MODE ENABLED")
         print("="*80)
         print(f"  Iterations per run: {SWEEP_MAX_ITER} (vs 6000 in full mode)")
+        print(f"  Warmup options (scaled for {SWEEP_MAX_ITER} iters): {WARMUP_OPTIONS} (full: 0, 500, 1000)")
         print(f"  Validation interval: {VALIDATION_INTERVAL} (vs 250 in full mode)")
         print(f"  Validation images: ~{int(20000 * VALIDATION_SPLIT)} (vs ~200 in full mode)")
-        print(f"  Total combinations: {len(LEARNING_RATES) * len(ANCHOR_SIZES)}")
-        print(f"  Estimated time: ~{len(LEARNING_RATES) * len(ANCHOR_SIZES) * 15} minutes total")
+        print(f"  Total combinations: {len(WARMUP_OPTIONS) * len(DECAY_OPTIONS)} (Warmup x Decay)")
+        print(f"  Estimated time: ~{(len(WARMUP_OPTIONS) * len(DECAY_OPTIONS)) * 15} minutes total")
         print("="*80 + "\n")
     
     # Check if resuming from existing sweep folder
@@ -1508,69 +1548,76 @@ def main():
         for completed_run in completed_runs_in_folders:
             lr = completed_run['learning_rate']
             anchors = completed_run['anchor_sizes']
+            wi = completed_run['warmup_iters']
+            dt = completed_run['decay_type']
             
-            # Check if already in CSV
             already_in_csv = False
             for existing in existing_runs:
-                if (abs(existing['learning_rate'] - lr) < 1e-6 and 
-                    existing['anchor_sizes'] == anchors):
+                if (abs(existing.get('learning_rate', 0) - lr) < 1e-6 and
+                    existing.get('anchor_sizes') == anchors and
+                    existing.get('warmup_iters') == wi and
+                    existing.get('decay_type') == dt):
                     already_in_csv = True
                     break
             
             if not already_in_csv:
-                print(f"  [RECOVER] Recovering metrics for: LR={lr}, Anchors={anchors}")
+                print(f"  [RECOVER] Recovering: warmup={wi}, decay={dt}")
                 metrics = completed_run['metrics']
-                
-                # Create results dict in same format as run_single_sweep
+                bv_s = metrics.get('best_val_segm_ap', metrics.get('final_val_segm_ap', 0.0))
+                bv_b = metrics.get('best_val_bbox_ap', metrics.get('final_val_bbox_ap', 0.0))
                 results = {
                     'run_name': completed_run['run_name'],
                     'learning_rate': lr,
                     'anchor_sizes': str(anchors),
+                    'warmup_iters': wi,
+                    'decay_type': dt,
                     'final_val_segm_ap': metrics.get('final_val_segm_ap', 0.0),
                     'final_val_bbox_ap': metrics.get('final_val_bbox_ap', 0.0),
-                    'best_val_segm_ap': metrics.get('best_val_segm_ap', metrics.get('final_val_segm_ap', 0.0)),
-                    'best_val_bbox_ap': metrics.get('best_val_bbox_ap', metrics.get('final_val_bbox_ap', 0.0)),
+                    'best_val_segm_ap': bv_s,
+                    'best_val_bbox_ap': bv_b,
+                    'best_val_ap': (bv_s + bv_b) / 2.0,
                     'best_val_iter': metrics.get('best_val_iter', metrics.get('max_iter', 0)),
+                    'final_training_loss': metrics.get('final_training_loss'),
+                    'mean_training_loss': metrics.get('mean_training_loss'),
                     'training_time_seconds': metrics.get('training_time_seconds', 0),
                     'training_time_minutes': metrics.get('training_time_minutes', 0),
                     'max_iter': metrics.get('max_iter', SWEEP_MAX_ITER if SWEEP_MAX_ITER else 0),
                     'output_dir': str(completed_run['run_dir'])
                 }
-                
-                # Add to CSV
                 save_run_to_csv(results)
                 print(f"    [OK] Added to CSV: segm/AP={results['final_val_segm_ap']:.4f}, bbox/AP={results['final_val_bbox_ap']:.4f}")
-                
-                # Add to existing_runs so it gets skipped
                 existing_runs.append({
                     'learning_rate': lr,
-                    'anchor_sizes': anchors
+                    'anchor_sizes': anchors,
+                    'warmup_iters': wi,
+                    'decay_type': dt
                 })
             else:
-                print(f"  [SKIP] Already in CSV: LR={lr}, Anchors={anchors}")
+                print(f"  [SKIP] Already in CSV: warmup={wi}, decay={dt}")
         
         print()  # Blank line
     
-    # Generate all hyperparameter combinations
+    # Generate all combinations: Warmup x Decay = 9
     all_combinations = []
-    for lr in LEARNING_RATES:
-        for anchor_sizes in ANCHOR_SIZES:
-            # Check if this combination was already run
+    for w in WARMUP_OPTIONS:
+        for d in DECAY_OPTIONS:
             is_duplicate = False
             for existing in existing_runs:
-                if (abs(existing['learning_rate'] - lr) < 1e-6 and 
-                    existing['anchor_sizes'] == anchor_sizes):
-                    print(f"[SKIP] Already run: LR={lr}, Anchors={anchor_sizes}")
+                if (abs(existing.get('learning_rate', 0) - FIXED_LR) < 1e-6
+                    and existing.get('anchor_sizes') == FIXED_ANCHORS
+                    and existing.get('warmup_iters') == w
+                    and existing.get('decay_type') == d):
+                    print(f"[SKIP] Already run: warmup={w}, decay={d}")
                     is_duplicate = True
                     break
-            
             if not is_duplicate:
-                all_combinations.append((lr, anchor_sizes))
+                all_combinations.append((w, d))
     
     total_runs = len(all_combinations)
+    total_combos = len(WARMUP_OPTIONS) * len(DECAY_OPTIONS)
     print(f"\nTotal new runs to execute: {total_runs}")
-    print(f"Total combinations: {len(LEARNING_RATES) * len(ANCHOR_SIZES)}")
-    print(f"Already completed: {len(LEARNING_RATES) * len(ANCHOR_SIZES) - total_runs}\n")
+    print(f"Total combinations: {total_combos} (Warmup x Decay)")
+    print(f"Already completed: {total_combos - total_runs}\n")
     
     if total_runs == 0:
         print("All combinations already completed! Exiting.")
@@ -1580,10 +1627,10 @@ def main():
     all_results = []
     
     try:
-        for run_num, (lr, anchor_sizes) in enumerate(all_combinations, 1):
+        for run_num, (warmup_iters, decay_type) in enumerate(all_combinations, 1):
             results = run_single_sweep(
-                lr, anchor_sizes, train_dicts, val_dicts,
-                num_train_images, run_num, total_runs
+                FIXED_LR, FIXED_ANCHORS, warmup_iters, decay_type,
+                train_dicts, val_dicts, num_train_images, run_num, total_runs
             )
             all_results.append(results)
             
@@ -1608,8 +1655,8 @@ def main():
     print("SWEEP COMPLETE!")
     print(f"{'='*80}")
     print(f"Best configuration:")
-    print(f"  Learning Rate: {best_run['learning_rate']}")
-    print(f"  Anchor Sizes: {best_run['anchor_sizes']}")
+    print(f"  Learning Rate: {best_run['learning_rate']} | Anchors: {best_run['anchor_sizes']}")
+    print(f"  Warmup: {best_run['warmup_iters']} iters | Decay: {best_run['decay_type']}")
     print(f"  Best Validation AP: {best_run['best_val_ap']:.4f}")
     print(f"  Output Directory: {best_run['output_dir']}")
     print(f"\nSummary files:")
