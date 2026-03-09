@@ -18,6 +18,7 @@ Layout:
   └─────────────────────────────────────────────────────┘
 """
 
+import io
 import os
 import sys
 import time
@@ -33,9 +34,13 @@ import pandas as pd
 from datetime import datetime
 
 import matplotlib
-matplotlib.use("QtAgg")
+matplotlib.use("Agg")          # non-interactive backend — only used for snapshot renders
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+
+import pyqtgraph as pg
+pg.setConfigOption('background', '#2c2c2e')
+pg.setConfigOption('foreground', '#8e8e93')
+pg.setConfigOptions(antialias=True)
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -527,6 +532,7 @@ class AtomisationApp(QMainWindow):
 
         self.cumulative_distance = 0.0
         self.cleaning_in_progress = False
+        self._experiment_saved = True   # True until an experiment runs unsaved
 
         self.pressure_data = {
             'live_buffer': {'timestamps': [], 'pressures': []},
@@ -535,6 +541,7 @@ class AtomisationApp(QMainWindow):
             'experiment_start_time': None,
         }
         self.pressure_data['live_buffer_start_time'] = time.time()
+        self._last_experiment_snapshot = {'timestamps': [], 'pressures': []}
 
         # ── Build UI ──────────────────────────────────────────────────────────
         self._build_ui()
@@ -683,21 +690,27 @@ class AtomisationApp(QMainWindow):
         graph_card.layout().setSpacing(6)
         graph_card.layout().addWidget(title_label("Pressure (live)", 13))
 
-        self._fig, self._ax = plt.subplots(figsize=(4.0, 2.2))
-        self._fig.patch.set_facecolor("#1c1c1e")
-        self._ax.set_facecolor("#2c2c2e")
-        self._ax.tick_params(colors="#8e8e93", labelsize=8)
-        self._ax.spines[:].set_color("#3a3a3c")
-        self._ax.set_xlabel("Time (s)", color="#8e8e93", fontsize=8)
-        self._ax.set_ylabel("Pressure (BAR)", color="#8e8e93", fontsize=8)
-        self._ax.set_xlim(0, 60); self._ax.set_ylim(0, 20)
-        self._ax.grid(True, alpha=0.15, color="#8e8e93")
-        self._pressure_line, = self._ax.plot([], [], color=CLR_ACCENT, linewidth=1.8)
-        self._fig.tight_layout(pad=0.8)
+        self._graph_widget = pg.PlotWidget()
+        self._graph_widget.setFixedHeight(180)
+        self._graph_widget.setBackground('#2c2c2e')
 
-        self._graph_canvas = FigureCanvas(self._fig)
-        self._graph_canvas.setFixedHeight(180)
-        graph_card.layout().addWidget(self._graph_canvas)
+        _plot = self._graph_widget.getPlotItem()
+        _plot.setLabel('left',  'Pressure', units='BAR',
+                       color='#8e8e93', **{'font-size': '9pt'})
+        _plot.setLabel('bottom', 'Time', units='s',
+                       color='#8e8e93', **{'font-size': '9pt'})
+        _plot.getAxis('left').setTextPen(pg.mkPen('#8e8e93'))
+        _plot.getAxis('bottom').setTextPen(pg.mkPen('#8e8e93'))
+        _plot.getAxis('left').setPen(pg.mkPen('#3a3a3c'))
+        _plot.getAxis('bottom').setPen(pg.mkPen('#3a3a3c'))
+        _plot.showGrid(x=True, y=True, alpha=0.15)
+        _plot.setMouseEnabled(x=False, y=False)
+        _plot.hideButtons()
+
+        self._pressure_curve = _plot.plot(
+            pen=pg.mkPen(color=CLR_ACCENT, width=2.5)
+        )
+        graph_card.layout().addWidget(self._graph_widget)
         vl.addWidget(graph_card)
 
         # ── Motor travel card ─────────────────────────────────────────────────
@@ -1466,11 +1479,10 @@ class AtomisationApp(QMainWindow):
         if not lb['timestamps']:
             return
         ts = lb['timestamps']; ps = lb['pressures']
-        self._pressure_line.set_data(ts, ps)
+        self._pressure_curve.setData(ts, ps)
         t_max = max(ts[-1], 10.0)
-        self._ax.set_xlim(max(0, t_max - 60), t_max)
-        self._ax.set_ylim(0, max(max(ps) * 1.2, 5))
-        self._graph_canvas.draw_idle()
+        self._graph_widget.setXRange(max(0, t_max - 30), t_max, padding=0.02)
+        self._graph_widget.setYRange(0, max(max(ps) * 1.2, 5), padding=0.05)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Logic — Camera
@@ -1581,6 +1593,33 @@ class AtomisationApp(QMainWindow):
 
     def _start_experiment(self):
         if not self._require_arduino(): return
+
+        # Warn if previous experiment data hasn't been saved yet
+        if not self._experiment_saved and self.pressure_data['experiment_data']['timestamps']:
+            dlg = QMessageBox(self)
+            dlg.setWindowTitle("Unsaved Experiment Data")
+            dlg.setText(
+                "You have unsaved data from the previous experiment.\n\n"
+                "Starting a new experiment will discard it.\n"
+                "Save to Excel first, or click Discard to continue anyway."
+            )
+            dlg.setIcon(QMessageBox.Icon.Warning)
+            save_btn     = dlg.addButton("Save First",          QMessageBox.ButtonRole.RejectRole)
+            discard_btn  = dlg.addButton("Discard & Continue",  QMessageBox.ButtonRole.DestructiveRole)  # noqa: F841
+            dlg.setStyleSheet(f"""
+                QMessageBox {{ background-color: {CLR_PANEL}; color: {CLR_TEXT}; }}
+                QLabel {{ color: {CLR_TEXT}; font-size: 13px; }}
+                QPushButton {{
+                    background-color: {CLR_INPUT}; color: {CLR_TEXT};
+                    border: 1px solid {CLR_BORDER}; border-radius: 8px;
+                    padding: 6px 20px; font-size: 13px;
+                }}
+                QPushButton:hover {{ background-color: {CLR_ACCENT}; color: white; }}
+            """)
+            dlg.exec()
+            if dlg.clickedButton() == save_btn:
+                return  # let user save first before continuing
+
         try:
             pressure = float(self._pressure_entry.text())
             speed    = int(self._speed_entry.text())
@@ -1618,7 +1657,13 @@ class AtomisationApp(QMainWindow):
         self.pressure_data['experiment_active'] = False
         self.arduino.send_pressure_off_command()
         self.arduino.reset_state()
-        self._set_status("Experiment complete ✓", CLR_GREEN)
+        # Freeze a clean copy of the experiment data at this exact moment
+        self._last_experiment_snapshot = {
+            'timestamps': list(self.pressure_data['experiment_data']['timestamps']),
+            'pressures':  list(self.pressure_data['experiment_data']['pressures']),
+        }
+        self._experiment_saved = False
+        self._set_status("Experiment complete ✓ — remember to Save to Excel", CLR_GREEN)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Logic — Shadowgraph preview
@@ -1677,29 +1722,122 @@ class AtomisationApp(QMainWindow):
                        "Please enter a Nozzle No. in the right-hand panel before saving.")
             return
         try:
-            lacie = find_lacie_drive()
-            base  = os.path.join(lacie, "Experiments", "Logs") if lacie else "experiment_logs"
-            os.makedirs(base, exist_ok=True)
-            ts   = datetime.now().strftime("%Y%m%d_%H%M%S")
-            path = os.path.join(base, f"experiment_{ts}.xlsx")
+            from openpyxl import load_workbook, Workbook
+            from openpyxl.drawing.image import Image as XLImage
 
-            data = {
-                'Timestamp':      [datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
-                'Nozzle':         [self._nozzle_entry.text()],
-                'Orifice':        [self._orifice_combo.currentText()],
-                'Pressure (BAR)': [self._pressure_entry.text()],
-                'Speed (steps/s)':[self._speed_entry.text()],
-                'Distance (mm)':  [self._distance_entry.text()],
-                'Notes':          [self._notes_text.toPlainText()],
+            lacie       = find_lacie_drive()
+            base        = os.path.join(lacie, "Experiments", "Logs") if lacie else "experiment_logs"
+            per_run_dir = os.path.join(base, "per_run")
+            os.makedirs(base, exist_ok=True)
+            os.makedirs(per_run_dir, exist_ok=True)
+
+            now          = datetime.now()
+            ts           = now.strftime("%Y%m%d_%H%M%S")
+            ts_str       = now.strftime("%Y-%m-%d %H:%M:%S")
+            nozzle       = self._nozzle_entry.text().strip()
+            orifice      = self._orifice_combo.currentText()
+            notes        = self._notes_text.toPlainText()
+            speed_str    = self._speed_entry.text()
+            distance_str = self._distance_entry.text()
+
+            # Use the frozen snapshot taken at experiment end — not the live buffer
+            snap = self._last_experiment_snapshot
+            pressures = snap['pressures']
+            if pressures:
+                p_min, p_max = min(pressures), max(pressures)
+                p_range_str  = f"{p_min:.1f}–{p_max:.1f} BAR"
+                p_range_file = f"{p_min:.1f}-{p_max:.1f}BAR"
+            else:
+                raw = self._pressure_entry.text()
+                p_range_str  = f"{raw} BAR" if raw else "N/A"
+                p_range_file = None
+
+            # ── Individual per-run file ────────────────────────────────────────
+            safe_nozzle = f"N{nozzle}".replace(" ", "_")
+            fname = (f"{ts}_{safe_nozzle}_{orifice}_{p_range_file}.xlsx"
+                     if p_range_file else f"{ts}_{safe_nozzle}_{orifice}.xlsx")
+            ind_path = os.path.join(per_run_dir, fname)
+
+            meta = {
+                'Field': ['Timestamp', 'Nozzle', 'Orifice', 'Pressure Range',
+                          'Speed (steps/s)', 'Distance (mm)', 'Notes'],
+                'Value': [ts_str, nozzle, orifice, p_range_str,
+                          speed_str, distance_str, notes],
             }
-            df = pd.DataFrame(data)
-            with pd.ExcelWriter(path, engine='openpyxl') as writer:
-                df.to_excel(writer, sheet_name='Experiment', index=False)
-                if self.pressure_data['experiment_data']['timestamps']:
-                    pd.DataFrame(self.pressure_data['experiment_data']).to_excel(
-                        writer, sheet_name='Pressure', index=False)
-            self._set_status(f"Saved: {os.path.basename(path)}", CLR_GREEN)
-            self._save_path_lbl.setText(path)
+            with pd.ExcelWriter(ind_path, engine='openpyxl') as writer:
+                pd.DataFrame(meta).to_excel(writer, sheet_name='Metadata', index=False)
+                if snap['timestamps']:
+                    pd.DataFrame(snap).to_excel(writer, sheet_name='Pressure', index=False)
+
+            # ── Master log (append-mode) ───────────────────────────────────────
+            master_path = os.path.join(base, 'master_log.xlsx')
+            if os.path.exists(master_path):
+                wb = load_workbook(master_path)
+                ws = wb.active
+            else:
+                wb = Workbook()
+                ws = wb.active
+                ws.title = 'Experiments'
+                ws.append(['Timestamp', 'Nozzle', 'Orifice', 'Pressure Range',
+                           'Speed (steps/s)', 'Distance (mm)', 'Notes',
+                           'Pressure Graph', 'Shadowgraph', 'Cone Image'])
+                for col, width in zip('ABCDEFGHIJ', [20, 8, 8, 18, 14, 12, 35, 28, 28, 28]):
+                    ws.column_dimensions[col].width = width
+
+            ws.append([ts_str, nozzle, orifice, p_range_str,
+                       speed_str, distance_str, notes, '', '', ''])
+            row_num = ws.max_row
+            ws.row_dimensions[row_num].height = 90   # points ≈ 120 px
+
+            # Render clean light-mode pressure thumbnail from snapshot
+            if pressures:
+                fig, ax = plt.subplots(figsize=(4.5, 2.0))
+                fig.patch.set_facecolor('white')
+                ax.set_facecolor('#f5f5f7')
+                t0 = snap['timestamps'][0]
+                rel_ts = [t - t0 for t in snap['timestamps']]
+                ax.plot(rel_ts, pressures, color='#0a84ff', linewidth=2.5, solid_capstyle='round')
+                ax.fill_between(rel_ts, pressures, alpha=0.12, color='#0a84ff')
+                ax.set_xlabel('Time (s)', fontsize=8, color='#3a3a3c')
+                ax.set_ylabel('Pressure (BAR)', fontsize=8, color='#3a3a3c')
+                ax.set_title(f'N{nozzle}  {orifice}  {p_range_str}',
+                             fontsize=8, color='#1c1c1e', pad=4)
+                ax.tick_params(colors='#6e6e73', labelsize=7)
+                ax.spines['top'].set_visible(False)
+                ax.spines['right'].set_visible(False)
+                ax.spines['left'].set_color('#d1d1d6')
+                ax.spines['bottom'].set_color('#d1d1d6')
+                ax.grid(True, alpha=0.4, color='#d1d1d6', linewidth=0.6)
+                ax.set_ylim(bottom=0)
+                fig.tight_layout(pad=0.6)
+                buf = io.BytesIO()
+                fig.savefig(buf, format='png', dpi=150, bbox_inches='tight',
+                            facecolor='white')
+                plt.close(fig)
+                buf.seek(0)
+                pimg = XLImage(buf)
+                pimg.width = 210; pimg.height = 100
+                ws.add_image(pimg, f'H{row_num}')
+            else:
+                ws.cell(row=row_num, column=8).value = 'NO DATA AVAILABLE'
+
+            # Embed shadowgraph thumbnail if available
+            shadow_path = self._result_path_label.text()
+            if shadow_path and os.path.exists(shadow_path):
+                simg = XLImage(shadow_path)
+                simg.width = 200; simg.height = 110
+                ws.add_image(simg, f'I{row_num}')
+            else:
+                ws.cell(row=row_num, column=9).value = 'NO DATA AVAILABLE'
+
+            # Cone image — placeholder until cone spray workflow is implemented
+            ws.cell(row=row_num, column=10).value = 'NO DATA AVAILABLE'
+
+            wb.save(master_path)
+
+            self._experiment_saved = True
+            self._set_status(f"Saved: {fname}  +  master_log.xlsx updated", CLR_GREEN)
+            self._save_path_lbl.setText(f"{ind_path}\nMaster: {master_path}")
         except Exception as e:
             self._set_status(f"Save error: {e}", CLR_RED)
 
