@@ -1,9 +1,9 @@
 {
   "ip": "100.100.100.1",
-  "fps": "1000",
-  "exposure_us": "500",
-  "width": "640",
-  "height": "480",
-  "seconds": "0.020",
+  "fps": "100",
+  "exposure_us": "9900",
+  "width": "512",
+  "height": "512",
+  "seconds": "0.5",
   "output": "E:\\Phantom\\Video"
 }

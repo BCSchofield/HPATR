@@ -339,10 +339,6 @@ class ArduinoController:
         command = f"SPEED:{speed};DIST:{distance}\n"
         self.ser.write(command.encode())
         log_serial(f"Sent: {command.strip()}")
-        time.sleep(1)
-        while self.ser.in_waiting > 0:
-            response = self.ser.readline().decode().strip()
-            if response: log_serial(f"Arduino response: {response}")
 
     def send_pressure_command(self, pressure):
         command = f"PRESSURE:{pressure}\n"
@@ -380,11 +376,25 @@ class PhantomController:
     def connect(self, ip_address=None, camera_index=0):
         if not PHANTOM_SDK_AVAILABLE:
             raise RuntimeError("Phantom SDK not installed")
+        import pyphantom as _pyph
         self.ph = Phantom()
         self.ph.discover(print_list=False)
         if self.ph.camera_count == 0:
-            self.ph.add_simulated_camera()
-        self.cam = self.ph.Camera(min(camera_index, self.ph.camera_count - 1))
+            raise RuntimeError("No Phantom camera found")
+        cam_index = min(camera_index, self.ph.camera_count - 1)
+        try:
+            self.cam = self.ph.Camera(cam_index)
+        except Exception as e:
+            if "requested parameter is missing" in str(e).lower() or "missing" in str(e).lower():
+                # Camera not in live/recording state — Camera.__init__ tries to get the
+                # live cine handle which requires the camera to be armed/live.
+                # Bypass by creating the Camera instance without calling __init__.
+                cam = object.__new__(_pyph.Camera)
+                cam._camera_num = cam_index
+                cam._live_cine = None
+                self.cam = cam
+            else:
+                raise
         self.is_connected = True
         return True
 
@@ -642,6 +652,7 @@ class AtomisationApp(QMainWindow):
 
         panel = QFrame()
         panel.setStyleSheet("background: transparent;")
+        panel.setMinimumWidth(0)
         vl = QVBoxLayout(panel)
         vl.setContentsMargins(0, 0, 0, 0)
         vl.setSpacing(12)
@@ -662,7 +673,7 @@ class AtomisationApp(QMainWindow):
         preview_card.layout().addWidget(top_row)
 
         self._shadow_label = QLabel()
-        self._shadow_label.setFixedSize(390, 265)
+        self._shadow_label.setFixedSize(370, 250)
         self._shadow_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._shadow_label.setStyleSheet(f"""
             background-color: {CLR_INPUT};
@@ -760,7 +771,8 @@ class AtomisationApp(QMainWindow):
 
     def _build_right_panel(self):
         panel = QFrame()
-        panel.setFixedWidth(300)
+        panel.setFixedWidth(260)
+        panel.setMinimumWidth(0)
         panel.setStyleSheet("background: transparent;")
         vl = QVBoxLayout(panel)
         vl.setContentsMargins(0, 0, 0, 0)
@@ -882,8 +894,10 @@ class AtomisationApp(QMainWindow):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("background: transparent; border: none;")
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
         w = QWidget()
+        w.setMinimumWidth(0)
         vl = QVBoxLayout(w)
         vl.setContentsMargins(20, 20, 20, 20)
         vl.setSpacing(14)
@@ -901,6 +915,7 @@ class AtomisationApp(QMainWindow):
         self._port_combo.setEditable(True)
         self._port_combo.addItems(self._get_serial_ports())
         self._port_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._port_combo.setMinimumWidth(120)
         refresh_port_btn = ghost_button("Refresh")
         refresh_port_btn.setFixedHeight(34)
         refresh_port_btn.clicked.connect(self._refresh_ports)
@@ -933,7 +948,8 @@ class AtomisationApp(QMainWindow):
         p_lbl = QLabel("Target (BAR)"); p_lbl.setFixedWidth(110)
         p_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
         self._pressure_entry = QLineEdit(); self._pressure_entry.setPlaceholderText("0.0 – 26.4")
-        self._pressure_entry.setFixedWidth(120)
+        self._pressure_entry.setMinimumWidth(80)
+        self._pressure_entry.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         set_p_btn = accent_button("Set Pressure", CLR_ACCENT)
         set_p_btn.setFixedHeight(36)
         set_p_btn.clicked.connect(self._set_pressure)
@@ -990,7 +1006,9 @@ class AtomisationApp(QMainWindow):
     def _build_camera_tab(self):
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
         scroll.setStyleSheet("background:transparent; border:none;")
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         w = QWidget()
+        w.setMinimumWidth(0)
         vl = QVBoxLayout(w); vl.setContentsMargins(20,20,20,20); vl.setSpacing(14)
 
         # Connection card
@@ -1093,7 +1111,9 @@ class AtomisationApp(QMainWindow):
     def _build_afg_tab(self):
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
         scroll.setStyleSheet("background:transparent; border:none;")
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         w = QWidget()
+        w.setMinimumWidth(0)
         vl = QVBoxLayout(w); vl.setContentsMargins(20,20,20,20); vl.setSpacing(14)
 
         c = card(w)
@@ -1392,8 +1412,10 @@ class AtomisationApp(QMainWindow):
                                     self._exp_progress.setValue(p)
                                 ))
                             except: pass
-            except Exception:
-                break
+            except serial.SerialException:
+                break  # port closed or disconnected — exit cleanly
+            except Exception as e:
+                log_serial(f"Serial reader warning: {e}")
             time.sleep(0.05)
 
     def _poll_serial(self):
