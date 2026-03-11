@@ -68,17 +68,41 @@ def handle(cmd: str):
         print("[MOCK]   Pressure off")
 
     elif "DIST:" in cmd:
-        # SPEED:<int>;DIST:<float>  — simulate motor completing after 2 s
+        # SPEED:<int>;DIST:<float>  — simulate motor run with progress + MOVEMENT_COMPLETE
         connected[0] = True
-        print(f"[MOCK]   Motor move command, sending HOMED in 2 s…")
-        def _send_homed():
-            time.sleep(2.0)
+        duration = random.uniform(5.0, 15.0)
+        print(f"[MOCK]   Motor move command, running for {duration:.1f} s…")
+        def _run_motor():
+            steps = 10
+            for i in range(1, steps + 1):
+                time.sleep(duration / steps)
+                pct = i * 10
+                try:
+                    msg = f"DEBUG: Movement progress: {pct}%\n".encode()
+                    os.write(master_fd, msg)
+                    print(f"[MOCK →] Movement progress: {pct}%")
+                except OSError:
+                    return
             try:
-                os.write(master_fd, b"HOMED\n")
-                print("[MOCK →] HOMED")
+                os.write(master_fd, b"MOVEMENT_COMPLETE\n")
+                print("[MOCK →] MOVEMENT_COMPLETE")
+                os.write(master_fd, b"ARDUINO_READY\n")
             except OSError:
                 pass
-        threading.Thread(target=_send_homed, daemon=True).start()
+        threading.Thread(target=_run_motor, daemon=True).start()
+
+    elif cmd.startswith("HOME:"):
+        connected[0] = True
+        print("[MOCK]   Homing sequence started, sending Homing Complete! in 2 s…")
+        def _send_homing_complete():
+            time.sleep(2.0)
+            try:
+                os.write(master_fd, b"Homing Complete!\n")
+                print("[MOCK →] Homing Complete!")
+                os.write(master_fd, b"ARDUINO_READY\n")
+            except OSError:
+                pass
+        threading.Thread(target=_send_homing_complete, daemon=True).start()
 
     elif cmd.startswith("RESET:"):
         connected[0] = True

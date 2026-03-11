@@ -898,6 +898,7 @@ class AtomisationApp(QMainWindow):
         lbl = QLabel("Port"); lbl.setFixedWidth(80)
         lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
         self._port_combo = QComboBox()
+        self._port_combo.setEditable(True)
         self._port_combo.addItems(self._get_serial_ports())
         self._port_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         refresh_port_btn = ghost_button("Refresh")
@@ -1268,6 +1269,24 @@ class AtomisationApp(QMainWindow):
         """)
         self._start_btn.clicked.connect(self._start_experiment)
         hl.addWidget(self._start_btn)
+
+        self._exp_progress = QProgressBar()
+        self._exp_progress.setRange(0, 0)   # indeterminate by default
+        self._exp_progress.setFixedHeight(10)
+        self._exp_progress.setTextVisible(False)
+        self._exp_progress.setVisible(False)
+        self._exp_progress.setStyleSheet(f"""
+            QProgressBar {{
+                background-color: {CLR_INPUT};
+                border: none;
+                border-radius: 5px;
+            }}
+            QProgressBar::chunk {{
+                background-color: {CLR_GREEN};
+                border-radius: 5px;
+            }}
+        """)
+        hl.addWidget(self._exp_progress)
         return bar
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -1359,10 +1378,20 @@ class AtomisationApp(QMainWindow):
                         if line.startswith("PRESSURE_READING:"):
                             try:
                                 val = float(line.split(":")[1])
-                                self._handle_pressure_reading(val)
+                                QTimer.singleShot(0, self, lambda v=val: self._handle_pressure_reading(v))
                             except: pass
-                        elif "HOMED" in line:
-                            self._on_homed()
+                        elif "MOVEMENT_COMPLETE" in line or "MOVEMENT_TIMEOUT" in line:
+                            QTimer.singleShot(0, self, self._on_movement_complete)
+                        elif "Homing Complete" in line:
+                            QTimer.singleShot(0, self, self._on_homed)
+                        elif line.startswith("DEBUG: Movement progress:"):
+                            try:
+                                pct = int(line.split(":")[-1].strip().replace("%", ""))
+                                QTimer.singleShot(0, self, lambda p=pct: (
+                                    self._exp_progress.setRange(0, 100),
+                                    self._exp_progress.setValue(p)
+                                ))
+                            except: pass
             except Exception:
                 break
             time.sleep(0.05)
@@ -1390,6 +1419,22 @@ class AtomisationApp(QMainWindow):
 
     def _on_homed(self):
         self._homed_dot.setStyleSheet(f"color:{CLR_GREEN}; font-size:10px;")
+        self.cumulative_distance = 0.0
+        self._update_travel_bar()
+
+    def _on_movement_complete(self):
+        if self.pressure_data['experiment_active']:
+            self.pressure_data['experiment_active'] = False
+            self.arduino.send_pressure_off_command()
+            self.arduino.reset_state()
+            self._last_experiment_snapshot = {
+                'timestamps': list(self.pressure_data['experiment_data']['timestamps']),
+                'pressures':  list(self.pressure_data['experiment_data']['pressures']),
+            }
+            self._experiment_saved = False
+            self._exp_progress.setVisible(False)
+            self._start_btn.setEnabled(True)
+            self._set_status("Experiment complete ✓ — remember to Save to Excel", CLR_GREEN)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Logic — Pressure / Motor
@@ -1415,7 +1460,8 @@ class AtomisationApp(QMainWindow):
 
     def _home_motor(self):
         if not self._require_arduino(): return
-        self.arduino.send_motor_command(500, 0)
+        self.arduino.ser.write(b"HOME:1\n")
+        log_serial("Sent: HOME:1")
         self._set_status("Homing…")
 
     def _start_cleaning(self):
@@ -1644,26 +1690,23 @@ class AtomisationApp(QMainWindow):
         self.pressure_data['experiment_active'] = True
         self.pressure_data['experiment_start_time'] = time.time()
         self.pressure_data['experiment_data'] = {'timestamps':[], 'pressures':[]}
+        # Reset live buffer so the graph X-axis starts from 0 at experiment start
+        self.pressure_data['live_buffer'] = {'timestamps': [], 'pressures': []}
+        self.pressure_data['live_buffer_start_time'] = time.time()
+
+        self._start_btn.setEnabled(False)
+        self._exp_progress.setRange(0, 0)   # indeterminate pulsing
+        self._exp_progress.setVisible(True)
+        self._set_status("Experiment running…", CLR_ACCENT)
 
         self.arduino.send_pressure_command(pressure)
-        time.sleep(0.5)
-        self.arduino.send_motor_command(speed, distance)
+        # Send motor command 500 ms later without blocking the UI
+        QTimer.singleShot(500, lambda: self.arduino.send_motor_command(speed, distance))
         self.cumulative_distance += distance
         self._update_travel_bar()
 
         if self.phantom and self.phantom.is_connected:
             self._cam_capture()
-
-        self.pressure_data['experiment_active'] = False
-        self.arduino.send_pressure_off_command()
-        self.arduino.reset_state()
-        # Freeze a clean copy of the experiment data at this exact moment
-        self._last_experiment_snapshot = {
-            'timestamps': list(self.pressure_data['experiment_data']['timestamps']),
-            'pressures':  list(self.pressure_data['experiment_data']['pressures']),
-        }
-        self._experiment_saved = False
-        self._set_status("Experiment complete ✓ — remember to Save to Excel", CLR_GREEN)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Logic — Shadowgraph preview
@@ -1678,7 +1721,7 @@ class AtomisationApp(QMainWindow):
             except: base = None
             if not base or not os.path.exists(base):
                 lacie = find_lacie_drive()
-                base  = os.path.join(lacie, "Shadowgraph") if lacie else "D:\\Shadowgraph"
+                base  = os.path.join(lacie, "Shadowgraph") if lacie else "experiment_logs"
             if not os.path.exists(base): return None
             def latest_subdir(path):
                 items = [(os.path.join(path,i), os.path.getmtime(os.path.join(path,i)))
@@ -1724,16 +1767,21 @@ class AtomisationApp(QMainWindow):
         try:
             from openpyxl import load_workbook, Workbook
             from openpyxl.drawing.image import Image as XLImage
+            from openpyxl.styles import Alignment
 
             lacie       = find_lacie_drive()
             base        = os.path.join(lacie, "Experiments", "Logs") if lacie else "experiment_logs"
-            per_run_dir = os.path.join(base, "per_run")
             os.makedirs(base, exist_ok=True)
-            os.makedirs(per_run_dir, exist_ok=True)
 
             now          = datetime.now()
             ts           = now.strftime("%Y%m%d_%H%M%S")
             ts_str       = now.strftime("%Y-%m-%d %H:%M:%S")
+
+            per_run_dir = os.path.join(base, "per_run",
+                                       now.strftime("%Y"),
+                                       now.strftime("%m"),
+                                       now.strftime("%d"))
+            os.makedirs(per_run_dir, exist_ok=True)
             nozzle       = self._nozzle_entry.text().strip()
             orifice      = self._orifice_combo.currentText()
             notes        = self._notes_text.toPlainText()
@@ -1769,69 +1817,115 @@ class AtomisationApp(QMainWindow):
                 if snap['timestamps']:
                     pd.DataFrame(snap).to_excel(writer, sheet_name='Pressure', index=False)
 
-            # ── Master log (append-mode) ───────────────────────────────────────
+            # ── Render pressure thumbnail ─────────────────────────────────────
+            # Strategy: set DPI = DISPLAY_H / fig_h so the PNG renders at
+            # exactly DISPLAY_H pixels tall.  That means we embed at 1:1 scale
+            # vertically — no squash/stretch — and text always appears the same
+            # visual size regardless of how wide the chart is.
+            DISPLAY_H   = 165          # Excel display height, pixels
+            MIN_W_PX    = 347          # minimum display width (= 10 s baseline)
+            PX_PER_SEC  = MIN_W_PX / 10.0
+            FIG_H_IN    = 2.0
+            DPI         = DISPLAY_H / FIG_H_IN   # ≈ 82.5 — height is always 165 px
+            pressure_buf = None
+            pressure_img_width = MIN_W_PX
+            if pressures:
+                t0 = snap['timestamps'][0]
+                rel_ts = [t - t0 for t in snap['timestamps']]
+                duration_s = rel_ts[-1] if rel_ts else 0.0
+                target_w_px = max(MIN_W_PX, int(duration_s * PX_PER_SEC))
+                fig_w = target_w_px / DPI
+                fig, ax = plt.subplots(figsize=(fig_w, FIG_H_IN))
+                fig.patch.set_facecolor('white')
+                ax.set_facecolor('#f5f5f7')
+                ax.plot(rel_ts, pressures, color='#0a84ff', linewidth=2.5, solid_capstyle='round')
+                ax.fill_between(rel_ts, pressures, alpha=0.12, color='#0a84ff')
+                ax.set_xlabel('Time (s)', fontsize=8, color='#3a3a3c')
+                ax.set_ylabel('Pressure (BAR)', fontsize=8, color='#3a3a3c')
+                ax.set_title(f'N{nozzle}  {orifice}  {p_range_str}',
+                             fontsize=8, color='#1c1c1e', pad=4, loc='left')
+                ax.tick_params(colors='#6e6e73', labelsize=7)
+                ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
+                ax.spines['left'].set_color('#d1d1d6'); ax.spines['bottom'].set_color('#d1d1d6')
+                ax.grid(True, alpha=0.4, color='#d1d1d6', linewidth=0.6)
+                ax.set_ylim(bottom=0)
+                fig.tight_layout(pad=0.6)
+                pressure_buf = io.BytesIO()
+                fig.savefig(pressure_buf, format='png', dpi=DPI,
+                            bbox_inches='tight', facecolor='white')
+                plt.close(fig)
+                # Read actual PNG dimensions from header; bbox_inches='tight' may
+                # trim a few pixels, so derive final Excel width from true size.
+                import struct as _struct
+                pressure_buf.seek(16)
+                actual_w = _struct.unpack('>I', pressure_buf.read(4))[0]
+                actual_h = _struct.unpack('>I', pressure_buf.read(4))[0]
+                # Scale to DISPLAY_H — height ratio ≈ 1 so width ≈ actual_w
+                pressure_img_width = max(MIN_W_PX, int(actual_w * DISPLAY_H / actual_h))
+                pressure_buf.seek(0)
+
+            # ── Master log: insert at row 2, shift image anchors first ───────
+            import re as _re
             master_path = os.path.join(base, 'master_log.xlsx')
             if os.path.exists(master_path):
                 wb = load_workbook(master_path)
                 ws = wb.active
+                # Shift row_dimensions down one row before inserting
+                old_dims = {r: ws.row_dimensions[r].height
+                            for r in list(ws.row_dimensions.keys()) if r >= 2}
+                for r in sorted(old_dims.keys(), reverse=True):
+                    ws.row_dimensions[r + 1].height = old_dims[r]
+
+                # Shift every existing image anchor down one row before inserting
+                for img in ws._images:
+                    anchor = img.anchor
+                    if isinstance(anchor, str):
+                        m = _re.match(r'^([A-Z]+)(\d+)$', anchor)
+                        if m and int(m.group(2)) >= 2:
+                            img.anchor = f'{m.group(1)}{int(m.group(2)) + 1}'
+                    elif hasattr(anchor, '_from'):
+                        if anchor._from.row >= 1:   # 0-indexed: row 1 == Excel row 2
+                            anchor._from.row += 1
+                        if hasattr(anchor, 'to') and anchor.to and anchor.to.row >= 1:
+                            anchor.to.row += 1
             else:
                 wb = Workbook()
                 ws = wb.active
                 ws.title = 'Experiments'
                 ws.append(['Timestamp', 'Nozzle', 'Orifice', 'Pressure Range',
                            'Speed (steps/s)', 'Distance (mm)', 'Notes',
-                           'Pressure Graph', 'Shadowgraph', 'Cone Image'])
-                for col, width in zip('ABCDEFGHIJ', [20, 8, 8, 18, 14, 12, 35, 28, 28, 28]):
+                           'Cone Image', 'Shadowgraph', 'Pressure Graph'])
+                for col, width in zip('ABCDEFGHIJ', [20, 8, 8, 18, 14, 12, 35, 36.5, 36.5, 56]):
                     ws.column_dimensions[col].width = width
 
-            ws.append([ts_str, nozzle, orifice, p_range_str,
-                       speed_str, distance_str, notes, '', '', ''])
-            row_num = ws.max_row
-            ws.row_dimensions[row_num].height = 90   # points ≈ 120 px
+            ws.insert_rows(2)
+            row_num = 2
+            center_mid = Alignment(horizontal='center', vertical='center', wrap_text=True)
+            top_left   = Alignment(horizontal='left',   vertical='top',    wrap_text=True)
+            for col, val in enumerate([ts_str, nozzle, orifice, p_range_str,
+                                       speed_str, distance_str, notes, '', '', ''], start=1):
+                cell = ws.cell(row=row_num, column=col)
+                cell.value = val
+                cell.alignment = top_left if col == 7 else center_mid
+            ws.row_dimensions[row_num].height = 125
 
-            # Render clean light-mode pressure thumbnail from snapshot
-            if pressures:
-                fig, ax = plt.subplots(figsize=(4.5, 2.0))
-                fig.patch.set_facecolor('white')
-                ax.set_facecolor('#f5f5f7')
-                t0 = snap['timestamps'][0]
-                rel_ts = [t - t0 for t in snap['timestamps']]
-                ax.plot(rel_ts, pressures, color='#0a84ff', linewidth=2.5, solid_capstyle='round')
-                ax.fill_between(rel_ts, pressures, alpha=0.12, color='#0a84ff')
-                ax.set_xlabel('Time (s)', fontsize=8, color='#3a3a3c')
-                ax.set_ylabel('Pressure (BAR)', fontsize=8, color='#3a3a3c')
-                ax.set_title(f'N{nozzle}  {orifice}  {p_range_str}',
-                             fontsize=8, color='#1c1c1e', pad=4)
-                ax.tick_params(colors='#6e6e73', labelsize=7)
-                ax.spines['top'].set_visible(False)
-                ax.spines['right'].set_visible(False)
-                ax.spines['left'].set_color('#d1d1d6')
-                ax.spines['bottom'].set_color('#d1d1d6')
-                ax.grid(True, alpha=0.4, color='#d1d1d6', linewidth=0.6)
-                ax.set_ylim(bottom=0)
-                fig.tight_layout(pad=0.6)
-                buf = io.BytesIO()
-                fig.savefig(buf, format='png', dpi=150, bbox_inches='tight',
-                            facecolor='white')
-                plt.close(fig)
-                buf.seek(0)
-                pimg = XLImage(buf)
-                pimg.width = 210; pimg.height = 100
-                ws.add_image(pimg, f'H{row_num}')
-            else:
-                ws.cell(row=row_num, column=8).value = 'NO DATA AVAILABLE'
+            ws.cell(row=row_num, column=8).value = 'NO DATA AVAILABLE'
 
-            # Embed shadowgraph thumbnail if available
-            shadow_path = self._result_path_label.text()
-            if shadow_path and os.path.exists(shadow_path):
-                simg = XLImage(shadow_path)
-                simg.width = 200; simg.height = 110
+            shadow_src = self._result_path_label.text()
+            if shadow_src and os.path.exists(shadow_src):
+                simg = XLImage(shadow_src); simg.width = 300; simg.height = 165
                 ws.add_image(simg, f'I{row_num}')
             else:
                 ws.cell(row=row_num, column=9).value = 'NO DATA AVAILABLE'
 
-            # Cone image — placeholder until cone spray workflow is implemented
-            ws.cell(row=row_num, column=10).value = 'NO DATA AVAILABLE'
+            if pressure_buf:
+                pimg = XLImage(pressure_buf)
+                pimg.width = pressure_img_width; pimg.height = DISPLAY_H
+                # Widen column J to fit this image (56 chars ≈ 347 px baseline)
+                ws.column_dimensions['J'].width = max(56, pressure_img_width * 56 / 347)
+                ws.add_image(pimg, f'J{row_num}')
+            else:
+                ws.cell(row=row_num, column=10).value = 'NO DATA AVAILABLE'
 
             wb.save(master_path)
 
