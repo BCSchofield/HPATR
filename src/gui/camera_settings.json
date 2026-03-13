@@ -5,5 +5,6 @@
   "width": "512",
   "height": "512",
   "seconds": "0.5",
-  "output": "E:\\Phantom\\Video"
+  "output": "E:\\Phantom\\Video",
+  "px_per_mm": 28.3
 }

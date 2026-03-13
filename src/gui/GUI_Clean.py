@@ -21,6 +21,7 @@ Layout:
 import io
 import os
 import sys
+import math
 import time
 import json
 import platform
@@ -46,10 +47,10 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QLineEdit, QComboBox, QCheckBox, QTextEdit,
     QFrame, QTabWidget, QSizePolicy, QProgressBar, QScrollArea,
-    QSpacerItem, QGridLayout, QMessageBox
+    QSpacerItem, QGridLayout, QMessageBox, QFileDialog
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QObject, QThread, QSize
-from PySide6.QtGui import QFont, QPixmap, QImage, QColor, QPalette, QIcon
+from PySide6.QtGui import QFont, QPixmap, QImage, QColor, QPalette, QIcon, QPainter, QPen
 
 # ── Path setup ──────────────────────────────────────────────────────────────
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -296,6 +297,75 @@ def separator():
     line.setStyleSheet(f"color: {CLR_BORDER}; background: {CLR_BORDER};")
     line.setFixedHeight(1)
     return line
+
+# ── Calibration image widget ──────────────────────────────────────────────────
+
+class ClickableImageWidget(QLabel):
+    """QLabel subclass that records up to 2 click positions (in original image
+    pixel coordinates) and overlays crosshair markers.
+
+    pointsChanged is emitted with the current list of (x, y) tuples every time
+    a point is added or the list is reset.
+    """
+    pointsChanged = Signal(list)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._pixmap_orig = None   # full-resolution original
+        self._points = []          # list of (x, y) in original image coords
+        self.setCursor(Qt.CursorShape.CrossCursor)
+
+    def setCalibrationImage(self, pixmap: QPixmap):
+        self._pixmap_orig = pixmap
+        self._points = []
+        self._redraw()
+
+    def resetPoints(self):
+        self._points = []
+        self._redraw()
+        self.pointsChanged.emit(self._points)
+
+    def getPoints(self) -> list:
+        return list(self._points)
+
+    def mousePressEvent(self, event):
+        if self._pixmap_orig is None or len(self._points) >= 2:
+            return
+        lw, lh = self.width(), self.height()
+        ow, oh = self._pixmap_orig.width(), self._pixmap_orig.height()
+        scale  = min(lw / ow, lh / oh)
+        disp_w, disp_h = ow * scale, oh * scale
+        ox = (lw - disp_w) / 2
+        oy = (lh - disp_h) / 2
+        cx, cy = event.position().x(), event.position().y()
+        if ox <= cx <= ox + disp_w and oy <= cy <= oy + disp_h:
+            img_x = int((cx - ox) / scale)
+            img_y = int((cy - oy) / scale)
+            self._points.append((img_x, img_y))
+            self._redraw()
+            self.pointsChanged.emit(self._points)
+
+    def _redraw(self):
+        if self._pixmap_orig is None:
+            return
+        pm = self._pixmap_orig.copy()
+        if self._points:
+            painter = QPainter(pm)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            pen = QPen(QColor("#ff453a"), 3)
+            painter.setPen(pen)
+            for (x, y) in self._points:
+                arm = max(15, pm.width() // 40)
+                painter.drawLine(x - arm, y, x + arm, y)
+                painter.drawLine(x, y - arm, x, y + arm)
+                painter.drawEllipse(x - 6, y - 6, 12, 12)
+            painter.end()
+        self.setPixmap(pm.scaled(
+            self.width(), self.height(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        ))
+
 
 # ── Backend controllers (unchanged from Windows_Experiment_GUI.py) ────────────
 
@@ -618,6 +688,14 @@ class AtomisationApp(QMainWindow):
         hl.addWidget(app_title)
         hl.addStretch()
 
+        # Pixels/mm display (updated by calibration; persists via settings)
+        self._hdr_pxmm_lbl = QLabel("– px/mm")
+        self._hdr_pxmm_lbl.setStyleSheet(f"color: {CLR_TEXT_SEC}; font-size: 12px;")
+        hl.addWidget(self._hdr_pxmm_lbl)
+        _sep = QFrame(); _sep.setFixedWidth(1); _sep.setFixedHeight(18)
+        _sep.setStyleSheet(f"background: {CLR_BORDER};")
+        hl.addWidget(_sep)
+
         # Status dots
         self._hdr_arduino_dot  = dot_indicator(CLR_TEXT_SEC)
         self._hdr_arduino_lbl  = QLabel("Arduino")
@@ -854,11 +932,12 @@ class AtomisationApp(QMainWindow):
             }}
             QTabBar::tab:hover:!selected {{ color: {CLR_TEXT}; }}
         """)
-        self._tabs.addTab(self._build_hardware_tab(),   "  Hardware  ")
-        self._tabs.addTab(self._build_camera_tab(),     "  Camera  ")
-        self._tabs.addTab(self._build_afg_tab(),        "  AFG1062  ")
-        self._tabs.addTab(self._build_how_to_tab(),     "")
-        self._tabs.setTabVisible(3, False)   # content shown via corner button
+        self._tabs.addTab(self._build_hardware_tab(),     "  Hardware  ")
+        self._tabs.addTab(self._build_camera_tab(),       "  Camera  ")
+        self._tabs.addTab(self._build_afg_tab(),          "  AFG1062  ")
+        self._tabs.addTab(self._build_calibration_tab(),  "  Calibration  ")
+        self._tabs.addTab(self._build_how_to_tab(),       "")
+        self._tabs.setTabVisible(4, False)   # content shown via corner button
 
         # "How To" corner button — styled as a tab, physically right-aligned
         _how_to_btn = QPushButton("  How To  ")
@@ -880,10 +959,10 @@ class AtomisationApp(QMainWindow):
             }}
         """)
         _how_to_btn.clicked.connect(
-            lambda checked: self._tabs.setCurrentIndex(3 if checked else 0)
+            lambda checked: self._tabs.setCurrentIndex(4 if checked else 0)
         )
         self._tabs.currentChanged.connect(
-            lambda idx: _how_to_btn.setChecked(idx == 3)
+            lambda idx: _how_to_btn.setChecked(idx == 4)
         )
         self._tabs.setCornerWidget(_how_to_btn, Qt.Corner.TopRightCorner)
         return self._tabs
@@ -1164,6 +1243,113 @@ class AtomisationApp(QMainWindow):
                 btn.setEnabled(False)
 
         vl.addWidget(c)
+        vl.addStretch()
+        scroll.setWidget(w); return scroll
+
+    # ── Calibration tab ───────────────────────────────────────────────────────
+
+    def _build_calibration_tab(self):
+        scroll = QScrollArea(); scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("background:transparent; border:none;")
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        w = QWidget()
+        w.setMinimumWidth(0)
+        vl = QVBoxLayout(w); vl.setContentsMargins(20,20,20,20); vl.setSpacing(14)
+
+        # ── LIVE FEED card ────────────────────────────────────────────────────
+        c1 = card(w)
+        c1.layout().addWidget(section_label("LIVE FEED"))
+        c1.layout().addWidget(separator())
+
+        if not self.camera_available:
+            warn = QLabel("⚠  Live feed requires Windows + Phantom SDK.\n"
+                          "Use 'Load from File' below to load a calibration image.")
+            warn.setStyleSheet(f"color:{CLR_ORANGE}; font-size:12px; font-weight:600;")
+            warn.setWordWrap(True)
+            c1.layout().addWidget(warn)
+
+        self._cal_feed_label = QLabel()
+        self._cal_feed_label.setFixedSize(500, 300)
+        self._cal_feed_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._cal_feed_label.setStyleSheet(f"""
+            background-color: {CLR_INPUT};
+            border-radius: 8px;
+            color: {CLR_TEXT_SEC};
+            font-size: 12px;
+        """)
+        self._cal_feed_label.setText("Live feed not active")
+        c1.layout().addWidget(self._cal_feed_label)
+
+        feed_btn_row = QWidget()
+        fbr = QHBoxLayout(feed_btn_row); fbr.setContentsMargins(0,0,0,0); fbr.setSpacing(8)
+        self._cal_load_btn = ghost_button("Load from File")
+        self._cal_load_btn.setFixedHeight(36)
+        self._cal_load_btn.clicked.connect(self._cal_load_photo)
+        self._cal_take_btn = accent_button("Take Photo", CLR_ACCENT)
+        self._cal_take_btn.setFixedHeight(36)
+        self._cal_take_btn.clicked.connect(self._cal_take_photo)
+        if not self.camera_available:
+            self._cal_take_btn.setEnabled(False)
+            self._cal_take_btn.setToolTip("Connect Phantom camera on Windows to capture live frame")
+        fbr.addStretch()
+        fbr.addWidget(self._cal_load_btn)
+        fbr.addWidget(self._cal_take_btn)
+        c1.layout().addWidget(feed_btn_row)
+
+        vl.addWidget(c1)
+
+        # ── CALIBRATION IMAGE card ────────────────────────────────────────────
+        c2 = card(w)
+        c2.layout().addWidget(section_label("CALIBRATION"))
+        c2.layout().addWidget(separator())
+
+        instr = QLabel("Click two points on a known distance, "
+                       "enter the real-world distance in mm, then press Calculate.")
+        instr.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
+        instr.setWordWrap(True)
+        c2.layout().addWidget(instr)
+
+        self._cal_image_widget = ClickableImageWidget()
+        self._cal_image_widget.setFixedSize(500, 300)
+        self._cal_image_widget.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._cal_image_widget.setStyleSheet(f"""
+            background-color: {CLR_INPUT};
+            border-radius: 8px;
+            color: {CLR_TEXT_SEC};
+            font-size: 12px;
+        """)
+        self._cal_image_widget.setText("Load a photo to begin calibration")
+        self._cal_image_widget.pointsChanged.connect(self._cal_on_points_changed)
+        c2.layout().addWidget(self._cal_image_widget)
+
+        self._cal_point_status = QLabel("Point 1: not set  |  Point 2: not set")
+        self._cal_point_status.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
+        c2.layout().addWidget(self._cal_point_status)
+
+        self._cal_dist_entry = QLineEdit()
+        self._cal_dist_entry.setPlaceholderText("e.g. 10.0")
+        c2.layout().addWidget(input_row("Distance (mm):", self._cal_dist_entry, label_width=110))
+
+        calc_btn_row = QWidget()
+        cbr = QHBoxLayout(calc_btn_row); cbr.setContentsMargins(0,0,0,0); cbr.setSpacing(8)
+        self._cal_reset_btn = ghost_button("Reset Points")
+        self._cal_reset_btn.setFixedHeight(36)
+        self._cal_reset_btn.clicked.connect(self._cal_reset_points)
+        self._cal_calc_btn = accent_button("Calculate px/mm", CLR_ACCENT)
+        self._cal_calc_btn.setFixedHeight(36)
+        self._cal_calc_btn.setEnabled(False)
+        self._cal_calc_btn.clicked.connect(self._cal_calculate)
+        cbr.addWidget(self._cal_reset_btn)
+        cbr.addStretch()
+        cbr.addWidget(self._cal_calc_btn)
+        c2.layout().addWidget(calc_btn_row)
+
+        self._cal_result_lbl = QLabel("Pixels/mm:  –")
+        self._cal_result_lbl.setStyleSheet(
+            f"color:{CLR_TEXT}; font-size:14px; font-weight:600;")
+        c2.layout().addWidget(self._cal_result_lbl)
+
+        vl.addWidget(c2)
         vl.addStretch()
         scroll.setWidget(w); return scroll
 
@@ -1617,6 +1803,104 @@ class AtomisationApp(QMainWindow):
             self._pipeline_status.setText(f"Pipeline error: {e}")
 
     # ─────────────────────────────────────────────────────────────────────────
+    # Logic — Calibration
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _cal_take_photo(self):
+        """Capture a frame from the Phantom live feed and load it into the
+        calibration widget.
+
+        TODO(calibration): Change save_dir to:
+            os.path.join(find_lacie_drive(), "Phantom", "Calibration")
+        when the LaCie drive is reliably available.  Use find_lacie_drive()
+        from src/config_loader.py.  For now images are saved locally.
+        """
+        if not self.phantom or not self.phantom.is_connected:
+            self._warn("Camera Not Connected", "Connect the Phantom camera first.")
+            return
+        try:
+            # TODO(calibration): verify the correct pyphantom method for a live
+            # single-frame grab (e.g. cam.get_image() / cam.live_image()).
+            frame = self.phantom.cam.get_image()
+            h, w = frame.shape[:2]
+            fmt = QImage.Format.Format_RGB888 if len(frame.shape) == 3 \
+                  else QImage.Format.Format_Grayscale8
+            img = QImage(frame.data, w, h, int(frame.strides[0]), fmt)
+            pixmap = QPixmap.fromImage(img)
+            save_dir = os.path.join(os.path.dirname(__file__), "calibration_photos")
+            os.makedirs(save_dir, exist_ok=True)
+            fname = datetime.now().strftime("calib_%Y%m%d_%H%M%S.png")
+            path = os.path.join(save_dir, fname)
+            pixmap.save(path)
+            self._cal_load_image_into_widget(path)
+            self._set_status(f"Calibration photo saved: {fname}", CLR_GREEN)
+        except Exception as e:
+            self._warn("Capture Failed",
+                       f"Could not capture live frame:\n{e}\n\nUse 'Load from File' instead.")
+
+    def _cal_load_photo(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open Calibration Image", "",
+            "Images (*.png *.jpg *.jpeg *.tif *.tiff *.bmp)"
+        )
+        if path:
+            self._cal_load_image_into_widget(path)
+
+    def _cal_load_image_into_widget(self, path):
+        pixmap = QPixmap(path)
+        if pixmap.isNull():
+            self._warn("Load Failed", f"Could not load image:\n{path}")
+            return
+        self._cal_image_widget.setCalibrationImage(pixmap)
+        self._cal_point_status.setText("Point 1: not set  |  Point 2: not set")
+        self._cal_calc_btn.setEnabled(False)
+        self._cal_result_lbl.setText("Pixels/mm:  –")
+        self._set_status("Calibration image loaded — click two points on a known distance")
+
+    def _cal_on_points_changed(self, points):
+        labels = []
+        for i, (x, y) in enumerate(points):
+            labels.append(f"Point {i + 1}: ({x}, {y})")
+        for i in range(len(points), 2):
+            labels.append(f"Point {i + 1}: not set")
+        self._cal_point_status.setText("  |  ".join(labels))
+        self._cal_calc_btn.setEnabled(len(points) == 2)
+
+    def _cal_reset_points(self):
+        self._cal_image_widget.resetPoints()
+        self._cal_point_status.setText("Point 1: not set  |  Point 2: not set")
+        self._cal_calc_btn.setEnabled(False)
+
+    def _cal_calculate(self):
+        points = self._cal_image_widget.getPoints()
+        if len(points) != 2:
+            self._warn("Calibration Error", "Please click exactly two points on the image first.")
+            return
+        try:
+            dist_mm = float(self._cal_dist_entry.text())
+            if dist_mm <= 0:
+                raise ValueError
+        except ValueError:
+            self._warn("Invalid Distance", "Enter a positive real-world distance in millimetres.")
+            return
+        (x1, y1), (x2, y2) = points
+        pixel_dist = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+        if pixel_dist < 1:
+            self._warn("Points Too Close",
+                       "The two points are too close together.\nSelect points further apart.")
+            return
+        px_per_mm = pixel_dist / dist_mm
+        self._cal_result_lbl.setText(f"Pixels/mm:  {px_per_mm:.2f}")
+        self._apply_calibration_result(px_per_mm)
+        self._set_status(f"Calibration set: {px_per_mm:.2f} px/mm", CLR_GREEN)
+
+    def _apply_calibration_result(self, val: float):
+        """Update the header px/mm label and persist the value to settings."""
+        self._hdr_pxmm_lbl.setText(f"{val:.1f} px/mm")
+        self._hdr_pxmm_lbl.setStyleSheet(f"color: {CLR_TEXT}; font-size: 12px;")
+        self._save_camera_settings()
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Logic — AFG
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -1975,11 +2259,26 @@ class AtomisationApp(QMainWindow):
             self._cam_height.setText(str(s.get("height", "480")))
             self._cam_seconds.setText(str(s.get("seconds", "0.020")))
             self._cam_output.setText(s.get("output", ""))
+            px_per_mm = float(s.get("px_per_mm", 0.0))
+            if px_per_mm > 0:
+                self._hdr_pxmm_lbl.setText(f"{px_per_mm:.1f} px/mm")
+                self._hdr_pxmm_lbl.setStyleSheet(f"color: {CLR_TEXT}; font-size: 12px;")
         except Exception:
             pass
 
     def _save_camera_settings(self):
         try:
+            # Read existing px_per_mm so it's preserved even if called before calibration
+            try:
+                with open(self._settings_path()) as f:
+                    existing = json.load(f)
+            except Exception:
+                existing = {}
+            lbl_text = self._hdr_pxmm_lbl.text().replace("px/mm", "").strip()
+            try:
+                px_per_mm = float(lbl_text) if lbl_text not in ("–", "") else existing.get("px_per_mm", 0.0)
+            except ValueError:
+                px_per_mm = existing.get("px_per_mm", 0.0)
             s = {
                 "ip":          self._cam_ip.text(),
                 "fps":         self._cam_fps.text(),
@@ -1988,6 +2287,7 @@ class AtomisationApp(QMainWindow):
                 "height":      self._cam_height.text(),
                 "seconds":     self._cam_seconds.text(),
                 "output":      self._cam_output.text(),
+                "px_per_mm":   px_per_mm,
             }
             with open(self._settings_path(), "w") as f:
                 json.dump(s, f, indent=2)
