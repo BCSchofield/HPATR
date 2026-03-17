@@ -47,7 +47,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QLineEdit, QComboBox, QCheckBox, QTextEdit,
     QFrame, QTabWidget, QSizePolicy, QProgressBar, QScrollArea,
-    QSpacerItem, QGridLayout, QMessageBox, QFileDialog
+    QSpacerItem, QGridLayout, QMessageBox, QFileDialog, QSpinBox
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QObject, QThread, QSize
 from PySide6.QtGui import QFont, QPixmap, QImage, QColor, QPalette, QIcon, QPainter, QPen
@@ -62,6 +62,17 @@ except ImportError:
     def resolve_path(p, lacie_base=None): return p
     def find_lacie_drive(): return None
 
+# Cone_3.py lives in Trials/ relative to the repo root
+_TRIALS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "Trials")
+if _TRIALS_DIR not in sys.path:
+    sys.path.insert(0, _TRIALS_DIR)
+CONE3_AVAILABLE = False
+try:
+    from Cone_3 import detect_cone_angle
+    CONE3_AVAILABLE = True
+except ImportError:
+    pass
+
 # ── Optional SDKs ────────────────────────────────────────────────────────────
 PHANTOM_SDK_AVAILABLE = False
 try:
@@ -74,6 +85,13 @@ PYVISA_AVAILABLE = False
 try:
     import pyvisa
     PYVISA_AVAILABLE = True
+except ImportError:
+    pass
+
+CV2_AVAILABLE = False
+try:
+    import cv2
+    CV2_AVAILABLE = True
 except ImportError:
     pass
 
@@ -636,6 +654,16 @@ class AtomisationApp(QMainWindow):
         self._graph_timer.timeout.connect(self._update_pressure_graph)
         self._graph_timer.start(500)
 
+        self._cone_feed_timer = QTimer(self)
+        self._cone_feed_timer.timeout.connect(self._cone_update_feed)
+        # started/stopped by Start Camera / Stop Camera buttons
+
+        self._cone_auto_timer = QTimer(self)
+        self._cone_auto_timer.timeout.connect(self._cone_capture)
+        # started in _start_experiment(), stopped in _on_movement_complete()
+
+        self._cone_cap = None  # cv2.VideoCapture instance
+
         # Auto-connect Arduino
         ports = self._get_serial_ports()
         if ports:
@@ -936,8 +964,9 @@ class AtomisationApp(QMainWindow):
         self._tabs.addTab(self._build_camera_tab(),       "  Camera  ")
         self._tabs.addTab(self._build_afg_tab(),          "  AFG1062  ")
         self._tabs.addTab(self._build_calibration_tab(),  "  Calibration  ")
+        self._tabs.addTab(self._build_cone_tab(),         "  Cone  ")
         self._tabs.addTab(self._build_how_to_tab(),       "")
-        self._tabs.setTabVisible(4, False)   # content shown via corner button
+        self._tabs.setTabVisible(5, False)   # content shown via corner button
 
         # "How To" corner button — styled as a tab, physically right-aligned
         _how_to_btn = QPushButton("  How To  ")
@@ -959,10 +988,10 @@ class AtomisationApp(QMainWindow):
             }}
         """)
         _how_to_btn.clicked.connect(
-            lambda checked: self._tabs.setCurrentIndex(4 if checked else 0)
+            lambda checked: self._tabs.setCurrentIndex(5 if checked else 0)
         )
         self._tabs.currentChanged.connect(
-            lambda idx: _how_to_btn.setChecked(idx == 4)
+            lambda idx: _how_to_btn.setChecked(idx == 5)
         )
         self._tabs.setCornerWidget(_how_to_btn, Qt.Corner.TopRightCorner)
         return self._tabs
@@ -1353,6 +1382,125 @@ class AtomisationApp(QMainWindow):
         vl.addStretch()
         scroll.setWidget(w); return scroll
 
+    # ── Cone tab ──────────────────────────────────────────────────────────────
+
+    def _build_cone_tab(self):
+        scroll = QScrollArea(); scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("background:transparent; border:none;")
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        w = QWidget(); vl = QVBoxLayout(w); vl.setSpacing(16); vl.setContentsMargins(16, 16, 16, 16)
+
+        # ── Card 1: Live Feed ────────────────────────────────────────────────
+        c1 = card()
+        c1.layout().addWidget(section_label("LIVE FEED"))
+
+        if not CV2_AVAILABLE:
+            warn = QLabel("⚠  opencv-python (cv2) is not installed — webcam unavailable")
+            warn.setStyleSheet(f"color:{CLR_ORANGE}; font-size:12px;")
+            warn.setWordWrap(True)
+            c1.layout().addWidget(warn)
+
+        self._cone_feed_lbl = QLabel("No camera")
+        self._cone_feed_lbl.setFixedSize(500, 300)
+        self._cone_feed_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._cone_feed_lbl.setStyleSheet(
+            f"background:{CLR_INPUT}; color:{CLR_TEXT_SEC}; border-radius:8px; font-size:13px;")
+        c1.layout().addWidget(self._cone_feed_lbl)
+
+        spin_style = f"background:{CLR_INPUT}; color:{CLR_TEXT}; border:1px solid {CLR_BORDER}; border-radius:6px; padding:4px;"
+
+        self._cone_idx_spin = QSpinBox()
+        self._cone_idx_spin.setRange(0, 9)
+        self._cone_idx_spin.setValue(0)
+        self._cone_idx_spin.setFixedWidth(60)
+        self._cone_idx_spin.setStyleSheet(spin_style)
+        c1.layout().addWidget(input_row("Camera index:", self._cone_idx_spin))
+
+        cam_row = QWidget(); cam_hl = QHBoxLayout(cam_row); cam_hl.setContentsMargins(0,0,0,0); cam_hl.setSpacing(10)
+        self._cone_start_cam_btn = accent_button("Start Camera")
+        self._cone_start_cam_btn.clicked.connect(self._cone_start_camera)
+        self._cone_start_cam_btn.setEnabled(CV2_AVAILABLE)
+        self._cone_stop_cam_btn  = ghost_button("Stop Camera")
+        self._cone_stop_cam_btn.clicked.connect(self._cone_stop_camera)
+        self._cone_stop_cam_btn.setEnabled(False)
+        cam_hl.addWidget(self._cone_start_cam_btn)
+        cam_hl.addWidget(self._cone_stop_cam_btn)
+        cam_hl.addStretch()
+        c1.layout().addWidget(cam_row)
+
+        self._cone_cam_status_lbl = QLabel("Camera stopped")
+        self._cone_cam_status_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
+        c1.layout().addWidget(self._cone_cam_status_lbl)
+
+        c1.layout().addWidget(separator())
+        c1.layout().addWidget(section_label("FOCUS"))
+
+        self._cone_autofocus_chk = QCheckBox("Auto-focus")
+        self._cone_autofocus_chk.setChecked(True)
+        self._cone_autofocus_chk.setStyleSheet(f"color:{CLR_TEXT}; font-size:13px;")
+        self._cone_autofocus_chk.toggled.connect(self._cone_apply_focus)
+        c1.layout().addWidget(self._cone_autofocus_chk)
+
+        self._cone_focus_spin = QSpinBox()
+        self._cone_focus_spin.setRange(0, 255)
+        self._cone_focus_spin.setValue(0)
+        self._cone_focus_spin.setFixedWidth(80)
+        self._cone_focus_spin.setStyleSheet(spin_style)
+        self._cone_focus_spin.setEnabled(False)  # disabled while auto-focus is on
+        self._cone_focus_spin.editingFinished.connect(self._cone_apply_focus)
+        self._cone_autofocus_chk.toggled.connect(
+            lambda checked: self._cone_focus_spin.setEnabled(not checked)
+        )
+        focus_row = input_row("Manual focus (0–255):", self._cone_focus_spin)
+        focus_note = QLabel("Note: focus control support depends on your webcam model")
+        focus_note.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
+        focus_note.setWordWrap(True)
+        c1.layout().addWidget(focus_row)
+        c1.layout().addWidget(focus_note)
+
+        vl.addWidget(c1)
+
+        # ── Card 2: Capture & Results ────────────────────────────────────────
+        c2 = card()
+        c2.layout().addWidget(section_label("CAPTURE & RESULTS"))
+
+        self._cone_capture_btn = accent_button("Capture & Analyse")
+        self._cone_capture_btn.setEnabled(False)
+        self._cone_capture_btn.clicked.connect(self._cone_capture)
+        c2.layout().addWidget(self._cone_capture_btn)
+
+        self._cone_auto_status_lbl = QLabel("Auto-capture: inactive")
+        self._cone_auto_status_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
+        c2.layout().addWidget(self._cone_auto_status_lbl)
+
+        c2.layout().addWidget(separator())
+
+        self._cone_result_img_lbl = QLabel()
+        self._cone_result_img_lbl.setFixedSize(500, 300)
+        self._cone_result_img_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._cone_result_img_lbl.setStyleSheet(
+            f"background:{CLR_INPUT}; color:{CLR_TEXT_SEC}; border-radius:8px; font-size:13px;")
+        self._cone_result_img_lbl.setText("No capture yet")
+        self._cone_result_img_lbl.setVisible(False)
+        c2.layout().addWidget(self._cone_result_img_lbl)
+
+        self._cone_angle_lbl = QLabel("")
+        self._cone_angle_lbl.setStyleSheet(
+            f"color:{CLR_TEXT}; font-size:20px; font-weight:700;")
+        self._cone_angle_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._cone_angle_lbl.setVisible(False)
+        c2.layout().addWidget(self._cone_angle_lbl)
+
+        self._cone_saved_lbl = QLabel("")
+        self._cone_saved_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
+        self._cone_saved_lbl.setWordWrap(True)
+        self._cone_saved_lbl.setVisible(False)
+        c2.layout().addWidget(self._cone_saved_lbl)
+
+        vl.addWidget(c2)
+        vl.addStretch()
+        scroll.setWidget(w); return scroll
+
     # ── How To tab ────────────────────────────────────────────────────────────
 
     def _build_how_to_tab(self):
@@ -1633,6 +1781,9 @@ class AtomisationApp(QMainWindow):
     def _on_movement_complete(self):
         if self.pressure_data['experiment_active']:
             self.pressure_data['experiment_active'] = False
+            self._cone_auto_timer.stop()
+            self._cone_auto_status_lbl.setText("Auto-capture: inactive")
+            self._cone_auto_status_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
             self.arduino.send_pressure_off_command()
             self.arduino.reset_state()
             self._last_experiment_snapshot = {
@@ -1884,7 +2035,7 @@ class AtomisationApp(QMainWindow):
             self._warn("Invalid Distance", "Enter a positive real-world distance in millimetres.")
             return
         (x1, y1), (x2, y2) = points
-        pixel_dist = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+        pixel_dist = abs(y2 - y1)  # vertical only — calibration target is always mounted vertically
         if pixel_dist < 1:
             self._warn("Points Too Close",
                        "The two points are too close together.\nSelect points further apart.")
@@ -1899,6 +2050,138 @@ class AtomisationApp(QMainWindow):
         self._hdr_pxmm_lbl.setText(f"{val:.1f} px/mm")
         self._hdr_pxmm_lbl.setStyleSheet(f"color: {CLR_TEXT}; font-size: 12px;")
         self._save_camera_settings()
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Logic — Cone
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _cone_save_dir(self):
+        """Return the directory to save cone images into, creating it if needed."""
+        lacie = find_lacie_drive()
+        save_dir = os.path.join(lacie, "Experiments", "Logs", "Testing") if lacie \
+                   else os.path.join(os.path.dirname(__file__), "cone_captures")
+        os.makedirs(save_dir, exist_ok=True)
+        return save_dir
+
+    def _cone_apply_focus(self):
+        """Push current focus settings to the open camera (silently ignored if unsupported)."""
+        if self._cone_cap is None or not self._cone_cap.isOpened():
+            return
+        if self._cone_autofocus_chk.isChecked():
+            self._cone_cap.set(cv2.CAP_PROP_AUTOFOCUS, 1)
+        else:
+            self._cone_cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
+            self._cone_cap.set(cv2.CAP_PROP_FOCUS, self._cone_focus_spin.value())
+        self._save_camera_settings()
+
+    def _cone_bgr_to_pixmap(self, bgr_arr) -> QPixmap:
+        """Convert a numpy BGR array to a QPixmap."""
+        rgb = cv2.cvtColor(bgr_arr, cv2.COLOR_BGR2RGB)
+        h, w, ch = rgb.shape
+        img = QImage(rgb.data, w, h, w * ch, QImage.Format.Format_RGB888)
+        return QPixmap.fromImage(img)
+
+    def _cone_start_camera(self):
+        if not CV2_AVAILABLE:
+            return
+        idx = self._cone_idx_spin.value()
+        cap = cv2.VideoCapture(idx)
+        if not cap.isOpened():
+            self._cone_cam_status_lbl.setText(f"Failed to open camera {idx}")
+            self._cone_cam_status_lbl.setStyleSheet(f"color:{CLR_RED}; font-size:12px;")
+            return
+        self._cone_cap = cap
+        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        self._cone_cam_status_lbl.setText(f"Camera running ({w}×{h})")
+        self._cone_cam_status_lbl.setStyleSheet(f"color:{CLR_GREEN}; font-size:12px;")
+        self._cone_start_cam_btn.setEnabled(False)
+        self._cone_stop_cam_btn.setEnabled(True)
+        self._cone_capture_btn.setEnabled(True)
+        self._cone_feed_timer.start(100)
+        self._cone_apply_focus()
+        self._save_camera_settings()  # persist index for auto-connect on next launch
+
+    def _cone_stop_camera(self):
+        self._cone_feed_timer.stop()
+        self._cone_auto_timer.stop()
+        self._cone_auto_status_lbl.setText("Auto-capture: inactive")
+        self._cone_auto_status_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
+        if self._cone_cap is not None:
+            self._cone_cap.release()
+            self._cone_cap = None
+        self._cone_feed_lbl.setText("No camera")
+        self._cone_feed_lbl.setPixmap(QPixmap())
+        self._cone_cam_status_lbl.setText("Camera stopped")
+        self._cone_cam_status_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
+        self._cone_start_cam_btn.setEnabled(CV2_AVAILABLE)
+        self._cone_stop_cam_btn.setEnabled(False)
+        self._cone_capture_btn.setEnabled(False)
+
+    def _cone_update_feed(self):
+        if self._cone_cap is None or not self._cone_cap.isOpened():
+            self._cone_feed_timer.stop()
+            return
+        ret, frame = self._cone_cap.read()
+        if not ret:
+            self._cone_feed_timer.stop()
+            self._cone_cam_status_lbl.setText("Camera lost")
+            self._cone_cam_status_lbl.setStyleSheet(f"color:{CLR_RED}; font-size:12px;")
+            return
+        frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+        pm = self._cone_bgr_to_pixmap(frame).scaled(
+            self._cone_feed_lbl.width(), self._cone_feed_lbl.height(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self._cone_feed_lbl.setPixmap(pm)
+
+    def _cone_capture(self):
+        if self._cone_cap is None or not self._cone_cap.isOpened():
+            self._cone_cam_status_lbl.setText("No camera — cannot capture")
+            self._cone_cam_status_lbl.setStyleSheet(f"color:{CLR_RED}; font-size:12px;")
+            return
+        ret, frame = self._cone_cap.read()
+        if not ret:
+            self._cone_cam_status_lbl.setText("Capture failed")
+            return
+
+        frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+        ts        = datetime.now().strftime("%Y%m%d_%H%M%S")
+        save_dir  = self._cone_save_dir()
+        raw_path  = os.path.join(save_dir, f"cone_raw_{ts}.png")
+        cv2.imwrite(raw_path, frame)
+
+        if not CONE3_AVAILABLE:
+            self._cone_angle_lbl.setText("Cone_3.py not found — raw image saved only")
+            self._cone_angle_lbl.setVisible(True)
+            self._cone_result_img_lbl.setVisible(False)
+            self._cone_saved_lbl.setText(f"Saved: {raw_path}")
+            self._cone_saved_lbl.setVisible(True)
+            return
+
+        try:
+            from pathlib import Path as _Path
+            angle, annotated_bgr, _debug = detect_cone_angle(_Path(raw_path))
+        except Exception as e:
+            self._cone_angle_lbl.setText(f"Analysis error: {e}")
+            self._cone_angle_lbl.setVisible(True)
+            return
+
+        annotated_path = os.path.join(save_dir, f"cone_{ts}.png")
+        cv2.imwrite(annotated_path, annotated_bgr)
+
+        pm = self._cone_bgr_to_pixmap(annotated_bgr).scaled(
+            self._cone_result_img_lbl.width(), self._cone_result_img_lbl.height(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self._cone_result_img_lbl.setPixmap(pm)
+        self._cone_result_img_lbl.setVisible(True)
+        self._cone_angle_lbl.setText(f"Cone angle: {angle:.1f}°")
+        self._cone_angle_lbl.setVisible(True)
+        self._cone_saved_lbl.setText(f"Saved: {annotated_path}")
+        self._cone_saved_lbl.setVisible(True)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Logic — AFG
@@ -1996,6 +2279,12 @@ class AtomisationApp(QMainWindow):
         self.pressure_data['experiment_active'] = True
         self.pressure_data['experiment_start_time'] = time.time()
         self.pressure_data['experiment_data'] = {'timestamps':[], 'pressures':[]}
+
+        # Start cone auto-capture (every 5 s) if webcam is already running
+        if self._cone_cap is not None and self._cone_cap.isOpened():
+            self._cone_auto_timer.start(5000)
+            self._cone_auto_status_lbl.setText("Auto-capture: ON (every 5 s)")
+            self._cone_auto_status_lbl.setStyleSheet(f"color:{CLR_GREEN}; font-size:12px;")
         # Reset live buffer so the graph X-axis starts from 0 at experiment start
         self.pressure_data['live_buffer'] = {'timestamps': [], 'pressures': []}
         self.pressure_data['live_buffer_start_time'] = time.time()
@@ -2263,6 +2552,14 @@ class AtomisationApp(QMainWindow):
             if px_per_mm > 0:
                 self._hdr_pxmm_lbl.setText(f"{px_per_mm:.1f} px/mm")
                 self._hdr_pxmm_lbl.setStyleSheet(f"color: {CLR_TEXT}; font-size: 12px;")
+            cone_idx = int(s.get("cone_camera_index", -1))
+            if cone_idx >= 0 and CV2_AVAILABLE:
+                self._cone_idx_spin.setValue(cone_idx)
+                QTimer.singleShot(500, self._cone_start_camera)  # attempt auto-connect after UI is ready
+            autofocus = bool(s.get("cone_autofocus", True))
+            self._cone_autofocus_chk.setChecked(autofocus)
+            self._cone_focus_spin.setValue(int(s.get("cone_focus", 0)))
+            self._cone_focus_spin.setEnabled(not autofocus)
         except Exception:
             pass
 
@@ -2280,14 +2577,17 @@ class AtomisationApp(QMainWindow):
             except ValueError:
                 px_per_mm = existing.get("px_per_mm", 0.0)
             s = {
-                "ip":          self._cam_ip.text(),
-                "fps":         self._cam_fps.text(),
-                "exposure_us": self._cam_exp.text(),
-                "width":       self._cam_width.text(),
-                "height":      self._cam_height.text(),
-                "seconds":     self._cam_seconds.text(),
-                "output":      self._cam_output.text(),
-                "px_per_mm":   px_per_mm,
+                "ip":                self._cam_ip.text(),
+                "fps":               self._cam_fps.text(),
+                "exposure_us":       self._cam_exp.text(),
+                "width":             self._cam_width.text(),
+                "height":            self._cam_height.text(),
+                "seconds":           self._cam_seconds.text(),
+                "output":            self._cam_output.text(),
+                "px_per_mm":         px_per_mm,
+                "cone_camera_index": self._cone_idx_spin.value() if (self._cone_cap is not None and self._cone_cap.isOpened()) else existing.get("cone_camera_index", -1),
+                "cone_autofocus":    self._cone_autofocus_chk.isChecked(),
+                "cone_focus":        self._cone_focus_spin.value(),
             }
             with open(self._settings_path(), "w") as f:
                 json.dump(s, f, indent=2)
