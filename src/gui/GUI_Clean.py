@@ -1442,7 +1442,7 @@ class AtomisationApp(QMainWindow):
         c1.layout().addWidget(self._cone_autofocus_chk)
 
         self._cone_focus_spin = QSpinBox()
-        self._cone_focus_spin.setRange(0, 255)
+        self._cone_focus_spin.setRange(0, 250)
         self._cone_focus_spin.setValue(0)
         self._cone_focus_spin.setFixedWidth(80)
         self._cone_focus_spin.setStyleSheet(spin_style)
@@ -1451,7 +1451,7 @@ class AtomisationApp(QMainWindow):
         self._cone_autofocus_chk.toggled.connect(
             lambda checked: self._cone_focus_spin.setEnabled(not checked)
         )
-        focus_row = input_row("Manual focus (0–255):", self._cone_focus_spin)
+        focus_row = input_row("Manual focus (0–250):", self._cone_focus_spin)
         focus_note = QLabel("Note: focus control support depends on your webcam model")
         focus_note.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
         focus_note.setWordWrap(True)
