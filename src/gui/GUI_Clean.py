@@ -62,14 +62,14 @@ except ImportError:
     def resolve_path(p, lacie_base=None): return p
     def find_lacie_drive(): return None
 
-# Cone_3.py lives in Trials/ relative to the repo root
+# Cone_4.py lives in Trials/ relative to the repo root
 _TRIALS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "Trials")
 if _TRIALS_DIR not in sys.path:
     sys.path.insert(0, _TRIALS_DIR)
-CONE3_AVAILABLE = False
+CONE4_AVAILABLE = False
 try:
-    from Cone_3 import detect_cone_angle
-    CONE3_AVAILABLE = True
+    from Cone_4 import detect_cone_angle
+    CONE4_AVAILABLE = True
 except ImportError:
     pass
 
@@ -1523,18 +1523,49 @@ class AtomisationApp(QMainWindow):
                  "Enter a target pressure (0.0 – 26.4 BAR) and click Set Pressure. The current reading "
                  "updates live. Click Pressure Off to close the valve immediately."),
             ]),
-            ("PHANTOM CAMERA", [
+            ("PHANTOM HIGH-SPEED CAMERA", [
                 ("Connecting",
-                 "Enter the camera IP (default 100.100.100.1) in the Camera tab and click Connect. "
-                 "Use Ping to test network reachability without a full connection. The camera SDK is "
+                 "Go to the Camera tab. Enter the camera IP (default 100.100.100.1) and click Connect. "
+                 "Use Ping to verify network reachability without a full connection. The Phantom SDK is "
                  "Windows-only — a warning appears on other platforms."),
                 ("Configuring",
-                 "Set FPS, resolution (Width × Height), exposure time, and recording duration. "
-                 "Click Apply Config before capturing to push settings to the camera."),
+                 "Set FPS, resolution (Width × Height), exposure time (µs), and recording duration (s). "
+                 "Click Apply Config to push settings to the camera before capturing. Typical settings: "
+                 "1000 fps, 640×480, 100 µs exposure."),
                 ("Capturing",
-                 "Click ● Capture to trigger a high-speed recording. Tick Run analysis pipeline to "
-                 "automatically detect droplets and ligaments after capture and save the result to "
-                 "Outputs/FINAL_OPTIMIZED_RESULT.png. The Latest Result panel updates on completion."),
+                 "Click ● Capture to trigger a high-speed recording. The cine file is transferred and "
+                 "converted to TIFF frames automatically. Tick Run analysis pipeline to detect droplets "
+                 "and ligaments after capture — results are saved to Outputs/FINAL_OPTIMIZED_RESULT.png "
+                 "and the Latest Result panel updates on completion."),
+                ("Calibration",
+                 "Go to the Calibration sub-panel to set the pixel-to-mm scale. Capture a live frame "
+                 "with a known reference object in view, draw the reference line, and enter the real "
+                 "distance. The scale factor is saved and used by the analysis pipeline."),
+            ]),
+            ("CONE ANGLE MEASUREMENT", [
+                ("Overview",
+                 "The Cone tab uses a standard USB webcam pointed at the spray to measure the full "
+                 "spray cone angle in real time. The algorithm (Cone_4) fits sigmoid curves to each "
+                 "row of the image to locate the left and right spray boundaries, then uses RANSAC "
+                 "robust line fitting to compute the half-angles and report the full cone angle."),
+                ("Setup",
+                 "Connect the webcam, select its index (usually 0), and click Start Camera. The live "
+                 "feed appears in the top panel. Adjust manual focus if your webcam supports it — "
+                 "untick Auto-focus and set the focus value (0–250)."),
+                ("Capturing",
+                 "Click Capture & Analyse to grab a frame and run the cone detection. The annotated "
+                 "result image (with fitted boundary lines overlaid) is shown immediately and saved "
+                 "to cone_captures/ alongside the raw frame. The cone angle is displayed in large "
+                 "text below the image."),
+                ("Auto-capture",
+                 "When the webcam is running and a full experiment is started (▶ START EXPERIMENT), "
+                 "auto-capture activates automatically — taking a new measurement every 5 seconds "
+                 "throughout the run. The status label shows 'Auto-capture: ON (every 5 s)'."),
+                ("Debug output",
+                 "Cone_4 also saves a 6-panel debug image alongside the annotated result showing: "
+                 "the processed grayscale image, the sigmoid inflection-point map, accepted boundary "
+                 "points coloured by R² quality, outermost-filtered boundary points, RANSAC inliers "
+                 "(bright) vs outliers (dim), and the final annotated overlay."),
             ]),
             ("AFG1062 SIGNAL GENERATOR", [
                 ("Connecting",
@@ -1553,16 +1584,20 @@ class AtomisationApp(QMainWindow):
                  "The Latest Result panel (left) shows the most recent FINAL_OPTIMIZED_RESULT.png found "
                  "on the LaCie drive. Click ↻ Refresh to scan for a newer result after analysis."),
             ]),
-            ("KEYBOARD SHORTCUTS & TIPS", [
+            ("TIPS & ENVIRONMENT", [
                 ("Dark/light background",
                  "The analysis pipeline saves both light- and dark-background versions of the result "
                  "image. Check the Outputs/ folder for LIGHT_BG and DARK_BG variants."),
                 ("Running on macOS",
-                 "The GUI runs on macOS for layout/design work. Camera capture and Arduino serial "
+                 "The GUI runs on macOS for layout/design work. Phantom camera capture and Arduino serial "
                  "require Windows (or the correct driver). Connect warnings will appear for unavailable hardware."),
                 ("Python environment",
                  "macOS: conda activate phantom → python src/gui/GUI_Clean.py\n"
                  "Windows: conda activate Detectron2 → python src/gui/GUI_Clean.py"),
+                ("Cone detection dependency",
+                 "Cone_4 requires scipy (pip install scipy). If 'Cone_4.py not found' appears, ensure "
+                 "scipy is installed in the active conda environment and that Trials/Cone_4.py exists "
+                 "in the repo."),
             ]),
         ]
 
@@ -2152,8 +2187,8 @@ class AtomisationApp(QMainWindow):
         raw_path  = os.path.join(save_dir, f"cone_raw_{ts}.png")
         cv2.imwrite(raw_path, frame)
 
-        if not CONE3_AVAILABLE:
-            self._cone_angle_lbl.setText("Cone_3.py not found — raw image saved only")
+        if not CONE4_AVAILABLE:
+            self._cone_angle_lbl.setText("Cone_4.py not found — raw image saved only")
             self._cone_angle_lbl.setVisible(True)
             self._cone_result_img_lbl.setVisible(False)
             self._cone_saved_lbl.setText(f"Saved: {raw_path}")
