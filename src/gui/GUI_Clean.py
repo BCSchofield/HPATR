@@ -1433,6 +1433,27 @@ class AtomisationApp(QMainWindow):
         c1.layout().addWidget(self._cone_cam_status_lbl)
 
         c1.layout().addWidget(separator())
+        c1.layout().addWidget(section_label("CROP REGION"))
+
+        from PySide6.QtWidgets import QDoubleSpinBox
+        self._cone_top_crop_spin = QDoubleSpinBox()
+        self._cone_top_crop_spin.setRange(0.0, 0.5)
+        self._cone_top_crop_spin.setSingleStep(0.01)
+        self._cone_top_crop_spin.setDecimals(3)
+        self._cone_top_crop_spin.setValue(0.05)
+        self._cone_top_crop_spin.setFixedWidth(80)
+        self._cone_top_crop_spin.setStyleSheet(spin_style)
+        self._cone_top_crop_spin.setToolTip(
+            "Fraction of image height cropped from the top before analysis.\n"
+            "The red band on the live feed shows the excluded region.")
+        self._cone_top_crop_spin.valueChanged.connect(self._save_camera_settings)
+        crop_note = QLabel("Drag the spinner or type a value. The red band on the live feed shows the excluded region.")
+        crop_note.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
+        crop_note.setWordWrap(True)
+        c1.layout().addWidget(input_row("Top crop ratio:", self._cone_top_crop_spin))
+        c1.layout().addWidget(crop_note)
+
+        c1.layout().addWidget(separator())
         c1.layout().addWidget(section_label("FOCUS"))
 
         self._cone_autofocus_chk = QCheckBox("Auto-focus")
@@ -2164,6 +2185,14 @@ class AtomisationApp(QMainWindow):
             self._cone_cam_status_lbl.setStyleSheet(f"color:{CLR_RED}; font-size:12px;")
             return
         frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+        top_crop = self._cone_top_crop_spin.value()
+        if top_crop > 0:
+            top_px = int(frame.shape[0] * top_crop)
+            if top_px > 0:
+                overlay = frame.copy()
+                cv2.rectangle(overlay, (0, 0), (frame.shape[1] - 1, top_px - 1), (0, 0, 200), -1)
+                cv2.addWeighted(overlay, 0.45, frame, 0.55, 0, frame)
+                cv2.line(frame, (0, top_px), (frame.shape[1] - 1, top_px), (0, 0, 255), 1)
         pm = self._cone_bgr_to_pixmap(frame).scaled(
             self._cone_feed_lbl.width(), self._cone_feed_lbl.height(),
             Qt.AspectRatioMode.KeepAspectRatio,
@@ -2197,7 +2226,8 @@ class AtomisationApp(QMainWindow):
 
         try:
             from pathlib import Path as _Path
-            angle, annotated_bgr, _debug = detect_cone_angle(_Path(raw_path))
+            angle, annotated_bgr, _debug = detect_cone_angle(
+                _Path(raw_path), top_crop_ratio=self._cone_top_crop_spin.value())
         except Exception as e:
             self._cone_angle_lbl.setText(f"Analysis error: {e}")
             self._cone_angle_lbl.setVisible(True)
@@ -2595,6 +2625,7 @@ class AtomisationApp(QMainWindow):
             self._cone_autofocus_chk.setChecked(autofocus)
             self._cone_focus_spin.setValue(int(s.get("cone_focus", 0)))
             self._cone_focus_spin.setEnabled(not autofocus)
+            self._cone_top_crop_spin.setValue(float(s.get("cone_top_crop", 0.05)))
         except Exception:
             pass
 
@@ -2623,6 +2654,7 @@ class AtomisationApp(QMainWindow):
                 "cone_camera_index": self._cone_idx_spin.value() if (self._cone_cap is not None and self._cone_cap.isOpened()) else existing.get("cone_camera_index", -1),
                 "cone_autofocus":    self._cone_autofocus_chk.isChecked(),
                 "cone_focus":        self._cone_focus_spin.value(),
+                "cone_top_crop":     self._cone_top_crop_spin.value(),
             }
             with open(self._settings_path(), "w") as f:
                 json.dump(s, f, indent=2)

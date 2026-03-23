@@ -43,7 +43,7 @@ from config_loader import get_imaging_config  # noqa: E402
 # ---------------------------------------------------------------------------
 # Algorithm parameters (module-level defaults, overridable via function args)
 # ---------------------------------------------------------------------------
-TOP_CROP_RATIO = 0.05       # Fraction of image height to crop from top
+TOP_CROP_RATIO = 0.17       # Fraction of image height to crop from top
 ROW_STEP = 1                # Process every row
 MIN_R2 = 0.75               # Minimum sigmoid fit R² to accept a boundary point
 MIN_CONTRAST = 10.0         # Minimum abs(U-L) to attempt / accept a fit (0-255)
@@ -542,6 +542,8 @@ def detect_cone_angle(
         "left_dir": dir_left,
         "right_dir": dir_right,
         "angle_deg": angle_deg,
+        "top_px": top_px,
+        "orig_h": h_orig,
     }
 
     return angle_deg, annotated, debug_info
@@ -558,7 +560,7 @@ def create_debug_image(debug_info: dict, image_path: Path) -> np.ndarray:
     Panels
     ------
     1. Original grayscale
-    2. Row sampling visualisation
+    2. Original image with TOP_CROP_RATIO region highlighted in red
     3. Left boundary scatter (colour-coded by R²)
     4. Right boundary scatter (colour-coded by R²)
     5. Both boundary clouds + fitted lines
@@ -604,14 +606,23 @@ def create_debug_image(debug_info: dict, image_path: Path) -> np.ndarray:
     # ---- Panel 1: original grayscale ------------------------------------
     p1 = _label(_resize(orig_bgr), "1. Original")
 
-    # ---- Panel 2: row sampling ------------------------------------------
-    p2_base = _resize(orig_bgr.copy())
-    scale_x = cell_w / w
-    scale_y = cell_h / h
-    for row_y in range(0, h, ROW_STEP):
-        py = int(row_y * scale_y)
-        cv2.line(p2_base, (0, py), (cell_w, py), (60, 60, 60), 1)
-    p2 = _label(p2_base, "2. Row sampling")
+    # ---- Panel 2: original image with top-crop region highlighted -------
+    top_px = debug_info.get("top_px", 0)
+    orig_h = debug_info.get("orig_h", h)
+    orig_full = cv2.imread(str(image_path))
+    if orig_full is None:
+        orig_full = cv2.copyMakeBorder(orig_bgr, top_px, 0, 0, 0, cv2.BORDER_CONSTANT, value=0)
+    orig_full_gray = cv2.cvtColor(orig_full, cv2.COLOR_BGR2GRAY) if orig_full.ndim == 3 else orig_full
+    p2_base = cv2.cvtColor(orig_full_gray, cv2.COLOR_GRAY2BGR)
+    if top_px > 0:
+        overlay = p2_base.copy()
+        cv2.rectangle(overlay, (0, 0), (p2_base.shape[1] - 1, top_px - 1), (0, 0, 200), -1)
+        cv2.addWeighted(overlay, 0.45, p2_base, 0.55, 0, p2_base)
+        crop_y_scaled = int(top_px * cell_h / orig_h)
+    p2_base = _resize(p2_base)
+    if top_px > 0:
+        cv2.line(p2_base, (0, crop_y_scaled), (cell_w, crop_y_scaled), (0, 0, 255), 1)
+    p2 = _label(p2_base, "2. Crop region")
 
     # ---- Panels 3–5: matplotlib scatter or OpenCV fallback --------------
     _mpl_ok = False
@@ -883,7 +894,7 @@ def main() -> None:
     input_path = args.input
     if input_path is None:
         for ext in [".tiff", ".tif", ".png", ".jpg", ".jpeg", ".bmp"]:
-            candidate = CURRENT_DIR / f"Spray_1{ext}"
+            candidate = CURRENT_DIR / f"Spray_3{ext}"
             if candidate.exists():
                 input_path = candidate
                 break
