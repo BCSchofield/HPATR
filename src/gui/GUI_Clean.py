@@ -563,12 +563,30 @@ class AFGController:
 
     def configure_pulse(self, duration_seconds, amplitude_volts=5.0, channel=1):
         if not self.is_connected: raise RuntimeError("AFG not connected")
-        self.pulse_duration = duration_seconds; self.channel = channel
+        self.pulse_duration = duration_seconds
+        self.channel = channel
         ch = f'SOUR{channel}:'
-        self.afg.write(f'{ch}FUNC SQUARE')
-        self.afg.write(f'{ch}FREQ {1.0 / (2.0 * duration_seconds)}')
+
+        # Set waveform to PULSE — allows direct pulse width control
+        # independent of period, unlike SQUARE (which is always 50% duty cycle)
+        self.afg.write(f'{ch}FUNC PULS')
+
+        # Set period to 10x the pulse width — gives 10% duty cycle baseline
+        # This is only the carrier period; burst mode means it fires once per trigger
+        period_seconds = max(duration_seconds * 10, 1e-3)  # minimum 1ms period
+        self.afg.write(f'{ch}FREQ {1.0 / period_seconds}')
+
+        # Set pulse width directly in seconds
+        # AFG1062 accepts pulse width via PULSe:WIDTh command
+        self.afg.write(f'{ch}PULS:WIDT {duration_seconds}')
+
+        # Set amplitude and offset for TTL-compatible 0-5V output
         self.afg.write(f'{ch}VOLT {amplitude_volts}')
-        self.afg.write(f'{ch}VOLT:OFFS {amplitude_volts/2.0}')
+        self.afg.write(f'{ch}VOLT:OFFS {amplitude_volts / 2.0}')
+        self.afg.write(f'{ch}VOLT:LOW 0.0')
+        self.afg.write(f'{ch}VOLT:HIGH {amplitude_volts}')
+
+        # Configure burst mode: single pulse per manual trigger
         self.afg.write(f'{ch}BURS:STAT ON')
         self.afg.write(f'{ch}BURS:MODE TRIG')
         self.afg.write(f'{ch}BURS:NCYC 1')
@@ -2268,7 +2286,12 @@ class AtomisationApp(QMainWindow):
             ch = 1 if self._afg_channel.currentText() == "CH1" else 2
             dur = float(self._afg_duration.text())
             self.afg.configure_pulse(dur, channel=ch)
-            self._afg_status_lbl.setText(f"AFG: configured ({dur*1000:.1f} ms pulse, CH{ch})")
+            pulse_us = dur * 1e6
+            if pulse_us >= 1000:
+                pulse_str = f"{dur*1000:.1f} ms"
+            else:
+                pulse_str = f"{pulse_us:.0f} µs"
+            self._afg_status_lbl.setText(f"AFG: configured ({pulse_str} pulse, CH{ch})")
         except Exception as e:
             self._set_status(f"AFG config error: {e}", CLR_RED)
 
