@@ -18,7 +18,11 @@
       "Bash(/c/Users/55154111/AppData/Local/Programs/Python/Python311/python.exe -c \":*)",
       "Bash(/c/Users/55154111/AppData/Local/Programs/Python/Python311/Scripts/pip install:*)",
       "Bash(python3 -c \" import json with open\\(''/Users/benschofield/.claude/projects/-Users-benschofield-Documents-GitHub-HPATR/2f97a88c-bb46-49e7-a839-9a2402d6b245/tool-results/toolu_01AtUxpMgy2MZ5gJdgWh47wr.json''\\) as f: data = json.load\\(f\\) print\\(data[0][''text'']\\) \")",
-      "Bash(/Users/benschofield/anaconda3/envs/phantom/bin/pip install:*)"
+      "Bash(/Users/benschofield/anaconda3/envs/phantom/bin/pip install:*)",
+      "mcp__claude_ai_Notion__notion-search",
+      "mcp__claude_ai_Notion__notion-fetch",
+      "mcp__claude_ai_Notion__notion-update-page",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''src/gui/GUI_Clean.py''\\).read\\(\\)\\); print\\(''Syntax OK''\\)\")"
     ]
   }
 }

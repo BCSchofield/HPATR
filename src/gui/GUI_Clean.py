@@ -387,9 +387,25 @@ class ClickableImageWidget(QLabel):
 
 # ── Backend controllers (unchanged from Windows_Experiment_GUI.py) ────────────
 
+_SESSION_LOG_FILE = None
+
+def _get_session_log_file():
+    """Return the path to this session's serial log, creating it lazily on first call."""
+    global _SESSION_LOG_FILE
+    if _SESSION_LOG_FILE is None:
+        lacie = find_lacie_drive()
+        if lacie:
+            log_dir = os.path.join(lacie, "Logs")
+        else:
+            log_dir = os.path.dirname(os.path.abspath(__file__))
+        os.makedirs(log_dir, exist_ok=True)
+        _SESSION_LOG_FILE = os.path.join(
+            log_dir, datetime.now().strftime("serial_%Y%m%d_%H%M%S.txt"))
+    return _SESSION_LOG_FILE
+
 def log_serial(message, log_file=None):
     if log_file is None:
-        log_file = GUI_CONFIG.get('serial_log_file', 'serial_log.txt')
+        log_file = _get_session_log_file()
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     with open(log_file, "a") as f:
         f.write(f"[{timestamp}] {message}\n")
@@ -649,6 +665,7 @@ class AtomisationApp(QMainWindow):
         self.cumulative_distance = 0.0
         self.cleaning_in_progress = False
         self._experiment_saved = True   # True until an experiment runs unsaved
+        self._run_folder = None          # Set eagerly on Start Experiment, cleared on next start
 
         self.pressure_data = {
             'live_buffer': {'timestamps': [], 'pressures': []},
@@ -1617,11 +1634,11 @@ class AtomisationApp(QMainWindow):
             ("SAVING RESULTS", [
                 ("Excel log",
                  "Fill in Nozzle No. and Orifice in the right panel, add any notes (fluid composition, "
-                 "temperature, observations), then click Save to Excel. Logs are written to the "
-                 "LaCie drive under Experiments/Logs/."),
+                 "temperature, observations), then click Save to Excel. Results are written to a per-run "
+                 "folder on the LaCie drive: Experiments/YYYY/MM/DD/HHMMSS_Nnozzle_pressureBAR/run_summary.xlsx."),
                 ("Shadowgraph result",
                  "The Latest Result panel (left) shows the most recent FINAL_OPTIMIZED_RESULT.png found "
-                 "on the LaCie drive. Click ↻ Refresh to scan for a newer result after analysis."),
+                 "in the current run's shadowgraph/analysis/ folder. Click ↻ Refresh to scan for a newer result after analysis."),
             ]),
             ("TIPS & ENVIRONMENT", [
                 ("Dark/light background",
@@ -2052,9 +2069,11 @@ class AtomisationApp(QMainWindow):
                   else QImage.Format.Format_Grayscale8
             img = QImage(frame.data, w, h, int(frame.strides[0]), fmt)
             pixmap = QPixmap.fromImage(img)
-            save_dir = os.path.join(os.path.dirname(__file__), "calibration_photos")
+            lacie = find_lacie_drive()
+            save_dir = os.path.join(lacie, "Calibration") if lacie \
+                       else os.path.join(os.path.dirname(__file__), "calibration_photos")
             os.makedirs(save_dir, exist_ok=True)
-            fname = datetime.now().strftime("calib_%Y%m%d_%H%M%S.png")
+            fname = datetime.now().strftime("cal_%Y%m%d_%H%M%S.png")
             path = os.path.join(save_dir, fname)
             pixmap.save(path)
             self._cal_load_image_into_widget(path)
@@ -2131,9 +2150,13 @@ class AtomisationApp(QMainWindow):
 
     def _cone_save_dir(self):
         """Return the directory to save cone images into, creating it if needed."""
-        lacie = find_lacie_drive()
-        save_dir = os.path.join(lacie, "Experiments", "Logs", "Testing") if lacie \
-                   else os.path.join(os.path.dirname(__file__), "cone_captures")
+        if self._run_folder:
+            save_dir = os.path.join(self._run_folder, "cone")
+        else:
+            # Standalone / no active experiment — use original fallback locations
+            lacie = find_lacie_drive()
+            save_dir = os.path.join(lacie, "Experiments", "Logs", "Testing") if lacie \
+                       else os.path.join(os.path.dirname(__file__), "cone_captures")
         os.makedirs(save_dir, exist_ok=True)
         return save_dir
 
@@ -2368,6 +2391,20 @@ class AtomisationApp(QMainWindow):
         self.pressure_data['experiment_start_time'] = time.time()
         self.pressure_data['experiment_data'] = {'timestamps':[], 'pressures':[]}
 
+        # ── Create run folder eagerly ──────────────────────────────────────────
+        _now = datetime.now()
+        _nozzle_label = (self._nozzle_entry.text().strip() or "NoNozzle").replace(" ", "_")
+        _run_id = f"{_now.strftime('%H%M%S')}_N{_nozzle_label}_{pressure:.1f}BAR"
+        _lacie = find_lacie_drive()
+        _exp_base = os.path.join(_lacie, "Experiments") if _lacie else os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            "experiment_logs", "Experiments")
+        self._run_folder = os.path.join(
+            _exp_base, _now.strftime("%Y"), _now.strftime("%m"), _now.strftime("%d"), _run_id)
+        for _sub in [os.path.join("shadowgraph", "raw"),
+                     os.path.join("shadowgraph", "analysis"), "cone"]:
+            os.makedirs(os.path.join(self._run_folder, _sub), exist_ok=True)
+
         # Start cone auto-capture (every 5 s) if webcam is already running
         if self._cone_cap is not None and self._cone_cap.isOpened():
             self._cone_auto_timer.start(5000)
@@ -2397,25 +2434,31 @@ class AtomisationApp(QMainWindow):
 
     def _find_latest_result(self):
         try:
-            try:
-                from config_loader import get_imaging_config
-                cfg = get_imaging_config()
-                base = resolve_path(cfg.get('output_root', ''))
-            except: base = None
-            if not base or not os.path.exists(base):
-                lacie = find_lacie_drive()
-                base  = os.path.join(lacie, "Shadowgraph") if lacie else "experiment_logs"
-            if not os.path.exists(base): return None
+            # Check the active run folder first
+            if self._run_folder:
+                f = os.path.join(self._run_folder, "shadowgraph", "analysis",
+                                 "FINAL_OPTIMIZED_RESULT.png")
+                if os.path.exists(f):
+                    return f
+
+            # Fall back to scanning Experiments tree for most-recent result
+            lacie = find_lacie_drive()
+            base  = os.path.join(lacie, "Experiments") if lacie else None
+            if not base or not os.path.exists(base): return None
+
             def latest_subdir(path):
-                items = [(os.path.join(path,i), os.path.getmtime(os.path.join(path,i)))
-                         for i in os.listdir(path) if os.path.isdir(os.path.join(path,i))]
+                items = [(os.path.join(path, i), os.path.getmtime(os.path.join(path, i)))
+                         for i in os.listdir(path) if os.path.isdir(os.path.join(path, i))]
                 items.sort(key=lambda x: x[1], reverse=True)
                 return [x[0] for x in items]
-            for month in latest_subdir(base):
-                for day in latest_subdir(month):
-                    for ts in latest_subdir(day):
-                        f = os.path.join(ts, "Outputs", "FINAL_OPTIMIZED_RESULT.png")
-                        if os.path.exists(f): return f
+
+            for year in latest_subdir(base):
+                for month in latest_subdir(year):
+                    for day in latest_subdir(month):
+                        for run in latest_subdir(day):
+                            f = os.path.join(run, "shadowgraph", "analysis",
+                                             "FINAL_OPTIMIZED_RESULT.png")
+                            if os.path.exists(f): return f
         except Exception as e:
             print(f"Error finding result: {e}")
         return None
@@ -2436,7 +2479,7 @@ class AtomisationApp(QMainWindow):
                 return
         self._shadow_label.setPixmap(QPixmap())
         self._shadow_label.setText("No result found\nClick ↻ Refresh")
-        self._result_path_label.setText("Searching: LaCie/Shadowgraph/…/Outputs/FINAL_OPTIMIZED_RESULT.png")
+        self._result_path_label.setText("Searching: LaCie/Experiments/…/shadowgraph/analysis/FINAL_OPTIMIZED_RESULT.png")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Logic — Excel save
@@ -2452,19 +2495,10 @@ class AtomisationApp(QMainWindow):
             from openpyxl.drawing.image import Image as XLImage
             from openpyxl.styles import Alignment
 
-            lacie       = find_lacie_drive()
-            base        = os.path.join(lacie, "Experiments", "Logs") if lacie else "experiment_logs"
-            os.makedirs(base, exist_ok=True)
-
+            lacie        = find_lacie_drive()
             now          = datetime.now()
-            ts           = now.strftime("%Y%m%d_%H%M%S")
             ts_str       = now.strftime("%Y-%m-%d %H:%M:%S")
 
-            per_run_dir = os.path.join(base, "per_run",
-                                       now.strftime("%Y"),
-                                       now.strftime("%m"),
-                                       now.strftime("%d"))
-            os.makedirs(per_run_dir, exist_ok=True)
             nozzle       = self._nozzle_entry.text().strip()
             orifice      = self._orifice_combo.currentText()
             notes        = self._notes_text.toPlainText()
@@ -2483,11 +2517,22 @@ class AtomisationApp(QMainWindow):
                 p_range_str  = f"{raw} BAR" if raw else "N/A"
                 p_range_file = None
 
-            # ── Individual per-run file ────────────────────────────────────────
-            safe_nozzle = f"N{nozzle}".replace(" ", "_")
-            fname = (f"{ts}_{safe_nozzle}_{orifice}_{p_range_file}.xlsx"
-                     if p_range_file else f"{ts}_{safe_nozzle}_{orifice}.xlsx")
-            ind_path = os.path.join(per_run_dir, fname)
+            # ── Resolve run folder (created at Start Experiment, or now as fallback) ──
+            if self._run_folder:
+                run_dir = self._run_folder
+            else:
+                _exp_base = os.path.join(lacie, "Experiments") if lacie else os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                    "experiment_logs", "Experiments")
+                _safe_nozzle = f"N{nozzle}".replace(" ", "_")
+                _run_id = f"{now.strftime('%H%M%S')}_{_safe_nozzle}_{p_range_file or 'unknownBAR'}"
+                run_dir = os.path.join(_exp_base, now.strftime("%Y"), now.strftime("%m"),
+                                       now.strftime("%d"), _run_id)
+                for _sub in [os.path.join("shadowgraph", "raw"),
+                             os.path.join("shadowgraph", "analysis"), "cone"]:
+                    os.makedirs(os.path.join(run_dir, _sub), exist_ok=True)
+                self._run_folder = run_dir
+            ind_path = os.path.join(run_dir, "run_summary.xlsx")
 
             meta = {
                 'Field': ['Timestamp', 'Nozzle', 'Orifice', 'Pressure Range',
@@ -2549,7 +2594,11 @@ class AtomisationApp(QMainWindow):
 
             # ── Master log: insert at row 2, shift image anchors first ───────
             import re as _re
-            master_path = os.path.join(base, 'master_log.xlsx')
+            _master_base = lacie if lacie else os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                "experiment_logs")
+            os.makedirs(_master_base, exist_ok=True)
+            master_path = os.path.join(_master_base, 'master_log.xlsx')
             if os.path.exists(master_path):
                 wb = load_workbook(master_path)
                 ws = wb.active
@@ -2613,7 +2662,7 @@ class AtomisationApp(QMainWindow):
             wb.save(master_path)
 
             self._experiment_saved = True
-            self._set_status(f"Saved: {fname}  +  master_log.xlsx updated", CLR_GREEN)
+            self._set_status("Saved: run_summary.xlsx  +  master_log.xlsx updated", CLR_GREEN)
             self._save_path_lbl.setText(f"{ind_path}\nMaster: {master_path}")
         except Exception as e:
             self._set_status(f"Save error: {e}", CLR_RED)
@@ -2689,9 +2738,12 @@ class AtomisationApp(QMainWindow):
     # ─────────────────────────────────────────────────────────────────────────
 
     def _excel_save_path_hint(self):
+        if self._run_folder:
+            return os.path.join(self._run_folder, "run_summary.xlsx")
         lacie = find_lacie_drive()
         if lacie:
-            return os.path.join(lacie, "Experiments", "Logs", "experiment_<timestamp>.xlsx")
+            return os.path.join(lacie, "Experiments", "YYYY", "MM", "DD",
+                                "HHMMSS_Nnozzle_pressureBAR", "run_summary.xlsx")
         return "Saving to: experiment_logs/ (no LaCie drive found)"
 
     def _warn(self, title, message):
