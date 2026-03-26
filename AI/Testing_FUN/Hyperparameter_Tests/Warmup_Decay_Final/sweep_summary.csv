@@ -1,3 +1,0 @@
-run_name,learning_rate,anchor_sizes,warmup_iters,decay_type,final_val_segm_ap,final_val_bbox_ap,best_val_segm_ap,best_val_bbox_ap,best_val_ap,best_val_iter,final_training_loss,mean_training_loss,training_time_minutes
-lr0_0025_anchors8_16_32_64_warmup1000_decaystep_2026_01_25_17_17_16,0.0025,"[[8, 16, 32, 64]]",1000,step,78.58619666090185,80.01683659255711,78.58619666090185,80.028469820195,79.30733324054842,5000,,,93.63700522581736
-lr0_0025_anchors8_16_32_64_warmup1000_decaycosine_2026_01_25_18_50_56,0.0025,"[[8, 16, 32, 64]]",1000,cosine,80.74499143461202,82.24790919219235,80.86768760527673,82.42029440829292,81.64399100678483,4500,,,92.87570247252782
