@@ -41,6 +41,10 @@ def find_lacie_drive():
             for vol in volumes.iterdir():
                 if "lacie" in vol.name.lower():
                     return str(vol)
+        # Fallback: Backup_PhD is a secondary drive that also holds the data
+        backup_path = Path("/Volumes/Backup_PhD")
+        if backup_path.exists():
+            return str(backup_path)
     
     elif system == "Windows":
         # On Windows, check common drive letters (D:, E:, F:, etc.)

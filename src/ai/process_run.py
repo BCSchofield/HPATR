@@ -97,7 +97,7 @@ def extract_brightest_tiff(frames_folder: Path, output_folder: Path) -> Path:
 
     # Delete frames folder — clean slate for next run
     print(f"[process_run] Deleting frames folder (clean slate): {frames_folder}")
-    shutil.rmtree(frames_folder)
+    shutil.rmtree(frames_folder, ignore_errors=True)
 
     print(f"[process_run] Brightest frame saved → {tiff_path}")
     return tiff_path

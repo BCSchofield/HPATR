@@ -359,6 +359,9 @@ class ClickableImageWidget(QLabel):
         if ox <= cx <= ox + disp_w and oy <= cy <= oy + disp_h:
             img_x = int((cx - ox) / scale)
             img_y = int((cy - oy) / scale)
+            # Second point is clamped to same x as first (vertical-only measurement)
+            if len(self._points) == 1:
+                img_x = self._points[0][0]
             self._points.append((img_x, img_y))
             self._redraw()
             self.pointsChanged.emit(self._points)
@@ -646,6 +649,10 @@ class AtomisationApp(QMainWindow):
 
     MAX_MOTOR_MM = 72.5   # physical travel limit
 
+    # Cross-thread signals for pipeline callbacks
+    _pipeline_done = Signal(object)
+    _pipeline_err  = Signal(str)
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Atomisation Control Panel")
@@ -679,6 +686,10 @@ class AtomisationApp(QMainWindow):
         # ── Build UI ──────────────────────────────────────────────────────────
         self._build_ui()
         self._load_camera_settings()
+
+        # Pipeline cross-thread signal connections (UI must exist first)
+        self._pipeline_done.connect(self._on_pipeline_complete)
+        self._pipeline_err.connect(self._on_pipeline_error)
 
         # ── Timers ────────────────────────────────────────────────────────────
         self._serial_timer = QTimer(self)
@@ -834,6 +845,18 @@ class AtomisationApp(QMainWindow):
         self._pipeline_status.setStyleSheet(f"color: {CLR_TEXT_SEC}; font-size: 11px;")
         self._pipeline_status.setWordWrap(True)
         preview_card.layout().addWidget(self._pipeline_status)
+
+        # AI metrics — populated after pipeline run
+        metrics_row = QWidget()
+        mr = QHBoxLayout(metrics_row); mr.setContentsMargins(0, 0, 0, 0); mr.setSpacing(16)
+        self._ai_confidence_lbl = QLabel("Confidence: –")
+        self._ai_diameter_lbl   = QLabel("Avg droplet: –")
+        self._ai_dl_lbl         = QLabel("D/L: –")
+        for lbl in [self._ai_confidence_lbl, self._ai_diameter_lbl, self._ai_dl_lbl]:
+            lbl.setStyleSheet(f"color: {CLR_TEXT_SEC}; font-size: 11px;")
+            mr.addWidget(lbl)
+        mr.addStretch()
+        preview_card.layout().addWidget(metrics_row)
 
         vl.addWidget(preview_card)
 
@@ -1222,10 +1245,10 @@ class AtomisationApp(QMainWindow):
         c3.layout().addWidget(section_label("CAPTURE"))
         c3.layout().addWidget(separator())
 
-        self._pipeline_check = QCheckBox("Run analysis pipeline after capture")
+        self._pipeline_check = QCheckBox("Run AI analysis after capture")
         self._pipeline_check.setStyleSheet(f"color:{CLR_TEXT}; font-size:13px;")
         c3.layout().addWidget(self._pipeline_check)
-        _pipeline_desc = QLabel("When enabled, the CV/AI analysis pipeline runs automatically after each capture — detecting droplets and ligaments and saving the result to Outputs/FINAL_OPTIMIZED_RESULT.png.")
+        _pipeline_desc = QLabel("When enabled, Dennis (Mask R-CNN) runs automatically after each capture — detecting droplets and ligaments and saving ai_result.png + metrics to the run folder.")
         _pipeline_desc.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
         _pipeline_desc.setWordWrap(True)
         c3.layout().addWidget(_pipeline_desc)
@@ -1245,6 +1268,24 @@ class AtomisationApp(QMainWindow):
             for btn in [self._cam_connect_btn, self._cam_ping_btn,
                         apply_btn, self._cam_abort_btn, self._cam_capture_btn]:
                 btn.setEnabled(False)
+
+        # Test Pipeline card
+        c_test = card(w)
+        c_test.layout().addWidget(section_label("TEST PIPELINE"))
+        c_test.layout().addWidget(separator())
+        _test_desc = QLabel(
+            "Runs Dennis on existing frames from Backup_PhD/Phantom/frames/ "
+            "and writes results to Backup_PhD/Experiments/Trials/. "
+            "Uses current calibration px/mm (falls back to 52.3)."
+        )
+        _test_desc.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
+        _test_desc.setWordWrap(True)
+        c_test.layout().addWidget(_test_desc)
+        self._test_pipeline_btn = accent_button("Test Pipeline", CLR_ACCENT)
+        self._test_pipeline_btn.setFixedHeight(36)
+        self._test_pipeline_btn.clicked.connect(self._run_test_pipeline)
+        c_test.layout().addWidget(self._test_pipeline_btn, alignment=Qt.AlignmentFlag.AlignRight)
+        vl.addWidget(c_test)
 
         vl.addStretch()
         scroll.setWidget(w); return scroll
@@ -2029,20 +2070,98 @@ class AtomisationApp(QMainWindow):
             self.phantom.save_recording(out)
             self._cam_status_lbl.setText("Capture saved")
             if self._pipeline_check.isChecked():
-                self._run_pipeline(out)
+                lacie = find_lacie_drive()
+                frames_folder = os.path.join(lacie, "VIDEO_PERSISTENT", "frames") if lacie else out
+                output_folder = os.path.join(self._run_folder, "shadowgraph", "analysis") \
+                                if self._run_folder else os.path.join(out, "analysis")
+                self._run_pipeline(frames_folder, output_folder)
         except Exception as e:
             self._set_status(f"Capture error: {e}", CLR_RED)
 
-    def _run_pipeline(self, source_path):
-        self._pipeline_status.setText("Pipeline: running…")
+    def _get_px_per_mm(self) -> float:
+        """Return the current calibrated px/mm value, falling back to 0.0 if not set."""
+        txt = self._hdr_pxmm_lbl.text().replace("px/mm", "").strip()
         try:
-            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            from imaging.save_and_analyse import process_and_save_to_lacie
-            process_and_save_to_lacie(source_path)
-            self._pipeline_status.setText("Pipeline: complete ✓")
-            self._refresh_shadowgraph()
-        except Exception as e:
-            self._pipeline_status.setText(f"Pipeline error: {e}")
+            return float(txt) if txt not in ("–", "") else 0.0
+        except ValueError:
+            return 0.0
+
+    def _run_pipeline(self, frames_folder: str, output_folder: str, px_per_mm: float = None):
+        """Run Dennis AI pipeline in a background thread so the UI stays responsive."""
+        if px_per_mm is None:
+            px_per_mm = self._get_px_per_mm()
+        self._pipeline_status.setText("Pipeline: running…")
+        self._ai_confidence_lbl.setText("Confidence: –")
+        self._ai_diameter_lbl.setText("Avg droplet: –")
+        self._ai_dl_lbl.setText("D/L: –")
+
+        import threading
+        def _worker():
+            try:
+                sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                from ai.process_run import run as ai_run
+                results = ai_run(frames_folder, output_folder, px_per_mm)
+                self._pipeline_done.emit(results)
+            except Exception as e:
+                self._pipeline_err.emit(str(e))
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_pipeline_complete(self, results: dict):
+        self._pipeline_status.setText("Pipeline: complete ✓")
+        conf = results.get("mean_confidence")
+        diam = results.get("avg_droplet_um")
+        dl   = results.get("dl_ratio", "–")
+        self._ai_confidence_lbl.setText(f"Confidence: {conf:.1f}%" if conf is not None else "Confidence: –")
+        self._ai_diameter_lbl.setText(f"Avg droplet: {diam:.1f} µm" if diam is not None else "Avg droplet: –")
+        self._ai_dl_lbl.setText(f"D/L: {dl}")
+        # Re-enable test button if this was a test run
+        if getattr(self, '_is_test_pipeline', False):
+            self._test_pipeline_btn.setEnabled(True)
+            self._test_pipeline_btn.setText("Test Pipeline")
+            self._is_test_pipeline = False
+        # Use the result image path directly from results
+        result_image = results.get("result_image")
+        if result_image:
+            path = str(result_image)
+            img = QImage(path)
+            if not img.isNull():
+                pix = QPixmap.fromImage(img).scaled(
+                    390, 265,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation
+                )
+                self._shadow_label.setPixmap(pix)
+                self._shadow_label.setText("")
+                self._result_path_label.setText(path)
+                return
+        self._refresh_shadowgraph()
+
+    def _on_pipeline_error(self, err: str):
+        self._pipeline_status.setText(f"Pipeline error: {err}")
+        if getattr(self, '_is_test_pipeline', False):
+            self._test_pipeline_btn.setEnabled(True)
+            self._test_pipeline_btn.setText("Test Pipeline")
+            self._is_test_pipeline = False
+
+    def _run_test_pipeline(self):
+        """Test button: run Dennis on hardcoded Backup_PhD paths."""
+        frames_folder = "/Volumes/Backup_PhD/Phantom/frames"
+        output_folder = "/Volumes/Backup_PhD/Experiments/Trials"
+        px_per_mm = self._get_px_per_mm() or 52.3
+        self._test_pipeline_btn.setEnabled(False)
+        self._test_pipeline_btn.setText("Running…")
+        self._is_test_pipeline = True  # flag so _on_pipeline_complete re-enables btn
+
+        import threading
+        def _worker():
+            try:
+                sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                from ai.process_run import run as ai_run
+                results = ai_run(frames_folder, output_folder, px_per_mm)
+                self._pipeline_done.emit(results)
+            except Exception as e:
+                self._pipeline_err.emit(str(e))
+        threading.Thread(target=_worker, daemon=True).start()
 
     # ─────────────────────────────────────────────────────────────────────────
     # Logic — Calibration
@@ -2434,12 +2553,12 @@ class AtomisationApp(QMainWindow):
 
     def _find_latest_result(self):
         try:
-            # Check the active run folder first
+            # Check the active run folder first — prefer ai_result.png, fall back to CV result
             if self._run_folder:
-                f = os.path.join(self._run_folder, "shadowgraph", "analysis",
-                                 "FINAL_OPTIMIZED_RESULT.png")
-                if os.path.exists(f):
-                    return f
+                for fname in ("ai_result.png", "FINAL_OPTIMIZED_RESULT.png"):
+                    f = os.path.join(self._run_folder, "shadowgraph", "analysis", fname)
+                    if os.path.exists(f):
+                        return f
 
             # Fall back to scanning Experiments tree for most-recent result
             lacie = find_lacie_drive()
@@ -2456,9 +2575,9 @@ class AtomisationApp(QMainWindow):
                 for month in latest_subdir(year):
                     for day in latest_subdir(month):
                         for run in latest_subdir(day):
-                            f = os.path.join(run, "shadowgraph", "analysis",
-                                             "FINAL_OPTIMIZED_RESULT.png")
-                            if os.path.exists(f): return f
+                            for fname in ("ai_result.png", "FINAL_OPTIMIZED_RESULT.png"):
+                                f = os.path.join(run, "shadowgraph", "analysis", fname)
+                                if os.path.exists(f): return f
         except Exception as e:
             print(f"Error finding result: {e}")
         return None

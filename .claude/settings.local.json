@@ -22,7 +22,9 @@
       "mcp__claude_ai_Notion__notion-search",
       "mcp__claude_ai_Notion__notion-fetch",
       "mcp__claude_ai_Notion__notion-update-page",
-      "Bash(python -c \"import ast; ast.parse\\(open\\(''src/gui/GUI_Clean.py''\\).read\\(\\)\\); print\\(''Syntax OK''\\)\")"
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''src/gui/GUI_Clean.py''\\).read\\(\\)\\); print\\(''Syntax OK''\\)\")",
+      "Bash(conda env:*)",
+      "Bash(conda run:*)"
     ]
   }
 }
