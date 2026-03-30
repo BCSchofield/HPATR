@@ -1,3 +1,4 @@
+# Merge term 1
 """
 Detectron2 Inference Script
 Run inference on new images and export masks (visual + numerical data)

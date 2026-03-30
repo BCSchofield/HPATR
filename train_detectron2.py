@@ -1,3 +1,4 @@
+# Merge term 1
 """
 Detectron2 Training Script with Progress Visualization
 Trains Mask R-CNN on synthetic spray droplet dataset

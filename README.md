@@ -1,3 +1,4 @@
+<!-- Merge term 1 -->
 # HPATR - High-Performance Aerosol Testing & Research
 
 A comprehensive toolkit for droplet imaging analysis and experimental control.

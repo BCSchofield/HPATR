@@ -1,3 +1,4 @@
+# Merge term 1
 """
 Configuration loader for HPATR.
 Loads paths from config/paths.yaml (or paths_example.yaml as fallback).

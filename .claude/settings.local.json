@@ -24,7 +24,12 @@
       "mcp__claude_ai_Notion__notion-update-page",
       "Bash(python -c \"import ast; ast.parse\\(open\\(''src/gui/GUI_Clean.py''\\).read\\(\\)\\); print\\(''Syntax OK''\\)\")",
       "Bash(conda env:*)",
-      "Bash(conda run:*)"
+      "Bash(conda run:*)",
+      "Bash(wc -l /Users/benschofield/Documents/GitHub/HPATR/*.py)",
+      "Bash(find /Users/benschofield/Documents/GitHub/HPATR/Trials -name \"*.py\" -exec wc -l {} +)",
+      "Bash(grep -l \"from AI\\\\|import.*AI\\\\|from.*Trials\\\\|import.*Trials\" /Users/benschofield/Documents/GitHub/HPATR/*.py)",
+      "Bash(grep -l \"import torch\\\\|from detectron2\" /Users/benschofield/Documents/GitHub/HPATR/*.py)",
+      "Bash(du -sh /Users/benschofield/Documents/GitHub/HPATR/*/)"
     ]
   }
 }

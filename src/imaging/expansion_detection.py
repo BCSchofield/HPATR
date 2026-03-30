@@ -1,3 +1,4 @@
+# Merge term 1
 """
 HPATR Expansion Detection Module
 Core image processing functions for droplet detection using Canny, Watershed, and optimization.

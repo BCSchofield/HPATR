@@ -1,3 +1,4 @@
+// Merge term 1
 // TODO
 // Look into AccelStepper Library for where to put in stuff such as lead screw pitch
 // Work out how to reverse (Maybe just making the DIR pin LOW instead of HIGH?)
