@@ -1,7 +1,17 @@
-# This is a comment - will be ignored
+# Merge term 1
+# macOS system files
+.DS_Store
 
-/Volumes/LaCie/Experiments/AI/Anthony/Anthony.pth
-/Volumes/LaCie/Experiments/AI/Benedict/Benedict.pth
-/Volumes/LaCie/Experiments/AI/Claudia/Claudia.pth
+# Logs
+*.log
+serial_logs/
+logs/
 
-# Empty lines are also ignored
+# Debug / scratch
+debug_*
+scratch/
+tmp/
+
+# Python
+__pycache__/
+*.pyc

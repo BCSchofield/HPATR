@@ -53,18 +53,18 @@ from pycocotools import mask as coco_mask
 # ============================================================================
 
 # Number of images to generate (adjust for testing)
-NUM_IMAGES = 1000
+NUM_IMAGES = 10
 
 # Create side-by-side image/mask visualizations? (True/False)
-CREATE_SIDEBYSIDE_VIS = False
+CREATE_SIDEBYSIDE_VIS = True
 
 # Output Detectron2 essentials only? (True = only images + annotations.json, False = all outputs)
 # When True: Skips visualizations and sidebyside to save time/space for large datasets
-OUTPUT_DETECTRON_ONLY = True
+OUTPUT_DETECTRON_ONLY = False
 
 # Custom output folder name (None = use default "blur_timestamp" format)
 # Set to a string to use a custom name (e.g., "Detectron_Trial_2")
-CUSTOM_OUTPUT_FOLDER = "Detectron_Trial_4"
+CUSTOM_OUTPUT_FOLDER = None
 
 # Multiprocessing settings
 # Number of worker processes (None = use all CPU cores, or set to specific number)
@@ -155,9 +155,109 @@ MIN_DROPLET_DIAMETER = 15.0  # Minimum diameter in pixels to annotate (reduced f
 MIN_DROPLET_VISIBILITY_RATIO = 0.15  # At least 15% must be visible (reduced from 20%)
 MIN_DROPLET_CONTRAST = 2.0  # Minimum intensity difference from background to be visible (reduced from 3)
 
+# Conjoined droplet pairs (two droplets joined by a small overlap / bridge)
+# Goal: produce shapes like two circles connected by a narrow or thicker "bridge".
+# These are emitted as TWO separate droplet instances (two circle masks).
+CONJOINED_DROPLET_FROM_LIGAMENT_PROB = 0.50  # Fraction of ligaments replaced by conjoined pairs
+
+# How much of the circumference is involved in the join.
+# - "Tiny join" values: almost separate droplets with a very small bridge.
+# - "Strong overlap" values: clearly conjoined / peanut-shaped droplets.
+CONJOINED_DROPLET_TINY_JOIN_FRAC_MIN = 0.02
+CONJOINED_DROPLET_TINY_JOIN_FRAC_MAX = 0.06
+CONJOINED_DROPLET_STRONG_JOIN_FRAC_MIN = 0.15
+CONJOINED_DROPLET_STRONG_JOIN_FRAC_MAX = 0.50
+
+# Probability that a conjoined pair uses the stronger-overlap regime (more obvious visual bridge).
+CONJOINED_DROPLET_STRONG_OVERLAP_PROB = 0.8
+
+CONJOINED_DROPLET_MAX_PLACEMENT_TRIES = 50
+
 # Category IDs
 CATEGORY_DROPLET = 1
 CATEGORY_LIGAMENT = 2
+
+
+# ============================================================================
+# CONJOINED DROPLET HELPERS
+# ============================================================================
+
+def _conjoined_pair_center_distance(radius: float, join_circumference_frac: float) -> float:
+    """
+    Compute center-to-center distance for two equal-radius circles such that the
+    overlap corresponds to roughly `join_circumference_frac` of each circle's circumference.
+
+    Derivation (equal radii):
+      join_frac ≈ θ / π  where θ = arccos(d / (2r)) is the half-angle of the intersecting arc
+      => d = 2r cos(π * join_frac)
+    """
+    jf = float(np.clip(join_circumference_frac, 1e-6, 0.49))
+    return 2.0 * float(radius) * float(np.cos(np.pi * jf))
+
+
+def generate_conjoined_droplet_pair_parameters(
+    rng: np.random.Generator,
+    image_shape: Tuple[int, int],
+    join_circumference_frac: float = 0.05,
+    max_tries: int = CONJOINED_DROPLET_MAX_PLACEMENT_TRIES
+) -> Optional[Tuple[Dict, Dict]]:
+    """
+    Generate params for a pair of (circular) droplets with a tiny overlap so they look
+    "conjoined" (like the provided reference image).
+
+    Returns:
+      (params_a, params_b) or None if placement fails after max_tries.
+    """
+    height, width = image_shape
+
+    # Ensure these are large enough to be annotatable droplets.
+    min_radius = max(DROPLET_RADIUS_MIN, int(math.ceil(MIN_DROPLET_DIAMETER / 2.0)))
+    max_radius = DROPLET_RADIUS_MAX
+    if min_radius >= max_radius:
+        min_radius = max(1, max_radius - 1)
+
+    for _ in range(int(max_tries)):
+        r = float(rng.integers(min_radius, max_radius + 1))
+
+        # Sample how "strong" the join / overlap should be.
+        # Tiny-join regime: almost separate, subtle bridge.
+        # Strong-overlap regime: clearly conjoined / peanut-shaped.
+        if rng.random() < CONJOINED_DROPLET_STRONG_OVERLAP_PROB:
+            jf = rng.uniform(CONJOINED_DROPLET_STRONG_JOIN_FRAC_MIN, CONJOINED_DROPLET_STRONG_JOIN_FRAC_MAX)
+        else:
+            jf = rng.uniform(CONJOINED_DROPLET_TINY_JOIN_FRAC_MIN, CONJOINED_DROPLET_TINY_JOIN_FRAC_MAX)
+
+        d = _conjoined_pair_center_distance(r, jf)
+
+        # Random direction and first center; choose c1 so that c2 also stays in-bounds.
+        angle = rng.uniform(0.0, 2.0 * np.pi)
+        dx, dy = float(np.cos(angle)), float(np.sin(angle))
+
+        # Conservative bounds for c1 to keep both circles fully inside the image
+        # c2 = c1 + d*(dx,dy)
+        x_min = r + max(0.0, -d * dx) + 1.0
+        x_max = (width - 1) - r - max(0.0, d * dx) - 1.0
+        y_min = r + max(0.0, -d * dy) + 1.0
+        y_max = (height - 1) - r - max(0.0, d * dy) - 1.0
+
+        if x_min >= x_max or y_min >= y_max:
+            continue
+
+        cx1 = float(rng.uniform(x_min, x_max))
+        cy1 = float(rng.uniform(y_min, y_max))
+        cx2 = cx1 + d * dx
+        cy2 = cy1 + d * dy
+
+        # Store centers as integer pixel coordinates so downstream cv2.circle
+        # calls (both for rendering and masks) receive the expected types.
+        cx1_i, cy1_i = int(round(cx1)), int(round(cy1))
+        cx2_i, cy2_i = int(round(cx2)), int(round(cy2))
+
+        params_a = {'type': 'circular', 'center': (cx1_i, cy1_i), 'radius': r}
+        params_b = {'type': 'circular', 'center': (cx2_i, cy2_i), 'radius': r}
+        return params_a, params_b
+
+    return None
 
 
 # ============================================================================
@@ -1595,6 +1695,41 @@ def generate_synthetic_image(
     # Generate ligaments - REALISM: Varying thickness and intensity
     num_ligaments = rng.poisson(LIGAMENT_POISSON_LAMBDA)
     for _ in range(num_ligaments):
+        # Optionally swap a portion of ligaments for "conjoined droplet pairs".
+        # These are drawn late (foreground), and are annotated as TWO droplets (two circle masks).
+        if rng.random() < CONJOINED_DROPLET_FROM_LIGAMENT_PROB:
+            pair = generate_conjoined_droplet_pair_parameters(
+                rng, image_shape
+            )
+            if pair is not None:
+                params_a, params_b = pair
+
+                # Draw the two droplets (slight overlap creates the "tiny join").
+                image = draw_circular_droplet_realistic(
+                    image, (int(params_a['center'][0]), int(params_a['center'][1])),
+                    params_a['radius'], float(bg_intensity), rng, apply_edge_blur=False
+                )
+                image = draw_circular_droplet_realistic(
+                    image, (int(params_b['center'][0]), int(params_b['center'][1])),
+                    params_b['radius'], float(bg_intensity), rng, apply_edge_blur=False
+                )
+
+                # Two separate circle masks / two droplet instances (overlap is allowed).
+                mask_a = create_instance_mask(image_shape, 'droplet', params_a)
+                mask_b = create_instance_mask(image_shape, 'droplet', params_b)
+
+                inst_a = {'type': 'droplet', 'params': params_a, 'mask': mask_a, 'category_id': CATEGORY_DROPLET}
+                instances.append(inst_a)
+                instances = remove_entirely_covered_instances(instances, mask_a, image_shape)
+
+                inst_b = {'type': 'droplet', 'params': params_b, 'mask': mask_b, 'category_id': CATEGORY_DROPLET}
+                instances.append(inst_b)
+                instances = remove_entirely_covered_instances(instances, mask_b, image_shape)
+
+                occlusion_mask = np.maximum(occlusion_mask, mask_a)
+                occlusion_mask = np.maximum(occlusion_mask, mask_b)
+                continue
+
         params = generate_ligament_parameters(rng, image_shape)
         
         # Calculate base intensity drop from background
@@ -1805,14 +1940,16 @@ def generate_single_image_worker(args):
     Worker function for multiprocessing - generates a single image and returns data.
     
     Args:
-        args: Tuple of (image_id, image_filename, images_dir_str, image_shape, config, 
-                        detectron_only, visualizations_dir_str, sidebyside_dir_str, create_sidebyside)
+        args: Tuple of (image_id, image_filename, images_dir_str, image_shape, config,
+                        detectron_only, visualizations_dir_str, sidebyside_dir_str, create_sidebyside,
+                        run_prefix)
     
     Returns:
         Dictionary with image data, annotations, and paths
     """
-    (image_id, image_filename, images_dir_str, image_shape, config, 
-     detectron_only, visualizations_dir_str, sidebyside_dir_str, create_sidebyside) = args
+    (image_id, image_filename, images_dir_str, image_shape, config,
+     detectron_only, visualizations_dir_str, sidebyside_dir_str, create_sidebyside,
+     run_prefix) = args
     
     # Convert string paths back to Path objects
     images_dir = Path(images_dir_str)
@@ -1846,12 +1983,12 @@ def generate_single_image_worker(args):
     # Create visualizations only if not in detectron-only mode
     if not detectron_only and visualizations_dir:
         # Create visualization
-        vis_path = visualizations_dir / f"blur_image_{image_id:04d}_vis.png"
+        vis_path = visualizations_dir / f"{run_prefix}_{image_id:04d}_vis.png"
         visualize_instances(image, instances, str(vis_path))
         
         # Create side-by-side visualization if enabled
         if create_sidebyside and sidebyside_dir:
-            sidebyside_path = sidebyside_dir / f"blur_image_{image_id:05d}_sidebyside.png"
+            sidebyside_path = sidebyside_dir / f"{run_prefix}_{image_id:05d}_sidebyside.png"
             create_sidebyside_visualization(image, instances, str(sidebyside_path))
     
     return result
@@ -1883,12 +2020,14 @@ def generate_dataset(
     if config is None:
         config = {}
     
+    run_timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+    run_prefix = f"conj_blur_{run_timestamp}"
+    
     # Create output folder - use custom name if specified, otherwise use timestamped format
     if CUSTOM_OUTPUT_FOLDER:
         output_dir = Path(base_output_dir) / CUSTOM_OUTPUT_FOLDER
     else:
-        timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
-        output_dir = Path(base_output_dir) / f"blur_{timestamp}"
+        output_dir = Path(base_output_dir) / run_prefix
     images_dir = output_dir / "images"
     
     images_dir.mkdir(parents=True, exist_ok=True)
@@ -1940,13 +2079,14 @@ def generate_dataset(
         worker_args = []
         for i in range(num_images):
             image_id = i + 1
-            image_filename = f"blur_image_{image_id:05d}.png"
+            image_filename = f"{run_prefix}_{image_id:05d}.png"
             worker_args.append((
                 image_id, image_filename, str(images_dir), IMAGE_SHAPE, config_with_seed,
                 detectron_only, 
                 str(visualizations_dir) if visualizations_dir else None,
                 str(sidebyside_dir) if sidebyside_dir else None,
-                create_sidebyside
+                create_sidebyside,
+                run_prefix
             ))
         
         # Generate images using multiprocessing
@@ -1988,7 +2128,7 @@ def generate_dataset(
         
         for i in range(num_images):
             image_id = i + 1
-            image_filename = f"blur_image_{image_id:05d}.png"
+            image_filename = f"{run_prefix}_{image_id:05d}.png"
             image_path = images_dir / image_filename
             
             # Generate synthetic image
@@ -2008,12 +2148,12 @@ def generate_dataset(
             # Create visualizations only if not in detectron-only mode
             if not detectron_only:
                 # Create visualization
-                vis_path = visualizations_dir / f"blur_image_{image_id:04d}_vis.png"
+                vis_path = visualizations_dir / f"{run_prefix}_{image_id:04d}_vis.png"
                 visualize_instances(image, instances, str(vis_path))
                 
                 # Create side-by-side visualization if enabled
                 if create_sidebyside and sidebyside_dir:
-                    sidebyside_path = sidebyside_dir / f"blur_image_{image_id:05d}_sidebyside.png"
+                    sidebyside_path = sidebyside_dir / f"{run_prefix}_{image_id:05d}_sidebyside.png"
                     create_sidebyside_visualization(image, instances, str(sidebyside_path))
             
             # Report progress every 1%
@@ -2027,7 +2167,7 @@ def generate_dataset(
     coco_dataset['annotations'].sort(key=lambda x: x['image_id'])
     
     # Save COCO annotations
-    annotations_path = output_dir / "blur_annotations.json"
+    annotations_path = output_dir / f"{run_prefix}_annotations.json"
     with open(annotations_path, 'w') as f:
         json.dump(coco_dataset, f, indent=2)
     
@@ -2047,6 +2187,7 @@ def generate_dataset(
         'images_dir': str(images_dir),
         'annotations_path': str(annotations_path),
         'visualizations_dir': str(visualizations_dir),
+        'run_prefix': run_prefix,
         'num_images': num_images,
         'num_annotations': len(coco_dataset['annotations'])
     }

@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(echo $PATH)",
+      "Read(//c/Users/55154111/anaconda3/bin/**)",
+      "Read(//c/Users/55154111/miniconda3/bin/**)",
+      "Read(//opt/conda/bin/**)",
+      "Bash(/c/Users/55154111/.conda/envs/hello/python.exe -c \"from pyphantom import Phantom, utils, cine; print\\(''OK''\\)\")",
+      "Bash(/c/Users/55154111/.conda/envs/hello/python.exe -c \"import pyphantom; print\\(dir\\(pyphantom\\)\\)\")",
+      "Bash(/c/Users/55154111/.conda/envs/hello/python.exe -c \"import pyphantom; help\\(pyphantom\\)\")",
+      "Bash(/c/Users/55154111/.conda/envs/hello/python.exe -c \"import pyphantom.utils; print\\(dir\\(pyphantom.utils\\)\\)\")",
+      "Bash(pip install:*)",
+      "Bash(python -c \"import zipfile; z = zipfile.ZipFile\\(''/e/Phantom/Phantom SDKs/SDK CD Image 3.11.11.806_V5/Manual Install/SDK 13.11.11.806/Python/pyphantom-3.11.11.806-py311-none-any.whl''\\); print\\([f for f in z.namelist\\(\\) if ''__init__'' in f or ''cine'' in f or ''Phantom'' in f]\\)\")",
+      "Bash(/c/Users/55154111/.conda/envs/hello/python.exe -c \":*)",
+      "Bash(pip show:*)",
+      "Bash(/c/Users/55154111/.conda/envs/hello/Scripts/pip install:*)",
+      "Bash(/c/Users/55154111/.conda/envs/hello/python.exe --version)",
+      "Bash(/c/Users/55154111/AppData/Local/Programs/Python/Python311/python.exe -c \":*)",
+      "Bash(/c/Users/55154111/AppData/Local/Programs/Python/Python311/Scripts/pip install:*)",
+      "Bash(python3 -c \" import json with open\\(''/Users/benschofield/.claude/projects/-Users-benschofield-Documents-GitHub-HPATR/2f97a88c-bb46-49e7-a839-9a2402d6b245/tool-results/toolu_01AtUxpMgy2MZ5gJdgWh47wr.json''\\) as f: data = json.load\\(f\\) print\\(data[0][''text'']\\) \")",
+      "Bash(/Users/benschofield/anaconda3/envs/phantom/bin/pip install:*)",
+      "mcp__claude_ai_Notion__notion-search",
+      "mcp__claude_ai_Notion__notion-fetch",
+      "mcp__claude_ai_Notion__notion-update-page",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''src/gui/GUI_Clean.py''\\).read\\(\\)\\); print\\(''Syntax OK''\\)\")",
+      "Bash(conda env:*)",
+      "Bash(conda run:*)",
+      "Bash(wc -l /Users/benschofield/Documents/GitHub/HPATR/*.py)",
+      "Bash(find /Users/benschofield/Documents/GitHub/HPATR/Trials -name \"*.py\" -exec wc -l {} +)",
+      "Bash(grep -l \"from AI\\\\|import.*AI\\\\|from.*Trials\\\\|import.*Trials\" /Users/benschofield/Documents/GitHub/HPATR/*.py)",
+      "Bash(grep -l \"import torch\\\\|from detectron2\" /Users/benschofield/Documents/GitHub/HPATR/*.py)",
+      "Bash(du -sh /Users/benschofield/Documents/GitHub/HPATR/*/)"
+    ]
+  }
+}

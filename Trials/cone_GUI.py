@@ -1,3 +1,4 @@
+# Merge term 1
 """
 Interactive GUI to tune cone detection parameters and visualize each step.
 

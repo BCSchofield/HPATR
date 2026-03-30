@@ -1,3 +1,4 @@
+# Merge term 1
 """
 Cone detection script for spray angle measurement using TIFF frames.
 

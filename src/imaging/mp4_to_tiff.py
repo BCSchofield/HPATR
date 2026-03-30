@@ -1,3 +1,4 @@
+# Merge term 1
 """
 HPATR MP4 to TIFF Converter
 Converts MP4 videos to TIFF frames and finds the brightest frame.
