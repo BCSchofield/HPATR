@@ -6,7 +6,7 @@
   "height": "512",
   "seconds": "0.5",
   "output": "E:\\Phantom\\Video",
-  "px_per_mm": 112.5,
+  "px_per_mm": 465.0,
   "cone_camera_index": 0,
   "cone_autofocus": true,
   "cone_focus": 250,

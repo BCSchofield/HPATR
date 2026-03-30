@@ -29,7 +29,13 @@
       "Bash(find /Users/benschofield/Documents/GitHub/HPATR/Trials -name \"*.py\" -exec wc -l {} +)",
       "Bash(grep -l \"from AI\\\\|import.*AI\\\\|from.*Trials\\\\|import.*Trials\" /Users/benschofield/Documents/GitHub/HPATR/*.py)",
       "Bash(grep -l \"import torch\\\\|from detectron2\" /Users/benschofield/Documents/GitHub/HPATR/*.py)",
-      "Bash(du -sh /Users/benschofield/Documents/GitHub/HPATR/*/)"
+      "Bash(du -sh /Users/benschofield/Documents/GitHub/HPATR/*/)",
+      "Bash(C:Users55154111AppDataLocalProgramsPythonPython311python.exe --version)",
+      "Bash(C:Users55154111AppDataLocalProgramsPythonPython311python.exe -c \"import sys; print\\(sys.executable\\)\")",
+      "Bash(cmd /c \"C:\\\\Users\\\\55154111\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python311\\\\python.exe --version\")",
+      "Bash(cmd /c \"C:\\\\ProgramData\\\\anaconda3\\\\envs\\\\hello311\\\\python.exe --version 2>&1 || echo NOT_FOUND\")",
+      "Bash(cmd /c \"python --version & python -c \"\"import sys; print\\(sys.executable\\)\"\"\")",
+      "Bash(cmd /c \"conda env list 2>&1\")"
     ]
   }
 }

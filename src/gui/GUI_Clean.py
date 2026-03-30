@@ -486,9 +486,12 @@ class PhantomController:
             raise RuntimeError("Phantom SDK not installed")
         import pyphantom as _pyph
         self.ph = Phantom()
+        # Check count BEFORE discover — discover() auto-adds a simulated camera
+        # when no real camera is found, so post-discover count is always ≥ 1.
+        real_count = self.ph.camera_count
         self.ph.discover(print_list=False)
-        if self.ph.camera_count == 0:
-            raise RuntimeError("No Phantom camera found")
+        if real_count == 0:
+            raise RuntimeError("No Phantom camera found on network")
         cam_index = min(camera_index, self.ph.camera_count - 1)
         try:
             self.cam = self.ph.Camera(cam_index)
@@ -591,18 +594,18 @@ class AFGController:
         # independent of period, unlike SQUARE (which is always 50% duty cycle)
         self.afg.write(f'{ch}FUNC PULS')
 
-        # Set period to 10x the pulse width — gives 10% duty cycle baseline
-        # This is only the carrier period; burst mode means it fires once per trigger
-        period_seconds = max(duration_seconds * 10, 1e-3)  # minimum 1ms period
+        # Set period just slightly longer than the pulse width (10% overhead, min 1ms dead time)
+        # A large period (e.g. 10x) causes the AFG to linger in an unexpected output state
+        # during the dead time, making the pulse appear much longer than intended
+        period_seconds = duration_seconds + max(duration_seconds * 0.1, 1e-3)
         self.afg.write(f'{ch}FREQ {1.0 / period_seconds}')
 
         # Set pulse width directly in seconds
         # AFG1062 accepts pulse width via PULSe:WIDTh command
         self.afg.write(f'{ch}PULS:WIDT {duration_seconds}')
 
-        # Set amplitude and offset for TTL-compatible 0-5V output
-        self.afg.write(f'{ch}VOLT {amplitude_volts}')
-        self.afg.write(f'{ch}VOLT:OFFS {amplitude_volts / 2.0}')
+        # Set TTL-compatible 0-5V output using HIGH/LOW only
+        # (avoids conflict between VOLT/VOLT:OFFS and VOLT:HIGH/LOW)
         self.afg.write(f'{ch}VOLT:LOW 0.0')
         self.afg.write(f'{ch}VOLT:HIGH {amplitude_volts}')
 
@@ -611,7 +614,9 @@ class AFGController:
         self.afg.write(f'{ch}BURS:MODE TRIG')
         self.afg.write(f'{ch}BURS:NCYC 1')
         self.afg.write(f'{ch}BURS:TRIG:SOUR MAN')
-        self.afg.write(f'{ch}TRIG:SOUR MAN')
+
+        # Enable channel output
+        self.afg.write(f'OUTP{channel}:STAT ON')
 
     def trigger(self, channel=1):
         if not self.is_connected: raise RuntimeError("AFG not connected")
@@ -928,7 +933,9 @@ class AtomisationApp(QMainWindow):
         vl.addWidget(pressure_off_card)
         vl.addStretch()
 
-        self._refresh_shadowgraph()
+        # Defer the drive scan until after the window is shown — scanning
+        # the LaCie drive during __init__ blocks the window from opening.
+        QTimer.singleShot(500, self._refresh_shadowgraph)
         scroll.setWidget(panel)
         return scroll
 
@@ -1275,8 +1282,8 @@ class AtomisationApp(QMainWindow):
         c_test.layout().addWidget(section_label("TEST PIPELINE"))
         c_test.layout().addWidget(separator())
         _test_desc = QLabel(
-            "Runs Dennis on existing frames from Backup_PhD/Phantom/frames/ "
-            "and writes results to Backup_PhD/Experiments/Trials/. "
+            "Runs Dennis on existing frames from {LaCie}/Phantom/frames/ "
+            "and writes results to {LaCie}/Experiments/Trials/. "
             "Uses current calibration px/mm (falls back to 52.3)."
         )
         _test_desc.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
@@ -2145,9 +2152,10 @@ class AtomisationApp(QMainWindow):
             self._is_test_pipeline = False
 
     def _run_test_pipeline(self):
-        """Test button: run Dennis on hardcoded Backup_PhD paths."""
-        frames_folder = "/Volumes/Backup_PhD/Phantom/frames"
-        output_folder = "/Volumes/Backup_PhD/Experiments/Trials"
+        """Test button: run Dennis on test paths, preferring LaCie drive."""
+        _base = find_lacie_drive() or "/Volumes/Backup_PhD"
+        frames_folder = os.path.join(_base, "Phantom", "frames")
+        output_folder = os.path.join(_base, "Experiments", "Trials")
         px_per_mm = self._get_px_per_mm() or 52.3
         self._test_pipeline_btn.setEnabled(False)
         self._test_pipeline_btn.setText("Running…")
@@ -2302,7 +2310,19 @@ class AtomisationApp(QMainWindow):
         if not CV2_AVAILABLE:
             return
         idx = self._cone_idx_spin.value()
-        cap = cv2.VideoCapture(idx)
+        self._cone_cam_status_lbl.setText(f"Opening camera {idx}…")
+        self._cone_cam_status_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
+        # cv2.VideoCapture can block for several seconds on Windows — run in a thread.
+        # On Windows, DirectShow (CAP_DSHOW) is more reliable than the default MSMF backend.
+        def _open():
+            if platform.system() == "Windows":
+                cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
+            else:
+                cap = cv2.VideoCapture(idx)
+            QTimer.singleShot(0, self, lambda: self._cone_on_camera_opened(cap, idx))
+        threading.Thread(target=_open, daemon=True).start()
+
+    def _cone_on_camera_opened(self, cap, idx):
         if not cap.isOpened():
             self._cone_cam_status_lbl.setText(f"Failed to open camera {idx}")
             self._cone_cam_status_lbl.setStyleSheet(f"color:{CLR_RED}; font-size:12px;")
@@ -2584,7 +2604,13 @@ class AtomisationApp(QMainWindow):
         return None
 
     def _refresh_shadowgraph(self):
-        path = self._find_latest_result()
+        # Run the drive scan in a background thread so the main thread stays responsive.
+        def _scan():
+            path = self._find_latest_result()
+            QTimer.singleShot(0, self, lambda: self._apply_shadowgraph_result(path))
+        threading.Thread(target=_scan, daemon=True).start()
+
+    def _apply_shadowgraph_result(self, path):
         if path and os.path.exists(path):
             img = QImage(path)
             if not img.isNull():
