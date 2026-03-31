@@ -29,7 +29,9 @@
       "Bash(find /Users/benschofield/Documents/GitHub/HPATR/Trials -name \"*.py\" -exec wc -l {} +)",
       "Bash(grep -l \"from AI\\\\|import.*AI\\\\|from.*Trials\\\\|import.*Trials\" /Users/benschofield/Documents/GitHub/HPATR/*.py)",
       "Bash(grep -l \"import torch\\\\|from detectron2\" /Users/benschofield/Documents/GitHub/HPATR/*.py)",
-      "Bash(du -sh /Users/benschofield/Documents/GitHub/HPATR/*/)"
+      "Bash(du -sh /Users/benschofield/Documents/GitHub/HPATR/*/)",
+      "Bash(git checkout:*)",
+      "Bash(git pull:*)"
     ]
   }
 }
