@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>HPATR Codebase Audit</title>
+  <style>
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    span.underline{text-decoration: underline;}
+    div.column{display: inline-block; vertical-align: top; width: 50%;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    ul.task-list{list-style: none;}
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+  </style>
+  <link rel="stylesheet" href="-" />
+  <!--[if lt IE 9]>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/html5shiv/3.7.3/html5shiv-printshiv.min.js"></script>
+  <![endif]-->
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">HPATR Codebase Audit</h1>
+</header>
+<h1 id="hpatr-codebase-audit">HPATR Codebase Audit</h1>
+<p><strong>Date:</strong> 2026-03-31 <strong>Branch:</strong> Main (commit <code>5a3ed97</code>) <strong>Auditor:</strong> Claude (automated)</p>
+<hr />
+<h2 id="a.-master-file-audit-table">A. Master File Audit Table</h2>
+<h3 id="imaging-shadowgraphy">1. Imaging / Shadowgraphy</h3>
+<table>
+<colgroup>
+<col style="width: 3%" />
+<col style="width: 14%" />
+<col style="width: 24%" />
+<col style="width: 4%" />
+<col style="width: 54%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>File Path</th>
+<th>Inputs</th>
+<th>Outputs</th>
+<th>Prerequisites</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>src/imaging/expansion_detection.py</code> (1466 lines)</td>
+<td>BGR image path or CLI arg; 13 tunable params: <code>denoise_ksize</code>, <code>clahe_clip</code>, <code>clahe_tile</code>, <code>gamma</code>, <code>blur_ksize</code>, <code>canny_thresh1/2</code>, <code>hough_min/max_radius</code>, <code>hough_param1/2</code>, <code>hough_min_dist</code>; optional <code>output_dir</code></td>
+<td>Dict with 13 keys: <code>final_image</code> (annotated RGB), <code>optimized_circles</code>, <code>optimization_data</code> (per-circle DataFrame-ready dicts), <code>canny_circles</code>, <code>watershed_circles</code>, <code>circle_sources</code>, <code>all_circles_before_optimization</code>, <code>position_optimization_data</code>, <code>size_optimized_circles</code>, <code>watershed_debug_images</code>, <code>canny_edges</code>, <code>preprocess_debug</code>, <code>preprocess_params</code></td>
+<td>opencv-python, numpy, matplotlib, pandas</td>
+<td><strong>5-step pipeline:</strong> (1) Median denoise → CLAHE → gamma → normalize → Gaussian blur; (2) Canny edge → contours → minEnclosingCircle for small droplets (area 220–4000 px²); (3) Otsu threshold → morphology → HoughCircles as Watershed markers → Watershed for large droplets; (4) Merge + deduplicate (20px centre distance threshold); (5) Two-phase optimisation per circle: coarse grid search then gradient descent to maximise dark-pixel % (target 98%), then size expansion/contraction (0.5x–2.0x). Module-level constants: <code>MIN_DROPLET_AREA=220</code>, <code>SMALL_DROPLET_MAX_AREA=4000</code>, <code>WATERSHED_DISTANCE_THRESHOLD=0.25</code>, <code>MIN_CONNECTED_COMPONENT_AREA=50</code>. When run directly: reads from LaCie <code>Phantom/Flashed_Output/flashed_output.tiff</code>, saves to LaCie <code>Shadowgraph/Expansion_Detection_Tests/{timestamp}/</code>.</td>
+</tr>
+<tr class="even">
+<td><code>src/imaging/save_and_analyse.py</code> (550 lines)</td>
+<td>Image path (TIFF from Phantom); <code>expansion_detection.process_image()</code> results</td>
+<td><code>FINAL_OPTIMIZED_RESULT.png</code>, <code>FINAL_ANALYSIS.csv</code>, <code>CANNY_EDGES.png</code>, circle visualisations, Hough visualisations — all saved to LaCie Shadowgraph/{timestamp}/</td>
+<td>LaCie drive mounted; <code>config_loader</code>; <code>expansion_detection</code></td>
+<td>Orchestrates full CV pipeline. Copies input to LaCie <code>Input/</code> subfolder. Uses <code>get_imaging_config()</code> for default paths. Has TODO to integrate Phantom camera.</td>
+</tr>
+<tr class="odd">
+<td><code>src/imaging/mp4_to_tiff.py</code> (213 lines)</td>
+<td>MP4 video path OR TIFF folder path; output folder</td>
+<td>Individual TIFF frames (<code>frame_XXXXXX.tiff</code>); <code>flashed_output.tiff</code> (brightest frame)</td>
+<td>opencv-python; <code>config_loader</code></td>
+<td>Two functions: <code>video_to_tiff_frames()</code> and <code>find_brightest_frame()</code>. Brightest frame = highest mean grayscale intensity. Used by <code>process_run.py</code>.</td>
+</tr>
+<tr class="even">
+<td><code>src/imaging/capture_still_image.py</code> (114 lines)</td>
+<td>Camera index; optional output path; optional resolution</td>
+<td>Single PNG image saved to disk</td>
+<td>USB webcam connected; opencv-python</td>
+<td>Simple webcam capture with 5-frame warm-up. Standalone CLI tool.</td>
+</tr>
+<tr class="odd">
+<td><code>src/imaging/webcam_preview.py</code> (278 lines)</td>
+<td>Camera index</td>
+<td>Live preview window; saved PNG snapshots on ‘s’ keypress</td>
+<td>USB webcam connected; opencv-python</td>
+<td>OpenCV trackbar-based live preview with brightness/contrast/saturation/hue/gain/exposure controls. Interactive GUI (not headless).</td>
+</tr>
+</tbody>
+</table>
+<h3 id="spray-cone-analysis">2. Spray Cone Analysis</h3>
+<table>
+<colgroup>
+<col style="width: 2%" />
+<col style="width: 11%" />
+<col style="width: 9%" />
+<col style="width: 7%" />
+<col style="width: 69%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>File Path</th>
+<th>Inputs</th>
+<th>Outputs</th>
+<th>Prerequisites</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>Trials/Cone_2.py</code> (363 lines)</td>
+<td>Image path (auto-finds <code>Nicer_Spray.</code>*); optional CSV params file</td>
+<td><code>Cone_2_annotated.png</code>, <code>Cone_2_mask_overlay.png</code>, <code>Cone_2_mask.png</code>, step images in <code>cone_steps_2/</code></td>
+<td>opencv-python, numpy; <code>config_loader</code></td>
+<td>Row-based cone detector. 18 tunable constants (CLAHE, gamma, adaptive threshold, morphology, line fitting). Can load params from CSV (same format <code>cone_GUI</code> saves). Auto-opens annotated image.</td>
+</tr>
+<tr class="even">
+<td><code>Trials/Cone_3.py</code> (1292 lines)</td>
+<td>Image path (any cv2-readable format) via <code>--input</code>; auto-finds <code>Cone_Trial_Image.*</code> or <code>Spray_1.*</code> in script dir; optional <code>--nozzle-x</code>, <code>--output</code>, <code>--no-open</code></td>
+<td><code>{stem}_cone3{suffix}</code> annotated BGR image; <code>cone_3_debug/{stem}_debug.png</code> (2×3 step grid) when <code>DEBUG_MODE=True</code></td>
+<td>opencv-python, numpy; <code>config_loader</code> (for imaging path defaults only)</td>
+<td><strong>PCA contour method.</strong> Pipeline: load → normalize to uint8 → Gaussian blur (k=5) → Otsu threshold → invert-if-needed → morphological close (k=7) → border clear (top kept) → 3-stage contour filter (strict/relaxed/fallback) → combine vertically-aligned contours → split at nozzle x (or centroid) → bin-by-y outermost points per edge → <code>numpy.linalg.eigh</code> covariance eigendecomp → angle from dot product. Crops top 5% of image to remove nozzle hardware. <code>detect_cone_angle()</code> is the callable API, returns <code>(angle_deg, annotated_bgr, debug_info)</code>. Constants: <code>MIN_CONTOUR_AREA_RATIO=0.01</code>, <code>MORPH_CLOSE_KSIZE=7</code>. No scipy used (PCA via numpy).</td>
+</tr>
+<tr class="odd">
+<td><code>Trials/Cone_4.py</code> (922 lines)</td>
+<td>Image path (any cv2-readable) via <code>--input</code>; optional <code>--nozzle-x</code>, <code>--no-open</code>, <code>--output</code></td>
+<td><code>{stem}_cone4{suffix}</code> annotated BGR image; <code>cone_4_debug/{stem}_debug.png</code> (6-panel matplotlib/OpenCV grid)</td>
+<td>opencv-python, numpy, scipy (<code>curve_fit</code>); <code>config_loader</code>; matplotlib (optional, for debug scatter plots)</td>
+<td><strong>Sigmoid profile fitting — no thresholding or contours.</strong> Designed for diffuse/soft spray edges (effervescent atomisation). Algorithm: crop top 17% → per-row: find darkest rolling-mean centre → fit logistic sigmoid to left and right window (size 40% of half-row) using <code>scipy.curve_fit</code> → accept if R²≥0.75 and contrast≥10 → collect boundary x-coords → outermost-per-bin filter (50 bins) → RANSAC line fit (<code>x=m·y+c</code>, 200 iterations, 15px inlier threshold) per side → angle from normalised direction vectors. Returns <code>fit_quality</code> (mean line R²); warns if &lt;0.6. Key public API: <code>detect_cone_angle(image_path, nozzle_x=None, top_crop_ratio=0.17, debug=True, min_r2=0.75, min_contrast=10.0)</code> → <code>(angle_deg                                                                                                                                                                                                                                                                                              | |</code>Trials/Cone_Tester.py<code>(604 lines) | Image path; optional apex click (interactive); optional</code>–use-matplotlib<code>|</code>Cone_Tester_annotated.png<code>,</code>Cone_Tester_mask_overlay.png<code>,</code>Cone_Tester_mask.png<code>, step images                                     | opencv-python, numpy, matplotlib (fallback click);</code>config_loader<code>| Hybrid approach: convex hull + line fitting with multiple fallbacks. Interactive apex selection via OpenCV window or matplotlib.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | |</code>Trials/cone_GUI.py<code>(1268 lines)   | Image path (auto-finds</code>Nicer_Spray.<code>* in script dir, or Load Image button); interactive slider tuning                                                           | Live multi-panel display in GUI (no file output by default); "Export Image" saves annotated PNG; "Save/Load Params" reads/writes CSV | tkinter, matplotlib (TkAgg, FigureCanvasTkAgg), opencv-python, numpy, PIL (Image, ImageTk);</code>config_loader<code>| **Independent row-based cone detector with interactive GUI** — NOT a wrapper around Cone_2. Own</code>process_image()<code>: CLAHE → Gaussian blur → gamma correction → piecewise weight mask (top/mid/bot thirds) × linear ramp → adaptive mean threshold → auto-invert → morphological open+close → border clear → row-scan top fraction of image for leftmost/rightmost fg px per row →</code>numpy.linalg.lstsq<code>line fit per side → angle from</code>arctan` of slopes. <strong>19 tunable parameters</strong> (CLAHE_CLIP, CLAHE_TILE, BLUR_KSIZE, GAMMA, TOP_RAMP_START, WEIGHT_TOP/MID/BOT, ADAPT_BLOCK, ADAPT_C, FG_MIN_RATIO, OPEN_K, CLOSE_K, TOP_BAND_FRAC, MIN_FG_PER_ROW, LINE_FIT_START_FRAC, APEX_CLAMP_FRAC, LEFT_SLOPE_MAX, RIGHT_SLOPE_MIN). GUI layout: left 350px scrollable controls panel; right 3-row image grid (original+scan-band overlay, gray, clahe_blur / gamma, weighted, mask, lines / previous annotated, latest annotated). ℹ️ info buttons open matplotlib diagram popups per parameter. 200ms debounce on slider changes.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="ml-detectron2-inference">3. ML / Detectron2 / Inference</h3>
+<table>
+<colgroup>
+<col style="width: 5%" />
+<col style="width: 17%" />
+<col style="width: 17%" />
+<col style="width: 12%" />
+<col style="width: 45%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>File Path</th>
+<th>Inputs</th>
+<th>Outputs</th>
+<th>Prerequisites</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>src/ai/process_run.py</code> (342 lines)</td>
+<td><code>frames_folder</code> (TIFF sequence from Phantom); <code>output_folder</code>; <code>pixels_per_mm</code></td>
+<td><code>flashed_output.tiff</code>, <code>ai_result.png</code> (mask overlay), <code>ai_results.json</code>, <code>ai_summary.xlsx</code></td>
+<td>LaCie drive with Dennis model at <code>{lacie}/Experiments/AI/Dennis/Dennis.pth</code>; detectron2; torch; <code>config_loader</code>; <code>mp4_to_tiff.find_brightest_frame</code></td>
+<td><strong>Production inference pipeline.</strong> Dennis model with anchors [8,16,32,64], score threshold 0.75. Deletes frames folder after extraction (clean slate). Called by GUI or CLI. Computes mean confidence, avg droplet diameter (um), D/L ratio.</td>
+</tr>
+<tr class="even">
+<td><code>AI/evaluate_model.py</code> (891 lines)</td>
+<td>Model <code>.pth</code> path; validation dir with images + annotations JSON; score threshold</td>
+<td>Per-image Excel (<code>evaluation_results.xlsx</code>); visualisations + JSON per image in timestamped Validation_100 subfolder; <code>summary.json</code>; appends to <code>evaluation_results.csv</code></td>
+<td>detectron2, torch, pycocotools, pandas, openpyxl</td>
+<td><strong>Canonical evaluation script.</strong> Auto-detects config from checkpoint or creates default. Supports both auto-detect (<code>--model</code>) and manual path modes. CSV append mode for comparing across runs. Score threshold default 0.1.</td>
+</tr>
+<tr class="odd">
+<td><code>AI/Training_Analysis/evaluate_model.py</code> (787 lines)</td>
+<td>Model <code>.pth</code> path (auto-detect via <code>--model</code>, or manual <code>--config/--weights/--annotations/--images</code>); optional <code>--output</code>, <code>--score-threshold</code> (default 0.5), <code>--model-name</code>, <code>--no-vis</code>, <code>--validation-dir</code></td>
+<td>Excel <code>evaluation_results.xlsx</code> (3 sheets: Model Summary, Per Image Results, Instance Details); <code>summary.json</code>; <code>visualizations/</code> + <code>json/</code> per-image outputs in <code>Validation_100/{model_name}_{timestamp}/</code></td>
+<td>detectron2, torch, pycocotools, pandas, openpyxl, cv2</td>
+<td><strong>Near-duplicate</strong> of <code>AI/evaluate_model.py</code>. Missing CSV append-mode feature. Per-image metrics: TP/FP/FN, precision, recall, F1, avg IoU (threshold 0.5), pred/gt droplet+ligament counts, area ratio. Category index handling: converts GT 1-indexed (COCO) to 0-indexed. <code>auto_detect_paths()</code> searches Windows (<code>D:\Experiments\AI</code>) and macOS (LaCie) paths. Config loading order: config file → checkpoint <code>cfg</code> key → model zoo Mask R-CNN base → minimal fallback. Score threshold default <strong>0.5</strong> (vs 0.1 in <code>AI/evaluate_model.py</code>).</td>
+</tr>
+<tr class="even">
+<td><code>AI/Training_Analysis/train_detectron2.py</code> (892 lines)</td>
+<td>COCO annotations JSON + images dir (hardcoded <code>D:\Experiments\TrainingData\Detectron_Trial_4\</code>); resume model path</td>
+<td>Trained model checkpoints; loss curve plots in <code>plots/</code>; metrics JSON; validation evaluation</td>
+<td>detectron2, torch, pycocotools, matplotlib, tqdm, numpy</td>
+<td>Training script with <code>ProgressTracker</code> class (train+val loss curves). 90/10 train/val split. Dynamic <code>MAX_ITER</code> based on dataset size and epochs. Resumes from Benedict model by default.</td>
+</tr>
+<tr class="odd">
+<td><code>AI/Training_Analysis/inference_detectron2.py</code> (406 lines)</td>
+<td>Image paths or directory; model <code>.pth</code> path; optional px/mm calibration</td>
+<td><code>visualizations/</code>, <code>masks/</code> (per-detection PNGs), <code>data/</code> (per-image JSON), <code>summary.json</code></td>
+<td>detectron2, torch, opencv-python, matplotlib</td>
+<td>Inference with ellipse fitting and droplet property calculation. NMS threshold configurable (default 0.3). Output to <code>D:\Experiments\AI\InferenceTests\{folder}_{timestamp}\</code>. Hardcoded model path: <code>training_2025_12_25_15_43_57</code>.</td>
+</tr>
+<tr class="even">
+<td><code>AI/Training_Analysis/plot_from_metrics.py</code> (100 lines)</td>
+<td><code>metrics.json</code> from Detectron2 training (hardcoded path: <code>training_2025_12_26_10_03_18</code>)</td>
+<td><code>loss_curve.png</code> in <code>plots/</code> subfolder</td>
+<td>matplotlib, json</td>
+<td>Reads JSONL metrics file, plots total loss + component losses. Hardcoded to specific training run.</td>
+</tr>
+<tr class="odd">
+<td><code>AI/Training_Analysis/setup_training_dataset.py</code> (105 lines)</td>
+<td>Source dir (hardcoded <code>blur_2025_12_23_20_21_35</code>); dest dir (hardcoded <code>Detectron_Trial_1</code>)</td>
+<td>Copied images + <code>annotations.json</code> in Detectron2 structure</td>
+<td>shutil, json</td>
+<td>One-time dataset prep script. Copies images and annotations. Hardcoded to Trial 1 source.</td>
+</tr>
+<tr class="even">
+<td><code>AI/Training_Analysis/test_inference_debug.py</code> (103 lines)</td>
+<td>Model path (hardcoded <code>training_2025_12_24_19_37_46</code>); test images dir</td>
+<td>Console output: detection counts at various thresholds</td>
+<td>detectron2, torch, opencv-python</td>
+<td>Debug script. Tests thresholds 0.01-0.7. No config file — creates minimal config. Hardcoded to early training run.</td>
+</tr>
+<tr class="odd">
+<td><code>AI/Training_Analysis/verify_installation.py</code> (46 lines)</td>
+<td>None</td>
+<td>Console output: Python, PyTorch, CUDA, Detectron2 versions</td>
+<td>torch, detectron2, cv2, matplotlib, pycocotools</td>
+<td>Environment verification. Checks GPU availability.</td>
+</tr>
+<tr class="even">
+<td><code>AI/Training_Analysis/visualize_coco_results.py</code> (380 lines)</td>
+<td><code>coco_instances_results.json</code> (hardcoded path: <code>training_2025_12_25_15_43_57</code>)</td>
+<td><code>score_distribution.png</code>, <code>category_distribution.png</code>, <code>predictions_per_image.png</code>, <code>bbox_sizes.png</code>, <code>score_vs_category.png</code>, <code>summary_report.txt</code></td>
+<td>matplotlib, numpy, json</td>
+<td>Post-validation analysis. Hardcoded to specific training run results. Assumes 4000 validation images (line 178).</td>
+</tr>
+<tr class="odd">
+<td><code>AI/Training_Analysis/visualize_model_predictions.py</code> (182 lines)</td>
+<td>Model path (hardcoded <code>training_2025_12_24_19_37_46</code>); test images dir</td>
+<td>Side-by-side comparison PNGs in <code>visualization_debug/</code></td>
+<td>detectron2, torch, opencv-python, matplotlib</td>
+<td>Debug visualiser. Very low threshold (0.01). Processes first 5 images. Hardcoded to early training run.</td>
+</tr>
+<tr class="even">
+<td><code>AI/Training_Analysis/check_image_identity.py</code> (121 lines)</td>
+<td>Training images dir (<code>Detectron_Trial_2</code>); Validation_100 images dir</td>
+<td>Console output: hash comparison results</td>
+<td>hashlib, pathlib</td>
+<td>Checks for train/validation data leakage via MD5 hashing. Hardcoded to Trial 2.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="synthetic-data-generation">4. Synthetic Data Generation</h3>
+<table>
+<colgroup>
+<col style="width: 4%" />
+<col style="width: 15%" />
+<col style="width: 13%" />
+<col style="width: 5%" />
+<col style="width: 61%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>File Path</th>
+<th>Inputs</th>
+<th>Outputs</th>
+<th>Prerequisites</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>AI/synthetic_data/blur_spray_dataset_generator.py</code> (2080 lines)</td>
+<td>Module-level constants (all configurable): <code>NUM_IMAGES=1000</code>, <code>IMAGE_WIDTH=1280</code>, <code>IMAGE_HEIGHT=800</code>, <code>CUSTOM_OUTPUT_FOLDER="Detectron_Trial_4"</code>, <code>OUTPUT_DETECTRON_ONLY=True</code>, <code>NUM_WORKERS=None</code> (auto), droplet/ligament/background params</td>
+<td><code>{OUTPUT_BASE_DIR}/Detectron_Trial_4/images/blur_image_XXXXX.png</code> × N + <code>annotations.json</code> (COCO format, RLE masks); optional <code>visualizations/</code>, <code>sidebyside/</code> (suppressed by <code>OUTPUT_DETECTRON_ONLY=True</code>)</td>
+<td>opencv-python, numpy, matplotlib, pycocotools (RLE encode), multiprocessing, functools</td>
+<td><strong>Primary generator</strong> for Detectron2 training. Key realism features: (1) <strong>Absorption-style droplets</strong> (dark centre, radial exp falloff, 60% chance of bright halo rim); (2) <strong>Log-normal size dist</strong> (mu=2.5, sigma=0.8) → many small droplets; (3) <strong>Background out-of-focus layer</strong> (Poisson λ=50), 15% in-focus → annotated; (4) <strong>Non-uniform ligaments</strong> (varying thickness, broken gaps, intensity variation); (5) Background gradient + Gaussian noise; (6) Domain randomisation: Gaussian blur, motion blur, intensity jitter. Annotation filters: min diameter 15px, min visibility 15%, min contrast 2.0. Circularity threshold 0.85: elliptical droplets → ligament class. COCO categories: <code>droplet=1</code>, <code>ligament=2</code>. RLE segmentation masks via pycocotools. <strong>Multiprocessing</strong> via <code>Pool</code> + <code>imap_unordered</code> with <code>base_seed</code>-derived per-image seeds for reproducibility. OS-aware output: Windows <code>D:\Experiments\TrainingData</code>, macOS LaCie, Linux → script dir.</td>
+</tr>
+<tr class="even">
+<td><code>AI/synthetic_data/conjoined_blur_spray_dataset_generator.py</code> (2221 lines)</td>
+<td>Same module-level constants as blur generator, with key differences: <code>NUM_IMAGES=10</code>, <code>CREATE_SIDEBYSIDE_VIS=True</code>, <code>OUTPUT_DETECTRON_ONLY=False</code>, <code>CUSTOM_OUTPUT_FOLDER=None</code> (timestamped)</td>
+<td>Same COCO format output as blur generator, with <code>sidebyside/</code> directory also created</td>
+<td>Same as blur generator</td>
+<td><strong>Extended version adding conjoined droplet pairs.</strong> Same rendering pipeline (absorption-style, log-normal, RANSAC background layer) plus: <code>CONJOINED_DROPLET_FROM_LIGAMENT_PROB=0.50</code> — 50% of ligament slots replaced by conjoined pairs. <code>generate_conjoined_droplet_pair_parameters()</code> produces two overlapping same-radius circles; centre distance <code>d = 2r·cos(π·jf)</code> where join fraction <code>jf</code> is either tiny (0.02–0.06, 20% prob) or strong overlap (0.15–0.50, 80% prob). Each pair is annotated as <strong>two separate droplet instances</strong> (two binary masks). Placement retried up to 50 times. Primary purpose: teach model to separate touching/overlapping droplets. Default run generates only 10 images (development/test mode).</td>
+</tr>
+<tr class="odd">
+<td><code>AI/synthetic_data/spray_dataset_generator.py</code> (1175 lines)</td>
+<td>Same as above</td>
+<td>Same format output</td>
+<td>opencv-python, numpy, matplotlib, pycocotools</td>
+<td><strong>Original generator</strong> (no multiprocessing, no platform detection). 10 images default. Simpler droplet rendering (no absorption model). Higher droplet Poisson lambda (70).</td>
+</tr>
+</tbody>
+</table>
+<h3 id="root-level-duplicates">5. Root-Level Duplicates</h3>
+<table>
+<colgroup>
+<col style="width: 11%" />
+<col style="width: 18%" />
+<col style="width: 2%" />
+<col style="width: 7%" />
+<col style="width: 60%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>File Path</th>
+<th>Inputs</th>
+<th>Outputs</th>
+<th>Prerequisites</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>inference_detectron2.py</code></td>
+<td>Same as <code>AI/Training_Analysis/inference_detectron2.py</code></td>
+<td>Same</td>
+<td>Same</td>
+<td><strong>Duplicate.</strong> <code>MODEL_PATH</code> points to <code>Claudia.pth</code> instead of <code>training_2025_12_25_15_43_57</code>. Otherwise identical structure.</td>
+</tr>
+<tr class="even">
+<td><code>setup_training_dataset.py</code></td>
+<td>Same as <code>AI/Training_Analysis/setup_training_dataset.py</code></td>
+<td>Same</td>
+<td>Same</td>
+<td><strong>Duplicate.</strong> Identical content.</td>
+</tr>
+<tr class="odd">
+<td><code>train_detectron2.py</code> (1289 lines)</td>
+<td>Same as <code>AI/Training_Analysis/train_detectron2.py</code></td>
+<td>Same</td>
+<td>Same + csv, PIL, tqdm</td>
+<td><strong>Evolved version.</strong> Has additional CSV logging, <code>get_detection_dataset_dicts</code> import, <code>Visualizer</code> import, <code>wraps</code> from functools. More features than <code>AI/Training_Analysis/</code> copy.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="gui-interface">6. GUI / Interface</h3>
+<table>
+<colgroup>
+<col style="width: 7%" />
+<col style="width: 11%" />
+<col style="width: 20%" />
+<col style="width: 20%" />
+<col style="width: 40%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>File Path</th>
+<th>Inputs</th>
+<th>Outputs</th>
+<th>Prerequisites</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>src/gui/GUI_Clean.py</code> (2988 lines)</td>
+<td>Serial port (Portenta H7); Phantom camera (100.100.100.1); user interactions</td>
+<td>Serial commands to Arduino; experiment logs (JSON/Excel) to LaCie; pressure/motor control; camera capture trigger; cone analysis via Cone_4</td>
+<td>PySide6, pyqtgraph, pyserial, numpy, pandas, matplotlib, PIL; optional: pyphantom, pyvisa; <code>config_loader</code>; <code>Cone_4.detect_cone_angle</code></td>
+<td><strong>Active redesign</strong> replacing Windows_Experiment_GUI. Apple-inspired dark theme, Fusion style. Left panel: shadowgraph display, live pressure chart, motor travel, emergency stop. Tabs: Hardware, Camera, Experiment, AFG (+ hidden How To). Imports Cone_4 for cone analysis.</td>
+</tr>
+<tr class="even">
+<td><code>src/gui/Windows_Experiment_GUI.py</code> (3359 lines)</td>
+<td>Serial port (Portenta H7); Phantom camera; user interactions</td>
+<td>Same as GUI_Clean.py</td>
+<td>customtkinter, pyserial, numpy, pandas, matplotlib (TkAgg), openpyxl, PIL; optional: pyphantom, pyvisa; <code>config_loader</code></td>
+<td><strong>Legacy GUI.</strong> CustomTkinter dark theme. Full experiment workflow: motor homing, pressure control, camera capture, image analysis. TODOs in code for pressure controller, notes section.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="hardware-comms-arduino-firmware">7. Hardware Comms (Arduino / Firmware)</h3>
+<table>
+<colgroup>
+<col style="width: 6%" />
+<col style="width: 12%" />
+<col style="width: 18%" />
+<col style="width: 17%" />
+<col style="width: 45%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>File Path</th>
+<th>Inputs</th>
+<th>Outputs</th>
+<th>Prerequisites</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>src/gui/Pressure_Motor_Portenta.cpp</code> (596 lines)</td>
+<td>Serial commands from GUI: <code>SPEED:X;DIST:Y</code>, <code>PRESSURE:X</code>, <code>PRESSURE_OFF</code>, <code>HOME:</code>, <code>RESET:</code>, <code>CAM:...</code></td>
+<td>Serial responses: <code>ARDUINO_READY</code>, <code>PRESSURE_SET:X</code>, <code>PRESSURE_READING:X.XX</code>, <code>PRESSURE_DISABLED</code>, <code>PROGRESS:X</code>, <code>MOVE_COMPLETE</code>, <code>CAM:...</code> (relay)</td>
+<td>Arduino Portenta H7; TMCStepper lib; AccelStepper lib; TMC5160 stepper driver; AliCat pressure controller (0-5V via logic level converter)</td>
+<td>Firmware for combined motor + pressure control. TMC5160 stepper: 13600 steps/mm, 16 microsteps, 2A RMS current. Pressure: 12-bit PWM (20-68% duty = 0-26.4 BAR), 12-bit ADC read with calibration correction and rolling average (4 readings/1s). Optical endstops for homing. UART bridge (Serial1) for camera commands to Pi. Stall detection. Periodic 3s handshake.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="config-utilities">8. Config / Utilities</h3>
+<table>
+<colgroup>
+<col style="width: 7%" />
+<col style="width: 13%" />
+<col style="width: 6%" />
+<col style="width: 11%" />
+<col style="width: 60%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>File Path</th>
+<th>Inputs</th>
+<th>Outputs</th>
+<th>Prerequisites</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>src/config_loader.py</code> (275 lines)</td>
+<td><code>config/paths.yaml</code> or <code>config/paths_example.yaml</code>; OS environment</td>
+<td>Config dict with resolved paths</td>
+<td>PyYAML (optional — degrades gracefully); pathlib, platform</td>
+<td>Auto-detects LaCie drive (macOS <code>/Volumes/LaCie</code>, Windows D:-Z: by folder presence, Linux <code>/media</code>). Resolves <code>{lacie_drive}</code> placeholders. Provides <code>get_imaging_config()</code>, <code>get_gui_config()</code>, <code>get_mp4_config()</code>. Global lazy-loaded singleton. win32api import for Windows volume label (optional).</td>
+</tr>
+<tr class="even">
+<td><code>src/__init__.py</code></td>
+<td>—</td>
+<td>—</td>
+<td>—</td>
+<td>Package marker (empty).</td>
+</tr>
+<tr class="odd">
+<td><code>src/ai/__init__.py</code></td>
+<td>—</td>
+<td>—</td>
+<td>—</td>
+<td>Package marker (empty).</td>
+</tr>
+<tr class="even">
+<td><code>src/gui/__init__.py</code></td>
+<td>—</td>
+<td>—</td>
+<td>—</td>
+<td>Package marker (empty).</td>
+</tr>
+<tr class="odd">
+<td><code>src/imaging/__init__.py</code></td>
+<td>—</td>
+<td>—</td>
+<td>—</td>
+<td>Package marker (empty).</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="b.-master-dependencies-list">B. Master Dependencies List</h2>
+<h3 id="python-pip-packages">Python pip Packages</h3>
+<table>
+<thead>
+<tr class="header">
+<th>Package</th>
+<th>Version Constraint</th>
+<th>Listed in requirements.txt?</th>
+<th>Used By</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>opencv-python</td>
+<td>&gt;=4.5.0</td>
+<td>Yes</td>
+<td>Nearly all files</td>
+</tr>
+<tr class="even">
+<td>numpy</td>
+<td>&gt;=1.20.0,&lt;2.0</td>
+<td>Yes (NumPy 2.x breaks pyphantom)</td>
+<td>Nearly all files</td>
+</tr>
+<tr class="odd">
+<td>matplotlib</td>
+<td>&gt;=3.3.0</td>
+<td>Yes</td>
+<td>Plotting, cone GUI, generators, save_and_analyse</td>
+</tr>
+<tr class="even">
+<td>pandas</td>
+<td>&gt;=1.2.0</td>
+<td>Yes</td>
+<td>Evaluation, GUI, save_and_analyse</td>
+</tr>
+<tr class="odd">
+<td>customtkinter</td>
+<td>&gt;=5.0.0</td>
+<td>Yes</td>
+<td>Windows_Experiment_GUI.py only</td>
+</tr>
+<tr class="even">
+<td>Pillow</td>
+<td>&gt;=8.0.0</td>
+<td>Yes</td>
+<td>GUIs (Image/ImageTk), cone_GUI, train_detectron2</td>
+</tr>
+<tr class="odd">
+<td>openpyxl</td>
+<td>&gt;=3.0.0</td>
+<td>Yes</td>
+<td>Windows_Experiment_GUI, evaluate_model, process_run</td>
+</tr>
+<tr class="even">
+<td>pyserial</td>
+<td>&gt;=3.5</td>
+<td>Yes</td>
+<td>Both GUIs (serial comms to Portenta)</td>
+</tr>
+<tr class="odd">
+<td>PyYAML</td>
+<td>&gt;=5.4.0</td>
+<td>Yes</td>
+<td>config_loader</td>
+</tr>
+<tr class="even">
+<td>pycocotools</td>
+<td>&gt;=2.0.0</td>
+<td>Yes</td>
+<td>Training, evaluation, synthetic data generators</td>
+</tr>
+<tr class="odd">
+<td><strong>PySide6</strong></td>
+<td><strong>not pinned</strong></td>
+<td><strong>NO</strong></td>
+<td>GUI_Clean.py</td>
+</tr>
+<tr class="even">
+<td><strong>pyqtgraph</strong></td>
+<td><strong>not pinned</strong></td>
+<td><strong>NO</strong></td>
+<td>GUI_Clean.py (live pressure chart)</td>
+</tr>
+<tr class="odd">
+<td><strong>torch / PyTorch</strong></td>
+<td><strong>not pinned</strong></td>
+<td><strong>NO</strong></td>
+<td>All Detectron2 scripts, process_run</td>
+</tr>
+<tr class="even">
+<td><strong>detectron2</strong></td>
+<td><strong>not pinned</strong></td>
+<td><strong>NO</strong></td>
+<td>Training, inference, evaluation, process_run</td>
+</tr>
+<tr class="odd">
+<td><strong>scipy</strong></td>
+<td><strong>not pinned</strong></td>
+<td><strong>NO</strong></td>
+<td>Cone_4.py (curve_fit for sigmoid fitting)</td>
+</tr>
+<tr class="even">
+<td><strong>tqdm</strong></td>
+<td><strong>not pinned</strong></td>
+<td><strong>NO</strong></td>
+<td>train_detectron2.py (progress bars)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="optional-conditional-python-packages">Optional / Conditional Python Packages</h3>
+<table>
+<colgroup>
+<col style="width: 18%" />
+<col style="width: 31%" />
+<col style="width: 13%" />
+<col style="width: 36%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Package</th>
+<th>Listed in requirements.txt?</th>
+<th>Used By</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>pyphantom</td>
+<td>Commented out (<code>&gt;=3.11.11.806</code>)</td>
+<td>Both GUIs</td>
+<td>Phantom camera SDK — vendor install</td>
+</tr>
+<tr class="even">
+<td>pyvisa</td>
+<td>Commented out (<code>&gt;=1.11.0</code>)</td>
+<td>Both GUIs</td>
+<td>Tektronix AFG1062 function generator</td>
+</tr>
+<tr class="odd">
+<td>win32api (pywin32)</td>
+<td>No</td>
+<td>config_loader</td>
+<td>Windows-only volume label detection</td>
+</tr>
+</tbody>
+</table>
+<h3 id="arduino-libraries">Arduino Libraries</h3>
+<table>
+<colgroup>
+<col style="width: 14%" />
+<col style="width: 33%" />
+<col style="width: 51%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Library</th>
+<th>Used By</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>TMCStepper</td>
+<td>Pressure_Motor_Portenta.cpp</td>
+<td>TMC5160 stepper driver communication (SPI)</td>
+</tr>
+<tr class="even">
+<td>AccelStepper</td>
+<td>Pressure_Motor_Portenta.cpp</td>
+<td>Non-blocking stepper motor control</td>
+</tr>
+</tbody>
+</table>
+<h3 id="system-level-dependencies">System-Level Dependencies</h3>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 21%" />
+<col style="width: 53%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Dependency</th>
+<th>Required By</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>CUDA / cuDNN</td>
+<td>All Detectron2 scripts</td>
+<td>GPU training/inference. Falls back to CPU but impractical for training.</td>
+</tr>
+<tr class="even">
+<td>NI-VISA or Tektronix VISA drivers</td>
+<td>Windows_Experiment_GUI, GUI_Clean</td>
+<td>Required by pyvisa for AFG1062 instrument control</td>
+</tr>
+<tr class="odd">
+<td>Phantom SDK runtime</td>
+<td>Both GUIs</td>
+<td>Proprietary Vision Research SDK for Phantom camera (100.100.100.1, 1000fps, 640x480)</td>
+</tr>
+<tr class="even">
+<td>Arduino IDE / Portenta H7 board support</td>
+<td>Pressure_Motor_Portenta.cpp</td>
+<td>For firmware compilation and upload</td>
+</tr>
+<tr class="odd">
+<td>SPI hardware</td>
+<td>Portenta H7 firmware</td>
+<td>TMC5160 communicates via SPI (software bit-bang on pins 6/8/9/10)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="hardware-dependencies">Hardware Dependencies</h3>
+<table>
+<colgroup>
+<col style="width: 27%" />
+<col style="width: 31%" />
+<col style="width: 40%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Hardware</th>
+<th>Controlled By</th>
+<th>Protocol</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Portenta H7 (Arduino)</td>
+<td>Both GUIs</td>
+<td>USB Serial (9600 baud)</td>
+</tr>
+<tr class="even">
+<td>TMC5160 stepper driver + motor</td>
+<td>Firmware</td>
+<td>SPI via TMCStepper lib</td>
+</tr>
+<tr class="odd">
+<td>AliCat pressure controller</td>
+<td>Firmware</td>
+<td>0-5V analog (PWM out via LLC, ADC in via LLC)</td>
+</tr>
+<tr class="even">
+<td>Front/back optical endstops</td>
+<td>Firmware</td>
+<td>Digital input with pullup (pins 1, 5)</td>
+</tr>
+<tr class="odd">
+<td>Phantom high-speed camera</td>
+<td>Both GUIs</td>
+<td>Ethernet (100.100.100.1) via pyphantom SDK</td>
+</tr>
+<tr class="even">
+<td>USB webcam</td>
+<td>capture_still_image, webcam_preview</td>
+<td>USB via OpenCV VideoCapture</td>
+</tr>
+<tr class="odd">
+<td>Tektronix AFG1062</td>
+<td>Both GUIs</td>
+<td>SCPI via PyVISA</td>
+</tr>
+<tr class="even">
+<td>Raspberry Pi (camera bridge)</td>
+<td>Firmware (Serial1 UART)</td>
+<td>UART at 115200 baud, <code>CAM:</code> command prefix</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="c.-notable-issues-observations">C. Notable Issues &amp; Observations</h2>
+<h3 id="duplicates">Duplicates</h3>
+<ul>
+<li><code>inference_detectron2.py</code> (root) is a duplicate of <code>AI/Training_Analysis/inference_detectron2.py</code> with a different <code>MODEL_PATH</code></li>
+<li><code>setup_training_dataset.py</code> (root) is identical to <code>AI/Training_Analysis/setup_training_dataset.py</code></li>
+<li><code>train_detectron2.py</code> (root) is an <strong>evolved</strong> version of <code>AI/Training_Analysis/train_detectron2.py</code> with extra features (CSV logging, visualiser import)</li>
+<li><code>AI/evaluate_model.py</code> is the canonical evaluation script; <code>AI/Training_Analysis/evaluate_model.py</code> is a near-duplicate missing CSV append</li>
+</ul>
+<h3 id="hardcoded-paths">Hardcoded Paths</h3>
+<ul>
+<li>Nearly all <code>AI/Training_Analysis/</code> scripts have Windows-only hardcoded paths (<code>D:\Experiments\...</code>) pointing to specific timestamped training runs</li>
+<li><code>blur_spray_dataset_generator.py</code> has platform-aware output paths (Windows/Mac/Linux)</li>
+<li><code>config_loader.py</code> handles cross-platform path resolution with <code>{lacie_drive}</code> placeholders</li>
+</ul>
+<h3 id="undocumented-dependencies-not-in-requirements.txt">Undocumented Dependencies (not in requirements.txt)</h3>
+<ul>
+<li><strong>PySide6</strong> — required for GUI_Clean.py (the active redesign)</li>
+<li><strong>pyqtgraph</strong> — required for GUI_Clean.py (live pressure chart)</li>
+<li><strong>torch / PyTorch</strong> — required for all ML work</li>
+<li><strong>detectron2</strong> — required for all ML work</li>
+<li><strong>scipy</strong> — required for Cone_4.py</li>
+<li><strong>tqdm</strong> — required for training scripts</li>
+</ul>
+<h3 id="dead-code-unused">Dead Code / Unused</h3>
+<ul>
+<li><code>webcam_preview.py</code> — per project notes, webcam not installed; still in repo</li>
+<li><code>capture_still_image.py</code> — same situation</li>
+<li><code>AI/Training_Analysis/test_inference_debug.py</code> — one-time debug script, hardcoded to obsolete training run</li>
+<li><code>AI/Training_Analysis/verify_installation.py</code> — one-time setup check</li>
+<li><code>AI/Training_Analysis/visualize_model_predictions.py</code> — hardcoded to obsolete training run</li>
+</ul>
+<h3 id="firmware-notes">Firmware Notes</h3>
+<ul>
+<li><code>Pressure_Motor_Portenta.cpp</code> has a typo: <code>reveivedDist</code> (should be <code>receivedDist</code>) — used consistently so not a bug, just cosmetic</li>
+<li>Pressure calibration coefficients are empirically derived and hardcoded (offset 0.6, gain 1.032; compensation: <code>(desired + 0.2) / 1.16</code>)</li>
+<li>3-second periodic handshake (<code>ARDUINO_READY</code>) keeps GUI connection alive</li>
+<li>Camera commands bridged via <code>CAM:</code> prefix over UART1 to Raspberry Pi</li>
+</ul>
+</body>
+</html>

@@ -31,7 +31,19 @@
       "Bash(grep -l \"import torch\\\\|from detectron2\" /Users/benschofield/Documents/GitHub/HPATR/*.py)",
       "Bash(du -sh /Users/benschofield/Documents/GitHub/HPATR/*/)",
       "Bash(git checkout:*)",
-      "Bash(git pull:*)"
+      "Bash(git pull:*)",
+      "Bash(pandoc --version)",
+      "Bash(pandoc /Users/benschofield/Documents/GitHub/HPATR/docs/CODEBASE_AUDIT.md -o /Users/benschofield/Documents/GitHub/HPATR/docs/CODEBASE_AUDIT.pdf --pdf-engine=xelatex -V geometry:margin=1in -V fontsize=10pt)",
+      "Bash(pandoc /Users/benschofield/Documents/GitHub/HPATR/docs/CODEBASE_AUDIT.md -o /Users/benschofield/Documents/GitHub/HPATR/docs/CODEBASE_AUDIT.pdf --pdf-engine=pdflatex)",
+      "Bash(pandoc /Users/benschofield/Documents/GitHub/HPATR/docs/CODEBASE_AUDIT.md -o /Users/benschofield/Documents/GitHub/HPATR/docs/CODEBASE_AUDIT.html --standalone --metadata title=\"HPATR Codebase Audit\" -c \"https://cdn.jsdelivr.net/npm/github-markdown-css/github-markdown.css\")",
+      "Bash(xelatex --version)",
+      "Bash(/Library/TeX/texbin/xelatex --version)",
+      "Bash(export PATH=\"/Library/TeX/texbin:$PATH\")",
+      "Bash(pandoc /Users/benschofield/Documents/GitHub/HPATR/docs/CODEBASE_AUDIT.md -o /Users/benschofield/Documents/GitHub/HPATR/docs/CODEBASE_AUDIT.pdf --pdf-engine=xelatex -V geometry:\"margin=0.5in,landscape\" -V fontsize=9pt -V mainfont=\"DejaVu Sans\")",
+      "Bash(pandoc /Users/benschofield/Documents/GitHub/HPATR/docs/CODEBASE_AUDIT.md -o /Users/benschofield/Documents/GitHub/HPATR/docs/CODEBASE_AUDIT.pdf --pdf-engine=xelatex -V geometry:\"margin=0.5in,landscape\" -V fontsize=9pt)",
+      "Bash(/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --headless --disable-gpu --print-to-pdf=/Users/benschofield/Documents/GitHub/HPATR/docs/CODEBASE_AUDIT.pdf --print-to-pdf-no-header --no-margins \"file:///Users/benschofield/Documents/GitHub/HPATR/docs/CODEBASE_AUDIT.html\")",
+      "WebSearch",
+      "WebFetch(domain:www.drawio.com)"
     ]
   }
 }
