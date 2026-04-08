@@ -50,8 +50,8 @@ from PySide6.QtWidgets import (
     QFrame, QTabWidget, QSizePolicy, QProgressBar, QScrollArea,
     QSpacerItem, QGridLayout, QMessageBox, QFileDialog, QSpinBox
 )
-from PySide6.QtCore import Qt, QTimer, Signal, QObject, QThread, QSize
-from PySide6.QtGui import QFont, QPixmap, QImage, QColor, QPalette, QIcon, QPainter, QPen
+from PySide6.QtCore import Qt, QTimer, Signal, Slot, QObject, QThread, QSize
+from PySide6.QtGui import QFont, QPixmap, QImage, QColor, QPalette, QIcon, QPainter, QPen, QIntValidator
 
 # ── Path setup ──────────────────────────────────────────────────────────────
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -367,6 +367,10 @@ class ClickableImageWidget(QLabel):
             self._redraw()
             self.pointsChanged.emit(self._points)
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._redraw()
+
     def _redraw(self):
         if self._pixmap_orig is None:
             return
@@ -382,11 +386,14 @@ class ClickableImageWidget(QLabel):
                 painter.drawLine(x, y - arm, x, y + arm)
                 painter.drawEllipse(x - 6, y - 6, 12, 12)
             painter.end()
-        self.setPixmap(pm.scaled(
-            self.width(), self.height(),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        ))
+        w = self.width()
+        if w <= 0:
+            return
+        # Scale to full widget width — height is derived from aspect ratio, no grey bars
+        scaled = pm.scaled(w, 10000, Qt.AspectRatioMode.KeepAspectRatio,
+                           Qt.TransformationMode.SmoothTransformation)
+        self.setFixedHeight(scaled.height())
+        self.setPixmap(scaled)
 
 
 # ── Backend controllers (unchanged from Windows_Experiment_GUI.py) ────────────
@@ -509,7 +516,7 @@ class PhantomController:
         self.is_connected = True
         return True
 
-    def configure(self, width, height, fps, exposure_us, partition_count=1, post_trigger_frames=0):
+    def configure(self, width, height, fps, exposure_us, partition_count=1, post_trigger_frames=0, exp_index=0):
         if not self.is_connected: raise RuntimeError("Camera not connected")
         self.cam.resolution = (int(width), int(height))
         self.cam.partition_count = int(partition_count)
@@ -520,6 +527,8 @@ class PhantomController:
         if exposure_us >= max_exp:
             raise RuntimeError(f"Exposure {exposure_us}μs exceeds max {max_exp:.1f}μs")
         self.cam.exposure = float(exposure_us)
+        if exp_index != 0:
+            self.cam.exp_index = int(exp_index)
         return {'resolution': self.cam.resolution, 'frame_rate': actual_fps,
                 'exposure': self.cam.exposure}
 
@@ -688,6 +697,7 @@ class AtomisationApp(QMainWindow):
         }
         self.pressure_data['live_buffer_start_time'] = time.time()
         self._last_experiment_snapshot = {'timestamps': [], 'pressures': []}
+        self._last_cone_path = None   # path of most recent cone image (raw or annotated)
 
         # ── Build UI ──────────────────────────────────────────────────────────
         self._build_ui()
@@ -711,8 +721,14 @@ class AtomisationApp(QMainWindow):
         # started/stopped by Start Camera / Stop Camera buttons
 
         self._cone_auto_timer = QTimer(self)
+        self._cone_auto_timer.setSingleShot(True)
         self._cone_auto_timer.timeout.connect(self._cone_capture)
-        # started in _start_experiment(), stopped in _on_movement_complete()
+        # started (single-shot, 5 s) in _start_experiment(); stop() cancels if not yet fired
+
+        self._live_feed_timer = QTimer(self)
+        self._live_feed_timer.setInterval(100)   # ~10 fps
+        self._live_feed_timer.timeout.connect(self._live_feed_tick)
+        self._live_feed_pending = False          # throttle: only one grab in-flight at a time
 
         self._cone_cap = None  # cv2.VideoCapture instance
 
@@ -1225,21 +1241,26 @@ class AtomisationApp(QMainWindow):
         _W = 80  # uniform input width
         self._cam_fps      = QLineEdit("1000"); self._cam_fps.setFixedWidth(_W)
         self._cam_exp      = QLineEdit("500");  self._cam_exp.setFixedWidth(_W)
-        self._cam_width    = QLineEdit("640");  self._cam_width.setFixedWidth(_W)
-        self._cam_height   = QLineEdit("480");  self._cam_height.setFixedWidth(_W)
+        self._cam_exp_idx  = QLineEdit("0");    self._cam_exp_idx.setFixedWidth(_W)
+        self._cam_width    = QLineEdit("2560"); self._cam_width.setFixedWidth(_W)
+        self._cam_height   = QLineEdit("1600"); self._cam_height.setFixedWidth(_W)
         self._cam_seconds  = QLineEdit("0.020");self._cam_seconds.setFixedWidth(_W)
         self._cam_output   = QLineEdit()
+
+        self._cam_width.setValidator(QIntValidator(1, 2560))
+        self._cam_height.setValidator(QIntValidator(1, 1600))
 
         def glbl(t):
             l=QLabel(t); l.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
             return l
 
-        grid.addWidget(glbl("FPS"),           0,0); grid.addWidget(self._cam_fps,     0,1)
-        grid.addWidget(glbl("Height"),        1,0); grid.addWidget(self._cam_height,  1,1)
-        grid.addWidget(glbl("Width"),         2,0); grid.addWidget(self._cam_width,   2,1)
-        grid.addWidget(glbl("Duration (s)"),  3,0); grid.addWidget(self._cam_seconds, 3,1)
-        grid.addWidget(glbl("Exposure (μs)"), 4,0); grid.addWidget(self._cam_exp,     4,1)
-        grid.addWidget(glbl("Output path"),   5,0); grid.addWidget(self._cam_output,  5,1)
+        grid.addWidget(glbl("FPS"),              0,0); grid.addWidget(self._cam_fps,     0,1)
+        grid.addWidget(glbl("Height"),           1,0); grid.addWidget(self._cam_height,  1,1)
+        grid.addWidget(glbl("Width"),            2,0); grid.addWidget(self._cam_width,   2,1)
+        grid.addWidget(glbl("Duration (s)"),     3,0); grid.addWidget(self._cam_seconds, 3,1)
+        grid.addWidget(glbl("Exposure (μs)"),    4,0); grid.addWidget(self._cam_exp,     4,1)
+        grid.addWidget(glbl("Exposure Index"),   5,0); grid.addWidget(self._cam_exp_idx, 5,1)
+        grid.addWidget(glbl("Output path"),      6,0); grid.addWidget(self._cam_output,  6,1)
         grid.setColumnStretch(1, 1)
         c2.layout().addWidget(grid_w)
 
@@ -1382,7 +1403,8 @@ class AtomisationApp(QMainWindow):
             c1.layout().addWidget(warn)
 
         self._cal_feed_label = QLabel()
-        self._cal_feed_label.setFixedSize(500, 300)
+        self._cal_feed_label.setMinimumHeight(320)
+        self._cal_feed_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._cal_feed_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._cal_feed_label.setStyleSheet(f"""
             background-color: {CLR_INPUT};
@@ -1398,12 +1420,22 @@ class AtomisationApp(QMainWindow):
         self._cal_load_btn = ghost_button("Load from File")
         self._cal_load_btn.setFixedHeight(36)
         self._cal_load_btn.clicked.connect(self._cal_load_photo)
-        self._cal_take_btn = accent_button("Take Photo", CLR_ACCENT)
+        self._cal_take_btn = accent_button("Use as Calibration Image", CLR_ACCENT)
         self._cal_take_btn.setFixedHeight(36)
         self._cal_take_btn.clicked.connect(self._cal_take_photo)
+        self._cal_feed_start_btn = accent_button("▶ Start Feed", CLR_GREEN)
+        self._cal_feed_start_btn.setFixedHeight(36)
+        self._cal_feed_start_btn.clicked.connect(self._cal_start_feed)
+        self._cal_feed_stop_btn = ghost_button("■ Stop Feed")
+        self._cal_feed_stop_btn.setFixedHeight(36)
+        self._cal_feed_stop_btn.setEnabled(False)
+        self._cal_feed_stop_btn.clicked.connect(self._cal_stop_feed)
         if not self.camera_available:
             self._cal_take_btn.setEnabled(False)
             self._cal_take_btn.setToolTip("Connect Phantom camera on Windows to capture live frame")
+            self._cal_feed_start_btn.setEnabled(False)
+        fbr.addWidget(self._cal_feed_start_btn)
+        fbr.addWidget(self._cal_feed_stop_btn)
         fbr.addStretch()
         fbr.addWidget(self._cal_load_btn)
         fbr.addWidget(self._cal_take_btn)
@@ -1423,7 +1455,7 @@ class AtomisationApp(QMainWindow):
         c2.layout().addWidget(instr)
 
         self._cal_image_widget = ClickableImageWidget()
-        self._cal_image_widget.setFixedSize(500, 300)
+        self._cal_image_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._cal_image_widget.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._cal_image_widget.setStyleSheet(f"""
             background-color: {CLR_INPUT};
@@ -1569,8 +1601,11 @@ class AtomisationApp(QMainWindow):
         c2 = card()
         c2.layout().addWidget(section_label("CAPTURE & RESULTS"))
 
-        self._cone_capture_btn = accent_button("Capture & Analyse")
+        self._cone_capture_btn = accent_button("Manual Capture")
         self._cone_capture_btn.setEnabled(False)
+        self._cone_capture_btn.setToolTip(
+            "Capture and analyse a cone image now.\n"
+            "This will become the image saved to Excel (most recent capture always wins).")
         self._cone_capture_btn.clicked.connect(self._cone_capture)
         c2.layout().addWidget(self._cone_capture_btn)
 
@@ -1875,9 +1910,9 @@ class AtomisationApp(QMainWindow):
                                 QTimer.singleShot(0, self, lambda v=val: self._handle_pressure_reading(v))
                             except: pass
                         elif "MOVEMENT_COMPLETE" in line or "MOVEMENT_TIMEOUT" in line:
-                            QTimer.singleShot(0, self, self._on_movement_complete)
+                            QTimer.singleShot(0, self._on_movement_complete)
                         elif "Homing Complete" in line:
-                            QTimer.singleShot(0, self, self._on_homed)
+                            QTimer.singleShot(0, self._on_homed)
                         elif line.startswith("DEBUG: Movement progress:"):
                             try:
                                 pct = int(line.split(":")[-1].strip().replace("%", ""))
@@ -1913,11 +1948,13 @@ class AtomisationApp(QMainWindow):
         self._hdr_pressure_lbl.setText(f"{val:.1f} BAR")
         self._hdr_pressure_dot.setStyleSheet(f"color:{CLR_ACCENT}; font-size:10px; background:transparent;")
 
+    @Slot()
     def _on_homed(self):
         self._homed_dot.setStyleSheet(f"color:{CLR_GREEN}; font-size:10px;")
         self.cumulative_distance = 0.0
         self._update_travel_bar()
 
+    @Slot()
     def _on_movement_complete(self):
         if self.pressure_data['experiment_active']:
             self.pressure_data['experiment_active'] = False
@@ -1925,15 +1962,20 @@ class AtomisationApp(QMainWindow):
             self._cone_auto_status_lbl.setText("Auto-capture: inactive")
             self._cone_auto_status_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
             self.arduino.send_pressure_off_command()
-            self.arduino.reset_state()
             self._last_experiment_snapshot = {
                 'timestamps': list(self.pressure_data['experiment_data']['timestamps']),
                 'pressures':  list(self.pressure_data['experiment_data']['pressures']),
             }
             self._experiment_saved = False
-            self._exp_progress.setVisible(False)
+            self._exp_progress.setRange(0, 100)
+            self._exp_progress.setValue(100)
+            QTimer.singleShot(800, lambda: (
+                self._exp_progress.setVisible(False),
+                self._exp_progress.setRange(0, 0),
+            ))
             self._start_btn.setEnabled(True)
             self._set_status("Experiment complete ✓ — remember to Save to Excel", CLR_GREEN)
+            threading.Thread(target=self.arduino.reset_state, daemon=True).start()
 
     # ─────────────────────────────────────────────────────────────────────────
     # Logic — Pressure / Motor
@@ -2019,6 +2061,7 @@ class AtomisationApp(QMainWindow):
     # Logic — Pressure graph
     # ─────────────────────────────────────────────────────────────────────────
 
+    @Slot()
     def _update_pressure_graph(self):
         lb = self.pressure_data['live_buffer']
         if not lb['timestamps']:
@@ -2059,6 +2102,7 @@ class AtomisationApp(QMainWindow):
                 height=int(self._cam_height.text()),
                 fps=float(self._cam_fps.text()),
                 exposure_us=float(self._cam_exp.text()),
+                exp_index=int(self._cam_exp_idx.text() or "0"),
             )
             self._cam_status_lbl.setText("Config applied")
             self._save_camera_settings()
@@ -2071,20 +2115,84 @@ class AtomisationApp(QMainWindow):
 
     def _cam_capture(self):
         if not self.phantom: return
-        try:
-            self.phantom.start_recording()
-            self.phantom.trigger()
-            out = self._cam_output.text() or "capture"
-            self.phantom.save_recording(out)
-            self._cam_status_lbl.setText("Capture saved")
-            if self._pipeline_check.isChecked():
-                lacie = find_lacie_drive()
-                frames_folder = os.path.join(lacie, "VIDEO_PERSISTENT", "frames") if lacie else out
-                output_folder = os.path.join(self._run_folder, "shadowgraph", "analysis") \
-                                if self._run_folder else os.path.join(out, "analysis")
-                self._run_pipeline(frames_folder, output_folder)
-        except Exception as e:
-            self._set_status(f"Capture error: {e}", CLR_RED)
+        run_pipeline = self._pipeline_check.isChecked()
+        run_folder   = self._run_folder
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        if run_folder:
+            cine_path   = os.path.join(run_folder, "shadowgraph", "raw", "CINE",
+                                       f"recording_{ts}.cine")
+            tiff_prefix = os.path.join(run_folder, "shadowgraph", "raw", "TIFFs", "frame")
+            tiff_dir    = os.path.join(run_folder, "shadowgraph", "raw", "TIFFs")
+            bright_dir  = os.path.join(run_folder, "shadowgraph", "raw", "Brightest_Frame")
+            analysis_dir = os.path.join(run_folder, "shadowgraph", "analysis")
+        else:
+            # No active experiment — fall back to output path field
+            fallback    = self._cam_output.text().strip() or os.path.join(
+                os.path.dirname(__file__), "phantom_captures")
+            os.makedirs(fallback, exist_ok=True)
+            cine_path   = os.path.join(fallback, f"recording_{ts}.cine")
+            tiff_prefix = os.path.join(fallback, "TIFFs", "frame")
+            tiff_dir    = os.path.join(fallback, "TIFFs")
+            bright_dir  = os.path.join(fallback, "Brightest_Frame")
+            analysis_dir = os.path.join(fallback, "analysis")
+            for d in [tiff_dir, bright_dir, analysis_dir]:
+                os.makedirs(d, exist_ok=True)
+
+        def _brightest_frame(folder):
+            """Return path of the TIFF file with the highest mean pixel value."""
+            import glob, cv2 as _cv2
+            tiffs = glob.glob(os.path.join(folder, "*.tif")) + \
+                    glob.glob(os.path.join(folder, "*.tiff"))
+            if not tiffs:
+                return None
+            best, best_val = None, -1
+            for f in tiffs:
+                img = _cv2.imread(f, _cv2.IMREAD_UNCHANGED)
+                if img is not None:
+                    val = float(img.mean())
+                    if val > best_val:
+                        best_val, best = val, f
+            return best
+
+        def _do_capture():
+            import shutil
+            try:
+                self.phantom.start_recording()
+                self.phantom.trigger()
+                time.sleep(0.5)   # wait for cine to be marked complete
+
+                # 1 — save full .cine
+                self.phantom.save_recording(cine_path, file_format='cine')
+
+                # 2 — save all frames as TIFFs
+                os.makedirs(tiff_dir, exist_ok=True)
+                self.phantom.save_recording(tiff_prefix, file_format='tiff')
+
+                # 3 — find brightest frame and copy to Brightest_Frame/
+                os.makedirs(bright_dir, exist_ok=True)
+                best = _brightest_frame(tiff_dir)
+                bright_path = None
+                if best:
+                    bright_path = os.path.join(bright_dir, os.path.basename(best))
+                    shutil.copy2(best, bright_path)
+
+                QTimer.singleShot(0, self, lambda: self._cam_status_lbl.setText("Capture saved"))
+
+                # 4 — run AI pipeline on the Brightest_Frame folder
+                if run_pipeline and bright_path:
+                    QTimer.singleShot(0, self,
+                        lambda: self._run_pipeline(bright_dir, analysis_dir))
+                elif run_pipeline:
+                    QTimer.singleShot(0, self,
+                        lambda: self._set_status("No frames found for pipeline", CLR_ORANGE))
+
+            except Exception as e:
+                err = str(e)
+                QTimer.singleShot(0, self,
+                    lambda: self._set_status(f"Capture error: {err}", CLR_RED))
+
+        threading.Thread(target=_do_capture, daemon=True).start()
 
     def _get_px_per_mm(self) -> float:
         """Return the current calibrated px/mm value, falling back to 0.0 if not set."""
@@ -2176,27 +2284,33 @@ class AtomisationApp(QMainWindow):
     # Logic — Calibration
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _cal_take_photo(self):
-        """Capture a frame from the Phantom live feed and load it into the
-        calibration widget.
+    @staticmethod
+    def _phantom_frame_to_pixmap(frame) -> 'QPixmap':
+        """Convert a pyphantom numpy frame (any bit depth) to a display QPixmap."""
+        import numpy as np
+        # Normalise to uint8 — Phantom outputs 12-bit packed in uint16
+        if frame.dtype != np.uint8:
+            f_min, f_max = int(frame.min()), int(frame.max())
+            if f_max > f_min:
+                frame = ((frame.astype(np.float32) - f_min) * 255.0 / (f_max - f_min)).astype(np.uint8)
+            else:
+                frame = np.zeros_like(frame, dtype=np.uint8)
+        # Ensure C-contiguous so QImage can read the buffer directly
+        frame = np.ascontiguousarray(frame)
+        h, w = frame.shape[:2]
+        fmt = QImage.Format.Format_RGB888 if len(frame.shape) == 3 \
+              else QImage.Format.Format_Grayscale8
+        img = QImage(frame.data, w, h, int(frame.strides[0]), fmt)
+        return QPixmap.fromImage(img)
 
-        TODO(calibration): Change save_dir to:
-            os.path.join(find_lacie_drive(), "Phantom", "Calibration")
-        when the LaCie drive is reliably available.  Use find_lacie_drive()
-        from src/config_loader.py.  For now images are saved locally.
-        """
+    def _cal_take_photo(self):
+        """Freeze the current live frame and load it into the calibration widget."""
         if not self.phantom or not self.phantom.is_connected:
             self._warn("Camera Not Connected", "Connect the Phantom camera first.")
             return
         try:
-            # TODO(calibration): verify the correct pyphantom method for a live
-            # single-frame grab (e.g. cam.get_image() / cam.live_image()).
-            frame = self.phantom.cam.get_image()
-            h, w = frame.shape[:2]
-            fmt = QImage.Format.Format_RGB888 if len(frame.shape) == 3 \
-                  else QImage.Format.Format_Grayscale8
-            img = QImage(frame.data, w, h, int(frame.strides[0]), fmt)
-            pixmap = QPixmap.fromImage(img)
+            frame = self.phantom.cam.get_live_image()
+            pixmap = self._phantom_frame_to_pixmap(frame)
             lacie = find_lacie_drive()
             save_dir = os.path.join(lacie, "Calibration") if lacie \
                        else os.path.join(os.path.dirname(__file__), "calibration_photos")
@@ -2209,6 +2323,50 @@ class AtomisationApp(QMainWindow):
         except Exception as e:
             self._warn("Capture Failed",
                        f"Could not capture live frame:\n{e}\n\nUse 'Load from File' instead.")
+
+    def _cal_start_feed(self):
+        if not self.phantom or not self.phantom.is_connected:
+            self._warn("Camera Not Connected", "Connect the Phantom camera first.")
+            return
+        self._live_feed_timer.start()
+        self._cal_feed_start_btn.setEnabled(False)
+        self._cal_feed_stop_btn.setEnabled(True)
+        self._cal_feed_label.setText("")
+
+    def _cal_stop_feed(self):
+        self._live_feed_timer.stop()
+        self._live_feed_pending = False
+        self._cal_feed_start_btn.setEnabled(True)
+        self._cal_feed_stop_btn.setEnabled(False)
+        self._cal_feed_label.setText("Live feed not active")
+
+    def _live_feed_tick(self):
+        """Timer callback — grab one frame in a background thread."""
+        if self._live_feed_pending:
+            return
+        if not self.phantom or not self.phantom.is_connected:
+            self._cal_stop_feed()
+            return
+        self._live_feed_pending = True
+        def _grab():
+            try:
+                frame = self.phantom.cam.get_live_image()
+                QTimer.singleShot(0, self, lambda: self._live_feed_update(frame))
+            except Exception as e:
+                QTimer.singleShot(0, self, lambda: self._cal_stop_feed())
+            finally:
+                self._live_feed_pending = False
+        threading.Thread(target=_grab, daemon=True).start()
+
+    def _live_feed_update(self, frame):
+        """Main-thread callback — paint the latest frame into the feed label."""
+        pix = self._phantom_frame_to_pixmap(frame)
+        pix = pix.scaled(
+            self._cal_feed_label.width(), self._cal_feed_label.height(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.FastTransformation,
+        )
+        self._cal_feed_label.setPixmap(pix)
 
     def _cal_load_photo(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -2390,12 +2548,17 @@ class AtomisationApp(QMainWindow):
         if not ret:
             self._cone_cam_status_lbl.setText("Capture failed")
             return
+        _cap_time = datetime.now().strftime("%H:%M:%S")
+        self._cone_capture_btn.setEnabled(False)   # block until analysis done
+        self._cone_auto_status_lbl.setText(f"Captured at {_cap_time} — analysing…")
+        self._cone_auto_status_lbl.setStyleSheet(f"color:{CLR_ACCENT}; font-size:12px;")
 
         frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
         ts        = datetime.now().strftime("%Y%m%d_%H%M%S")
         save_dir  = self._cone_save_dir()
         raw_path  = os.path.join(save_dir, f"cone_raw_{ts}.png")
         cv2.imwrite(raw_path, frame)
+        self._last_cone_path = raw_path   # fallback if analysis not yet done
 
         if not CONE4_AVAILABLE:
             self._cone_angle_lbl.setText("Cone_4.py not found — raw image saved only")
@@ -2403,31 +2566,49 @@ class AtomisationApp(QMainWindow):
             self._cone_result_img_lbl.setVisible(False)
             self._cone_saved_lbl.setText(f"Saved: {raw_path}")
             self._cone_saved_lbl.setVisible(True)
+            self._cone_capture_btn.setEnabled(True)
             return
 
-        try:
-            from pathlib import Path as _Path
-            angle, annotated_bgr, _debug = detect_cone_angle(
-                _Path(raw_path), top_crop_ratio=self._cone_top_crop_spin.value())
-        except Exception as e:
-            self._cone_angle_lbl.setText(f"Analysis error: {e}")
-            self._cone_angle_lbl.setVisible(True)
-            return
-
-        annotated_path = os.path.join(save_dir, f"cone_{ts}.png")
-        cv2.imwrite(annotated_path, annotated_bgr)
-
-        pm = self._cone_bgr_to_pixmap(annotated_bgr).scaled(
-            self._cone_result_img_lbl.width(), self._cone_result_img_lbl.height(),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        self._cone_result_img_lbl.setPixmap(pm)
-        self._cone_result_img_lbl.setVisible(True)
-        self._cone_angle_lbl.setText(f"Cone angle: {angle:.1f}°")
+        self._cone_angle_lbl.setText("Analysing…")
         self._cone_angle_lbl.setVisible(True)
-        self._cone_saved_lbl.setText(f"Saved: {annotated_path}")
-        self._cone_saved_lbl.setVisible(True)
+        top_crop = self._cone_top_crop_spin.value()
+
+        def _analyse():
+            try:
+                from pathlib import Path as _Path
+                angle, annotated_bgr, _debug = detect_cone_angle(
+                    _Path(raw_path), top_crop_ratio=top_crop)
+            except Exception as e:
+                def _on_err():
+                    self._cone_angle_lbl.setText(f"Analysis error: {e}")
+                    self._cone_angle_lbl.setVisible(True)
+                    self._cone_capture_btn.setEnabled(True)
+                QTimer.singleShot(0, self, _on_err)
+                return
+
+            annotated_path = os.path.join(save_dir, f"cone_{ts}.png")
+            cv2.imwrite(annotated_path, annotated_bgr)
+
+            def _update_ui():
+                self._last_cone_path = annotated_path
+                pm = self._cone_bgr_to_pixmap(annotated_bgr).scaled(
+                    self._cone_result_img_lbl.width(), self._cone_result_img_lbl.height(),
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+                self._cone_result_img_lbl.setPixmap(pm)
+                self._cone_result_img_lbl.setVisible(True)
+                self._cone_angle_lbl.setText(f"Cone angle: {angle:.1f}°")
+                self._cone_angle_lbl.setVisible(True)
+                self._cone_saved_lbl.setText(f"Saved: {annotated_path}")
+                self._cone_saved_lbl.setVisible(True)
+                self._cone_auto_status_lbl.setText(f"Last capture: {_cap_time} — {angle:.1f}°  (will be used in Excel)")
+                self._cone_auto_status_lbl.setStyleSheet(f"color:{CLR_GREEN}; font-size:12px;")
+                self._cone_capture_btn.setEnabled(True)
+
+            QTimer.singleShot(0, self, _update_ui)
+
+        threading.Thread(target=_analyse, daemon=True).start()
 
     # ─────────────────────────────────────────────────────────────────────────
     # Logic — AFG
@@ -2530,6 +2711,7 @@ class AtomisationApp(QMainWindow):
         self.pressure_data['experiment_active'] = True
         self.pressure_data['experiment_start_time'] = time.time()
         self.pressure_data['experiment_data'] = {'timestamps':[], 'pressures':[]}
+        self._last_cone_path = None   # reset so we only capture this experiment's image
 
         # ── Create run folder eagerly ──────────────────────────────────────────
         _now = datetime.now()
@@ -2541,14 +2723,17 @@ class AtomisationApp(QMainWindow):
             "experiment_logs", "Experiments")
         self._run_folder = os.path.join(
             _exp_base, _now.strftime("%Y"), _now.strftime("%m"), _now.strftime("%d"), _run_id)
-        for _sub in [os.path.join("shadowgraph", "raw"),
-                     os.path.join("shadowgraph", "analysis"), "cone"]:
+        for _sub in [os.path.join("shadowgraph", "raw", "CINE"),
+                     os.path.join("shadowgraph", "raw", "TIFFs"),
+                     os.path.join("shadowgraph", "raw", "Brightest_Frame"),
+                     os.path.join("shadowgraph", "analysis"),
+                     "cone"]:
             os.makedirs(os.path.join(self._run_folder, _sub), exist_ok=True)
 
-        # Start cone auto-capture (every 5 s) if webcam is already running
+        # Schedule a single cone capture 5 s after experiment start
         if self._cone_cap is not None and self._cone_cap.isOpened():
             self._cone_auto_timer.start(5000)
-            self._cone_auto_status_lbl.setText("Auto-capture: ON (every 5 s)")
+            self._cone_auto_status_lbl.setText("Cone capture: in 5 s")
             self._cone_auto_status_lbl.setStyleSheet(f"color:{CLR_GREEN}; font-size:12px;")
         # Reset live buffer so the graph X-axis starts from 0 at experiment start
         self.pressure_data['live_buffer'] = {'timestamps': [], 'pressures': []}
@@ -2625,7 +2810,7 @@ class AtomisationApp(QMainWindow):
                 return
         self._shadow_label.setPixmap(QPixmap())
         self._shadow_label.setText("No result found\nClick ↻ Refresh")
-        self._result_path_label.setText("Searching: LaCie/Experiments/…/shadowgraph/analysis/FINAL_OPTIMIZED_RESULT.png")
+        self._result_path_label.setText("Searching: LaCie/Experiments/…/shadowgraph/analysis/ai_result.png")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Logic — Excel save
@@ -2740,7 +2925,7 @@ class AtomisationApp(QMainWindow):
 
             # ── Master log: insert at row 2, shift image anchors first ───────
             import re as _re
-            _master_base = lacie if lacie else os.path.join(
+            _master_base = os.path.join(lacie, "Experiments", "Logs") if lacie else os.path.join(
                 os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                 "experiment_logs")
             os.makedirs(_master_base, exist_ok=True)
@@ -2787,7 +2972,22 @@ class AtomisationApp(QMainWindow):
                 cell.alignment = top_left if col == 7 else center_mid
             ws.row_dimensions[row_num].height = 125
 
-            ws.cell(row=row_num, column=8).value = 'NO DATA AVAILABLE'
+            _cone_img_path = self._last_cone_path or ""
+            if _cone_img_path and os.path.exists(_cone_img_path):
+                _cone_raw = cv2.imread(_cone_img_path)
+                if _cone_raw is not None:
+                    _ch, _cw = _cone_raw.shape[:2]
+                    # Scale to match the row height (DISPLAY_H px) preserving aspect ratio
+                    _cone_disp_h = DISPLAY_H
+                    _cone_disp_w = max(1, int(_cw * _cone_disp_h / _ch))
+                    cimg = XLImage(_cone_img_path)
+                    cimg.width = _cone_disp_w; cimg.height = _cone_disp_h
+                    ws.column_dimensions['H'].width = max(10, _cone_disp_w / 7.0)
+                    ws.add_image(cimg, f'H{row_num}')
+                else:
+                    ws.cell(row=row_num, column=8).value = 'NO DATA AVAILABLE'
+            else:
+                ws.cell(row=row_num, column=8).value = 'NO DATA AVAILABLE'
 
             shadow_src = self._result_path_label.text()
             if shadow_src and os.path.exists(shadow_src):
@@ -2938,6 +3138,7 @@ class AtomisationApp(QMainWindow):
 
     def closeEvent(self, event):
         self.serial_reading_active = False
+        self._live_feed_timer.stop()
         if self.arduino:     self.arduino.disconnect()
         if self.phantom:     self.phantom.disconnect()
         if self.afg:         self.afg.disconnect()

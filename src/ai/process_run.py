@@ -96,11 +96,8 @@ def extract_brightest_tiff(frames_folder: Path, output_folder: Path) -> Path:
     if not tiff_path.exists():
         raise RuntimeError(f"Expected flashed_output.tiff not found at {tiff_path}")
 
-    # Delete frames folder — clean slate for next run
-    print(f"[process_run] Deleting frames folder (clean slate): {frames_folder}")
-    shutil.rmtree(frames_folder, ignore_errors=True)
-
     print(f"[process_run] Brightest frame saved → {tiff_path}")
+    # Frames folder is kept — all raw data is preserved for troubleshooting
     return tiff_path
 
 
