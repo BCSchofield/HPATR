@@ -1,0 +1,651 @@
+<mxfile host="Electron" agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/29.6.6 Chrome/144.0.7559.236 Electron/40.8.4 Safari/537.36" version="29.6.6">
+  <diagram name="Page-1" id="g3ZAYo9Gak_cZr9127Mb">
+    <mxGraphModel dx="2027" dy="1290" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2336" pageHeight="1654" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="8fFa9fZodg1UNE94WgWk-98" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=15;fillStyle=dots;fontStyle=5" value="Training_Outputs" vertex="1">
+          <mxGeometry height="611" width="310" x="4898" y="49" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-99" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=15;fillStyle=dots;fontStyle=5" value="Debug_Tools" vertex="1">
+          <mxGeometry height="611" width="373" x="3417" y="49" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-100" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=15;fillStyle=dots;fontStyle=5" value="Visualisation" vertex="1">
+          <mxGeometry height="611" width="332" x="4510" y="49" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-326" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-101" style="edgeStyle=none;shape=connector;curved=0;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=default;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=default;labelBackgroundColor=default;startArrow=none;endArrow=block;jumpStyle=gap;" target="8fFa9fZodg1UNE94WgWk-100">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="4160" y="355" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-101" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=15;fillStyle=dots;fontStyle=5" value="Evaluation" vertex="1">
+          <mxGeometry height="210" width="640" x="3840" y="415" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-102" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#f8cecc;strokeColor=#b85450;fontSize=12;fillStyle=dots;" value="Model_Weights" vertex="1">
+          <mxGeometry height="100" width="309" x="3058" y="560" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-103" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=15;fillStyle=dots;fontStyle=5" value="Training" vertex="1">
+          <mxGeometry height="480" width="840" x="2110" y="280" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-104" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=15;fillStyle=dots;fontStyle=5" value="Training_Data" vertex="1">
+          <mxGeometry height="280" width="325" x="1691" y="380" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-105" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=15;fontStyle=5;fillStyle=dots;" value="Synthetic_Data" vertex="1">
+          <mxGeometry height="280" width="834.5" x="800" y="380" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-106" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=15;fillStyle=dots;fontStyle=5" value="Cone_Outputs" vertex="1">
+          <mxGeometry height="223" width="360" x="3620" y="1547" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-107" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#FFCCFF,#1F2020);strokeColor=light-dark(#FF99FF,#CCCCCC);fontColor=light-dark(#333333,#cccccc);fontSize=15;fillStyle=dots;fontStyle=5" value="Cone_Detection" vertex="1">
+          <mxGeometry height="409" width="750" x="2740" y="1278" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-108" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=15;fillStyle=dots;fontStyle=5" value="Main_Outputs" vertex="1">
+          <mxGeometry height="714" width="360" x="3620" y="810" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-109" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;fillStyle=dots;" value="AI_Inference" vertex="1">
+          <mxGeometry height="120" width="310" x="3180" y="940" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-112" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#FFCCE6;strokeColor=#FF99CC;fontSize=15;fillStyle=dots;fontStyle=5" value="GUI_Active" vertex="1">
+          <mxGeometry height="380" width="325" x="2733" y="810" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-113" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#FFCCFF,#1F2020);strokeColor=light-dark(#FF99FF,#CCCCCC);fontColor=light-dark(#333333,#cccccc);fontSize=15;fillStyle=dots;fontStyle=5" value="Imaging_Utils" vertex="1">
+          <mxGeometry height="237" width="405" x="2259" y="1399" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-343" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-114" style="edgeStyle=none;shape=connector;curved=0;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=default;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=default;labelBackgroundColor=default;startArrow=none;endArrow=block;" target="8fFa9fZodg1UNE94WgWk-112">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-114" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=15;fontStyle=5" value="Hardware" vertex="1">
+          <mxGeometry height="295" width="407" x="2257" y="1072" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-115" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#CCFFE6,#1F2020);strokeColor=light-dark(#99FFCC,#CCCCCC);fontColor=light-dark(#333333,#cccccc);fontSize=12;fillStyle=dots;" value="Firmware" vertex="1">
+          <mxGeometry height="118" width="325" x="1890" y="1072" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-341" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-116" style="edgeStyle=none;shape=connector;curved=0;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=default;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=default;labelBackgroundColor=default;startArrow=none;endArrow=block;" target="8fFa9fZodg1UNE94WgWk-126">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="2690" y="1040" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-344" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-116" style="edgeStyle=none;shape=connector;curved=0;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=default;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=default;labelBackgroundColor=default;startArrow=none;endArrow=block;" target="8fFa9fZodg1UNE94WgWk-124">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-345" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-116" style="edgeStyle=none;shape=connector;curved=0;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=default;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=default;labelBackgroundColor=default;startArrow=none;endArrow=block;" target="8fFa9fZodg1UNE94WgWk-129">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-116" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#CCCCFF;strokeColor=light-dark(#9999FF,#CCCCCC);fontColor=light-dark(#333333,#cccccc);fontSize=15;gradientColor=none;fillStyle=dots;fontStyle=5" value="Config" vertex="1">
+          <mxGeometry height="230" width="220" x="2444" y="810" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-334" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-117" style="edgeStyle=none;shape=connector;curved=0;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.25;exitY=1;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;strokeColor=default;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=default;labelBackgroundColor=default;startArrow=none;endArrow=block;" target="8fFa9fZodg1UNE94WgWk-118">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-117" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#CCCCFF,#1F2020);strokeColor=light-dark(#9999FF,#CCCCCC);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=1" value="config/paths.yaml" vertex="1">
+          <mxGeometry height="54" width="180" x="2464" y="840" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-118" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#CCCCFF,#1F2020);strokeColor=light-dark(#9999FF,#CCCCCC);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=1" value="config_loader.py" vertex="1">
+          <mxGeometry height="54" width="178" x="2464" y="960" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-119" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#CCFFE6,#1F2020);strokeColor=light-dark(#99FFCC,#CCCCCC);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=1" value="Pressure_Motor_Portenta.cpp Arduino" vertex="1">
+          <mxGeometry height="53" width="275" x="1915" y="1107" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-120" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=1" value="Phantom Camera" vertex="1">
+          <mxGeometry height="54" width="280" x="2320" y="1235" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-121" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=1" value="Arduino Portenta H7" vertex="1">
+          <mxGeometry height="26" width="280" x="2320" y="1104" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-122" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#FFCCFF,#1F2020);strokeColor=light-dark(#FF99FF,#CCCCCC);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=1" value="webcam_preview.py" vertex="1">
+          <mxGeometry height="22" width="350" x="2280" y="1538" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-123" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#FFCCFF,#1F2020);strokeColor=light-dark(#FF99FF,#CCCCCC);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=1" value="capture_still_image.py" vertex="1">
+          <mxGeometry height="20" width="350" x="2280" y="1420" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-124" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#FFCCE6,#1F2020);strokeColor=light-dark(#FF99CC,#CCCCCC);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=1" value="GUI_Clean.py PySide6" vertex="1">
+          <mxGeometry height="20" width="270" x="2760" y="830" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-342" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-126" style="edgeStyle=none;shape=connector;curved=0;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.25;exitY=0;exitDx=0;exitDy=0;entryX=0.25;entryY=1;entryDx=0;entryDy=0;strokeColor=default;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=default;labelBackgroundColor=default;startArrow=none;endArrow=block;" target="8fFa9fZodg1UNE94WgWk-338">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-126" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#FFCCFF,#1F2020);strokeColor=light-dark(#FF99FF,#CCCCCC);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=1" value="mp4_to_tiff.py" vertex="1">
+          <mxGeometry height="30" width="270" x="2760" y="1024" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-129" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;fontStyle=1" value="process_run.py" vertex="1">
+          <mxGeometry height="23" width="263" x="3204" y="957" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-130" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;fontStyle=1" value="LaCie/Phantom/TIFF_Output" vertex="1">
+          <mxGeometry height="54" width="295" x="3645" y="840" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-131" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;fontStyle=1" value="LaCie/Shadowgraph/Outputs" vertex="1">
+          <mxGeometry height="54" width="295" x="3645" y="920" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-132" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;fontStyle=1" value="LaCie/Shadowgraph/AI_Output" vertex="1">
+          <mxGeometry height="54" width="295" x="3645" y="1000" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-133" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;fontStyle=1" value="LaCie/Experiments/Logs" vertex="1">
+          <mxGeometry height="54" width="295" x="3645" y="1082" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-134" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#FFCCFF,#1F2020);strokeColor=light-dark(#FF99FF,#CCCCCC);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=1" value="Cone_4.py sigmoid RANSAC active" vertex="1">
+          <mxGeometry height="24" width="260" x="2770" y="1300" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-137" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#FFCCFF,#1F2020);strokeColor=light-dark(#FF99FF,#CCCCCC);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=1" value="Cone_Tester.py convex hull" vertex="1">
+          <mxGeometry height="22" width="219" x="3240" y="1570" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-138" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#FFCCFF,#1F2020);strokeColor=light-dark(#FF99FF,#CCCCCC);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=1" value="cone_GUI.py 19 params" vertex="1">
+          <mxGeometry height="24" width="219" x="3240" y="1300" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-139" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;fontStyle=1" value="cone angle measurements" vertex="1">
+          <mxGeometry height="30" width="305" x="3645" y="1570" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-140" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;fontStyle=1" value="debug images cone_4_debug" vertex="1">
+          <mxGeometry height="30" width="305" x="3645" y="1680" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-142" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;fontStyle=1" value="blur_spray_dataset_generator.py" vertex="1">
+          <mxGeometry height="54" width="330" x="820" y="397" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-255" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-143" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.25;entryY=0;entryDx=0;entryDy=0;exitX=0.5;exitY=0;exitDx=0;exitDy=0;curved=0;fontSize=12;strokeWidth=2;" target="8fFa9fZodg1UNE94WgWk-144">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1449" y="360" />
+              <mxPoint x="1782" y="360" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-143" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;fontStyle=1" value="conjoined_blur_spray_dataset_generator.py" vertex="1">
+          <mxGeometry height="54" width="338" x="1280" y="397" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-270" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-144" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="8fFa9fZodg1UNE94WgWk-269" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-288" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-144" style="edgeStyle=none;shape=connector;curved=0;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.75;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=default;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=default;labelBackgroundColor=default;startArrow=none;endArrow=block;jumpStyle=gap;" target="8fFa9fZodg1UNE94WgWk-147">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1928" y="240" />
+              <mxPoint x="2297" y="240" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-144" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=12;fontStyle=1" value="Synthetic Data" vertex="1">
+          <mxGeometry height="20" width="290" x="1710" y="400" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-325" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-145" style="edgeStyle=none;shape=connector;curved=0;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;strokeColor=default;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=default;labelBackgroundColor=default;startArrow=none;endArrow=block;entryX=0;entryY=0.5;entryDx=0;entryDy=0;jumpStyle=gap;" target="8fFa9fZodg1UNE94WgWk-151">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="2060" y="555" />
+              <mxPoint x="2060" y="780" />
+              <mxPoint x="3830" y="780" />
+              <mxPoint x="3830" y="452" />
+            </Array>
+            <mxPoint x="2080" y="760" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-145" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=12;fontStyle=1" value="Validation 100" vertex="1">
+          <mxGeometry height="30" width="290" x="1710" y="540" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-295" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-147" style="edgeStyle=none;shape=connector;curved=0;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.75;exitY=0;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;strokeColor=default;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=default;labelBackgroundColor=default;startArrow=none;endArrow=block;jumpStyle=gap;" target="8fFa9fZodg1UNE94WgWk-150">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="2380" y="270" />
+              <mxPoint x="3148" y="269" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-147" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;fontStyle=1" value="root/train_detectron2.py evolved" vertex="1">
+          <mxGeometry height="30" width="330" x="2132" y="297" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-148" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;fontStyle=1" value="hyperparameter_sweep.py" vertex="1">
+          <mxGeometry height="30" width="792" x="2138" y="550" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-292" edge="1" parent="1" style="edgeStyle=none;shape=connector;curved=0;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.75;exitY=0;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;strokeColor=default;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=default;labelBackgroundColor=default;startArrow=none;endArrow=block;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="2848" y="270" />
+              <mxPoint x="3148" y="269" />
+            </Array>
+            <mxPoint x="2847.5" y="297" as="sourcePoint" />
+            <mxPoint x="3147.75" y="585" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-149" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;fontStyle=1" value="convergence_test.py" vertex="1">
+          <mxGeometry height="27" width="330" x="2600" y="297" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-303" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-150" style="edgeStyle=none;shape=connector;curved=0;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;strokeColor=default;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=default;labelBackgroundColor=default;startArrow=none;endArrow=block;" target="8fFa9fZodg1UNE94WgWk-160">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="3390" y="611" />
+              <mxPoint x="3390" y="520" />
+              <mxPoint x="3522" y="520" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-306" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-150" style="edgeStyle=none;shape=connector;curved=0;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.75;exitY=0;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=default;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=default;labelBackgroundColor=default;startArrow=none;endArrow=block;" target="8fFa9fZodg1UNE94WgWk-163">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="3277" y="521" />
+              <mxPoint x="3350" y="521" />
+              <mxPoint x="3350" y="265" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-322" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-150" style="edgeStyle=none;shape=connector;curved=0;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.75;exitY=1;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;strokeColor=default;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=default;labelBackgroundColor=default;startArrow=none;endArrow=block;" target="8fFa9fZodg1UNE94WgWk-151">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="3278" y="690" />
+              <mxPoint x="3810" y="690" />
+              <mxPoint x="3810" y="379" />
+              <mxPoint x="3917" y="379" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-340" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-150" style="edgeStyle=none;shape=connector;curved=0;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=default;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=default;labelBackgroundColor=default;startArrow=none;endArrow=block;jumpStyle=gap;" target="8fFa9fZodg1UNE94WgWk-129">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="3212" y="840" />
+              <mxPoint x="3336" y="840" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-150" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#f8cecc;strokeColor=#b85450;fontSize=12;fontStyle=1" value="CURRENT AI MODEL (Dennis)" vertex="1">
+          <mxGeometry height="54" width="259" x="3083" y="585" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-151" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;fontStyle=1" value="AI/evaluate_model.py " vertex="1">
+          <mxGeometry height="34" width="240" x="3858" y="436" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-328" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-153" style="edgeStyle=none;shape=connector;curved=0;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=default;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=default;labelBackgroundColor=default;startArrow=none;endArrow=block;" target="8fFa9fZodg1UNE94WgWk-166">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="4494" y="453" />
+              <mxPoint x="4494" y="710" />
+              <mxPoint x="4870" y="710" />
+              <mxPoint x="4870" y="565" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-153" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;fontStyle=1" value="evaluate_multiple_models.py" vertex="1">
+          <mxGeometry height="34" width="240" x="4218" y="436" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-333" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-154" style="edgeStyle=none;shape=connector;curved=0;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=default;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=default;labelBackgroundColor=default;startArrow=none;endArrow=block;" target="8fFa9fZodg1UNE94WgWk-165">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="4872" y="492" />
+              <mxPoint x="4871" y="175" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-154" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;fontStyle=1" value="extract_sweep_metrics.py" vertex="1">
+          <mxGeometry height="54" width="269" x="4540.75" y="465" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-332" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-155" style="edgeStyle=none;shape=connector;curved=0;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;strokeColor=default;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=default;labelBackgroundColor=default;startArrow=none;endArrow=block;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="8fFa9fZodg1UNE94WgWk-165">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="4872" y="411" />
+              <mxPoint x="4872" y="175" />
+            </Array>
+            <mxPoint x="4980" y="170" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-155" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;fontStyle=1" value="compare_eval_results.py" vertex="1">
+          <mxGeometry height="54" width="269" x="4541" y="383" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-331" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-156" style="edgeStyle=none;shape=connector;curved=0;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;strokeColor=default;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=default;labelBackgroundColor=default;startArrow=none;endArrow=block;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="8fFa9fZodg1UNE94WgWk-165">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="4871" y="297" />
+              <mxPoint x="4871" y="175" />
+            </Array>
+            <mxPoint x="4980" y="170" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-156" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;fontStyle=1" value="compare_training_metrics.py" vertex="1">
+          <mxGeometry height="54" width="269" x="4541.5" y="270" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-330" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-157" style="edgeStyle=none;shape=connector;curved=0;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=default;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=default;labelBackgroundColor=default;startArrow=none;endArrow=block;" target="8fFa9fZodg1UNE94WgWk-165">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="4870" y="197" />
+              <mxPoint x="4870" y="175" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-157" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;fontStyle=1" value="visualize_dennis_vs_claudia.py" vertex="1">
+          <mxGeometry height="54" width="269" x="4541" y="170" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-329" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-158" style="edgeStyle=none;shape=connector;curved=0;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=default;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=default;labelBackgroundColor=default;startArrow=none;endArrow=block;" target="8fFa9fZodg1UNE94WgWk-165">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="4870" y="97" />
+              <mxPoint x="4870" y="175" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-158" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;fontStyle=1" value="plot_from_metrics.py" vertex="1">
+          <mxGeometry height="54" width="269" x="4541" y="70" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-160" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;fontStyle=1" value="root/inference_detectron2.py " vertex="1">
+          <mxGeometry height="29" width="330" x="3438.5" y="550.5" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-161" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;fontStyle=1" value="test_inference_debug.py" vertex="1">
+          <mxGeometry height="30" width="330" x="3440" y="70" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-162" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;fontStyle=1" value="visualize_model_predictions.py" vertex="1">
+          <mxGeometry height="30" width="330" x="3440" y="160" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-163" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;fontStyle=1" value="visualize_coco_results.py" vertex="1">
+          <mxGeometry height="30" width="330" x="3440" y="250" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-304" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-164" style="edgeStyle=none;shape=connector;curved=0;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;strokeColor=default;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=default;labelBackgroundColor=default;startArrow=none;endArrow=block;entryX=1;entryY=0.5;entryDx=0;entryDy=0;jumpStyle=gap;" target="8fFa9fZodg1UNE94WgWk-144">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="3260" y="415" />
+              <mxPoint x="3260" y="210" />
+              <mxPoint x="2040" y="210" />
+              <mxPoint x="2040" y="410" />
+            </Array>
+            <mxPoint x="2660" y="170" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-164" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;fontStyle=1" value="check_image_identity.py" vertex="1">
+          <mxGeometry height="30" width="330" x="3440" y="400" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-165" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;fontStyle=1" value="charts + CSVs" vertex="1">
+          <mxGeometry height="54" width="155" x="4975" y="148" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-166" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;fontStyle=1" value="evaluation_results.xlsx" vertex="1">
+          <mxGeometry height="54" width="224" x="4940.5" y="538" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-170" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-119" style="curved=1;dashed=1;dashPattern=2 3;startArrow=none;endArrow=block;exitX=1;exitY=0.5;entryX=0;entryY=0.5;rounded=0;fontSize=12;" target="8fFa9fZodg1UNE94WgWk-121" value="flashed to">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-171" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-118" style="curved=1;startArrow=none;endArrow=block;exitX=0.76;exitY=1;entryX=0.27;entryY=1;rounded=0;fontSize=12;" target="8fFa9fZodg1UNE94WgWk-124" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-182" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-124" style="curved=1;startArrow=none;endArrow=block;exitX=0.72;exitY=0;entryX=0.23;entryY=1;rounded=0;fontSize=12;" target="8fFa9fZodg1UNE94WgWk-133" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-183" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-124" style="curved=1;startArrow=none;endArrow=block;exitX=0.55;exitY=1;entryX=0.02;entryY=1;rounded=0;fontSize=12;" target="8fFa9fZodg1UNE94WgWk-134" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-186" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-126" style="curved=1;startArrow=none;endArrow=block;exitX=0.64;exitY=0;entryX=0;entryY=0.5;rounded=0;fontSize=12;" target="8fFa9fZodg1UNE94WgWk-130" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-187" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-126" style="curved=1;startArrow=none;endArrow=block;exitX=0.63;exitY=0;entryX=0.39;entryY=1;rounded=0;fontSize=12;" target="8fFa9fZodg1UNE94WgWk-129" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-189" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-129" style="curved=1;startArrow=none;endArrow=block;exitX=1;exitY=0.5;entryX=0;entryY=0.5;rounded=0;fontSize=12;" target="8fFa9fZodg1UNE94WgWk-132" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-193" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-122" style="curved=1;startArrow=none;endArrow=block;exitX=0.93;exitY=0;entryX=0;entryY=0.17;rounded=0;fontSize=12;" target="8fFa9fZodg1UNE94WgWk-134" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-195" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-123" style="curved=1;startArrow=none;endArrow=block;exitX=1;exitY=0.29;entryX=0.03;entryY=0;rounded=0;fontSize=12;" target="8fFa9fZodg1UNE94WgWk-134" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-198" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-126" style="curved=1;startArrow=none;endArrow=block;exitX=1;exitY=0.81;entryX=0.16;entryY=0;rounded=0;fontSize=12;" target="8fFa9fZodg1UNE94WgWk-134" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-201" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-134" style="curved=1;startArrow=none;endArrow=block;exitX=1;exitY=0.5;entryX=0;entryY=0.5;rounded=0;fontSize=12;" target="8fFa9fZodg1UNE94WgWk-137" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-202" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-134" style="curved=1;startArrow=none;endArrow=block;exitX=0.74;exitY=0;entryX=0;entryY=0.5;rounded=0;fontSize=12;" target="8fFa9fZodg1UNE94WgWk-138" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-203" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-134" style="curved=1;startArrow=none;endArrow=block;exitX=0.74;exitY=1;entryX=0;entryY=0.06;rounded=0;fontSize=12;" target="8fFa9fZodg1UNE94WgWk-140" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-204" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-137" style="curved=1;startArrow=none;endArrow=block;exitX=1;exitY=0.5;entryX=0.17;entryY=1;rounded=0;fontSize=12;" target="8fFa9fZodg1UNE94WgWk-139" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-205" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-138" style="curved=1;startArrow=none;endArrow=block;exitX=1;exitY=0.5;entryX=0.17;entryY=0;rounded=0;fontSize=12;" target="8fFa9fZodg1UNE94WgWk-139" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-211" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-142" style="curved=0;startArrow=none;endArrow=block;exitX=0.5;exitY=0;rounded=1;fontSize=12;exitDx=0;exitDy=0;strokeWidth=2;" target="8fFa9fZodg1UNE94WgWk-144" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="985" y="320" />
+              <mxPoint x="1854" y="320" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-248" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Path: Github/HPATR/&#xa;AI/synthetic_data/blur_spray_dataset_generator.py" vertex="1">
+          <mxGeometry height="54" width="330" x="820" y="451" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-249" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Inputs: All module-level parameters, with boolean for activating detectron2-only mode (no images, just .json file) or visualisations" vertex="1">
+          <mxGeometry height="54" width="330" x="820" y="505" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-250" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Outputs: {OUTPUT_BASE_DIR}/Detectron_Trial_4/image&#xa;× N + annotations.json (COCO format, RLE m&#xa;visualizations/, sidebyside/ (suppressed by&#xa;OUTPUT_DETECTRON_ONLY=True)" vertex="1">
+          <mxGeometry height="81" width="330" x="820" y="559" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-251" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Path: Github/HPATR/&#xa; AI/synthetic_data/conjoined_blur_spray_dataset_generator.py" vertex="1">
+          <mxGeometry height="54" width="338" x="1280" y="452" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-252" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Inputs:   &#39;&#39;" vertex="1">
+          <mxGeometry height="54" width="338" x="1280" y="506" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-253" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Outputs:   &#39;&#39;" vertex="1">
+          <mxGeometry height="80" width="338" x="1280" y="560" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-256" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;align=left;verticalAlign=top;fontStyle=1" value="Key:&#xa;" vertex="1">
+          <mxGeometry height="709.5" width="320" x="410" y="30" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-258" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fontStyle=1;strokeWidth=2;fillColor=#fff2cc;strokeColor=#d6b656;" value="Folders/Drives" vertex="1">
+          <mxGeometry height="60" width="300" x="420" y="64.5" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-259" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fontStyle=1;strokeWidth=2;fillColor=#FFCCFF;strokeColor=#FF99FF;" value="Imaging Scripts" vertex="1">
+          <mxGeometry height="60" width="300" x="420" y="328.5" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-260" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fontStyle=1;strokeWidth=2;fillColor=#d5e8d4;strokeColor=#82b366;" value="AI Scripts" vertex="1">
+          <mxGeometry height="60" width="300" x="420" y="196.5" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-261" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fontStyle=1;strokeWidth=2;fillColor=#CCFFE6;fontColor=#333333;strokeColor=#99FFCC;" value="Electronics Scripts" vertex="1">
+          <mxGeometry height="60" width="300" x="419.5" y="394.5" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-262" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fontStyle=1;strokeWidth=2;fillColor=#CCCCFF;strokeColor=#9999FF;" value="Config Files" vertex="1">
+          <mxGeometry height="60" width="300" x="420" y="593.5" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-263" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fontStyle=1;strokeWidth=2;fillColor=#FFCCE6;fontColor=#333333;strokeColor=#FF99CC;" value="UI Scripts" vertex="1">
+          <mxGeometry height="60" width="300" x="419.5" y="461.5" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-267" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontStyle=1;strokeWidth=2;" value="LaCie" vertex="1">
+          <mxGeometry height="60" width="300" x="419.5" y="130.5" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-269" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;" value="Path: LaCie/Experiments/TrainingData" vertex="1">
+          <mxGeometry height="30" width="290" x="1710" y="420" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-271" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;" value="Notes: Contains all tests for synthetic data, INCLUDING detectron_trial_N folders" vertex="1">
+          <mxGeometry height="40" width="290" x="1710" y="450" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-272" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;" value="Path: LaCie/Experiments/Validation_100" vertex="1">
+          <mxGeometry height="30" width="290" x="1710" y="570" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-273" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;" value="Notes: Contains 100 images, .json masks and visualisations required for testing AI models. " vertex="1">
+          <mxGeometry height="40" width="290" x="1710" y="600" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-275" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Path: Github/HPATR/convergence_test.py" vertex="1">
+          <mxGeometry height="26.5" width="330" x="2600" y="323.5" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-276" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Inputs:   &#39;&#39;" vertex="1">
+          <mxGeometry height="22.5" width="330" x="2600" y="347" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-277" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Outputs: D:\Experiments\AI\ConvergenceTests\&#xa;convergence_lr{LR}_{timestamp}/&#xa;plots/convergence_test_live.png&#xa;Live-updating 2-panel chart (training loss + validation AP)" vertex="1">
+          <mxGeometry height="80" width="330" x="2600" y="369.5" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-280" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Path: Github/HPATR/hyperparameter_sweep.py" vertex="1">
+          <mxGeometry height="30" width="792" x="2138" y="580" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-281" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Inputs:   &#39;&#39;" vertex="1">
+          <mxGeometry height="39" width="792" x="2138" y="610" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-282" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Outputs: D:\Experiments\AI\Hyperparameters\sweep_{timestamp}\. Also plots sweep comparisons to visualise differences. " vertex="1">
+          <mxGeometry height="35" width="792" x="2138" y="649" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-283" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Notes: Sweeps hyperparameters you set. Currently set to warmup &amp; LR decay schedule. Runs a 5000 iteration train_detectron." vertex="1">
+          <mxGeometry height="59" width="792" x="2138" y="684" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-284" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Path: Github/HPATR/&#xa;AI/Training_Analysis/train_detectron2.py " vertex="1">
+          <mxGeometry height="54" width="330" x="2132" y="327" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-285" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Inputs: COCO annotations .json, + images dir. Hard-code to where you want files to come from." vertex="1">
+          <mxGeometry height="39" width="330" x="2132" y="381" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-286" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Outputs: Trained model checkpoints, loss curve plots, validation evals. " vertex="1">
+          <mxGeometry height="35" width="330" x="2132" y="419" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-287" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Notes: Full script to get a proper AI training run. Can use checkpoints from previous AIs to over-train and fit new data to it. " vertex="1">
+          <mxGeometry height="59" width="330" x="2132" y="451" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-290" edge="1" parent="1" style="edgeStyle=none;shape=connector;curved=0;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.75;exitY=0;exitDx=0;exitDy=0;strokeColor=default;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=default;labelBackgroundColor=default;startArrow=none;endArrow=block;entryX=0.25;entryY=0;entryDx=0;entryDy=0;jumpStyle=gap;" target="8fFa9fZodg1UNE94WgWk-149">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1928" y="240" />
+              <mxPoint x="2683" y="240" />
+            </Array>
+            <mxPoint x="1928" y="400" as="sourcePoint" />
+            <mxPoint x="2520" y="250" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-278" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Notes: Trains Mask R-CNN model and auto-stops when AP plateaus. Useful to find expected length of training. Built on-top of train_detectron2" vertex="1">
+          <mxGeometry height="60" width="330" x="2600" y="450" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-293" edge="1" parent="1" source="8fFa9fZodg1UNE94WgWk-148" style="edgeStyle=none;shape=connector;curved=0;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.75;exitY=0;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=default;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=default;labelBackgroundColor=default;startArrow=none;endArrow=block;" target="8fFa9fZodg1UNE94WgWk-150">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="2732" y="530" />
+              <mxPoint x="3020" y="530" />
+              <mxPoint x="3020" y="612" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-294" edge="1" parent="1" style="edgeStyle=none;shape=connector;curved=0;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.75;exitY=0;exitDx=0;exitDy=0;strokeColor=default;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=default;labelBackgroundColor=default;startArrow=none;endArrow=block;entryX=0.25;entryY=0;entryDx=0;entryDy=0;jumpStyle=gap;" target="8fFa9fZodg1UNE94WgWk-148">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1928" y="240" />
+              <mxPoint x="2090" y="240" />
+              <mxPoint x="2090" y="530" />
+              <mxPoint x="2336" y="530" />
+            </Array>
+            <mxPoint x="1928" y="400" as="sourcePoint" />
+            <mxPoint x="2060" y="400" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-296" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fontStyle=1;strokeWidth=2;fillColor=#e1d5e7;strokeColor=#9673a6;" value="Debug / Helper Scripts" vertex="1">
+          <mxGeometry height="60" width="300" x="420.5" y="659.5" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-298" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Notes: Helper when inference was breaking consistently. Prints most steps into the console for easy viewing. " vertex="1">
+          <mxGeometry height="40" width="330" x="3440" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-299" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Notes: .png creation for model predictions. BROKEN." vertex="1">
+          <mxGeometry height="40" width="330" x="3440" y="190" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-300" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Notes: .png creation for results. Superseded by other scripts. " vertex="1">
+          <mxGeometry height="40" width="330" x="3440" y="280" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-301" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Notes: Checks image hashes between folders, to ENSURE that no images are duplicates for synthetic data. " vertex="1">
+          <mxGeometry height="40" width="330" x="3440" y="430" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-302" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Notes: Full inference script. Can have this output visualisations/side-by-sides/masks only. Will give confidence values alongside. Also outputs summary.json." vertex="1">
+          <mxGeometry height="60" width="330" x="3438.5" y="579.5" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-305" edge="1" parent="1" style="edgeStyle=none;shape=connector;curved=0;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;strokeColor=default;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=default;labelBackgroundColor=default;startArrow=none;endArrow=block;entryX=0.75;entryY=0;entryDx=0;entryDy=0;jumpStyle=gap;" target="8fFa9fZodg1UNE94WgWk-145">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="3260" y="414.5" />
+              <mxPoint x="3260" y="209.5" />
+              <mxPoint x="2040" y="209.5" />
+              <mxPoint x="2040" y="520" />
+              <mxPoint x="1928" y="520" />
+            </Array>
+            <mxPoint x="3440" y="414.5" as="sourcePoint" />
+            <mxPoint x="2000" y="409.5" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-307" edge="1" parent="1" style="edgeStyle=none;shape=connector;curved=0;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.75;exitY=0;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=default;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=default;labelBackgroundColor=default;startArrow=none;endArrow=block;" target="8fFa9fZodg1UNE94WgWk-162">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="3277" y="521" />
+              <mxPoint x="3350" y="521" />
+              <mxPoint x="3350" y="175" />
+            </Array>
+            <mxPoint x="3277" y="585" as="sourcePoint" />
+            <mxPoint x="3440" y="265" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-308" edge="1" parent="1" style="edgeStyle=none;shape=connector;curved=0;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.75;exitY=0;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=default;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=default;labelBackgroundColor=default;startArrow=none;endArrow=block;" target="8fFa9fZodg1UNE94WgWk-161">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="3277" y="521" />
+              <mxPoint x="3350" y="521" />
+              <mxPoint x="3350" y="85" />
+            </Array>
+            <mxPoint x="3277" y="585" as="sourcePoint" />
+            <mxPoint x="3440" y="175" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-309" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fontStyle=1;strokeWidth=2;fillColor=#f8cecc;strokeColor=#b85450;" value="Current AI Model" vertex="1">
+          <mxGeometry height="60" width="300" x="420" y="262.5" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-313" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fontStyle=1;strokeWidth=2;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="Outputs" vertex="1">
+          <mxGeometry height="60" width="300" x="420.5" y="527.5" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-314" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Path: Github/HPATR/AI/" vertex="1">
+          <mxGeometry height="26.5" width="240" x="3858" y="470" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-315" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Inputs: Model .pth, vali. dir, score thresh." vertex="1">
+          <mxGeometry height="22.5" width="240" x="3858" y="496.5" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-316" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Outputs: Per-Image Excel, Visualisations + .json line per image (timestamped), Validation_100 subfolder." vertex="1">
+          <mxGeometry height="51" width="240" x="3858" y="519" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-317" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Notes: Evaluates model against validation_100 normally. Only 1 model. " vertex="1">
+          <mxGeometry height="40.5" width="240" x="3858" y="569.5" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-318" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Path: Github/HPATR/" vertex="1">
+          <mxGeometry height="26.5" width="240" x="4218" y="470" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-319" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Inputs: Model .pth, vali. dir, score thresh." vertex="1">
+          <mxGeometry height="22.5" width="240" x="4218" y="496.5" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-320" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Outputs: Per-Image Excel, Visualisations + .json line per image (timestamped), Validation_100 subfolder." vertex="1">
+          <mxGeometry height="51" width="240" x="4218" y="519" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-321" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Notes: Evaluates against validation_100, but with multiple models. " vertex="1">
+          <mxGeometry height="40.5" width="240" x="4218" y="569.5" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-324" edge="1" parent="1" style="edgeStyle=none;shape=connector;curved=0;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.75;exitY=1;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;strokeColor=default;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=default;labelBackgroundColor=default;startArrow=none;endArrow=block;jumpStyle=gap;" target="8fFa9fZodg1UNE94WgWk-153">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="3278" y="690" />
+              <mxPoint x="3810" y="690" />
+              <mxPoint x="3810" y="379" />
+              <mxPoint x="4278" y="379" />
+            </Array>
+            <mxPoint x="3277" y="639" as="sourcePoint" />
+            <mxPoint x="3918" y="436" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-327" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Notes: Just helper scripts to allow for visualisation and understanding of models. Allows for further metrics to be extracted that arent typically plotted normally from evaluate_model script." vertex="1">
+          <mxGeometry height="77.5" width="268.5" x="4540.75" y="550.5" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-335" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=1" value="Webcam" vertex="1">
+          <mxGeometry height="54" width="280" x="2320" y="1300" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-336" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Notes: Full Dennis inference pipeline. Picks brightest frame, deletes &#39;frames&#39; folder, loads Dennis, runs inference, computes." vertex="1">
+          <mxGeometry height="59" width="263" x="3204" y="980" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-337" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;fontStyle=1;align=left;" value="Full MAIN folder structure (Per Experiment Run):&#xa;&#xa;experiment_logs/Experiments/&#xa;└── {YYYY}/&#xa;    └── {MM}/&#xa;        └── {DD}/&#xa;            └── {run_id}/                   ← created on &quot;Start Experiment&quot;&#xa;                ├── shadowgraph/&#xa;                │   ├── raw/                ← .cine file saved here&#xa;                │   └── analysis/           ← AI/CV outputs&#xa;                │       ├── flashed_output.tiff&#xa;                │       ├── ai_result.png&#xa;                │       ├── ai_results.json&#xa;                │       └── ai_summary.xlsx&#xa;                ├── cone/                   ← webcam cone angle images&#xa;                └── run_summary.xlsx        ← pressure/motor data log" vertex="1">
+          <mxGeometry height="280" width="300" x="3645" y="1200" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-338" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Notes: Full GUI for all HPATR requirements. Controls motor, pressure, camera work, and AI pipelines. Ticking &#39;Run AI Analysis after capture&#39; will trigger process_run.py in a background thread. Requires LaCie drive to work, as AI models are stored there. " vertex="1">
+          <mxGeometry height="120" width="270" x="2760" y="850" as="geometry" />
+        </mxCell>
+        <mxCell id="8fFa9fZodg1UNE94WgWk-339" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);fontSize=12;fontStyle=0" value="Converts MP4 video (saved by phantom camera) to a sequence of .TIFF frames for AI analysis. Probably worth looking into a better, faster way of doing this in the future. " vertex="1">
+          <mxGeometry height="120" width="270" x="2760" y="1054" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
