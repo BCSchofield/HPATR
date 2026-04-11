@@ -50,7 +50,7 @@ from PySide6.QtWidgets import (
     QFrame, QTabWidget, QSizePolicy, QProgressBar, QScrollArea,
     QSpacerItem, QGridLayout, QMessageBox, QFileDialog, QSpinBox
 )
-from PySide6.QtCore import Qt, QTimer, Signal, Slot, QObject, QThread, QSize
+from PySide6.QtCore import Qt, QTimer, Signal, Slot, QObject, QThread, QSize, QEvent
 from PySide6.QtGui import QFont, QPixmap, QImage, QColor, QPalette, QIcon, QPainter, QPen, QIntValidator
 
 # ── Path setup ──────────────────────────────────────────────────────────────
@@ -229,6 +229,14 @@ QCheckBox::indicator {{
 QCheckBox::indicator:checked {{
     background: {CLR_ACCENT};
     border-color: {CLR_ACCENT};
+}}
+QToolTip {{
+    background-color: #2c2c2e;
+    color: {CLR_TEXT};
+    border: 1px solid {CLR_BORDER};
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 12px;
 }}
 """
 
@@ -842,6 +850,11 @@ class AtomisationApp(QMainWindow):
         tr.addStretch()
         self._refresh_btn = ghost_button("↻ Refresh")
         self._refresh_btn.setFixedHeight(28)
+        self._refresh_btn.setToolTip(
+            "<b>Refresh latest result</b><br>"
+            "1. Scans the LaCie drive for ai_result.png<br>"
+            "2. Looks in the current run's shadowgraph/analysis/ folder<br>"
+            "3. Displays the most recent result in the preview above")
         self._refresh_btn.clicked.connect(self._refresh_shadowgraph)
         tr.addWidget(self._refresh_btn)
         preview_card.layout().addWidget(top_row)
@@ -943,6 +956,11 @@ class AtomisationApp(QMainWindow):
 
         self._pressure_off_btn_left = accent_button("Pressure Off", CLR_RED)
         self._pressure_off_btn_left.setFixedHeight(40)
+        self._pressure_off_btn_left.setToolTip(
+            "<b>Emergency pressure off</b><br>"
+            "1. Sends an immediate stop command to the Arduino<br>"
+            "2. Closes the pressure valve<br>"
+            "3. Zeroes the AliCat setpoint")
         self._pressure_off_btn_left.clicked.connect(self._pressure_off)
         pressure_off_card.layout().addWidget(self._pressure_off_btn_left)
 
@@ -1008,6 +1026,12 @@ class AtomisationApp(QMainWindow):
         self._save_path_lbl.setWordWrap(True)
         save_btn = accent_button("Save to Excel", CLR_ACCENT)
         save_btn.setFixedHeight(36)
+        save_btn.setToolTip(
+            "<b>Save to Excel</b><br>"
+            "1. Reads the current run fields (pressure, date, notes, etc.)<br>"
+            "2. Appends a new row to the experiment log spreadsheet<br>"
+            "3. Saves the ai_result image path and metrics alongside it<br>"
+            "4. Writes the file to the LaCie drive")
         save_btn.clicked.connect(self._save_to_excel)
         sr.addWidget(self._save_path_lbl, stretch=1)
         sr.addWidget(save_btn)
@@ -1108,6 +1132,10 @@ class AtomisationApp(QMainWindow):
         self._port_combo.setMinimumWidth(120)
         refresh_port_btn = ghost_button("Refresh")
         refresh_port_btn.setFixedHeight(34)
+        refresh_port_btn.setToolTip(
+            "<b>Refresh serial ports</b><br>"
+            "1. Re-scans all COM/USB serial ports on this computer<br>"
+            "2. Updates the dropdown list with the new results")
         refresh_port_btn.clicked.connect(self._refresh_ports)
         pr.addWidget(lbl); pr.addWidget(self._port_combo); pr.addWidget(refresh_port_btn)
         c.layout().addWidget(port_row)
@@ -1119,6 +1147,15 @@ class AtomisationApp(QMainWindow):
         self._disconnect_btn.setEnabled(False)
         self._connect_btn.setFixedHeight(36)
         self._disconnect_btn.setFixedHeight(36)
+        self._connect_btn.setToolTip(
+            "<b>Connect to Arduino</b><br>"
+            "1. Opens a serial connection on the selected port<br>"
+            "2. Handshakes with the Portenta H7<br>"
+            "3. Enables pressure and motor controls")
+        self._disconnect_btn.setToolTip(
+            "<b>Disconnect Arduino</b><br>"
+            "1. Sends a disconnect command to the Portenta<br>"
+            "2. Closes the serial port and releases it")
         self._connect_btn.clicked.connect(self._trigger_arduino_connect)
         self._disconnect_btn.clicked.connect(self._trigger_arduino_disconnect)
         self._arduino_status_lbl = QLabel("Not connected")
@@ -1142,9 +1179,19 @@ class AtomisationApp(QMainWindow):
         self._pressure_entry.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         set_p_btn = accent_button("Set Pressure", CLR_ACCENT)
         set_p_btn.setFixedHeight(36)
+        set_p_btn.setToolTip(
+            "<b>Set pressure</b><br>"
+            "1. Validates the entered value (0.0 – 26.4 BAR)<br>"
+            "2. Sends the setpoint to the Arduino over serial<br>"
+            "3. Arduino forwards it to the AliCat controller")
         set_p_btn.clicked.connect(self._set_pressure)
         off_p_btn = accent_button("Pressure Off", CLR_RED)
         off_p_btn.setFixedHeight(36)
+        off_p_btn.setToolTip(
+            "<b>Pressure off</b><br>"
+            "1. Immediately closes the pressure valve<br>"
+            "2. Zeroes the AliCat setpoint<br>"
+            "Same as the Emergency button in the left panel")
         off_p_btn.clicked.connect(self._pressure_off)
         pir.addWidget(p_lbl); pir.addWidget(self._pressure_entry)
         pir.addWidget(set_p_btn); pir.addStretch(); pir.addWidget(off_p_btn)
@@ -1178,6 +1225,21 @@ class AtomisationApp(QMainWindow):
         self._homed_dot = dot_indicator(CLR_RED)
         homed_lbl = QLabel("Homed"); homed_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
         self._home_btn.setFixedHeight(36); self._clean_btn.setFixedHeight(36); self._move_btn.setFixedHeight(36)
+        self._home_btn.setToolTip(
+            "<b>Home motor</b><br>"
+            "1. Drives the motor to the reference (zero) position<br>"
+            "2. Sets the internal position counter to zero<br>"
+            "Run this once before any other motor commands")
+        self._clean_btn.setToolTip(
+            "<b>Cleaning cycle</b><br>"
+            "1. Moves the motor forward through the cleaning stroke<br>"
+            "2. Returns to the starting position<br>"
+            "Flushes the nozzle to clear any blockages")
+        self._move_btn.setToolTip(
+            "<b>Move motor</b><br>"
+            "1. Reads the Speed (steps/s) and Distance (mm) fields<br>"
+            "2. Sends a relative move command to the Portenta<br>"
+            "3. Motor moves by that distance at that speed")
         self._home_btn.clicked.connect(self._home_motor)
         self._clean_btn.clicked.connect(self._start_cleaning)
         self._move_btn.clicked.connect(self._move_motor)
@@ -1214,6 +1276,16 @@ class AtomisationApp(QMainWindow):
         self._cam_connect_btn = accent_button("Connect", CLR_ACCENT)
         self._cam_ping_btn    = ghost_button("Ping")
         self._cam_connect_btn.setFixedHeight(36); self._cam_ping_btn.setFixedHeight(36)
+        self._cam_connect_btn.setToolTip(
+            "<b>Connect to Phantom camera</b><br>"
+            "1. Connects to the camera at the entered IP address<br>"
+            "2. Initialises the Phantom SDK<br>"
+            "3. Enables capture and config controls")
+        self._cam_ping_btn.setToolTip(
+            "<b>Ping camera</b><br>"
+            "1. Sends a network ping to the camera IP<br>"
+            "2. Reports whether the camera is reachable on the network<br>"
+            "Use this to check connectivity before connecting")
         self._cam_connect_btn.clicked.connect(self._cam_connect)
         self._cam_ping_btn.clicked.connect(self._cam_ping)
         ipr.addWidget(ip_lbl); ipr.addWidget(self._cam_ip)
@@ -1265,7 +1337,13 @@ class AtomisationApp(QMainWindow):
         c2.layout().addWidget(grid_w)
 
         apply_btn = accent_button("Apply Config", CLR_ACCENT)
-        apply_btn.setFixedHeight(36); apply_btn.clicked.connect(self._cam_configure)
+        apply_btn.setFixedHeight(36)
+        apply_btn.setToolTip(
+            "<b>Apply camera config</b><br>"
+            "1. Reads FPS, resolution, exposure and duration fields<br>"
+            "2. Validates against camera maximums<br>"
+            "3. Pushes the settings to the Phantom camera")
+        apply_btn.clicked.connect(self._cam_configure)
         c2.layout().addWidget(apply_btn, alignment=Qt.AlignmentFlag.AlignRight)
         vl.addWidget(c2)
 
@@ -1287,6 +1365,16 @@ class AtomisationApp(QMainWindow):
         self._cam_abort_btn   = ghost_button("Abort")
         self._cam_capture_btn = accent_button("● Capture", CLR_RED)
         self._cam_abort_btn.setFixedHeight(40); self._cam_capture_btn.setFixedHeight(40)
+        self._cam_abort_btn.setToolTip(
+            "<b>Abort capture</b><br>"
+            "1. Sends an abort command to the Phantom camera<br>"
+            "2. Cancels the recording currently in progress")
+        self._cam_capture_btn.setToolTip(
+            "<b>Capture</b><br>"
+            "1. Triggers a recording on the Phantom camera<br>"
+            "2. Saves footage to the output path<br>"
+            "3. If 'Run AI analysis' is ticked, runs Dennis automatically<br>"
+            "4. Results appear in the AI panel on the left")
         self._cam_abort_btn.clicked.connect(self._cam_abort)
         self._cam_capture_btn.clicked.connect(self._cam_capture)
         cpr.addStretch(); cpr.addWidget(self._cam_abort_btn); cpr.addWidget(self._cam_capture_btn)
@@ -1312,6 +1400,12 @@ class AtomisationApp(QMainWindow):
         c_test.layout().addWidget(_test_desc)
         self._test_pipeline_btn = accent_button("Test Pipeline", CLR_ACCENT)
         self._test_pipeline_btn.setFixedHeight(36)
+        self._test_pipeline_btn.setToolTip(
+            "<b>Test pipeline</b><br>"
+            "1. Loads existing frames from {LaCie}/Phantom/frames/<br>"
+            "2. Runs Dennis (Mask R-CNN) to detect droplets and ligaments<br>"
+            "3. Saves results to {LaCie}/Experiments/Trials/<br>"
+            "Uses current calibration px/mm (falls back to 52.3)")
         self._test_pipeline_btn.clicked.connect(self._run_test_pipeline)
         c_test.layout().addWidget(self._test_pipeline_btn, alignment=Qt.AlignmentFlag.AlignRight)
         vl.addWidget(c_test)
@@ -1341,6 +1435,11 @@ class AtomisationApp(QMainWindow):
         self._afg_channel.setFixedWidth(80)
         self._afg_connect_btn = accent_button("Connect", CLR_ACCENT)
         self._afg_connect_btn.setFixedHeight(36)
+        self._afg_connect_btn.setToolTip(
+            "<b>Connect to AFG1062</b><br>"
+            "1. Scans all available VISA resources (USB/GPIB)<br>"
+            "2. Identifies the Tektronix AFG1062<br>"
+            "3. Opens a PyVISA connection to it")
         self._afg_connect_btn.clicked.connect(self._afg_connect)
         chr_.addWidget(ch_lbl); chr_.addWidget(self._afg_channel)
         chr_.addStretch(); chr_.addWidget(self._afg_connect_btn)
@@ -1357,6 +1456,19 @@ class AtomisationApp(QMainWindow):
         self._afg_disc_btn  = ghost_button("Disconnect")
         for btn in [self._afg_apply_btn, self._afg_test_btn, self._afg_disc_btn]:
             btn.setFixedHeight(36)
+        self._afg_apply_btn.setToolTip(
+            "<b>Apply AFG config</b><br>"
+            "1. Reads the pulse duration and waveform settings<br>"
+            "2. Pushes them to the selected channel on the AFG1062")
+        self._afg_test_btn.setToolTip(
+            "<b>Test fire</b><br>"
+            "1. Sends a single pulse to the selected AFG channel<br>"
+            "2. Triggers the atomiser once<br>"
+            "Use this to verify the signal before a full experiment")
+        self._afg_disc_btn.setToolTip(
+            "<b>Disconnect AFG</b><br>"
+            "1. Closes the PyVISA session<br>"
+            "2. Releases the USB resource")
         self._afg_apply_btn.clicked.connect(self._afg_configure)
         self._afg_test_btn.clicked.connect(self._afg_test)
         self._afg_disc_btn.clicked.connect(self._afg_disconnect)
@@ -1419,20 +1531,41 @@ class AtomisationApp(QMainWindow):
         fbr = QHBoxLayout(feed_btn_row); fbr.setContentsMargins(0,0,0,0); fbr.setSpacing(8)
         self._cal_load_btn = ghost_button("Load from File")
         self._cal_load_btn.setFixedHeight(36)
+        self._cal_load_btn.setToolTip(
+            "<b>Load calibration image from file</b><br>"
+            "1. Opens a file browser dialog<br>"
+            "2. Loads the selected image (e.g. a photo of a ruler)<br>"
+            "3. Displays it in the calibration panel for point selection")
         self._cal_load_btn.clicked.connect(self._cal_load_photo)
         self._cal_take_btn = accent_button("Use as Calibration Image", CLR_ACCENT)
         self._cal_take_btn.setFixedHeight(36)
+        self._cal_take_btn.setToolTip(
+            "<b>Use live frame as calibration image</b><br>"
+            "1. Freezes the current Phantom live feed frame<br>"
+            "2. Loads it into the calibration panel below<br>"
+            "3. Ready for click-point selection")
         self._cal_take_btn.clicked.connect(self._cal_take_photo)
         self._cal_feed_start_btn = accent_button("▶ Start Feed", CLR_GREEN)
         self._cal_feed_start_btn.setFixedHeight(36)
+        self._cal_feed_start_btn.setToolTip(
+            "<b>Start live feed</b><br>"
+            "1. Connects to the Phantom camera<br>"
+            "2. Starts a live preview in the panel above<br>"
+            "Use this to frame and focus before calibrating")
         self._cal_feed_start_btn.clicked.connect(self._cal_start_feed)
         self._cal_feed_stop_btn = ghost_button("■ Stop Feed")
         self._cal_feed_stop_btn.setFixedHeight(36)
         self._cal_feed_stop_btn.setEnabled(False)
+        self._cal_feed_stop_btn.setToolTip(
+            "<b>Stop live feed</b><br>"
+            "1. Stops the Phantom live preview<br>"
+            "2. Releases the camera feed")
         self._cal_feed_stop_btn.clicked.connect(self._cal_stop_feed)
         if not self.camera_available:
             self._cal_take_btn.setEnabled(False)
-            self._cal_take_btn.setToolTip("Connect Phantom camera on Windows to capture live frame")
+            self._cal_take_btn.setToolTip(
+                "<b>Use live frame as calibration image</b><br>"
+                "Not available on macOS — requires the Phantom SDK on Windows")
             self._cal_feed_start_btn.setEnabled(False)
         fbr.addWidget(self._cal_feed_start_btn)
         fbr.addWidget(self._cal_feed_stop_btn)
@@ -1479,10 +1612,21 @@ class AtomisationApp(QMainWindow):
         cbr = QHBoxLayout(calc_btn_row); cbr.setContentsMargins(0,0,0,0); cbr.setSpacing(8)
         self._cal_reset_btn = ghost_button("Reset Points")
         self._cal_reset_btn.setFixedHeight(36)
+        self._cal_reset_btn.setToolTip(
+            "<b>Reset calibration points</b><br>"
+            "1. Clears both click-points from the image<br>"
+            "2. Resets the point status labels<br>"
+            "3. Ready for a fresh selection")
         self._cal_reset_btn.clicked.connect(self._cal_reset_points)
         self._cal_calc_btn = accent_button("Calculate px/mm", CLR_ACCENT)
         self._cal_calc_btn.setFixedHeight(36)
         self._cal_calc_btn.setEnabled(False)
+        self._cal_calc_btn.setToolTip(
+            "<b>Calculate px/mm</b><br>"
+            "1. Measures the pixel distance between the two selected points<br>"
+            "2. Divides by the real-world distance entered above<br>"
+            "3. Stores the px/mm result for use in analysis<br>"
+            "Enabled once both points are placed")
         self._cal_calc_btn.clicked.connect(self._cal_calculate)
         cbr.addWidget(self._cal_reset_btn)
         cbr.addStretch()
@@ -1536,9 +1680,18 @@ class AtomisationApp(QMainWindow):
         self._cone_start_cam_btn = accent_button("Start Camera")
         self._cone_start_cam_btn.clicked.connect(self._cone_start_camera)
         self._cone_start_cam_btn.setEnabled(CV2_AVAILABLE)
+        self._cone_start_cam_btn.setToolTip(
+            "<b>Start cone camera</b><br>"
+            "1. Opens the webcam at the selected camera index<br>"
+            "2. Starts the live cone-angle detection feed<br>"
+            "3. Overlays the detected spray cone boundary in real time")
         self._cone_stop_cam_btn  = ghost_button("Stop Camera")
         self._cone_stop_cam_btn.clicked.connect(self._cone_stop_camera)
         self._cone_stop_cam_btn.setEnabled(False)
+        self._cone_stop_cam_btn.setToolTip(
+            "<b>Stop cone camera</b><br>"
+            "1. Stops the live webcam feed<br>"
+            "2. Releases the camera so other apps can use it")
         cam_hl.addWidget(self._cone_start_cam_btn)
         cam_hl.addWidget(self._cone_stop_cam_btn)
         cam_hl.addStretch()
@@ -1560,8 +1713,9 @@ class AtomisationApp(QMainWindow):
         self._cone_top_crop_spin.setFixedWidth(80)
         self._cone_top_crop_spin.setStyleSheet(spin_style)
         self._cone_top_crop_spin.setToolTip(
-            "Fraction of image height cropped from the top before analysis.\n"
-            "The red band on the live feed shows the excluded region.")
+            "<b>Top crop ratio</b><br>"
+            "Fraction of image height cropped from the top before analysis<br>"
+            "The red band on the live feed shows the excluded region")
         self._cone_top_crop_spin.valueChanged.connect(self._save_camera_settings)
         crop_note = QLabel("Drag the spinner or type a value. The red band on the live feed shows the excluded region.")
         crop_note.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
@@ -1604,8 +1758,11 @@ class AtomisationApp(QMainWindow):
         self._cone_capture_btn = accent_button("Manual Capture")
         self._cone_capture_btn.setEnabled(False)
         self._cone_capture_btn.setToolTip(
-            "Capture and analyse a cone image now.\n"
-            "This will become the image saved to Excel (most recent capture always wins).")
+            "<b>Manual cone capture</b><br>"
+            "1. Captures the current webcam frame<br>"
+            "2. Runs cone-angle detection on it<br>"
+            "3. Saves it as the result image for this run<br>"
+            "Most recent capture always overwrites the previous one")
         self._cone_capture_btn.clicked.connect(self._cone_capture)
         c2.layout().addWidget(self._cone_capture_btn)
 
@@ -1782,6 +1939,14 @@ class AtomisationApp(QMainWindow):
 
         self._start_btn = accent_button("▶  START EXPERIMENT", CLR_GREEN)
         self._start_btn.setFixedSize(200, 40)
+        self._start_btn.setToolTip(
+            "<b>Start experiment</b><br>"
+            "1. Sets pressure to the target BAR<br>"
+            "2. Waits for pressure to stabilise<br>"
+            "3. Triggers the AFG pulse (atomiser)<br>"
+            "4. Captures video with the Phantom camera<br>"
+            "5. Runs Dennis AI analysis (if checkbox ticked)<br>"
+            "6. Saves all results and metrics to Excel")
         self._start_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: {CLR_GREEN};
@@ -3146,6 +3311,23 @@ class AtomisationApp(QMainWindow):
         super().closeEvent(event)
 
 
+class _OpaqueTooltipFilter(QObject):
+    """Force tooltip windows to be fully opaque on macOS.
+
+    macOS compositing makes tooltip windows translucent by default.
+    This event filter catches every tooltip as it appears and removes
+    the translucent-background attribute so the QToolTip stylesheet
+    background is rendered solid.
+    """
+    def eventFilter(self, obj, event):
+        if event.type() in (QEvent.Type.Show, QEvent.Type.Polish):
+            if isinstance(obj, QWidget) and (
+                    obj.windowFlags() & Qt.WindowType.ToolTip):
+                obj.setAttribute(
+                    Qt.WidgetAttribute.WA_TranslucentBackground, False)
+        return False
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main():
@@ -3175,6 +3357,14 @@ def main():
     # Qt stylesheets (native macOS style ignores custom borders/backgrounds)
     app.setStyle("Fusion")
     app.setStyleSheet(BASE_STYLE)
+
+    # Solid, opaque tooltips — palette tells Fusion the base colours,
+    # event filter removes macOS translucent-background on tooltip windows
+    _pal = app.palette()
+    _pal.setColor(QPalette.ColorRole.ToolTipBase, QColor(44, 44, 46))
+    _pal.setColor(QPalette.ColorRole.ToolTipText, QColor(242, 242, 247))
+    app.setPalette(_pal)
+    app.installEventFilter(_OpaqueTooltipFilter(app))
 
     # Use system font
     font = QFont(FONT_FAMILY)
