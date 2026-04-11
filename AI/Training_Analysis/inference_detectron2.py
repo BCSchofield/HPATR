@@ -62,6 +62,7 @@ def setup_predictor(model_path: str, score_threshold: float = 0.5, nms_threshold
     # Set model weights
     cfg.MODEL.WEIGHTS = model_path
     cfg.MODEL.ROI_HEADS.NUM_CLASSES = 2  # droplet and ligament
+    cfg.MODEL.ANCHOR_GENERATOR.SIZES = [[8, 16, 32, 64]]  # Match Dennis training anchors
     cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = score_threshold
     
     # Non-Maximum Suppression (NMS) settings to reduce duplicate detections

@@ -438,6 +438,9 @@ def evaluate_model(
             ])
             print("  Created minimal config")
     
+    # Match Dennis training anchor sizes (small anchors for droplet detection)
+    cfg.MODEL.ANCHOR_GENERATOR.SIZES = [[8, 16, 32, 64]]
+
     # Set model weights and score threshold
     cfg.MODEL.WEIGHTS = weights_path
     cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = score_threshold
