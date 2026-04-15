@@ -338,23 +338,48 @@ def separator():
 # ── Calibration image widget ──────────────────────────────────────────────────
 
 class ClickableImageWidget(QLabel):
-    """QLabel subclass that records up to 2 click positions (in original image
-    pixel coordinates) and overlays crosshair markers.
+    """Calibration image widget with pan/zoom and sub-pixel-accurate point picking.
 
-    pointsChanged is emitted with the current list of (x, y) tuples every time
-    a point is added or the list is reset.
+    Coordinate model
+    ----------------
+    The widget always fills its full width.  At zoom=1 the image is scaled to
+    fit the widget width; at higher zoom levels the displayed region is a crop
+    of the original.
+
+    _zoom       : float, current zoom factor (1.0 = fit-to-width)
+    _pan_x/y    : float, offset in *original image pixels* of the top-left
+                  corner of the current view
+
+    Screen → image:   img = pan + screen / (fit_scale * zoom)
+    Image → screen:   screen = (img - pan) * fit_scale * zoom
+
+    pointsChanged is emitted with the current list of (x, y) tuples (original
+    image coordinates) every time a point is added or the list is reset.
     """
     pointsChanged = Signal(list)
 
+    _MAX_ZOOM = 16.0
+    _MIN_ZOOM = 1.0   # enforced dynamically so image never shrinks below fit
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._pixmap_orig = None   # full-resolution original
-        self._points = []          # list of (x, y) in original image coords
+        self._pixmap_orig = None
+        self._points      = []
+        self._zoom        = 1.0
+        self._pan_x       = 0.0   # top-left of view in original image px
+        self._pan_y       = 0.0
+        self._drag_start  = None  # (screen_x, screen_y, pan_x, pan_y) on right-drag start
+        self.setMouseTracking(True)
         self.setCursor(Qt.CursorShape.CrossCursor)
+
+    # ── Public API ────────────────────────────────────────────────────────────
 
     def setCalibrationImage(self, pixmap: QPixmap):
         self._pixmap_orig = pixmap
         self._points = []
+        self._zoom   = 1.0
+        self._pan_x  = 0.0
+        self._pan_y  = 0.0
         self._redraw()
 
     def resetPoints(self):
@@ -365,57 +390,241 @@ class ClickableImageWidget(QLabel):
     def getPoints(self) -> list:
         return list(self._points)
 
-    def mousePressEvent(self, event):
-        if self._pixmap_orig is None or len(self._points) >= 2:
+    # ── Coordinate helpers ────────────────────────────────────────────────────
+
+    def _fit_scale(self):
+        """Scale factor when zoom=1 (image fits widget width)."""
+        if self._pixmap_orig is None or self.width() <= 0:
+            return 1.0
+        return self.width() / self._pixmap_orig.width()
+
+    def _effective_scale(self):
+        return self._fit_scale() * self._zoom
+
+    def _screen_to_img(self, sx, sy):
+        s = self._effective_scale()
+        return self._pan_x + sx / s, self._pan_y + sy / s
+
+    def _img_to_screen(self, ix, iy):
+        s = self._effective_scale()
+        return (ix - self._pan_x) * s, (iy - self._pan_y) * s
+
+    def _clamp_pan(self):
+        """Keep pan within image bounds so you can't scroll off the edge."""
+        if self._pixmap_orig is None:
             return
-        lw, lh = self.width(), self.height()
-        ow, oh = self._pixmap_orig.width(), self._pixmap_orig.height()
-        scale  = min(lw / ow, lh / oh)
-        disp_w, disp_h = ow * scale, oh * scale
-        ox = (lw - disp_w) / 2
-        oy = (lh - disp_h) / 2
-        cx, cy = event.position().x(), event.position().y()
-        if ox <= cx <= ox + disp_w and oy <= cy <= oy + disp_h:
-            img_x = int((cx - ox) / scale)
-            img_y = int((cy - oy) / scale)
-            # Second point is clamped to same x as first (vertical-only measurement)
-            if len(self._points) == 1:
-                img_x = self._points[0][0]
-            self._points.append((img_x, img_y))
+        ow = self._pixmap_orig.width()
+        oh = self._pixmap_orig.height()
+        s  = self._effective_scale()
+        view_w = self.width()  / s
+        view_h = self.height() / s
+        self._pan_x = max(0.0, min(self._pan_x, ow - view_w))
+        self._pan_y = max(0.0, min(self._pan_y, oh - view_h))
+
+    # ── Events ────────────────────────────────────────────────────────────────
+
+    def wheelEvent(self, event):
+        if self._pixmap_orig is None:
+            return
+        delta   = event.angleDelta().y()
+        factor  = 1.15 if delta > 0 else 1.0 / 1.15
+        new_zoom = max(self._MIN_ZOOM, min(self._MAX_ZOOM, self._zoom * factor))
+        if new_zoom == self._zoom:
+            return
+        # Zoom centred on cursor: keep the image pixel under the cursor fixed
+        cx, cy  = event.position().x(), event.position().y()
+        img_cx, img_cy = self._screen_to_img(cx, cy)
+        self._zoom  = new_zoom
+        s_new       = self._effective_scale()
+        self._pan_x = img_cx - cx / s_new
+        self._pan_y = img_cy - cy / s_new
+        self._clamp_pan()
+        self._update_height()
+        self._redraw()
+        event.accept()
+
+    def mousePressEvent(self, event):
+        if self._pixmap_orig is None:
+            return
+        if event.button() == Qt.MouseButton.RightButton or \
+           event.button() == Qt.MouseButton.MiddleButton:
+            # Start pan drag
+            self._drag_start = (event.position().x(), event.position().y(),
+                                self._pan_x, self._pan_y)
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            return
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        if len(self._points) >= 2:
+            return
+        img_x, img_y = self._screen_to_img(event.position().x(), event.position().y())
+        img_x = int(max(0, min(img_x, self._pixmap_orig.width()  - 1)))
+        img_y = int(max(0, min(img_y, self._pixmap_orig.height() - 1)))
+        # Second point locked to same x-column as first (vertical measurement)
+        if len(self._points) == 1:
+            img_x = self._points[0][0]
+        self._points.append((img_x, img_y))
+        self._redraw()
+        self.pointsChanged.emit(self._points)
+
+    def mouseMoveEvent(self, event):
+        if self._drag_start is not None:
+            sx0, sy0, px0, py0 = self._drag_start
+            dx = event.position().x() - sx0
+            dy = event.position().y() - sy0
+            s  = self._effective_scale()
+            self._pan_x = px0 - dx / s
+            self._pan_y = py0 - dy / s
+            self._clamp_pan()
             self._redraw()
-            self.pointsChanged.emit(self._points)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() in (Qt.MouseButton.RightButton, Qt.MouseButton.MiddleButton):
+            self._drag_start = None
+            self.setCursor(Qt.CursorShape.CrossCursor)
+
+    def mouseDoubleClickEvent(self, event):
+        """Double-click resets zoom and pan to fit-to-width."""
+        if self._pixmap_orig is None:
+            return
+        self._zoom  = 1.0
+        self._pan_x = 0.0
+        self._pan_y = 0.0
+        self._update_height()
+        self._redraw()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._redraw()
+        if self._pixmap_orig is not None:
+            self._clamp_pan()
+            self._update_height()
+            self._redraw()
+
+    # ── Drawing ───────────────────────────────────────────────────────────────
+
+    def _update_height(self):
+        """Resize widget height to match the visible portion's aspect ratio."""
+        if self._pixmap_orig is None or self.width() <= 0:
+            return
+        s  = self._effective_scale()
+        oh = self._pixmap_orig.height()
+        visible_h = oh - self._pan_y          # image rows visible below pan
+        screen_h  = min(visible_h * s,        # pixels those rows take on screen
+                        oh * self._fit_scale()) # cap at fit-to-width height
+        self.setFixedHeight(max(1, int(screen_h)))
 
     def _redraw(self):
         if self._pixmap_orig is None:
             return
         w = self.width()
-        if w <= 0:
+        h = self.height()
+        if w <= 0 or h <= 0:
             return
-        # Scale first, then draw markers in screen pixels so size is always fixed
-        scaled = self._pixmap_orig.scaled(w, 10000, Qt.AspectRatioMode.KeepAspectRatio,
-                                          Qt.TransformationMode.SmoothTransformation)
-        self.setFixedHeight(scaled.height())
-        if self._points:
-            ow, oh = self._pixmap_orig.width(), self._pixmap_orig.height()
-            sw, sh = scaled.width(), scaled.height()
-            scale_x = sw / ow
-            scale_y = sh / oh
-            painter = QPainter(scaled)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            arm = 10   # fixed screen pixels — same size regardless of image resolution
-            pen = QPen(QColor("#ff453a"), 2)
+
+        s   = self._effective_scale()
+        ow  = self._pixmap_orig.width()
+        oh  = self._pixmap_orig.height()
+
+        # Source rect in original image coordinates
+        src_x = int(self._pan_x)
+        src_y = int(self._pan_y)
+        src_w = int(min(w / s, ow - src_x))
+        src_h = int(min(h / s, oh - src_y))
+        src_w = max(1, src_w)
+        src_h = max(1, src_h)
+
+        # Crop then scale to widget size
+        crop   = self._pixmap_orig.copy(src_x, src_y, src_w, src_h)
+        canvas = crop.scaled(int(src_w * s), int(src_h * s),
+                             Qt.AspectRatioMode.IgnoreAspectRatio,
+                             Qt.TransformationMode.FastTransformation)
+
+        painter = QPainter(canvas)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # ── Draw placed points ────────────────────────────────────────────────
+        for idx, (ix, iy) in enumerate(self._points):
+            # Screen position relative to current view
+            sx = (ix - self._pan_x) * s
+            sy = (iy - self._pan_y) * s
+
+            # Pixel highlight box (visible when zoomed in enough)
+            if s >= 4.0:
+                px_left  = (ix       - self._pan_x) * s
+                px_top   = (iy       - self._pan_y) * s
+                px_right = (ix + 1.0 - self._pan_x) * s
+                px_bot   = (iy + 1.0 - self._pan_y) * s
+                highlight = QColor("#ff453a")
+                highlight.setAlpha(80)
+                painter.fillRect(int(px_left), int(px_top),
+                                 int(px_right - px_left), int(px_bot - px_top),
+                                 highlight)
+                # Solid pixel-border outline
+                painter.setPen(QPen(QColor("#ff453a"), 1))
+                painter.drawRect(int(px_left), int(px_top),
+                                 int(px_right - px_left) - 1,
+                                 int(px_bot   - px_top)  - 1)
+
+            # Crosshair (full-span lines through the chosen pixel centre)
+            pen = QPen(QColor("#ff453a"), 1.5)
+            pen.setStyle(Qt.PenStyle.SolidLine)
             painter.setPen(pen)
-            for (x, y) in self._points:
-                sx, sy = int(x * scale_x), int(y * scale_y)
-                painter.drawLine(sx - arm, sy, sx + arm, sy)
-                painter.drawLine(sx, sy - arm, sx, sy + arm)
-                painter.drawEllipse(sx - 4, sy - 4, 8, 8)
-            painter.end()
-        self.setPixmap(scaled)
+            painter.drawLine(int(sx), 0, int(sx), canvas.height())
+            painter.drawLine(0, int(sy), canvas.width(), int(sy))
+
+            # Small circle at intersection
+            painter.setPen(QPen(QColor("#ff453a"), 1.5))
+            painter.drawEllipse(int(sx) - 5, int(sy) - 5, 10, 10)
+
+            # Label  "P1" / "P2"  with a dark backing rectangle
+            label = f"P{idx + 1}  ({ix}, {iy})"
+            font  = painter.font()
+            font.setPointSize(8)
+            font.setBold(True)
+            painter.setFont(font)
+            fm        = painter.fontMetrics()
+            lw_px     = fm.horizontalAdvance(label) + 6
+            lh_px     = fm.height() + 4
+            lx        = int(sx) + 8
+            ly        = int(sy) - lh_px - 4
+            # Keep label inside canvas
+            if lx + lw_px > canvas.width():
+                lx = int(sx) - lw_px - 8
+            if ly < 0:
+                ly = int(sy) + 8
+            backing = QColor(0, 0, 0, 160)
+            painter.fillRect(lx, ly, lw_px, lh_px, backing)
+            painter.setPen(QColor("#ffffff"))
+            painter.drawText(lx + 3, ly + lh_px - 5, label)
+
+        # ── Zoom badge (top-right corner) ─────────────────────────────────────
+        if self._zoom > 1.01:
+            badge_txt = f"{self._zoom:.1f}×"
+            font = painter.font()
+            font.setPointSize(8)
+            font.setBold(True)
+            painter.setFont(font)
+            fm    = painter.fontMetrics()
+            bw    = fm.horizontalAdvance(badge_txt) + 8
+            bh    = fm.height() + 4
+            bx    = canvas.width() - bw - 6
+            by    = 6
+            painter.fillRect(bx, by, bw, bh, QColor(0, 0, 0, 160))
+            painter.setPen(QColor("#ffffff"))
+            painter.drawText(bx + 4, by + bh - 5, badge_txt)
+
+        # ── Scroll hint when not at 1× ────────────────────────────────────────
+        if self._zoom <= 1.01:
+            hint = "Scroll to zoom  ·  Right-drag to pan  ·  Double-click to reset"
+            font = painter.font()
+            font.setPointSize(7)
+            font.setBold(False)
+            painter.setFont(font)
+            painter.setPen(QColor(180, 180, 180, 140))
+            painter.drawText(6, canvas.height() - 6, hint)
+
+        painter.end()
+        self.setPixmap(canvas)
 
 
 # ── Backend controllers (unchanged from Windows_Experiment_GUI.py) ────────────
@@ -729,6 +938,11 @@ class AtomisationApp(QMainWindow):
         self._last_experiment_snapshot = {'timestamps': [], 'pressures': []}
         self._last_cone_path = None   # path of most recent cone image (raw or annotated)
 
+        # EMA smoothing state (α=0.3: strong noise rejection, <2.5s lag on step changes)
+        self._pressure_smooth_enabled = True
+        self._EMA_ALPHA = 0.3
+        self._pressure_ema = None   # reset when new readings arrive after a gap
+
         # ── Build UI ──────────────────────────────────────────────────────────
         self._build_ui()
         self._load_camera_settings()
@@ -921,7 +1135,24 @@ class AtomisationApp(QMainWindow):
         # ── Pressure graph card ───────────────────────────────────────────────
         graph_card = card()
         graph_card.layout().setSpacing(6)
-        graph_card.layout().addWidget(title_label("Pressure (live)", 13))
+
+        graph_hdr = QWidget()
+        graph_hdr_l = QHBoxLayout(graph_hdr)
+        graph_hdr_l.setContentsMargins(0, 0, 0, 0)
+        graph_hdr_l.setSpacing(8)
+        graph_hdr_l.addWidget(title_label("Pressure (live)", 13))
+        graph_hdr_l.addStretch()
+        self._smooth_cb = QCheckBox("Smooth")
+        self._smooth_cb.setChecked(True)
+        self._smooth_cb.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
+        self._smooth_cb.setToolTip(
+            "<b>EMA smoothing (α=0.3)</b><br>"
+            "Exponential moving average — reduces electrical noise on the ADC line "
+            "without introducing the step-change lag of a simple rolling average.<br>"
+            "Raw values are always stored for export regardless of this setting.")
+        self._smooth_cb.toggled.connect(self._on_smooth_toggled)
+        graph_hdr_l.addWidget(self._smooth_cb)
+        graph_card.layout().addWidget(graph_hdr)
 
         self._graph_widget = pg.PlotWidget()
         self._graph_widget.setFixedHeight(180)
@@ -1684,7 +1915,8 @@ class AtomisationApp(QMainWindow):
         c2.layout().addWidget(section_label("CALIBRATION"))
         c2.layout().addWidget(separator())
 
-        instr = QLabel("Click two points on a known distance, "
+        instr = QLabel("Scroll to zoom, right-drag to pan, double-click to reset view. "
+                       "Click two points on a known distance, "
                        "enter the real-world distance in mm, then press Calculate.")
         instr.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
         instr.setWordWrap(True)
@@ -2200,21 +2432,39 @@ class AtomisationApp(QMainWindow):
 
     def _handle_pressure_reading(self, val):
         now = time.time()
-        lb  = self.pressure_data['live_buffer']
+
+        # ── EMA smoothing ─────────────────────────────────────────────────────
+        # Initialise (or reinitialise after a gap) by seeding with the first value
+        if self._pressure_ema is None:
+            self._pressure_ema = val
+        else:
+            self._pressure_ema = self._EMA_ALPHA * val + (1.0 - self._EMA_ALPHA) * self._pressure_ema
+        display_val = self._pressure_ema if self._pressure_smooth_enabled else val
+
+        # ── Live buffer (graph) — stores display value ────────────────────────
+        lb = self.pressure_data['live_buffer']
         lb['timestamps'].append(now - self.pressure_data['live_buffer_start_time'])
-        lb['pressures'].append(val)
+        lb['pressures'].append(display_val)
         # Keep 60s rolling window
         cutoff = lb['timestamps'][-1] - 60.0
         while lb['timestamps'] and lb['timestamps'][0] < cutoff:
             lb['timestamps'].pop(0); lb['pressures'].pop(0)
+
+        # ── Experiment log — always stores raw values for accurate export ─────
         if self.pressure_data['experiment_active']:
             ed = self.pressure_data['experiment_data']
             ed['timestamps'].append(now - self.pressure_data['experiment_start_time'])
             ed['pressures'].append(val)
+
         # Update labels on main thread via timer (already running in thread)
-        self._cur_pressure_lbl.setText(f"{val:.1f} BAR")
-        self._hdr_pressure_lbl.setText(f"{val:.1f} BAR")
+        self._cur_pressure_lbl.setText(f"{display_val:.3f} BAR")
+        self._hdr_pressure_lbl.setText(f"{display_val:.3f} BAR")
         self._hdr_pressure_dot.setStyleSheet(f"color:{CLR_ACCENT}; font-size:10px; background:transparent;")
+
+    def _on_smooth_toggled(self, checked: bool):
+        self._pressure_smooth_enabled = checked
+        # Reset EMA state so switching modes doesn't leave a stale seed value
+        self._pressure_ema = None
 
     @Slot()
     def _on_homed(self):
@@ -3095,9 +3345,10 @@ class AtomisationApp(QMainWindow):
             self._cone_auto_timer.start(5000)
             self._cone_auto_status_lbl.setText("Cone capture: in 5 s")
             self._cone_auto_status_lbl.setStyleSheet(f"color:{CLR_GREEN}; font-size:12px;")
-        # Reset live buffer so the graph X-axis starts from 0 at experiment start
+        # Reset live buffer and EMA so the graph X-axis starts from 0 at experiment start
         self.pressure_data['live_buffer'] = {'timestamps': [], 'pressures': []}
         self.pressure_data['live_buffer_start_time'] = time.time()
+        self._pressure_ema = None   # seed EMA fresh from the first reading of the run
 
         self._start_btn.setEnabled(False)
         self._exp_progress.setRange(0, 0)   # indeterminate pulsing
