@@ -41,7 +41,14 @@
       "WebSearch",
       "Bash(claude mcp:*)",
       "Bash(npx --version)",
-      "mcp__claude_ai_Notion__notion-create-pages"
+      "mcp__claude_ai_Notion__notion-create-pages",
+      "Bash(grep -v \"^--$\")",
+      "WebFetch(domain:www.phantomhighspeed.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:utopia-inst.com.tw)",
+      "WebFetch(domain:www.lovehighspeed.com)",
+      "WebFetch(domain:pypi.org)",
+      "WebFetch(domain:docplayer.net)"
     ]
   }
 }

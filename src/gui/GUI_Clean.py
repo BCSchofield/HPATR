@@ -494,7 +494,8 @@ class PhantomController:
     def __init__(self):
         self.ph = None; self.cam = None; self.current_cine = None
         self.is_connected = False; self.is_recording = False
-        self.recording_started = False
+        self.recording_started = False; self.is_armed = False
+        self._fps = 1000.0  # updated by configure()
 
     def connect(self, ip_address=None, camera_index=0):
         if not PHANTOM_SDK_AVAILABLE:
@@ -531,6 +532,7 @@ class PhantomController:
         self.cam.post_trigger_frames = int(post_trigger_frames)
         self.cam.frame_rate = float(fps)
         actual_fps = self.cam.frame_rate
+        self._fps = actual_fps
         max_exp = (1.0 / actual_fps) * 1e6
         if exposure_us >= max_exp:
             raise RuntimeError(f"Exposure {exposure_us}μs exceeds max {max_exp:.1f}μs")
@@ -541,10 +543,11 @@ class PhantomController:
                 'exposure': self.cam.exposure}
 
     def start_recording(self):
-        self.cam.record(); self.is_recording = True; self.recording_started = False; return True
+        self.cam.record(); self.is_recording = True; self.is_armed = True
+        self.recording_started = False; return True
 
     def trigger(self):
-        self.cam.trigger(); self.recording_started = True; return True
+        self.cam.trigger(); self.recording_started = True; self.is_armed = False; return True
 
     def save_recording(self, output_path, cine_index=1, file_format='cine', frame_range=None):
         self.current_cine = self.cam.Cine(cine_index)
@@ -553,6 +556,8 @@ class PhantomController:
         if frame_range is None:
             r = self.current_cine.range
             self.current_cine.save_range = utils.FrameRange(r.first_image, r.last_image)
+        else:
+            self.current_cine.save_range = utils.FrameRange(frame_range[0], frame_range[1])
         self.current_cine.save_name = output_path
         self.current_cine.save()
         return True
@@ -560,6 +565,7 @@ class PhantomController:
     def abort(self):
         if self.is_recording:
             self.cam.clear_ram(); self.is_recording = False; self.recording_started = False
+        self.is_armed = False
         return True
 
     def ping(self):
@@ -696,6 +702,8 @@ class AtomisationApp(QMainWindow):
         self.cleaning_in_progress = False
         self._experiment_saved = True   # True until an experiment runs unsaved
         self._run_folder = None          # Set eagerly on Start Experiment, cleared on next start
+        self._cam_pre_frames  = 0        # computed from pre-trigger seconds × fps at Apply Config
+        self._cam_post_frames = 0        # computed from post-trigger seconds × fps at Apply Config
 
         self.pressure_data = {
             'live_buffer': {'timestamps': [], 'pressures': []},
@@ -1317,8 +1325,8 @@ class AtomisationApp(QMainWindow):
         self._cam_exp_idx  = QLineEdit("0");    self._cam_exp_idx.setFixedWidth(_W)
         self._cam_width    = QLineEdit("2560"); self._cam_width.setFixedWidth(_W)
         self._cam_height   = QLineEdit("1600"); self._cam_height.setFixedWidth(_W)
-        self._cam_seconds  = QLineEdit("0.020");self._cam_seconds.setFixedWidth(_W)
-        self._cam_output   = QLineEdit()
+        self._cam_pre_s    = QLineEdit("0.5");  self._cam_pre_s.setFixedWidth(_W)
+        self._cam_post_s   = QLineEdit("0.5");  self._cam_post_s.setFixedWidth(_W)
 
         self._cam_width.setValidator(QIntValidator(1, 2560))
         self._cam_height.setValidator(QIntValidator(1, 1600))
@@ -1327,15 +1335,65 @@ class AtomisationApp(QMainWindow):
             l=QLabel(t); l.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
             return l
 
-        grid.addWidget(glbl("FPS"),              0,0); grid.addWidget(self._cam_fps,     0,1)
-        grid.addWidget(glbl("Height"),           1,0); grid.addWidget(self._cam_height,  1,1)
-        grid.addWidget(glbl("Width"),            2,0); grid.addWidget(self._cam_width,   2,1)
-        grid.addWidget(glbl("Duration (s)"),     3,0); grid.addWidget(self._cam_seconds, 3,1)
-        grid.addWidget(glbl("Exposure (μs)"),    4,0); grid.addWidget(self._cam_exp,     4,1)
-        grid.addWidget(glbl("Exposure Index"),   5,0); grid.addWidget(self._cam_exp_idx, 5,1)
-        grid.addWidget(glbl("Output path"),      6,0); grid.addWidget(self._cam_output,  6,1)
+        grid.addWidget(glbl("FPS"),               0,0); grid.addWidget(self._cam_fps,    0,1)
+        grid.addWidget(glbl("Height"),            1,0); grid.addWidget(self._cam_height, 1,1)
+        grid.addWidget(glbl("Width"),             2,0); grid.addWidget(self._cam_width,  2,1)
+        grid.addWidget(glbl("Pre-trigger (s)"),   3,0); grid.addWidget(self._cam_pre_s,  3,1)
+        grid.addWidget(glbl("Post-trigger (s)"),  4,0); grid.addWidget(self._cam_post_s, 4,1)
+        grid.addWidget(glbl("Exposure (μs)"),     5,0); grid.addWidget(self._cam_exp,    5,1)
+        grid.addWidget(glbl("Exposure Index"),    6,0); grid.addWidget(self._cam_exp_idx,6,1)
         grid.setColumnStretch(1, 1)
-        c2.layout().addWidget(grid_w)
+
+        # Capacity info box — sits to the right of the grid
+        cap_box = QFrame()
+        cap_box.setFixedWidth(150)
+        cap_box.setStyleSheet(f"""
+            QFrame {{
+                background: {CLR_INPUT};
+                border: 1px solid {CLR_BORDER};
+                border-radius: 6px;
+            }}
+        """)
+        cap_vl = QVBoxLayout(cap_box)
+        cap_vl.setContentsMargins(10, 10, 10, 10)
+        cap_vl.setSpacing(2)
+        _cap_title = QLabel("RAM CAPACITY")
+        _cap_title.setStyleSheet(
+            f"color:{CLR_TEXT_SEC}; font-size:9px; font-weight:700; letter-spacing:1px;")
+        cap_vl.addWidget(_cap_title)
+        _cap_sub = QLabel("18 GB  Veo-E 340L")
+        _cap_sub.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:10px;")
+        cap_vl.addWidget(_cap_sub)
+        cap_vl.addSpacing(6)
+        self._cam_capacity_lbl = QLabel("—")
+        self._cam_capacity_lbl.setStyleSheet(
+            f"color:{CLR_TEXT}; font-size:22px; font-weight:600;")
+        cap_vl.addWidget(self._cam_capacity_lbl)
+        self._cam_capacity_frames_lbl = QLabel("")
+        self._cam_capacity_frames_lbl.setStyleSheet(
+            f"color:{CLR_TEXT_SEC}; font-size:10px;")
+        self._cam_capacity_frames_lbl.setWordWrap(True)
+        cap_vl.addWidget(self._cam_capacity_frames_lbl)
+        cap_vl.addStretch()
+
+        body_row = QWidget()
+        br = QHBoxLayout(body_row)
+        br.setContentsMargins(0, 0, 0, 0); br.setSpacing(12)
+        br.addWidget(grid_w, stretch=1)
+        br.addWidget(cap_box, alignment=Qt.AlignmentFlag.AlignTop)
+        c2.layout().addWidget(body_row)
+
+        # Wire up live capacity updates — also call once to populate initial value
+        self._cam_fps.textChanged.connect(self._update_cam_capacity)
+        self._cam_width.textChanged.connect(self._update_cam_capacity)
+        self._cam_height.textChanged.connect(self._update_cam_capacity)
+        self._update_cam_capacity()
+
+        # Read-only label showing where captures will be saved
+        self._cam_save_lbl = QLabel(self._cam_path_hint())
+        self._cam_save_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:10px;")
+        self._cam_save_lbl.setWordWrap(True)
+        c2.layout().addWidget(self._cam_save_lbl)
 
         apply_btn = accent_button("Apply Config", CLR_ACCENT)
         apply_btn.setFixedHeight(36)
@@ -1361,30 +1419,50 @@ class AtomisationApp(QMainWindow):
         _pipeline_desc.setWordWrap(True)
         c3.layout().addWidget(_pipeline_desc)
 
+        self._cam_arm_status_lbl = QLabel("Not armed")
+        self._cam_arm_status_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
+        c3.layout().addWidget(self._cam_arm_status_lbl)
+
         cap_row = QWidget()
         cpr = QHBoxLayout(cap_row); cpr.setContentsMargins(0,0,0,0); cpr.setSpacing(8)
-        self._cam_abort_btn   = ghost_button("Abort")
-        self._cam_capture_btn = accent_button("● Capture", CLR_RED)
-        self._cam_abort_btn.setFixedHeight(40); self._cam_capture_btn.setFixedHeight(40)
+        self._cam_abort_btn   = ghost_button("Disarm / Abort")
+        self._cam_arm_btn     = accent_button("Arm", CLR_ACCENT)
+        self._cam_trigger_btn = accent_button("● Trigger", CLR_RED)
+        self._cam_abort_btn.setFixedHeight(40)
+        self._cam_arm_btn.setFixedHeight(40)
+        self._cam_trigger_btn.setFixedHeight(40)
+        self._cam_trigger_btn.setEnabled(False)   # enabled only when armed
         self._cam_abort_btn.setToolTip(
-            "<b>Abort capture</b><br>"
-            "1. Sends an abort command to the Phantom camera<br>"
-            "2. Cancels the recording currently in progress")
-        self._cam_capture_btn.setToolTip(
-            "<b>Capture</b><br>"
-            "1. Triggers a recording on the Phantom camera<br>"
-            "2. Saves footage to the output path<br>"
-            "3. If 'Run AI analysis' is ticked, runs Dennis automatically<br>"
-            "4. Results appear in the AI panel on the left")
+            "<b>Disarm / Abort</b><br>"
+            "1. Stops the ring-buffer recording<br>"
+            "2. Clears camera RAM<br>"
+            "3. Re-enables the Arm button")
+        self._cam_arm_btn.setToolTip(
+            "<b>Arm camera</b><br>"
+            "1. Applies current config to the Phantom camera<br>"
+            "2. Starts continuous ring-buffer recording<br>"
+            "3. Camera will buffer footage until you click Trigger<br>"
+            "Must click Apply Config first if settings have changed")
+        self._cam_trigger_btn.setToolTip(
+            "<b>Trigger</b><br>"
+            "1. Freezes the ring buffer at this moment<br>"
+            "2. Saves pre-trigger + post-trigger frames as CINE and TIFFs<br>"
+            "3. Identifies the brightest frame<br>"
+            "4. If 'Run AI analysis' is ticked, runs Dennis immediately<br>"
+            "5. Camera re-arms automatically for the next trigger")
         self._cam_abort_btn.clicked.connect(self._cam_abort)
-        self._cam_capture_btn.clicked.connect(self._cam_capture)
-        cpr.addStretch(); cpr.addWidget(self._cam_abort_btn); cpr.addWidget(self._cam_capture_btn)
+        self._cam_arm_btn.clicked.connect(self._cam_arm)
+        self._cam_trigger_btn.clicked.connect(self._cam_trigger)
+        cpr.addStretch()
+        cpr.addWidget(self._cam_abort_btn)
+        cpr.addWidget(self._cam_arm_btn)
+        cpr.addWidget(self._cam_trigger_btn)
         c3.layout().addWidget(cap_row)
         vl.addWidget(c3)
 
         if not self.camera_available:
             for btn in [self._cam_connect_btn, self._cam_ping_btn,
-                        apply_btn, self._cam_abort_btn, self._cam_capture_btn]:
+                        apply_btn, self._cam_abort_btn, self._cam_arm_btn, self._cam_trigger_btn]:
                 btn.setEnabled(False)
 
         # Test Pipeline card
@@ -2242,6 +2320,28 @@ class AtomisationApp(QMainWindow):
     # Logic — Camera
     # ─────────────────────────────────────────────────────────────────────────
 
+    def _update_cam_capacity(self):
+        """Recalculate and display how many frames/seconds the camera RAM can hold."""
+        _RAM_BYTES = 18 * 1024 ** 3  # Phantom Veo-E 340L — 18 GB
+        try:
+            fps    = float(self._cam_fps.text())
+            width  = int(self._cam_width.text() or 1)
+            height = int(self._cam_height.text() or 1)
+            if fps <= 0 or width <= 0 or height <= 0:
+                raise ValueError
+            bytes_per_frame = width * height * 2   # 12-bit Phantom data in 16-bit containers
+            max_frames = int(_RAM_BYTES / bytes_per_frame)
+            max_secs   = max_frames / fps
+            if max_secs >= 60:
+                time_str = f"{max_secs/60:.1f} min"
+            else:
+                time_str = f"{max_secs:.1f} s"
+            self._cam_capacity_lbl.setText(time_str)
+            self._cam_capacity_frames_lbl.setText(f"({max_frames:,} frames)")
+        except (ValueError, ZeroDivisionError):
+            self._cam_capacity_lbl.setText("—")
+            self._cam_capacity_frames_lbl.setText("")
+
     def _cam_connect(self):
         if not self.phantom:
             self._cam_status_lbl.setText("Camera SDK unavailable"); return
@@ -2263,50 +2363,109 @@ class AtomisationApp(QMainWindow):
     def _cam_configure(self):
         if not self.phantom: return
         try:
+            fps       = float(self._cam_fps.text())
+            pre_s     = float(self._cam_pre_s.text())
+            post_s    = float(self._cam_post_s.text())
+            pre_frames  = max(1, int(pre_s  * fps))
+            post_frames = max(1, int(post_s * fps))
+            self._cam_pre_frames  = pre_frames
+            self._cam_post_frames = post_frames
             self.phantom.configure(
                 width=int(self._cam_width.text()),
                 height=int(self._cam_height.text()),
-                fps=float(self._cam_fps.text()),
+                fps=fps,
                 exposure_us=float(self._cam_exp.text()),
+                post_trigger_frames=post_frames,
                 exp_index=int(self._cam_exp_idx.text() or "0"),
             )
-            self._cam_status_lbl.setText("Config applied")
+            self._cam_status_lbl.setText(
+                f"Config applied — {pre_frames} pre / {post_frames} post frames")
             self._save_camera_settings()
         except Exception as e:
             self._set_status(f"Camera config error: {e}", CLR_RED)
 
+    def _cam_arm(self):
+        """Start continuous ring-buffer recording. Camera buffers until Trigger is clicked."""
+        if not self.phantom: return
+        def _do_arm():
+            try:
+                self.phantom.start_recording()
+                QTimer.singleShot(0, self, lambda: (
+                    self._cam_status_lbl.setText("Armed — buffering…"),
+                    self._cam_status_lbl.setStyleSheet(f"color:{CLR_GREEN}; font-size:12px;"),
+                    self._cam_arm_status_lbl.setText("Armed — buffering…"),
+                    self._cam_arm_status_lbl.setStyleSheet(f"color:{CLR_GREEN}; font-size:12px;"),
+                    self._cam_arm_btn.setEnabled(False),
+                    self._cam_trigger_btn.setEnabled(True),
+                ))
+            except Exception as e:
+                err = str(e)
+                QTimer.singleShot(0, self, lambda: (
+                    self._set_status(f"Arm error: {err}", CLR_RED),
+                    self._cam_arm_status_lbl.setText("Arm failed"),
+                ))
+        threading.Thread(target=_do_arm, daemon=True).start()
+
     def _cam_abort(self):
         if self.phantom: self.phantom.abort()
-        self._cam_status_lbl.setText("Camera: aborted")
+        self._cam_status_lbl.setText("Camera: disarmed")
+        self._cam_arm_status_lbl.setText("Not armed")
+        self._cam_arm_status_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
+        self._cam_arm_btn.setEnabled(True)
+        self._cam_trigger_btn.setEnabled(False)
 
-    def _cam_capture(self):
+    def _cam_trigger(self):
+        """Fire the trigger — freeze the ring buffer and save pre+post window."""
         if not self.phantom: return
-        run_pipeline = self._pipeline_check.isChecked()
-        run_folder   = self._run_folder
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_pipeline  = self._pipeline_check.isChecked()
+        pre_frames    = self._cam_pre_frames
+        post_frames   = self._cam_post_frames
+        run_folder    = self._run_folder
+        ts = datetime.now().strftime("%H%M%S")
+
+        # Update UI immediately so the user knows the trigger was received
+        self._cam_trigger_btn.setEnabled(False)
+        self._cam_arm_btn.setEnabled(False)
+        self._cam_arm_status_lbl.setText("Triggered — saving…")
+        self._cam_arm_status_lbl.setStyleSheet(f"color:{CLR_ORANGE}; font-size:12px;")
 
         if run_folder:
-            cine_path   = os.path.join(run_folder, "shadowgraph", "raw", "CINE",
-                                       f"recording_{ts}.cine")
-            tiff_prefix = os.path.join(run_folder, "shadowgraph", "raw", "TIFFs", "frame")
-            tiff_dir    = os.path.join(run_folder, "shadowgraph", "raw", "TIFFs")
-            bright_dir  = os.path.join(run_folder, "shadowgraph", "raw", "Brightest_Frame")
+            # Mid-experiment: write into the active run folder
+            cine_path    = os.path.join(run_folder, "shadowgraph", "raw", "CINE",
+                                        f"recording_{ts}.cine")
+            tiff_prefix  = os.path.join(run_folder, "shadowgraph", "raw", "TIFFs", "frame")
+            tiff_dir     = os.path.join(run_folder, "shadowgraph", "raw", "TIFFs")
+            bright_dir   = os.path.join(run_folder, "shadowgraph", "raw", "Brightest_Frame")
             analysis_dir = os.path.join(run_folder, "shadowgraph", "analysis")
         else:
-            # No active experiment — fall back to output path field
-            fallback    = self._cam_output.text().strip() or os.path.join(
-                os.path.dirname(__file__), "phantom_captures")
-            os.makedirs(fallback, exist_ok=True)
-            cine_path   = os.path.join(fallback, f"recording_{ts}.cine")
-            tiff_prefix = os.path.join(fallback, "TIFFs", "frame")
-            tiff_dir    = os.path.join(fallback, "TIFFs")
-            bright_dir  = os.path.join(fallback, "Brightest_Frame")
-            analysis_dir = os.path.join(fallback, "analysis")
-            for d in [tiff_dir, bright_dir, analysis_dir]:
-                os.makedirs(d, exist_ok=True)
+            # Manual trigger — create a new run folder with the same structure
+            _now   = datetime.now()
+            _lacie = find_lacie_drive()
+            _base  = os.path.join(_lacie, "Experiments") if _lacie else os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                "experiment_logs", "Experiments")
+            _run_folder = os.path.join(
+                _base, _now.strftime("%Y"), _now.strftime("%m"),
+                _now.strftime("%d"), f"{_now.strftime('%H%M%S')}_Manual")
+            for _sub in [os.path.join("shadowgraph", "raw", "CINE"),
+                         os.path.join("shadowgraph", "raw", "TIFFs"),
+                         os.path.join("shadowgraph", "raw", "Brightest_Frame"),
+                         os.path.join("shadowgraph", "analysis"),
+                         "cone"]:
+                os.makedirs(os.path.join(_run_folder, _sub), exist_ok=True)
+            cine_path    = os.path.join(_run_folder, "shadowgraph", "raw", "CINE",
+                                        f"recording_{ts}.cine")
+            tiff_prefix  = os.path.join(_run_folder, "shadowgraph", "raw", "TIFFs", "frame")
+            tiff_dir     = os.path.join(_run_folder, "shadowgraph", "raw", "TIFFs")
+            bright_dir   = os.path.join(_run_folder, "shadowgraph", "raw", "Brightest_Frame")
+            analysis_dir = os.path.join(_run_folder, "shadowgraph", "analysis")
+            # Update the save path label to show where this capture went
+            QTimer.singleShot(0, self,
+                lambda p=_run_folder: self._cam_save_lbl.setText(f"Saving to: {p}"))
+
+        frame_range = (-pre_frames, post_frames - 1) if pre_frames > 0 else None
 
         def _brightest_frame(folder):
-            """Return path of the TIFF file with the highest mean pixel value."""
             import glob, cv2 as _cv2
             tiffs = glob.glob(os.path.join(folder, "*.tif")) + \
                     glob.glob(os.path.join(folder, "*.tiff"))
@@ -2321,21 +2480,22 @@ class AtomisationApp(QMainWindow):
                         best_val, best = val, f
             return best
 
-        def _do_capture():
+        def _do_trigger():
             import shutil
             try:
-                self.phantom.start_recording()
                 self.phantom.trigger()
-                time.sleep(0.5)   # wait for cine to be marked complete
+                time.sleep(0.5)   # wait for cine to be marked complete in camera RAM
 
-                # 1 — save full .cine
-                self.phantom.save_recording(cine_path, file_format='cine')
+                # 1 — save .cine with exact pre+post frame range
+                self.phantom.save_recording(cine_path, file_format='cine',
+                                            frame_range=frame_range)
 
-                # 2 — save all frames as TIFFs
+                # 2 — save frames as TIFFs (same range)
                 os.makedirs(tiff_dir, exist_ok=True)
-                self.phantom.save_recording(tiff_prefix, file_format='tiff')
+                self.phantom.save_recording(tiff_prefix, file_format='tiff',
+                                            frame_range=frame_range)
 
-                # 3 — find brightest frame and copy to Brightest_Frame/
+                # 3 — find brightest frame, copy to Brightest_Frame/
                 os.makedirs(bright_dir, exist_ok=True)
                 best = _brightest_frame(tiff_dir)
                 bright_path = None
@@ -2343,9 +2503,10 @@ class AtomisationApp(QMainWindow):
                     bright_path = os.path.join(bright_dir, os.path.basename(best))
                     shutil.copy2(best, bright_path)
 
-                QTimer.singleShot(0, self, lambda: self._cam_status_lbl.setText("Capture saved"))
+                QTimer.singleShot(0, self,
+                    lambda: self._cam_status_lbl.setText("Trigger saved ✓"))
 
-                # 4 — run AI pipeline on the Brightest_Frame folder
+                # 4 — kick off AI in its own thread as soon as brightest frame is known
                 if run_pipeline and bright_path:
                     QTimer.singleShot(0, self,
                         lambda: self._run_pipeline(bright_dir, analysis_dir))
@@ -2353,12 +2514,18 @@ class AtomisationApp(QMainWindow):
                     QTimer.singleShot(0, self,
                         lambda: self._set_status("No frames found for pipeline", CLR_ORANGE))
 
+                # 5 — re-arm automatically so the camera is ready for the next trigger
+                QTimer.singleShot(0, self, self._cam_arm)
+
             except Exception as e:
                 err = str(e)
-                QTimer.singleShot(0, self,
-                    lambda: self._set_status(f"Capture error: {err}", CLR_RED))
+                QTimer.singleShot(0, self, lambda: (
+                    self._set_status(f"Trigger error: {err}", CLR_RED),
+                    self._cam_arm_status_lbl.setText("Error — re-arm manually"),
+                    self._cam_arm_btn.setEnabled(True),
+                ))
 
-        threading.Thread(target=_do_capture, daemon=True).start()
+        threading.Thread(target=_do_trigger, daemon=True).start()
 
     def _get_px_per_mm(self) -> float:
         """Return the current calibrated px/mm value, falling back to 0.0 if not set."""
@@ -2895,6 +3062,9 @@ class AtomisationApp(QMainWindow):
                      os.path.join("shadowgraph", "analysis"),
                      "cone"]:
             os.makedirs(os.path.join(self._run_folder, _sub), exist_ok=True)
+        # Update the camera save path label to reflect the active run folder
+        if hasattr(self, '_cam_save_lbl'):
+            self._cam_save_lbl.setText(self._cam_path_hint())
 
         # Schedule a single cone capture 5 s after experiment start
         if self._cone_cap is not None and self._cone_cap.isOpened():
@@ -2916,8 +3086,7 @@ class AtomisationApp(QMainWindow):
         self.cumulative_distance += distance
         self._update_travel_bar()
 
-        if self.phantom and self.phantom.is_connected:
-            self._cam_capture()
+        # Camera is managed independently — arm/trigger from the Camera tab
 
     # ─────────────────────────────────────────────────────────────────────────
     # Logic — Shadowgraph preview
@@ -3195,8 +3364,9 @@ class AtomisationApp(QMainWindow):
             self._cam_exp.setText(str(s.get("exposure_us", "500")))
             self._cam_width.setText(str(s.get("width", "640")))
             self._cam_height.setText(str(s.get("height", "480")))
-            self._cam_seconds.setText(str(s.get("seconds", "0.020")))
-            self._cam_output.setText(s.get("output", ""))
+            self._cam_pre_s.setText(str(s.get("pre_trigger_s", "0.5")))
+            self._cam_post_s.setText(str(s.get("post_trigger_s", "0.5")))
+            self._update_cam_capacity()
             px_per_mm = float(s.get("px_per_mm", 0.0))
             if px_per_mm > 0:
                 self._hdr_pxmm_lbl.setText(f"{px_per_mm:.1f} px/mm")
@@ -3232,8 +3402,8 @@ class AtomisationApp(QMainWindow):
                 "exposure_us":       self._cam_exp.text(),
                 "width":             self._cam_width.text(),
                 "height":            self._cam_height.text(),
-                "seconds":           self._cam_seconds.text(),
-                "output":            self._cam_output.text(),
+                "pre_trigger_s":     self._cam_pre_s.text(),
+                "post_trigger_s":    self._cam_post_s.text(),
                 "px_per_mm":         px_per_mm,
                 "cone_camera_index": self._cone_idx_spin.value() if (self._cone_cap is not None and self._cone_cap.isOpened()) else existing.get("cone_camera_index", -1),
                 "cone_autofocus":    self._cone_autofocus_chk.isChecked(),
@@ -3248,6 +3418,18 @@ class AtomisationApp(QMainWindow):
     # ─────────────────────────────────────────────────────────────────────────
     # Helpers
     # ─────────────────────────────────────────────────────────────────────────
+
+    def _cam_path_hint(self) -> str:
+        """Return a human-readable string showing where the next camera capture will be saved."""
+        from datetime import date
+        today = date.today()
+        lacie = find_lacie_drive()
+        base  = os.path.join(lacie, "Experiments") if lacie else os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            "experiment_logs", "Experiments")
+        if self._run_folder:
+            return f"Saving to: {self._run_folder}"
+        return (f"Saving to: {base}/{today.strftime('%Y/%m/%d')}/{{HHMMSS}}_Manual/")
 
     def _excel_save_path_hint(self):
         if self._run_folder:
