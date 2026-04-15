@@ -564,13 +564,13 @@ class PhantomController:
 
     def ping(self):
         try: _ = self.cam.frame_rate; return True
-        except: self.is_connected = False; return False
+        except Exception: self.is_connected = False; return False
 
     def disconnect(self):
         try:
             if self.cam: self.cam.close(); self.cam = None
             if self.ph: self.ph.close(); self.ph = None
-        except: pass
+        except Exception: pass
         self.is_connected = False; self.is_recording = False
 
 
@@ -750,6 +750,7 @@ class AtomisationApp(QMainWindow):
     # ─────────────────────────────────────────────────────────────────────────
 
     def _build_ui(self):
+        self.setMinimumSize(1200, 700)
         root = QWidget()
         self.setCentralWidget(root)
         root_layout = QVBoxLayout(root)

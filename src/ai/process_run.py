@@ -9,7 +9,7 @@ Flow
 ----
 1. find_brightest_frame()  — picks best TIFF from frames_folder, saves
                              flashed_output.tiff into output_folder
-2. frames_folder deleted   — prevents stale frames from contaminating next run
+2. frames_folder preserved — all raw frames kept for troubleshooting
 3. Dennis loaded from LaCie
 4. Inference on flashed_output.tiff  (score threshold 0.75)
 5. Coloured mask overlay saved as ai_result.png
@@ -75,8 +75,8 @@ def _cuda_available() -> bool:
 def extract_brightest_tiff(frames_folder: Path, output_folder: Path) -> Path:
     """
     Pick the brightest TIFF from frames_folder, save it as
-    output_folder/flashed_output.tiff, then DELETE frames_folder so stale
-    frames from a longer previous run can never contaminate the next one.
+    output_folder/flashed_output.tiff. frames_folder is preserved so all
+    raw data remains available for troubleshooting.
 
     Returns the path to the saved flashed_output.tiff.
     """

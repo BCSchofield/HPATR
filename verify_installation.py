@@ -32,10 +32,10 @@ except ImportError:
 
 # Check other dependencies
 deps = ['cv2', 'matplotlib', 'pycocotools']
-for dep in deps:
+for i, dep in enumerate(deps, 4):
     try:
         __import__(dep)
-        print(f"4. {dep}: OK")
+        print(f"{i}. {dep}: OK")
     except ImportError:
         print(f"   ERROR: {dep} not installed!")
 

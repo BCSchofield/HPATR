@@ -2805,7 +2805,7 @@ class ModernExperimentControlApp:
             traceback.print_exc()
 
     def _run_pipeline_thread(self, tiff_output_folder):
-        """Run the full pipeline: find brightest frame → process → display result"""
+        """Run the full pipeline: find brightest frame → display result"""
         try:
             # Clear any previous error and set initial status
             self.master.after(0, lambda: self.pipeline_error_label.configure(text=""))
@@ -2838,21 +2838,10 @@ class ModernExperimentControlApp:
                 raise Exception(f"Brightest frame not found at {flashed_output_path}")
             
             print(f"[PIPELINE] Brightest frame saved to: {flashed_output_path}")
-            self.master.after(0, lambda: self.pipeline_status_label.configure(text="Step 2: Processing image...", text_color="gray"))
-            
-            # Step 2: Run save_and_analyse on flashed_output.tiff
-            print("[PIPELINE] Step 2: Processing image with save_and_analyse...")
-            from imaging.save_and_analyse import process_and_save_to_lacie
-            
-            success = process_and_save_to_lacie(flashed_output_path)
-            if not success:
-                raise Exception("Failed to process image with save_and_analyse")
-            
-            print("[PIPELINE] Image processing complete!")
-            self.master.after(0, lambda: self.pipeline_status_label.configure(text="Step 3: Refreshing display...", text_color="gray"))
-            
-            # Step 3: Refresh shadowgraph image display
-            print("[PIPELINE] Step 3: Refreshing GUI display...")
+            self.master.after(0, lambda: self.pipeline_status_label.configure(text="Step 2: Refreshing display...", text_color="gray"))
+
+            # Step 2: Refresh shadowgraph image display
+            print("[PIPELINE] Step 2: Refreshing GUI display...")
             time.sleep(0.5)  # Small delay to ensure file is written
             self.master.after(0, self.refresh_shadowgraph_image)
             
