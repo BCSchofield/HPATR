@@ -50,8 +50,8 @@ from PySide6.QtWidgets import (
     QFrame, QTabWidget, QSizePolicy, QProgressBar, QScrollArea,
     QSpacerItem, QGridLayout, QMessageBox, QFileDialog, QSpinBox
 )
-from PySide6.QtCore import Qt, QTimer, Signal, Slot, QObject, QThread, QSize, QEvent
-from PySide6.QtGui import QFont, QPixmap, QImage, QColor, QPalette, QIcon, QPainter, QPen, QIntValidator
+from PySide6.QtCore import Qt, QTimer, Signal, Slot, QObject, QThread, QSize, QEvent, QRegularExpression
+from PySide6.QtGui import QFont, QPixmap, QImage, QColor, QPalette, QIcon, QPainter, QPen, QIntValidator, QDoubleValidator, QRegularExpressionValidator
 
 # ── Path setup ──────────────────────────────────────────────────────────────
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -267,9 +267,18 @@ def title_label(text, size=15, bold=True):
     lbl.setStyleSheet(f"color: {CLR_TEXT}; font-size: {size}px; font-weight: {weight};")
     return lbl
 
+def _darken_hex(hex_color: str, factor: float = 0.82) -> str:
+    """Return a darkened version of a CSS hex color string."""
+    h = hex_color.lstrip('#')
+    if len(h) == 3:
+        h = h[0]*2 + h[1]*2 + h[2]*2
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"#{int(r*factor):02x}{int(g*factor):02x}{int(b*factor):02x}"
+
 def accent_button(text, color=CLR_ACCENT, hover=None):
     btn = QPushButton(text)
     hover = hover or color
+    pressed = _darken_hex(color)
     btn.setStyleSheet(f"""
         QPushButton {{
             background-color: {color};
@@ -280,7 +289,7 @@ def accent_button(text, color=CLR_ACCENT, hover=None):
             font-weight: 600;
         }}
         QPushButton:hover {{ background-color: {hover}; }}
-        QPushButton:pressed {{ opacity: 0.8; }}
+        QPushButton:pressed {{ background-color: {pressed}; }}
         QPushButton:disabled {{ background-color: {CLR_INPUT}; color: {CLR_TEXT_SEC}; }}
     """)
     return btn
@@ -297,6 +306,7 @@ def ghost_button(text):
             font-weight: 500;
         }}
         QPushButton:hover {{ background-color: rgba(10,132,255,0.15); }}
+        QPushButton:pressed {{ background-color: rgba(10,132,255,0.30); }}
         QPushButton:disabled {{ color: {CLR_TEXT_SEC}; border-color: {CLR_BORDER}; }}
     """)
     return btn
@@ -1004,6 +1014,7 @@ class AtomisationApp(QMainWindow):
 
         self._nozzle_entry = QLineEdit()
         self._nozzle_entry.setPlaceholderText("e.g. 1")
+        self._nozzle_entry.setValidator(QRegularExpressionValidator(QRegularExpression(r'[A-Za-z0-9]*')))
         nozzle_card.layout().addWidget(input_row("Nozzle No.", self._nozzle_entry, label_width=90))
 
         self._orifice_combo = QComboBox()
@@ -1190,6 +1201,7 @@ class AtomisationApp(QMainWindow):
         self._pressure_entry = QLineEdit(); self._pressure_entry.setPlaceholderText("0.0 – 26.4")
         self._pressure_entry.setMinimumWidth(80)
         self._pressure_entry.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._pressure_entry.setValidator(QDoubleValidator(0.0, 26.4, 2))
         set_p_btn = accent_button("Set Pressure", CLR_ACCENT)
         set_p_btn.setFixedHeight(36)
         set_p_btn.setToolTip(
@@ -1227,6 +1239,8 @@ class AtomisationApp(QMainWindow):
 
         self._speed_entry    = QLineEdit(); self._speed_entry.setPlaceholderText("e.g. 1000  steps/s")
         self._distance_entry = QLineEdit(); self._distance_entry.setPlaceholderText("e.g. 10.0  mm")
+        self._speed_entry.setValidator(QDoubleValidator(0.0, 100000.0, 0))
+        self._distance_entry.setValidator(QDoubleValidator(0.0, 72.5, 2))
         c3.layout().addWidget(input_row("Speed (steps/s)", self._speed_entry))
         c3.layout().addWidget(input_row("Distance (mm)",   self._distance_entry))
 
@@ -1332,8 +1346,13 @@ class AtomisationApp(QMainWindow):
         self._cam_pre_s    = QLineEdit("0.5");  self._cam_pre_s.setFixedWidth(_W)
         self._cam_post_s   = QLineEdit("0.5");  self._cam_post_s.setFixedWidth(_W)
 
+        self._cam_fps.setValidator(QDoubleValidator(1.0, 100000.0, 0))
+        self._cam_exp.setValidator(QDoubleValidator(1.0, 1000000.0, 0))
+        self._cam_exp_idx.setValidator(QIntValidator(0, 999))
         self._cam_width.setValidator(QIntValidator(1, 2560))
         self._cam_height.setValidator(QIntValidator(1, 1600))
+        self._cam_pre_s.setValidator(QDoubleValidator(0.0, 60.0, 3))
+        self._cam_post_s.setValidator(QDoubleValidator(0.0, 60.0, 3))
 
         def glbl(t):
             l=QLabel(t); l.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
@@ -1530,6 +1549,7 @@ class AtomisationApp(QMainWindow):
 
         self._afg_duration = QLineEdit("0.001")
         self._afg_duration.setFixedWidth(120)
+        self._afg_duration.setValidator(QDoubleValidator(0.000001, 10.0, 6))
         c.layout().addWidget(input_row("Pulse Duration (s)", self._afg_duration))
 
         action_row = QWidget()
@@ -2798,7 +2818,7 @@ class AtomisationApp(QMainWindow):
         """Convert a numpy BGR array to a QPixmap."""
         rgb = cv2.cvtColor(bgr_arr, cv2.COLOR_BGR2RGB)
         h, w, ch = rgb.shape
-        img = QImage(rgb.data, w, h, w * ch, QImage.Format.Format_RGB888)
+        img = QImage(bytes(rgb.data), w, h, w * ch, QImage.Format.Format_RGB888)
         return QPixmap.fromImage(img)
 
     def _cone_start_camera(self):
@@ -3384,8 +3404,8 @@ class AtomisationApp(QMainWindow):
             self._cone_focus_spin.setValue(int(s.get("cone_focus", 0)))
             self._cone_focus_spin.setEnabled(not autofocus)
             self._cone_top_crop_spin.setValue(float(s.get("cone_top_crop", 0.05)))
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[WARNING] Could not load camera settings: {e}")
 
     def _save_camera_settings(self):
         try:
@@ -3416,8 +3436,8 @@ class AtomisationApp(QMainWindow):
             }
             with open(self._settings_path(), "w") as f:
                 json.dump(s, f, indent=2)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[WARNING] Could not save camera settings: {e}")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Helpers
