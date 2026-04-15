@@ -382,25 +382,29 @@ class ClickableImageWidget(QLabel):
     def _redraw(self):
         if self._pixmap_orig is None:
             return
-        pm = self._pixmap_orig.copy()
-        if self._points:
-            painter = QPainter(pm)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            pen = QPen(QColor("#ff453a"), 3)
-            painter.setPen(pen)
-            for (x, y) in self._points:
-                arm = max(15, pm.width() // 40)
-                painter.drawLine(x - arm, y, x + arm, y)
-                painter.drawLine(x, y - arm, x, y + arm)
-                painter.drawEllipse(x - 6, y - 6, 12, 12)
-            painter.end()
         w = self.width()
         if w <= 0:
             return
-        # Scale to full widget width — height is derived from aspect ratio, no grey bars
-        scaled = pm.scaled(w, 10000, Qt.AspectRatioMode.KeepAspectRatio,
-                           Qt.TransformationMode.SmoothTransformation)
+        # Scale first, then draw markers in screen pixels so size is always fixed
+        scaled = self._pixmap_orig.scaled(w, 10000, Qt.AspectRatioMode.KeepAspectRatio,
+                                          Qt.TransformationMode.SmoothTransformation)
         self.setFixedHeight(scaled.height())
+        if self._points:
+            ow, oh = self._pixmap_orig.width(), self._pixmap_orig.height()
+            sw, sh = scaled.width(), scaled.height()
+            scale_x = sw / ow
+            scale_y = sh / oh
+            painter = QPainter(scaled)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            arm = 10   # fixed screen pixels — same size regardless of image resolution
+            pen = QPen(QColor("#ff453a"), 2)
+            painter.setPen(pen)
+            for (x, y) in self._points:
+                sx, sy = int(x * scale_x), int(y * scale_y)
+                painter.drawLine(sx - arm, sy, sx + arm, sy)
+                painter.drawLine(sx, sy - arm, sx, sy + arm)
+                painter.drawEllipse(sx - 4, sy - 4, 8, 8)
+            painter.end()
         self.setPixmap(scaled)
 
 
