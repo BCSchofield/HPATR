@@ -112,6 +112,7 @@ CLR_PURPLE      = "#bf5af2"   # Apple purple (clean)
 FONT_FAMILY = "SF Pro Display" if platform.system() == "Darwin" else "Segoe UI"
 RADIUS = "10px"
 
+
 BASE_STYLE = f"""
 QMainWindow {{
     background-color: {CLR_BG};
@@ -946,7 +947,14 @@ class AtomisationApp(QMainWindow):
         graph_card.layout().addWidget(self._graph_widget)
         vl.addWidget(graph_card)
 
-        # ── Motor travel card ─────────────────────────────────────────────────
+        # ── Motor travel + Volume row ──────────────────────────────────────────
+        motor_vol_row = QWidget()
+        motor_vol_row.setStyleSheet("background: transparent;")
+        mvrl = QHBoxLayout(motor_vol_row)
+        mvrl.setContentsMargins(0, 0, 0, 0)
+        mvrl.setSpacing(6)
+
+        # Motor travel card (3/4 width)
         motor_card = card(padding=10)
         motor_card.layout().setSpacing(6)
 
@@ -970,7 +978,23 @@ class AtomisationApp(QMainWindow):
         self._travel_warning.setStyleSheet(f"color: {CLR_ORANGE}; font-size: 11px;")
         motor_card.layout().addWidget(self._travel_warning)
 
-        vl.addWidget(motor_card)
+        mvrl.addWidget(motor_card, 3)
+
+        # Volume card (1/4 width)
+        vol_card = card(padding=10)
+        vol_card.layout().setSpacing(4)
+
+        vol_card.layout().addWidget(title_label("Volume", 13))
+
+        self._vol_label = QLabel("0.00 mL")
+        self._vol_label.setStyleSheet(
+            f"color: {CLR_TEXT}; font-size: 14px; font-weight: 700;")
+        self._vol_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        vol_card.layout().addWidget(self._vol_label)
+
+        mvrl.addWidget(vol_card, 1)
+
+        vl.addWidget(motor_vol_row)
 
         # ── Pressure Off (always visible) ─────────────────────────────────────
         pressure_off_card = card(padding=10)
@@ -2324,6 +2348,8 @@ class AtomisationApp(QMainWindow):
             self._travel_bar.setStyleSheet(
                 f"QProgressBar::chunk {{ background-color: {CLR_ACCENT}; border-radius:4px; }}")
             self._travel_warning.setText("")
+        vol_ml = 25.8 * (self.cumulative_distance / self.MAX_MOTOR_MM)
+        self._vol_label.setText(f"{vol_ml:.2f} mL")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Logic — Pressure graph

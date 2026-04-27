@@ -1,28 +1,26 @@
-# Merge term 1
 """
-Cone angle detection using intensity profile analysis with sigmoid fitting.
+Cone angle detection — blur-envelope edge finding + RANSAC line fitting.
 
 WHY THIS APPROACH:
-    Effervescent atomisation of silicone/n-heptane produces a spray of small,
-    semi-transparent droplets with soft, diffuse edges.  The cone boundary is a
-    gradual intensity transition — there is no hard step-change for a contour
-    detector to latch onto.  Cone_3 (contour/PCA) is therefore unreliable.
+    Effervescent atomisation produces a complex spray of ligaments and droplets.
+    The previous sigmoid-per-row approach was fragile: a sigmoid inflection point
+    can land anywhere along the intensity gradient and cannot distinguish the outer
+    cone edge from interior spray transitions.
 
-HOW IT DIFFERS FROM Cone_3:
-    No contour detection, no morphological processing, no thresholding.
-    Instead, for each horizontal row we fit a logistic sigmoid to the intensity
-    profile on each side of the spray centre.  The inflection point of the
-    sigmoid (parameter x0) is the boundary location.  Boundary locations are
-    collected across all rows, then a straight line is fitted through each set
-    to give the left and right cone edges.
+    Instead:
+    1. Heavy Gaussian blur (σ ≈ 15 px) merges individual ligaments into a smooth
+       intensity envelope.  The spray body becomes a single connected dark blob.
+    2. Per row, scan from the image edge inward — the first pixel that falls below
+       a threshold IS the outer boundary of that blob, by definition.
+    3. RANSAC fits a line to those boundary points, robustly discarding the small
+       number of outlier rows caused by stray droplets, nozzle hardware, or
+       background noise.
 
-KNOWN LIMITATIONS:
-    * Requires at least some intensity contrast across the boundary.
-      Very uniform backgrounds or extremely diffuse cones give low fit quality
-      (reported in the returned debug dict and via a console warning).
-    * Assumes the spray is roughly centred horizontally and darker than the
-      background (backlit shadowgraph geometry).  Reverse-contrast images will
-      also work because the sigmoid direction is chosen per-row.
+OUTPUT:
+    Annotated image + 6-panel debug grid.
+    Bright yellow/cyan dots = RANSAC inliers used for the final fit.
+    Dim dots = RANSAC outliers (rejected).
+    Red lines = fitted cone edges.
 """
 
 import argparse
@@ -31,337 +29,223 @@ import sys
 
 import cv2
 import numpy as np
-from scipy.optimize import curve_fit
 
-# Allow running from repo root
-CURRENT_DIR = Path(__file__).resolve().parent
+CURRENT_DIR  = Path(__file__).resolve().parent
 PROJECT_ROOT = CURRENT_DIR.parent
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from config_loader import get_imaging_config  # noqa: E402
 
-# ---------------------------------------------------------------------------
-# Algorithm parameters (module-level defaults, overridable via function args)
-# ---------------------------------------------------------------------------
-TOP_CROP_RATIO = 0.17       # Fraction of image height to crop from top
-ROW_STEP = 1                # Process every row
-MIN_R2 = 0.75               # Minimum sigmoid fit R² to accept a boundary point
-MIN_CONTRAST = 10.0         # Minimum abs(U-L) to attempt / accept a fit (0-255)
-MIN_BOUNDARY_POINTS = 20    # Minimum accepted points per side to compute angle
-SIGMOID_WINDOW = 0.4        # Fraction of half-row width used for sigmoid fitting
+# ─────────────────────────────────────────────────────────────────────────────
+# Algorithm parameters
+# ─────────────────────────────────────────────────────────────────────────────
+TOP_CROP_RATIO   = 0.30    # fraction of image height to remove from the top
+BLUR_SIGMA       = 7.5     # Gaussian σ (px) — merges ligaments into an envelope
+THRESHOLD_FRAC   = 0.85    # spray threshold = bg_level × this value
+RANSAC_THRESHOLD = 10.0    # max horizontal distance (px) to count as inlier
+MIN_PTS          = 20      # minimum edge points per side to attempt a line fit
+ROW_STEP         = 1       # process every Nth row (1 = every row)
 
 
-# ---------------------------------------------------------------------------
-# Sigmoid model
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
+# Edge detection
+# ─────────────────────────────────────────────────────────────────────────────
 
-def _sigmoid(x: np.ndarray, L: float, U: float, k: float, x0: float) -> np.ndarray:
-    """Logistic sigmoid: f(x) = L + (U-L) / (1 + exp(-k*(x-x0)))"""
-    return L + (U - L) / (1.0 + np.exp(-k * (x - x0)))
-
-
-def _r2(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    """Coefficient of determination."""
-    ss_res = np.sum((y_true - y_pred) ** 2)
-    ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
-    if ss_tot < 1e-12:
-        return 0.0
-    return float(1.0 - ss_res / ss_tot)
-
-
-# ---------------------------------------------------------------------------
-# Per-row boundary detection
-# ---------------------------------------------------------------------------
-
-def _find_row_boundaries(
-    row: np.ndarray,
-    min_r2: float,
-    min_contrast: float,
-    sigmoid_window: float,
-) -> tuple[float | None, float | None, float, float]:
+def _find_outer_edge_points(
+    gray: np.ndarray,
+    blur_sigma: float = BLUR_SIGMA,
+    threshold_frac: float = THRESHOLD_FRAC,
+    row_step: int = ROW_STEP,
+    center_x: int | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, float]:
     """
-    Fit sigmoids to the left and right halves of a single intensity row.
+    Find the outermost spray boundary point in each image row.
+
+    Scans from the image edges inward after blurring, so the result is
+    always the outer envelope of the spray, never an interior transition.
 
     Returns
     -------
-    (x_left, x_right, r2_left, r2_right)
-        x_left / x_right : boundary x-coordinate, or None if fit rejected.
-        r2_left / r2_right : R² of the accepted fit (0.0 if rejected).
+    left_xs, left_ys, right_xs, right_ys : np.ndarray  (px coords)
+    blurred  : np.ndarray (float32) — smoothed image used for detection
+    bg_level : float — estimated background intensity (0–255)
+    threshold: float — dark/light cutoff used
     """
-    n = len(row)
-    if n < 16:
-        return None, None, 0.0, 0.0
+    h, w = gray.shape
 
-    row_f = row.astype(np.float64)
+    # Large blur merges gaps between ligaments → continuous spray blob
+    blurred = cv2.GaussianBlur(gray.astype(np.float32), (0, 0), sigmaX=blur_sigma)
 
-    # Locate spray centre as darkest region via rolling mean (window = 10% of width)
-    win = max(3, n // 10)
-    kernel = np.ones(win) / win
-    smoothed = np.convolve(row_f, kernel, mode="same")
-    centre_x = int(np.argmin(smoothed))
+    # Background level: 80th percentile of corner pixels (always background
+    # in backlit shadowgraph images)
+    cs = max(20, min(w, h) // 8)
+    corners = np.concatenate([
+        blurred[:cs,   :cs  ].ravel(),
+        blurred[:cs,   w-cs:].ravel(),
+        blurred[h-cs:, :cs  ].ravel(),
+        blurred[h-cs:, w-cs:].ravel(),
+    ])
+    bg_level  = float(np.percentile(corners, 80))
+    threshold = bg_level * threshold_frac
 
-    results = []
-    for side in ("left", "right"):
-        if side == "left":
-            # Left half: x in [0, centre_x], boundary is dark→bright (left to right)
-            # Use a window around the expected transition
-            half = row_f[: centre_x + 1]
-            if len(half) < 8:
-                results.append((None, 0.0))
-                continue
-            win_w = max(8, int(len(half) * sigmoid_window))
-            seg = half[-win_w:]          # right portion of the left half
-            x_coords = np.arange(len(half) - win_w, len(half), dtype=np.float64)
-            # dark on the left (inside), bright on the right (background)
-            L_init = float(np.min(seg))
-            U_init = float(np.max(seg))
-            rising = True
-        else:
-            # Right half: x in [centre_x, n), boundary is bright→dark (left to right)
-            half = row_f[centre_x:]
-            if len(half) < 8:
-                results.append((None, 0.0))
-                continue
-            win_w = max(8, int(len(half) * sigmoid_window))
-            seg = half[:win_w]           # left portion of the right half
-            x_coords = np.arange(centre_x, centre_x + win_w, dtype=np.float64)
-            # bright on the left (background), dark on the right (inside)
-            L_init = float(np.max(seg))
-            U_init = float(np.min(seg))
-            rising = False
+    # Per-row spray centre: smooth each row with a wide moving average then
+    # take the darkest column.  This adapts to the spray being very narrow near
+    # the nozzle — a single global centre_x can end up on the WRONG SIDE of the
+    # spray edge in those upper rows, causing the left scan to miss the boundary.
+    if center_x is not None:
+        # Caller-supplied override: use it for every row
+        row_centers = np.full(h, float(center_x))
+    else:
+        win = max(3, w // 10)
+        kernel = np.ones(win, dtype=np.float32) / win
+        # Smooth each row to suppress single stray-dark pixels driving the argmin
+        blurred_smooth = np.apply_along_axis(
+            lambda r: np.convolve(r, kernel, mode="same"), axis=1, arr=blurred
+        )
+        raw_centers = np.argmin(blurred_smooth, axis=1).astype(np.float32)  # (h,)
+        # Smooth per-row centres across rows so the divider doesn't jitter
+        smooth_win = max(3, min(31, h // 15))
+        row_centers = np.convolve(
+            raw_centers, np.ones(smooth_win) / smooth_win, mode="same"
+        )
 
-        contrast = abs(U_init - L_init)
-        if contrast < min_contrast:
-            results.append((None, 0.0))
-            continue
+    row_centers = np.clip(row_centers, w // 4, 3 * w // 4)
 
-        # Bounds: x0 must lie within the segment x range
-        x_lo, x_hi = float(x_coords[0]), float(x_coords[-1])
-        # k > 0 for rising, k < 0 for falling (we allow both signs but constrain magnitude)
-        if rising:
-            k_lo, k_hi = 0.01, 2.0
-        else:
-            k_lo, k_hi = -2.0, -0.01
+    # Per-row edge scan: first dark pixel from each image edge toward the centre
+    left_xs:  list[float] = []
+    left_ys:  list[float] = []
+    right_xs: list[float] = []
+    right_ys: list[float] = []
 
-        p0 = [L_init, U_init, (k_lo + k_hi) / 2.0, float(np.mean(x_coords))]
-        bounds_lo = [min(L_init, U_init) - contrast, min(L_init, U_init) - contrast, k_lo, x_lo]
-        bounds_hi = [max(L_init, U_init) + contrast, max(L_init, U_init) + contrast, k_hi, x_hi]
+    for y in range(0, h, row_step):
+        cx  = int(row_centers[y])
+        row = blurred[y]
 
-        try:
-            popt, _ = curve_fit(
-                _sigmoid, x_coords, seg,
-                p0=p0,
-                bounds=(bounds_lo, bounds_hi),
-                maxfev=400,
-            )
-        except (RuntimeError, ValueError):
-            results.append((None, 0.0))
-            continue
+        # Left edge: scan x = 0 → cx (outermost dark pixel on left side)
+        for x in range(cx):
+            if row[x] < threshold:
+                left_xs.append(float(x))
+                left_ys.append(float(y))
+                break
 
-        L_fit, U_fit, k_fit, x0_fit = popt
+        # Right edge: scan x = w-1 → cx (outermost dark pixel on right side)
+        for x in range(w - 1, cx, -1):
+            if row[x] < threshold:
+                right_xs.append(float(x))
+                right_ys.append(float(y))
+                break
 
-        # Quality checks
-        if abs(U_fit - L_fit) < min_contrast:
-            results.append((None, 0.0))
-            continue
-        if x0_fit < x_lo or x0_fit > x_hi:
-            results.append((None, 0.0))
-            continue
-
-        y_pred = _sigmoid(x_coords, *popt)
-        r2_val = _r2(seg, y_pred)
-        if r2_val < min_r2:
-            results.append((None, 0.0))
-            continue
-
-        results.append((float(x0_fit), r2_val))
-
-    (x_left, r2_l), (x_right, r2_r) = results
-    return x_left, x_right, r2_l, r2_r
+    return (np.array(left_xs, dtype=np.float32),
+            np.array(left_ys,  dtype=np.float32),
+            np.array(right_xs, dtype=np.float32),
+            np.array(right_ys, dtype=np.float32),
+            blurred, bg_level, threshold)
 
 
-# ---------------------------------------------------------------------------
-# Outermost-per-bin filter
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
+# RANSAC line fit  (x = m·y + c)
+# ─────────────────────────────────────────────────────────────────────────────
 
-def _outermost_per_bin(
-    xs: np.ndarray,
-    ys: np.ndarray,
-    is_left: bool,
-    n_bins: int = 50,
-) -> tuple[np.ndarray, np.ndarray]:
-    """
-    For each y-bin keep only the most extreme x (leftmost for left side,
-    rightmost for right side).  This discards internal transitions and keeps
-    only points that lie on the outer envelope of the cone.
-    """
-    if len(xs) == 0:
-        return xs, ys
+def _r2(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    ss_res = np.sum((y_true - y_pred) ** 2)
+    ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
+    return 0.0 if ss_tot < 1e-12 else float(1.0 - ss_res / ss_tot)
 
-    y_min, y_max = ys.min(), ys.max()
-    if y_max == y_min:
-        return xs, ys
-
-    bins = np.linspace(y_min, y_max, n_bins + 1)
-    out_xs, out_ys = [], []
-
-    for i in range(n_bins):
-        mask = (ys >= bins[i]) & (ys < bins[i + 1])
-        if not mask.any():
-            continue
-        bx = xs[mask]
-        by = ys[mask]
-        idx = int(np.argmin(bx)) if is_left else int(np.argmax(bx))
-        out_xs.append(bx[idx])
-        out_ys.append(by[idx])
-
-    # include the last bin's upper edge
-    mask = ys >= bins[-2]
-    if mask.any():
-        bx, by = xs[mask], ys[mask]
-        idx = int(np.argmin(bx)) if is_left else int(np.argmax(bx))
-        out_xs.append(bx[idx])
-        out_ys.append(by[idx])
-
-    return np.array(out_xs), np.array(out_ys)
-
-
-# ---------------------------------------------------------------------------
-# Line-fit R² helper
-# ---------------------------------------------------------------------------
 
 def _line_r2(x_vals: np.ndarray, y_vals: np.ndarray, coeffs: np.ndarray) -> float:
-    """R² of x = m*y + c fit."""
-    x_pred = np.polyval(coeffs, y_vals)
-    return _r2(x_vals, x_pred)
+    return _r2(x_vals, np.polyval(coeffs, y_vals))
 
 
 def _ransac_line(
     xs: np.ndarray,
     ys: np.ndarray,
-    n_iterations: int = 200,
-    inlier_threshold: float = 15.0,
-    min_inlier_ratio: float = 0.4,
+    n_iterations: int = 300,
+    inlier_threshold: float = RANSAC_THRESHOLD,
+    min_inlier_ratio: float = 0.3,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Fit a line x = m*y + c using RANSAC (Random Sample Consensus).
+    Fit x = m·y + c using RANSAC.
 
-    How it works
-    ------------
-    RANSAC is an iterative outlier-rejection algorithm:
+    1. Randomly sample 2 points → fit a candidate line.
+    2. Count all points within inlier_threshold px — these are the inliers.
+    3. Repeat n_iterations times, keep the sample with the most inliers.
+    4. Refit using all inliers of the best sample.
 
-    1. Randomly pick 2 points from the set.
-    2. Fit a line exactly through those 2 points.
-    3. Count how many of the *remaining* points lie within
-       `inlier_threshold` pixels of that line — these are the "inliers".
-    4. Repeat steps 1-3 for `n_iterations` random samples.
-    5. Take the sample whose line had the most inliers.
-    6. Refit the line using *all* inliers from that best sample
-       (ordinary polyfit on the inlier subset) — this gives a more
-       accurate line than the 2-point seed alone.
-
-    The key insight: an outlier point (e.g. a rogue detection in the
-    spray breakup region) has very little chance of being picked as the
-    seed in two consecutive iterations, so it almost never drives the
-    consensus line.  The true cone boundary, having many consistent
-    points, will dominate.
-
-    Parameters
-    ----------
-    inlier_threshold : float
-        Maximum horizontal distance (pixels) from the line for a point
-        to count as an inlier.  ~10-20px works well for this image scale.
-    min_inlier_ratio : float
-        If the best fit has fewer inliers than this fraction of the total
-        points, fall back to plain polyfit (likely too few consistent pts).
-
-    Returns
-    -------
-    coeffs : np.ndarray  — [m, c] for x = m*y + c
-    inlier_mask : np.ndarray (bool) — which points were inliers
+    Returns coeffs [m, c] and boolean inlier_mask over xs/ys.
     """
-    best_coeffs = np.polyfit(ys, xs, deg=1)   # fallback
-    best_inliers = np.ones(len(xs), dtype=bool)
-    best_n_inliers = 0
+    if len(xs) < 2:
+        c = float(np.mean(xs)) if len(xs) else 0.0
+        return np.array([0.0, c]), np.ones(len(xs), dtype=bool)
 
-    rng = np.random.default_rng(seed=42)
+    best_coeffs  = np.polyfit(ys, xs, deg=1)
+    best_inliers = np.ones(len(xs), dtype=bool)
+    best_n       = 0
+    rng          = np.random.default_rng(seed=42)
 
     for _ in range(n_iterations):
-        # 1. Pick 2 random points
         idx = rng.choice(len(xs), size=2, replace=False)
-        y_s = ys[idx]
-        x_s = xs[idx]
-
-        # 2. Fit line through those 2 points
-        if abs(y_s[1] - y_s[0]) < 1e-6:
-            continue   # degenerate — same y, skip
-        coeffs = np.polyfit(y_s, x_s, deg=1)
-
-        # 3. Distance of all points from this line
-        x_pred = np.polyval(coeffs, ys)
-        dist = np.abs(xs - x_pred)
+        if abs(ys[idx[1]] - ys[idx[0]]) < 1e-6:
+            continue
+        coeffs  = np.polyfit(ys[idx], xs[idx], deg=1)
+        dist    = np.abs(xs - np.polyval(coeffs, ys))
         inliers = dist < inlier_threshold
-        n_inliers = int(inliers.sum())
-
-        # 4. Keep best
-        if n_inliers > best_n_inliers:
-            best_n_inliers = n_inliers
+        n       = int(inliers.sum())
+        if n > best_n:
+            best_n       = n
             best_inliers = inliers
-            best_coeffs = coeffs
+            best_coeffs  = coeffs
 
-    # 5. Refit on full inlier set
-    if best_n_inliers >= max(2, int(min_inlier_ratio * len(xs))):
+    if best_n >= max(2, int(min_inlier_ratio * len(xs))):
         best_coeffs = np.polyfit(ys[best_inliers], xs[best_inliers], deg=1)
     else:
-        print(f"[Cone_4] RANSAC: low inlier count ({best_n_inliers}/{len(xs)}), using plain polyfit")
+        print(f"[Cone_4] RANSAC: low inlier count ({best_n}/{len(xs)}), using plain polyfit")
         best_inliers = np.ones(len(xs), dtype=bool)
-        best_coeffs = np.polyfit(ys, xs, deg=1)
 
     return best_coeffs, best_inliers
 
 
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 # Public API
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 
 def detect_cone_angle(
     image_path: Path,
     nozzle_x: float | None = None,
     top_crop_ratio: float = TOP_CROP_RATIO,
     debug: bool = True,
-    min_r2: float = MIN_R2,
-    min_contrast: float = MIN_CONTRAST,
+    blur_sigma: float = BLUR_SIGMA,
+    threshold_frac: float = THRESHOLD_FRAC,
+    ransac_threshold: float = RANSAC_THRESHOLD,
+    # legacy kwargs — accepted but ignored
+    min_r2: float = 0.0,
+    min_contrast: float = 0.0,
 ) -> tuple[float | None, np.ndarray, dict]:
     """
-    Detect spray cone angle from a single image using sigmoid profile fitting.
+    Detect spray cone angle from a single image.
 
     Parameters
     ----------
     image_path : Path
-        Path to the input image (TIFF, PNG, …).
     nozzle_x : float, optional
-        Horizontal position of the nozzle.  If None the spray centre is found
-        automatically per-row (recommended).
+        Horizontal spray centre column.  Detected automatically if None.
     top_crop_ratio : float
         Fraction of image height to remove from the top before processing.
-    debug : bool
-        If True, overlay sigmoid fit locations (crosses) on the annotated image.
-    min_r2 : float
-        Minimum R² of a sigmoid fit to accept the boundary point.
-    min_contrast : float
-        Minimum intensity contrast |U-L| required to attempt fitting.
+    blur_sigma : float
+        Gaussian blur σ.  10–20 px works for typical shadowgraph images.
+        Larger values merge more features but soften the edge estimate.
+    threshold_frac : float
+        Pixels below bg_level × threshold_frac are counted as spray.
+        0.85 means "15% darker than background = spray".
+    ransac_threshold : float
+        RANSAC inlier distance in pixels.
 
     Returns
     -------
     angle_degrees : float or None
-        Total cone angle in degrees, or None if detection failed.
-    annotated_image : np.ndarray
-        BGR image with boundary lines, accepted points, and text annotations.
+    annotated_image : np.ndarray (BGR)
     debug_info : dict
-        Quality metrics and intermediate arrays.
     """
-    # --- load & normalise -------------------------------------------------
     if not image_path.exists():
         raise FileNotFoundError(f"Image not found: {image_path}")
 
@@ -369,232 +253,140 @@ def detect_cone_angle(
     if img_raw is None:
         raise ValueError(f"Cannot load image: {image_path}")
 
-    if len(img_raw.shape) == 3:
-        gray = cv2.cvtColor(img_raw, cv2.COLOR_BGR2GRAY)
-    else:
-        gray = img_raw.copy()
-
+    gray = (cv2.cvtColor(img_raw, cv2.COLOR_BGR2GRAY)
+            if len(img_raw.shape) == 3 else img_raw.copy())
     if gray.dtype != np.uint8:
         gray = cv2.normalize(gray, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
 
-    # --- top crop ---------------------------------------------------------
     h_orig, w = gray.shape
     top_px = int(h_orig * top_crop_ratio)
-    gray = gray[top_px:, :]
-    h, w = gray.shape
-    print(f"[Cone_4] Image {w}×{h} (cropped {top_px}px from top)")
+    gray   = gray[top_px:, :]
+    h, w   = gray.shape
+    print(f"[Cone_4] Image {w}×{h_orig} → cropped {w}×{h} (removed top {top_px}px)")
 
-    # --- row-by-row boundary detection ------------------------------------
-    left_xs, left_ys, left_r2s = [], [], []
-    right_xs, right_ys, right_r2s = [], [], []
-    debug_sigmoid_pts: list[tuple[int, int, str]] = []  # (x, y, side) for debug overlay
+    cx = int(nozzle_x) if nozzle_x is not None else None
+    left_xs, left_ys, right_xs, right_ys, blurred, bg_level, threshold = \
+        _find_outer_edge_points(gray, blur_sigma, threshold_frac, ROW_STEP, cx)
 
-    for row_y in range(0, h, ROW_STEP):
-        row = gray[row_y, :]
-        xl, xr, r2l, r2r = _find_row_boundaries(
-            row, min_r2, min_contrast, SIGMOID_WINDOW
-        )
-        if xl is not None:
-            left_xs.append(xl)
-            left_ys.append(float(row_y))
-            left_r2s.append(r2l)
-            if debug:
-                debug_sigmoid_pts.append((int(xl), row_y, "left"))
-        if xr is not None:
-            right_xs.append(xr)
-            right_ys.append(float(row_y))
-            right_r2s.append(r2r)
-            if debug:
-                debug_sigmoid_pts.append((int(xr), row_y, "right"))
+    n_left, n_right = len(left_xs), len(right_xs)
+    print(f"[Cone_4] Edge points — left: {n_left}, right: {n_right}")
+    print(f"[Cone_4] Background: {bg_level:.1f}   threshold: {threshold:.1f}")
 
-    n_left = len(left_xs)
-    n_right = len(right_xs)
-    print(f"[Cone_4] Accepted boundary points — left: {n_left}, right: {n_right}")
-
-    # --- annotated image (BGR) -------------------------------------------
     annotated = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
 
-    # Draw ALL accepted boundary points (small, dim)
-    for x, y in zip(left_xs, left_ys):
-        cv2.circle(annotated, (int(x), int(y)), 1, (120, 120, 0), -1)
-    for x, y in zip(right_xs, right_ys):
-        cv2.circle(annotated, (int(x), int(y)), 1, (0, 120, 120), -1)
-
-    if debug:
-        # Already drawn as part of accepted points; add small cross markers
-        for xd, yd, side in debug_sigmoid_pts:
-            col = (255, 255, 0) if side == "left" else (0, 255, 255)
-            cv2.drawMarker(annotated, (xd, yd), col, cv2.MARKER_CROSS, 5, 1)
-
-    # --- handle insufficient points ---------------------------------------
-    fail_msg = None
-    if n_left < MIN_BOUNDARY_POINTS:
-        fail_msg = f"Insufficient left boundary points ({n_left} < {MIN_BOUNDARY_POINTS})"
-    if n_right < MIN_BOUNDARY_POINTS:
-        msg2 = f"Insufficient right boundary points ({n_right} < {MIN_BOUNDARY_POINTS})"
-        fail_msg = (fail_msg + "; " + msg2) if fail_msg else msg2
-
     debug_info_base = {
-        "gray": gray,
-        "image_path": image_path,
-        # All accepted points (before outermost filter)
-        "left_xs_all": np.array(left_xs),
-        "left_ys_all": np.array(left_ys),
-        "right_xs_all": np.array(right_xs),
-        "right_ys_all": np.array(right_ys),
-        # Outermost-filtered points actually used for line fitting
-        "left_xs": np.array(left_xs),
-        "left_ys": np.array(left_ys),
-        "right_xs": np.array(right_xs),
-        "right_ys": np.array(right_ys),
-        "left_r2s": np.array(left_r2s),
-        "right_r2s": np.array(right_r2s),
-        "left_points_accepted": n_left,
-        "right_points_accepted": n_right,
-        "left_r2_mean": float(np.mean(left_r2s)) if left_r2s else 0.0,
-        "right_r2_mean": float(np.mean(right_r2s)) if right_r2s else 0.0,
+        "gray": gray, "blurred": blurred, "image_path": image_path,
+        "bg_level": bg_level, "threshold": threshold,
+        "left_xs": left_xs, "left_ys": left_ys,
+        "right_xs": right_xs, "right_ys": right_ys,
+        # legacy aliases so existing callers don't break
+        "left_xs_all": left_xs, "left_ys_all": left_ys,
+        "right_xs_all": right_xs, "right_ys_all": right_ys,
+        "left_r2s":  np.ones(n_left),  "right_r2s":  np.ones(n_right),
+        "left_r2_mean": 1.0, "right_r2_mean": 1.0,
+        "left_points_accepted": n_left, "right_points_accepted": n_right,
+        "top_px": top_px, "orig_h": h_orig,
     }
+
+    fail_msg = None
+    if n_left < MIN_PTS:
+        fail_msg = f"Insufficient left points ({n_left} < {MIN_PTS})"
+    if n_right < MIN_PTS:
+        m2 = f"Insufficient right points ({n_right} < {MIN_PTS})"
+        fail_msg = (fail_msg + "; " + m2) if fail_msg else m2
 
     if fail_msg:
         print(f"[Cone_4] Warning: {fail_msg}")
         cv2.putText(annotated, fail_msg[:60], (20, 40),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-        debug_info_base.update({
-            "error": fail_msg,
-            "left_line_r2": 0.0,
-            "right_line_r2": 0.0,
-            "fit_quality": 0.0,
-        })
+        debug_info_base.update({"error": fail_msg, "fit_quality": 0.0,
+                                 "left_line_r2": 0.0, "right_line_r2": 0.0})
         return None, annotated, debug_info_base
 
-    # --- line fitting: x = m*y + c  (x as function of y) -----------------
-    # Filter to outermost point per y-bin first — discards internal transitions
-    left_xs_outer, left_ys_outer = _outermost_per_bin(
-        np.array(left_xs), np.array(left_ys), is_left=True
-    )
-    right_xs_outer, right_ys_outer = _outermost_per_bin(
-        np.array(right_xs), np.array(right_ys), is_left=False
-    )
-    print(f"[Cone_4] Outermost filter — left: {len(left_xs_outer)}, right: {len(right_xs_outer)}")
+    left_coeffs,  left_mask  = _ransac_line(left_xs,  left_ys,
+                                             inlier_threshold=ransac_threshold)
+    right_coeffs, right_mask = _ransac_line(right_xs, right_ys,
+                                             inlier_threshold=ransac_threshold)
+    print(f"[Cone_4] RANSAC inliers — left: {left_mask.sum()}/{n_left}, "
+          f"right: {right_mask.sum()}/{n_right}")
 
-    left_coeffs, left_inlier_mask = _ransac_line(left_xs_outer, left_ys_outer)
-    right_coeffs, right_inlier_mask = _ransac_line(right_xs_outer, right_ys_outer)
-    print(f"[Cone_4] RANSAC inliers — left: {left_inlier_mask.sum()}/{len(left_xs_outer)}, "
-          f"right: {right_inlier_mask.sum()}/{len(right_xs_outer)}")
+    left_r2  = _line_r2(left_xs[left_mask],   left_ys[left_mask],   left_coeffs)
+    right_r2 = _line_r2(right_xs[right_mask], right_ys[right_mask], right_coeffs)
+    quality  = (left_r2 + right_r2) / 2.0
+    if quality < 0.6:
+        print(f"[Cone_4] Warning: low fit quality ({quality:.2f})")
 
-    # R² computed on inliers only (how well the consensus points fit the line)
-    left_line_r2 = _line_r2(left_xs_outer[left_inlier_mask],
-                             left_ys_outer[left_inlier_mask], left_coeffs)
-    right_line_r2 = _line_r2(right_xs_outer[right_inlier_mask],
-                              right_ys_outer[right_inlier_mask], right_coeffs)
-    fit_quality = (left_line_r2 + right_line_r2) / 2.0
+    m_l, m_r = left_coeffs[0], right_coeffs[0]
+    dl = np.array([m_l, 1.0]); dl /= np.linalg.norm(dl)
+    dr = np.array([m_r, 1.0]); dr /= np.linalg.norm(dr)
+    angle_deg = float(np.degrees(np.arccos(float(np.clip(np.dot(dl, dr), -1.0, 1.0)))))
 
-    if fit_quality < 0.6:
-        print(f"[Cone_4] Warning: low fit quality ({fit_quality:.2f}) — cone angle may be unreliable")
+    # Draw boundary points (bright = inlier, dim = outlier)
+    for x, y, ok in zip(left_xs,  left_ys,  left_mask):
+        cv2.circle(annotated, (int(x), int(y)), 2, (255, 255, 0) if ok else (70, 70, 0), -1)
+    for x, y, ok in zip(right_xs, right_ys, right_mask):
+        cv2.circle(annotated, (int(x), int(y)), 2, (0, 255, 255) if ok else (0, 70, 70), -1)
 
-    # --- cone angle -------------------------------------------------------
-    # Direction vectors for x = m*y + c  →  (dx, dy) = (m, 1) normalised
-    m_left, m_right = left_coeffs[0], right_coeffs[0]
-    dir_left = np.array([m_left, 1.0])
-    dir_right = np.array([m_right, 1.0])
-    dir_left /= np.linalg.norm(dir_left)
-    dir_right /= np.linalg.norm(dir_right)
+    # Draw fitted lines
+    for coeffs in (left_coeffs, right_coeffs):
+        cv2.line(annotated,
+                 (int(np.polyval(coeffs, 0)),   0),
+                 (int(np.polyval(coeffs, h-1)), h-1),
+                 (0, 0, 255), 2)
 
-    dot = float(np.clip(np.dot(dir_left, dir_right), -1.0, 1.0))
-    angle_deg = float(np.degrees(np.arccos(dot)))
-
-    # --- draw fitted boundary lines on annotated image --------------------
-    y_top, y_bot = 0, h - 1
-    for coeffs, color in [(left_coeffs, (0, 0, 255)), (right_coeffs, (0, 0, 255))]:
-        x_top = int(np.polyval(coeffs, y_top))
-        x_bot = int(np.polyval(coeffs, y_bot))
-        cv2.line(annotated, (x_top, y_top), (x_bot, y_bot), color, 2)
-
-    # Draw outermost-filtered points (bright, used for line fit)
-    for x, y in zip(left_xs_outer, left_ys_outer):
-        cv2.circle(annotated, (int(x), int(y)), 3, (255, 255, 0), -1)   # bright cyan
-    for x, y in zip(right_xs_outer, right_ys_outer):
-        cv2.circle(annotated, (int(x), int(y)), 3, (0, 255, 255), -1)   # bright yellow
-
-    # --- text overlays ----------------------------------------------------
     angle_text = f"Angle: {angle_deg:.2f} deg"
-    quality_text = f"Quality: {fit_quality:.2f}"
-    ts_angle = cv2.getTextSize(angle_text, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)[0]
-    tx = w - ts_angle[0] - 15
-    cv2.putText(annotated, angle_text, (tx, 35),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2, cv2.LINE_AA)
-    cv2.putText(annotated, quality_text, (tx, 65),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2, cv2.LINE_AA)
+    ts = cv2.getTextSize(angle_text, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)[0]
+    tx = w - ts[0] - 15
+    cv2.putText(annotated, angle_text,
+                (tx, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2, cv2.LINE_AA)
+    cv2.putText(annotated, f"Quality: {quality:.2f}",
+                (tx, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2, cv2.LINE_AA)
 
     debug_info = {
         **debug_info_base,
-        # Outer-filtered points with RANSAC inlier masks
-        "left_xs": left_xs_outer,
-        "left_ys": left_ys_outer,
-        "right_xs": right_xs_outer,
-        "right_ys": right_ys_outer,
-        "left_inlier_mask": left_inlier_mask,
-        "right_inlier_mask": right_inlier_mask,
-        "left_line_r2": left_line_r2,
-        "right_line_r2": right_line_r2,
-        "fit_quality": fit_quality,
-        "left_coeffs": left_coeffs,
-        "right_coeffs": right_coeffs,
-        "left_dir": dir_left,
-        "right_dir": dir_right,
-        "angle_deg": angle_deg,
-        "top_px": top_px,
-        "orig_h": h_orig,
+        "left_inlier_mask":  left_mask,  "right_inlier_mask": right_mask,
+        "left_line_r2":  left_r2, "right_line_r2": right_r2, "fit_quality": quality,
+        "left_coeffs":   left_coeffs,  "right_coeffs":  right_coeffs,
+        "left_dir": dl, "right_dir": dr, "angle_deg": angle_deg,
     }
-
     return angle_deg, annotated, debug_info
 
 
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 # 6-panel debug visualisation
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 
 def create_debug_image(debug_info: dict, image_path: Path) -> np.ndarray:
     """
-    Create a 6-panel debug grid showing the full processing pipeline.
+    6-panel debug grid.
 
-    Panels
-    ------
     1. Original grayscale
-    2. Original image with TOP_CROP_RATIO region highlighted in red
-    3. Left boundary scatter (colour-coded by R²)
-    4. Right boundary scatter (colour-coded by R²)
-    5. Both boundary clouds + fitted lines
+    2. Blurred image with threshold contour (shows what the detector sees)
+    3. Left boundary scatter  (bright = RANSAC inlier, dim = outlier)
+    4. Right boundary scatter
+    5. Both sides + RANSAC lines
     6. Final annotated result
     """
-    gray = debug_info["gray"]
-    h, w = gray.shape
+    gray     = debug_info["gray"]
+    blurred  = debug_info.get("blurred")
+    h, w     = gray.shape
+    threshold = debug_info.get("threshold", None)
 
-    # All accepted points (with matching R² arrays) — used for R²-coloured scatter
-    left_xs_all = debug_info.get("left_xs_all", debug_info.get("left_xs", np.array([])))
-    left_ys_all = debug_info.get("left_ys_all", debug_info.get("left_ys", np.array([])))
-    right_xs_all = debug_info.get("right_xs_all", debug_info.get("right_xs", np.array([])))
-    right_ys_all = debug_info.get("right_ys_all", debug_info.get("right_ys", np.array([])))
-    left_r2s = debug_info.get("left_r2s", np.array([]))
-    right_r2s = debug_info.get("right_r2s", np.array([]))
-    # Outermost-filtered points — used for panel 5 + line fit
-    left_xs = debug_info.get("left_xs", np.array([]))
-    left_ys = debug_info.get("left_ys", np.array([]))
+    left_xs  = debug_info.get("left_xs",  np.array([]))
+    left_ys  = debug_info.get("left_ys",  np.array([]))
     right_xs = debug_info.get("right_xs", np.array([]))
     right_ys = debug_info.get("right_ys", np.array([]))
-    left_coeffs = debug_info.get("left_coeffs", None)
+    left_mask  = debug_info.get("left_inlier_mask",  np.ones(len(left_xs),  dtype=bool))
+    right_mask = debug_info.get("right_inlier_mask", np.ones(len(right_xs), dtype=bool))
+    left_coeffs  = debug_info.get("left_coeffs",  None)
     right_coeffs = debug_info.get("right_coeffs", None)
-    left_inlier_mask = debug_info.get("left_inlier_mask", np.ones(len(left_xs), dtype=bool))
-    right_inlier_mask = debug_info.get("right_inlier_mask", np.ones(len(right_xs), dtype=bool))
-    angle_deg = debug_info.get("angle_deg", None)
-    fit_quality = debug_info.get("fit_quality", 0.0)
+    angle_deg    = debug_info.get("angle_deg",    None)
+    fit_quality  = debug_info.get("fit_quality",  0.0)
 
-    # Target cell size (each of the 6 panels)
     cell_w = max(200, w // 3)
     cell_h = max(150, h // 2)
-
     orig_bgr = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-    text_col = (0, 255, 255)  # yellow
+    text_col = (0, 255, 255)
 
     def _label(img: np.ndarray, text: str) -> np.ndarray:
         out = img.copy()
@@ -604,65 +396,67 @@ def create_debug_image(debug_info: dict, image_path: Path) -> np.ndarray:
     def _resize(img: np.ndarray) -> np.ndarray:
         return cv2.resize(img, (cell_w, cell_h), interpolation=cv2.INTER_AREA)
 
-    # ---- Panel 1: original grayscale ------------------------------------
-    p1 = _label(_resize(orig_bgr), "1. Original")
-
-    # ---- Panel 2: original image with top-crop region highlighted -------
-    top_px = debug_info.get("top_px", 0)
-    orig_h = debug_info.get("orig_h", h)
-    orig_full = cv2.imread(str(image_path))
-    if orig_full is None:
-        orig_full = cv2.copyMakeBorder(orig_bgr, top_px, 0, 0, 0, cv2.BORDER_CONSTANT, value=0)
-    orig_full_gray = cv2.cvtColor(orig_full, cv2.COLOR_BGR2GRAY) if orig_full.ndim == 3 else orig_full
-    p2_base = cv2.cvtColor(orig_full_gray, cv2.COLOR_GRAY2BGR)
+    # ── Panel 1: full original with crop line ────────────────────────────────
+    top_px  = debug_info.get("top_px", 0)
+    orig_h  = debug_info.get("orig_h", h)
+    full_img = cv2.imread(str(image_path))
+    if full_img is None:
+        full_img = cv2.copyMakeBorder(orig_bgr, top_px, 0, 0, 0,
+                                       cv2.BORDER_CONSTANT, value=0)
+    if full_img.ndim == 2:
+        full_img = cv2.cvtColor(full_img, cv2.COLOR_GRAY2BGR)
     if top_px > 0:
-        overlay = p2_base.copy()
-        cv2.rectangle(overlay, (0, 0), (p2_base.shape[1] - 1, top_px - 1), (0, 0, 200), -1)
-        cv2.addWeighted(overlay, 0.45, p2_base, 0.55, 0, p2_base)
-        crop_y_scaled = int(top_px * cell_h / orig_h)
-    p2_base = _resize(p2_base)
-    if top_px > 0:
-        cv2.line(p2_base, (0, crop_y_scaled), (cell_w, crop_y_scaled), (0, 0, 255), 1)
-    p2 = _label(p2_base, "2. Crop region")
+        overlay = full_img.copy()
+        cv2.rectangle(overlay, (0, 0), (full_img.shape[1] - 1, top_px - 1),
+                      (0, 0, 200), -1)
+        cv2.addWeighted(overlay, 0.45, full_img, 0.55, 0, full_img)
+        cv2.line(full_img, (0, top_px), (full_img.shape[1] - 1, top_px),
+                 (0, 0, 255), 2)
+    p1 = _label(_resize(full_img), "1. Original (red = cropped)")
 
-    # ---- Panels 3–5: matplotlib scatter or OpenCV fallback --------------
+    # ── Panel 2: blurred image + threshold contour ───────────────────────────
+    if blurred is not None:
+        blur_u8 = cv2.normalize(blurred, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        p2_base = cv2.cvtColor(blur_u8, cv2.COLOR_GRAY2BGR)
+        if threshold is not None:
+            _, tmask = cv2.threshold(blur_u8, int(threshold), 255, cv2.THRESH_BINARY_INV)
+            cnts, _ = cv2.findContours(tmask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            cv2.drawContours(p2_base, cnts, -1, (0, 0, 255), 1)
+        p2 = _label(_resize(p2_base), "2. Blurred + threshold")
+    else:
+        p2 = _label(_resize(orig_bgr.copy()), "2. (no blur data)")
+
+    # ── Panels 3–5: scatter plots ─────────────────────────────────────────────
     _mpl_ok = False
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-        import matplotlib.cm as cm
         _mpl_ok = True
     except ImportError:
         pass
 
-    def _scatter_panel_mpl(
-        xs: np.ndarray,
-        ys: np.ndarray,
-        r2s: np.ndarray,
-        title: str,
-        coeffs: np.ndarray | None = None,
-        other_xs: np.ndarray | None = None,
-        other_ys: np.ndarray | None = None,
-        other_coeffs: np.ndarray | None = None,
+    def _scatter_mpl(
+        xs: np.ndarray, ys: np.ndarray, colors: np.ndarray, title: str,
+        left_c: np.ndarray | None = None, left_cy: np.ndarray | None = None,
+        right_c: np.ndarray | None = None, right_cy: np.ndarray | None = None,
+        l_coeffs: np.ndarray | None = None, r_coeffs: np.ndarray | None = None,
     ) -> np.ndarray:
         fig, ax = plt.subplots(figsize=(cell_w / 80, cell_h / 80), dpi=80)
         fig.patch.set_facecolor("#1a1a1a")
         ax.set_facecolor("#1a1a1a")
         if len(xs):
-            sc = ax.scatter(xs, ys, c=r2s, cmap="plasma", vmin=0, vmax=1,
-                            s=6, alpha=0.8)
-            plt.colorbar(sc, ax=ax, label="R²")
-        if coeffs is not None and len(xs):
-            y_range = np.array([0.0, float(h)])
-            ax.plot(np.polyval(coeffs, y_range), y_range, "r-", lw=1.5)
-        if other_xs is not None and len(other_xs):
-            ax.scatter(other_xs, other_ys, c="cyan", s=4, alpha=0.5)
-            if other_coeffs is not None:
-                y_range = np.array([0.0, float(h)])
-                ax.plot(np.polyval(other_coeffs, y_range), y_range, "b-", lw=1.5)
-        ax.set_xlim(0, w)
-        ax.set_ylim(h, 0)
+            sc = ax.scatter(xs, ys, c=colors, cmap="plasma", vmin=0, vmax=1, s=5, alpha=0.85)
+            plt.colorbar(sc, ax=ax)
+        if left_c is not None and len(left_c):
+            ax.scatter(left_c, left_cy, c="yellow", s=5, alpha=0.7, marker="x")
+        if right_c is not None and len(right_c):
+            ax.scatter(right_c, right_cy, c="cyan", s=5, alpha=0.7, marker="x")
+        for coeffs, col in [(l_coeffs, "red"), (r_coeffs, "blue")]:
+            if coeffs is not None:
+                yr = np.array([0.0, float(h)])
+                ax.plot(np.polyval(coeffs, yr), yr, color=col, lw=1.5)
+        ax.set_xlim(0, w); ax.set_ylim(h, 0)
         ax.set_title(title, color="white", fontsize=8)
         ax.tick_params(colors="white", labelsize=6)
         for sp in ax.spines.values():
@@ -675,97 +469,78 @@ def create_debug_image(debug_info: dict, image_path: Path) -> np.ndarray:
         panel = cv2.cvtColor(buf, cv2.COLOR_RGBA2BGR)
         return cv2.resize(panel, (cell_w, cell_h), interpolation=cv2.INTER_AREA)
 
-    def _scatter_panel_cv(
-        xs: np.ndarray,
-        ys: np.ndarray,
-        r2s: np.ndarray,
-        title: str,
-        coeffs: np.ndarray | None = None,
-        color: tuple = (255, 100, 0),
-        other_xs: np.ndarray | None = None,
-        other_ys: np.ndarray | None = None,
-        other_color: tuple = (0, 255, 200),
-        other_coeffs: np.ndarray | None = None,
-    ) -> np.ndarray:
-        panel = np.zeros((cell_h, cell_w, 3), dtype=np.uint8)
-        sx, sy = cell_w / max(w, 1), cell_h / max(h, 1)
-        for xi, yi in zip(xs, ys):
-            cv2.circle(panel, (int(xi * sx), int(yi * sy)), 2, color, -1)
-        if other_xs is not None:
-            for xi, yi in zip(other_xs, other_ys):
-                cv2.circle(panel, (int(xi * sx), int(yi * sy)), 2, other_color, -1)
-        if coeffs is not None:
-            x0 = int(np.polyval(coeffs, 0) * sx)
-            x1 = int(np.polyval(coeffs, h) * sx)
-            cv2.line(panel, (x0, 0), (x1, cell_h - 1), (0, 0, 255), 1)
-        if other_coeffs is not None:
-            x0 = int(np.polyval(other_coeffs, 0) * sx)
-            x1 = int(np.polyval(other_coeffs, h) * sx)
-            cv2.line(panel, (x0, 0), (x1, cell_h - 1), (255, 0, 0), 1)
-        cv2.putText(panel, title, (8, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.55, text_col, 1)
-        return panel
+    # Inlier/outlier as plasma colour: 1.0 = inlier (bright), 0.15 = outlier (dim)
+    left_c  = np.where(left_mask,  1.0, 0.15)
+    right_c = np.where(right_mask, 1.0, 0.15)
 
     if _mpl_ok:
-        # Panels 3 & 4: all accepted points coloured by R² (no line — shows raw quality)
-        p3 = _scatter_panel_mpl(left_xs_all, left_ys_all, left_r2s,
-                                 "3. Left: all accepted (R²)")
-        p4 = _scatter_panel_mpl(right_xs_all, right_ys_all, right_r2s,
-                                 "4. Right: all accepted (R²)")
-        # Panel 5: outermost pts coloured by RANSAC inlier (bright) vs outlier (dim)
-        # Encode inlier status as 1.0 / 0.2 so the plasma colormap shows the split
-        left_inlier_c = np.where(left_inlier_mask, 1.0, 0.15)
-        right_inlier_c = np.where(right_inlier_mask, 1.0, 0.15)
-        p5 = _scatter_panel_mpl(
-            left_xs, left_ys, left_inlier_c, "5. RANSAC inliers (bright=kept)",
-            coeffs=left_coeffs,
-            other_xs=right_xs, other_ys=right_ys,
-            other_coeffs=right_coeffs,
-        )
+        p3 = _scatter_mpl(left_xs,  left_ys,  left_c,
+                          "3. Left boundary (bright=inlier)")
+        p4 = _scatter_mpl(right_xs, right_ys, right_c,
+                          "4. Right boundary (bright=inlier)")
+        # Panel 5: both sides together with lines
+        combined_c = np.concatenate([left_c, right_c])
+        combined_x = np.concatenate([left_xs, right_xs])
+        combined_y = np.concatenate([left_ys, right_ys])
+        p5 = _scatter_mpl(combined_x, combined_y, combined_c,
+                          "5. Both sides + RANSAC lines",
+                          l_coeffs=left_coeffs, r_coeffs=right_coeffs)
     else:
-        p3 = _scatter_panel_cv(left_xs_all, left_ys_all, left_r2s,
-                                "3. Left: all accepted", color=(255, 100, 0))
-        p4 = _scatter_panel_cv(right_xs_all, right_ys_all, right_r2s,
-                                "4. Right: all accepted", color=(0, 200, 255))
-        left_inlier_c = np.where(left_inlier_mask, 1.0, 0.15)
-        right_inlier_c = np.where(right_inlier_mask, 1.0, 0.15)
-        p5 = _scatter_panel_cv(
-            left_xs, left_ys, np.array([]), "5. RANSAC inliers + fit",
-            coeffs=left_coeffs, color=(255, 100, 0),
-            other_xs=right_xs, other_ys=right_ys,
-            other_color=(0, 200, 255), other_coeffs=right_coeffs,
-        )
+        def _scatter_cv(xs, ys, mask, title, color_in, color_out,
+                        l_coeffs=None, r_coeffs=None):
+            panel = np.zeros((cell_h, cell_w, 3), dtype=np.uint8)
+            sx, sy = cell_w / max(w, 1), cell_h / max(h, 1)
+            for xi, yi, ok in zip(xs, ys, mask):
+                cv2.circle(panel, (int(xi*sx), int(yi*sy)), 2,
+                           color_in if ok else color_out, -1)
+            for c, col in [(l_coeffs, (255, 0, 0)), (r_coeffs, (0, 0, 255))]:
+                if c is not None:
+                    cv2.line(panel,
+                             (int(np.polyval(c, 0)*sx), 0),
+                             (int(np.polyval(c, h)*sx), cell_h-1), col, 1)
+            cv2.putText(panel, title, (8, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.5, text_col, 1)
+            return panel
+        p3 = _scatter_cv(left_xs,  left_ys,  left_mask,  "3. Left",
+                         (255,255,0), (70,70,0))
+        p4 = _scatter_cv(right_xs, right_ys, right_mask, "4. Right",
+                         (0,255,255), (0,70,70))
+        all_xs = np.concatenate([left_xs, right_xs])
+        all_ys = np.concatenate([left_ys, right_ys])
+        all_mask = np.concatenate([left_mask, right_mask])
+        p5 = _scatter_cv(all_xs, all_ys, all_mask, "5. Both + lines",
+                         (200,200,0), (60,60,0),
+                         l_coeffs=left_coeffs, r_coeffs=right_coeffs)
 
-    # ---- Panel 6: final result ------------------------------------------
+    # ── Panel 6: final result ─────────────────────────────────────────────────
     if angle_deg is not None:
-        final_base = orig_bgr.copy()
-        if left_coeffs is not None:
-            x0 = int(np.polyval(left_coeffs, 0))
-            x1 = int(np.polyval(left_coeffs, h))
-            cv2.line(final_base, (x0, 0), (x1, h - 1), (0, 0, 255), 2)
-        if right_coeffs is not None:
-            x0 = int(np.polyval(right_coeffs, 0))
-            x1 = int(np.polyval(right_coeffs, h))
-            cv2.line(final_base, (x0, 0), (x1, h - 1), (0, 0, 255), 2)
-        p6 = _resize(final_base)
-        cv2.putText(p6, f"6. Angle: {angle_deg:.2f} deg", (8, 26),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_col, 2)
-        cv2.putText(p6, f"   Quality: {fit_quality:.2f}", (8, 50),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, text_col, 1)
+        p6_base = orig_bgr.copy()
+        for coeffs in (left_coeffs, right_coeffs):
+            if coeffs is not None:
+                cv2.line(p6_base,
+                         (int(np.polyval(coeffs, 0)),   0),
+                         (int(np.polyval(coeffs, h-1)), h-1),
+                         (0, 0, 255), 2)
+        p6 = _resize(p6_base)
+        cv2.putText(p6, f"6. Angle: {angle_deg:.2f} deg",
+                    (8, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_col, 2)
+        cv2.putText(p6, f"   Quality: {fit_quality:.2f}",
+                    (8, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.55, text_col, 1)
     else:
         p6 = np.zeros((cell_h, cell_w, 3), dtype=np.uint8)
-        cv2.putText(p6, "6. Detection failed", (8, 26),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+        cv2.putText(p6, "6. Detection failed",
+                    (8, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
-    # ---- assemble 2×3 grid ----------------------------------------------
+    # ── Assemble 2×3 grid ────────────────────────────────────────────────────
     def _pad(img: np.ndarray) -> np.ndarray:
         ph = cell_h - img.shape[0]
         pw = cell_w - img.shape[1]
         return cv2.copyMakeBorder(img, 0, max(ph, 0), 0, max(pw, 0),
                                   cv2.BORDER_CONSTANT, value=(0, 0, 0))
 
-    row1 = np.hstack([_pad(p1), _pad(p2), _pad(p3)])
-    row2 = np.hstack([_pad(p4), _pad(p5), _pad(p6)])
-    grid = np.vstack([row1, row2])
+    grid = np.vstack([
+        np.hstack([_pad(p1), _pad(p2), _pad(p3)]),
+        np.hstack([_pad(p4), _pad(p5), _pad(p6)]),
+    ])
 
     title_h = 50
     grid = cv2.copyMakeBorder(grid, title_h, 0, 0, 0,
@@ -775,25 +550,23 @@ def create_debug_image(debug_info: dict, image_path: Path) -> np.ndarray:
     return grid
 
 
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 # Helpers
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _find_local_image(base_dir: Path, base_name: str = "Cone_Trial_Image") -> Path:
-    """Find image file in directory with various extensions."""
-    exts = [".tiff", ".tif", ".png", ".jpg", ".jpeg", ".bmp"]
-    for ext in exts:
+    for ext in [".tiff", ".tif", ".png", ".jpg", ".jpeg", ".bmp"]:
         candidate = base_dir / f"{base_name}{ext}"
         if candidate.exists():
             return candidate
     raise FileNotFoundError(
-        f"No image named {base_name} with extensions {exts} found in {base_dir}"
+        f"No image named '{base_name}' with known extensions found in {base_dir}"
     )
 
 
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 # CLI
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 
 def process_single_image(
     input_path: Path,
@@ -801,109 +574,97 @@ def process_single_image(
     no_open: bool,
     top_crop: float,
     debug_mode: bool,
-    min_r2: float,
-    min_contrast: float,
+    blur_sigma: float,
+    threshold_frac: float,
+    ransac_threshold: float,
     output_path: Path | None = None,
 ) -> None:
-    """Process a single image and save outputs."""
     if output_path is None:
         output_path = input_path.parent / f"{input_path.stem}_cone4{input_path.suffix}"
 
-    print(f"[Cone_4] Loading image: {input_path}")
+    print(f"[Cone_4] Loading: {input_path}")
 
-    try:
-        angle_deg, annotated, debug_info = detect_cone_angle(
-            input_path,
-            nozzle_x=nozzle_x,
-            top_crop_ratio=top_crop,
-            debug=debug_mode,
-            min_r2=min_r2,
-            min_contrast=min_contrast,
-        )
+    angle_deg, annotated, debug_info = detect_cone_angle(
+        input_path,
+        nozzle_x=nozzle_x,
+        top_crop_ratio=top_crop,
+        debug=debug_mode,
+        blur_sigma=blur_sigma,
+        threshold_frac=threshold_frac,
+        ransac_threshold=ransac_threshold,
+    )
 
-        if angle_deg is None:
-            raise RuntimeError(debug_info.get("error", "Detection failed"))
+    if angle_deg is None:
+        raise RuntimeError(debug_info.get("error", "Detection failed"))
 
-        print(f"[Cone_4] Detected cone angle: {angle_deg:.2f} degrees")
-        print(f"[Cone_4] Left accepted: {debug_info['left_points_accepted']}  "
-              f"Right accepted: {debug_info['right_points_accepted']}")
-        print(f"[Cone_4] Sigmoid R² mean — left: {debug_info['left_r2_mean']:.3f}  "
-              f"right: {debug_info['right_r2_mean']:.3f}")
-        print(f"[Cone_4] Line R² — left: {debug_info['left_line_r2']:.3f}  "
-              f"right: {debug_info['right_line_r2']:.3f}  "
-              f"fit_quality: {debug_info['fit_quality']:.3f}")
+    print(f"[Cone_4] Cone angle: {angle_deg:.2f}°")
+    print(f"[Cone_4] Left / right points: "
+          f"{debug_info['left_points_accepted']} / {debug_info['right_points_accepted']}")
+    print(f"[Cone_4] Line R² — left: {debug_info['left_line_r2']:.3f}  "
+          f"right: {debug_info['right_line_r2']:.3f}  "
+          f"quality: {debug_info['fit_quality']:.3f}")
 
-        cv2.imwrite(str(output_path), annotated)
-        print(f"[Cone_4] Saved annotated image: {output_path}")
+    cv2.imwrite(str(output_path), annotated)
+    print(f"[Cone_4] Saved: {output_path}")
 
-        if debug_mode:
-            debug_dir = CURRENT_DIR / "cone_4_debug"
-            debug_dir.mkdir(exist_ok=True)
-            debug_img = create_debug_image(debug_info, input_path)
-            dbg_path = debug_dir / f"{input_path.stem}_debug.png"
-            cv2.imwrite(str(dbg_path), debug_img)
-            print(f"[Cone_4] Saved debug image: {dbg_path}")
+    if debug_mode:
+        debug_dir = CURRENT_DIR / "cone_4_debug"
+        debug_dir.mkdir(exist_ok=True)
+        dbg_img  = create_debug_image(debug_info, input_path)
+        dbg_path = debug_dir / f"{input_path.stem}_debug.png"
+        cv2.imwrite(str(dbg_path), dbg_img)
+        print(f"[Cone_4] Debug image: {dbg_path}")
 
-        if not no_open:
-            try:
-                if sys.platform == "darwin":
-                    import subprocess
-                    subprocess.run(["open", str(output_path)], check=False)
-                    if debug_mode:
-                        dbg_path = CURRENT_DIR / "cone_4_debug" / f"{input_path.stem}_debug.png"
-                        subprocess.run(["open", str(dbg_path)], check=False)
-                else:
-                    cv2.imshow("Cone_4 Result", annotated)
-                    cv2.waitKey(0)
-                    cv2.destroyAllWindows()
-            except Exception as e:
-                print(f"[Cone_4] Warning: could not open image: {e}")
-
-    except Exception as e:
-        print(f"[Cone_4] Error: {e}")
-        raise
+    if not no_open:
+        try:
+            if sys.platform == "darwin":
+                import subprocess
+                subprocess.run(["open", str(output_path)], check=False)
+                if debug_mode:
+                    subprocess.run(["open", str(dbg_path)], check=False)
+            else:
+                cv2.imshow("Cone_4 Result", annotated)
+                cv2.waitKey(0)
+                cv2.destroyAllWindows()
+        except Exception as e:
+            print(f"[Cone_4] Warning: could not open image: {e}")
 
 
 def main() -> None:
-    """Main entry point."""
     try:
-        default_input = _find_local_image(CURRENT_DIR)
+        default_input = _find_local_image(CURRENT_DIR, "Spray_1")
     except FileNotFoundError:
         default_input = None
 
     parser = argparse.ArgumentParser(
-        description="Sigmoid-profile cone angle detection (Cone_4)"
+        description="Blur-envelope cone angle detection (Cone_4)"
     )
-    parser.add_argument("--input", type=Path, default=default_input,
-                        help="Path to input image")
-    parser.add_argument("--output", type=Path, default=None,
-                        help="Path to output annotated image")
-    parser.add_argument("--nozzle-x", type=float, default=None,
-                        help="X-coordinate of nozzle (optional)")
-    parser.add_argument("--no-open", action="store_true",
-                        help="Do not auto-open output image")
-    parser.add_argument("--top-crop", type=float, default=TOP_CROP_RATIO,
-                        help=f"Fraction to crop from image top (default {TOP_CROP_RATIO})")
-    parser.add_argument("--no-debug", action="store_true",
-                        help="Disable debug overlay and debug image")
-    parser.add_argument("--min-r2", type=float, default=MIN_R2,
-                        help=f"Minimum sigmoid fit R² (default {MIN_R2})")
-    parser.add_argument("--min-contrast", type=float, default=MIN_CONTRAST,
-                        help=f"Minimum intensity contrast (default {MIN_CONTRAST})")
+    parser.add_argument("--input",      type=Path,  default=default_input)
+    parser.add_argument("--output",     type=Path,  default=None)
+    parser.add_argument("--nozzle-x",  type=float, default=None)
+    parser.add_argument("--no-open",   action="store_true")
+    parser.add_argument("--top-crop",  type=float, default=TOP_CROP_RATIO,
+                        help=f"Top crop fraction (default {TOP_CROP_RATIO})")
+    parser.add_argument("--no-debug",  action="store_true")
+    parser.add_argument("--blur-sigma", type=float, default=BLUR_SIGMA,
+                        help=f"Gaussian blur σ in px (default {BLUR_SIGMA})")
+    parser.add_argument("--threshold-frac", type=float, default=THRESHOLD_FRAC,
+                        help=f"Spray threshold fraction (default {THRESHOLD_FRAC})")
+    parser.add_argument("--ransac-threshold", type=float, default=RANSAC_THRESHOLD,
+                        help=f"RANSAC inlier distance in px (default {RANSAC_THRESHOLD})")
     args = parser.parse_args()
 
     input_path = args.input
     if input_path is None:
         for ext in [".tiff", ".tif", ".png", ".jpg", ".jpeg", ".bmp"]:
-            candidate = CURRENT_DIR / f"Spray_3{ext}"
+            candidate = CURRENT_DIR / f"Spray_1{ext}"
             if candidate.exists():
                 input_path = candidate
                 break
 
     if input_path is None or not input_path.exists():
         raise FileNotFoundError(
-            "No input image specified. Use --input or place Cone_Trial_Image.* "
-            "or Spray_1.* in the script directory."
+            "No input image found. Use --input or place Spray_1.* in the script directory."
         )
 
     process_single_image(
@@ -912,8 +673,9 @@ def main() -> None:
         no_open=args.no_open,
         top_crop=args.top_crop,
         debug_mode=not args.no_debug,
-        min_r2=args.min_r2,
-        min_contrast=args.min_contrast,
+        blur_sigma=args.blur_sigma,
+        threshold_frac=args.threshold_frac,
+        ransac_threshold=args.ransac_threshold,
         output_path=args.output,
     )
 

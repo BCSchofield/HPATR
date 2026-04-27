@@ -48,7 +48,8 @@
       "WebFetch(domain:utopia-inst.com.tw)",
       "WebFetch(domain:www.lovehighspeed.com)",
       "WebFetch(domain:pypi.org)",
-      "WebFetch(domain:docplayer.net)"
+      "WebFetch(domain:docplayer.net)",
+      "Bash(python -m py_compile src/gui/GUI_Clean.py)"
     ]
   }
 }
