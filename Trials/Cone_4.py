@@ -41,6 +41,7 @@ from config_loader import get_imaging_config  # noqa: E402
 # Algorithm parameters
 # ─────────────────────────────────────────────────────────────────────────────
 TOP_CROP_RATIO   = 0.30    # fraction of image height to remove from the top
+EDGE_MARGIN_FRAC = 0.05    # fraction of image width to exclude from each side
 BLUR_SIGMA       = 7.5     # Gaussian σ (px) — merges ligaments into an envelope
 THRESHOLD_FRAC   = 0.85    # spray threshold = bg_level × this value
 RANSAC_THRESHOLD = 10.0    # max horizontal distance (px) to count as inlier
@@ -112,6 +113,11 @@ def _find_outer_edge_points(
 
     row_centers = np.clip(row_centers, w // 4, 3 * w // 4)
 
+    # Exclude the outer 5% on each side to avoid picking up frame/vignette edges
+    margin = int(w * EDGE_MARGIN_FRAC)
+    x_left_start  = margin
+    x_right_start = w - 1 - margin
+
     # Per-row edge scan: first dark pixel from each image edge toward the centre
     left_xs:  list[float] = []
     left_ys:  list[float] = []
@@ -122,15 +128,15 @@ def _find_outer_edge_points(
         cx  = int(row_centers[y])
         row = blurred[y]
 
-        # Left edge: scan x = 0 → cx (outermost dark pixel on left side)
-        for x in range(cx):
+        # Left edge: scan inward from margin (skip outer 5%) → cx
+        for x in range(x_left_start, cx):
             if row[x] < threshold:
                 left_xs.append(float(x))
                 left_ys.append(float(y))
                 break
 
-        # Right edge: scan x = w-1 → cx (outermost dark pixel on right side)
-        for x in range(w - 1, cx, -1):
+        # Right edge: scan inward from margin (skip outer 5%) → cx
+        for x in range(x_right_start, cx, -1):
             if row[x] < threshold:
                 right_xs.append(float(x))
                 right_ys.append(float(y))

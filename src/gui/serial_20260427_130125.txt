@@ -1,0 +1,60 @@
+[2026-04-27 13:01:25] Received on connect: PRESSURE_READING:0.06
+[2026-04-27 13:01:25] Received on connect: PRESSURE_READING:0.11
+[2026-04-27 13:01:25] Received on connect: ARDUINO_READY
+[2026-04-27 13:01:25] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 13:01:25] Received: PRESSURE_READING:0.11
+[2026-04-27 13:01:25] Received: PRESSURE_READING:0.11
+[2026-04-27 13:01:26] Received: PRESSURE_READING:0.11
+[2026-04-27 13:01:26] Received: PRESSURE_READING:0.06
+[2026-04-27 13:01:26] Received: PRESSURE_READING:0.06
+[2026-04-27 13:01:26] Received: PRESSURE_READING:0.06
+[2026-04-27 13:01:27] Received: PRESSURE_READING:0.01
+[2026-04-27 13:01:27] Received: PRESSURE_READING:0.05
+[2026-04-27 13:01:27] Received: PRESSURE_READING:0.10
+[2026-04-27 13:01:27] Received: PRESSURE_READING:0.10
+[2026-04-27 13:01:28] Received: PRESSURE_READING:0.13
+[2026-04-27 13:01:28] Received: PRESSURE_READING:0.09
+[2026-04-27 13:01:28] Received: ARDUINO_READY
+[2026-04-27 13:01:28] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 13:01:28] Received: PRESSURE_READING:0.04
+[2026-04-27 13:01:28] Received: PRESSURE_READING:0.04
+[2026-04-27 13:01:29] Received: PRESSURE_READING:0.03
+[2026-04-27 13:01:29] Received: PRESSURE_READING:0.03
+[2026-04-27 13:01:29] Received: PRESSURE_READING:0.03
+[2026-04-27 13:01:29] Received: PRESSURE_READING:0.03
+[2026-04-27 13:01:30] Received: PRESSURE_READING:0.00
+[2026-04-27 13:01:30] Received: PRESSURE_READING:0.05
+[2026-04-27 13:01:30] Received: PRESSURE_READING:0.11
+[2026-04-27 13:01:31] Received: PRESSURE_READING:0.11
+[2026-04-27 13:01:31] Received: PRESSURE_READING:0.11
+[2026-04-27 13:01:31] Received: PRESSURE_READING:0.06
+[2026-04-27 13:01:31] Received: ARDUINO_READY
+[2026-04-27 13:01:31] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 13:01:31] Received: PRESSURE_READING:0.04
+[2026-04-27 13:01:32] Received: PRESSURE_READING:0.04
+[2026-04-27 13:01:32] Received: PRESSURE_READING:0.07
+[2026-04-27 13:01:32] Received: PRESSURE_READING:0.07
+[2026-04-27 13:01:32] Received: PRESSURE_READING:0.03
+[2026-04-27 13:01:33] Received: PRESSURE_READING:0.10
+[2026-04-27 13:01:33] Received: PRESSURE_READING:0.07
+[2026-04-27 13:01:33] Received: PRESSURE_READING:0.07
+[2026-04-27 13:01:33] Sent: HOME:1
+[2026-04-27 13:01:33] Received: DEBUG: Received char: H
+[2026-04-27 13:01:33] Received: DEBUG: Received char: O
+[2026-04-27 13:01:33] Received: DEBUG: Received char: M
+[2026-04-27 13:01:33] Received: DEBUG: Received char: E
+[2026-04-27 13:01:33] Received: DEBUG: Received char: :
+[2026-04-27 13:01:33] Received: DEBUG: Received char: 1
+[2026-04-27 13:01:34] Received: DEBUG: Received char:
+[2026-04-27 13:01:34] Received: DEBUG: String complete flag set
+[2026-04-27 13:01:34] Received: DEBUG: Complete input string: 'HOME:1'
+[2026-04-27 13:01:34] Received: DEBUG: === COMMAND PROCESSING START ===
+[2026-04-27 13:01:34] Received: DEBUG: String complete, parsing command...
+[2026-04-27 13:01:34] Received: DEBUG: Input string: 'HOME:1'
+[2026-04-27 13:01:34] Received: DEBUG: Input string length: 6
+[2026-04-27 13:01:34] Received: DEBUG: HOME command received - starting homing sequence
+[2026-04-27 13:01:34] Received: Stepper is Homing...
+[2026-04-27 13:01:34] Received: DEBUG: Starting homing sequence
+[2026-04-27 13:01:34] Received: DEBUG: Current optical switch state: LOW
+[2026-04-27 13:01:34] Received: DEBUG: Set homing speed to -10000
+[2026-04-27 13:01:34] Received: DEBUG: Moving towards optical switch...

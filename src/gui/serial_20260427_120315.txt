@@ -1,0 +1,1734 @@
+[2026-04-27 12:03:15] Received on connect: DEBUG: Optical switch triggered - reached home position
+[2026-04-27 12:03:15] Received on connect: DEBUG: Set current position to 0
+[2026-04-27 12:03:15] Received on connect: DEBUG: Moving away from switch at speed 200
+[2026-04-27 12:03:15] Received on connect: DEBUG: Moved away from switch
+[2026-04-27 12:03:15] Received on connect: Homing Complete!
+[2026-04-27 12:03:15] Received on connect: ARDUINO_READY
+[2026-04-27 12:03:15] Received: DEBUG: Homing sequence completed successfully
+[2026-04-27 12:03:15] Received: ARDUINO_READY
+[2026-04-27 12:03:15] Received: ARDUINO_READY
+[2026-04-27 12:03:15] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:03:15] Received: PRESSURE_READING:0.00
+[2026-04-27 12:03:15] Received: PRESSURE_READING:0.00
+[2026-04-27 12:03:15] Received: PRESSURE_READING:0.00
+[2026-04-27 12:03:16] Received: PRESSURE_READING:0.00
+[2026-04-27 12:03:16] Received: PRESSURE_READING:0.00
+[2026-04-27 12:03:16] Received: PRESSURE_READING:0.01
+[2026-04-27 12:03:16] Received: PRESSURE_READING:0.12
+[2026-04-27 12:03:17] Received: PRESSURE_READING:0.22
+[2026-04-27 12:03:17] Received: PRESSURE_READING:0.22
+[2026-04-27 12:03:17] Received: PRESSURE_READING:0.20
+[2026-04-27 12:03:17] Received: PRESSURE_READING:0.27
+[2026-04-27 12:03:18] Received: PRESSURE_READING:0.18
+[2026-04-27 12:03:18] Received: ARDUINO_READY
+[2026-04-27 12:03:18] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:03:18] Received: PRESSURE_READING:0.18
+[2026-04-27 12:03:18] Received: PRESSURE_READING:0.18
+[2026-04-27 12:03:18] Received: PRESSURE_READING:0.09
+[2026-04-27 12:03:19] Received: PRESSURE_READING:0.14
+[2026-04-27 12:03:19] Received: PRESSURE_READING:0.14
+[2026-04-27 12:03:19] Received: PRESSURE_READING:0.22
+[2026-04-27 12:03:19] Received: PRESSURE_READING:0.17
+[2026-04-27 12:03:20] Received: PRESSURE_READING:0.15
+[2026-04-27 12:03:20] Received: PRESSURE_READING:0.15
+[2026-04-27 12:03:20] Received: PRESSURE_READING:0.07
+[2026-04-27 12:03:20] Received: PRESSURE_READING:0.04
+[2026-04-27 12:03:21] Received: PRESSURE_READING:0.00
+[2026-04-27 12:03:21] Received: ARDUINO_READY
+[2026-04-27 12:03:21] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:03:21] Received: PRESSURE_READING:0.05
+[2026-04-27 12:03:21] Received: PRESSURE_READING:0.05
+[2026-04-27 12:03:21] Received: PRESSURE_READING:0.13
+[2026-04-27 12:03:22] Received: PRESSURE_READING:0.18
+[2026-04-27 12:03:22] Received: PRESSURE_READING:0.13
+[2026-04-27 12:03:22] Received: PRESSURE_READING:0.22
+[2026-04-27 12:03:23] Received: PRESSURE_READING:0.19
+[2026-04-27 12:03:23] Received: PRESSURE_READING:0.18
+[2026-04-27 12:03:23] Received: PRESSURE_READING:0.27
+[2026-04-27 12:03:23] Received: PRESSURE_READING:0.27
+[2026-04-27 12:03:24] Received: PRESSURE_READING:0.24
+[2026-04-27 12:03:24] Received: PRESSURE_READING:0.51
+[2026-04-27 12:03:24] Received: ARDUINO_READY
+[2026-04-27 12:03:24] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:03:24] Received: PRESSURE_READING:0.42
+[2026-04-27 12:03:24] Received: PRESSURE_READING:0.33
+[2026-04-27 12:03:25] Received: PRESSURE_READING:0.31
+[2026-04-27 12:03:25] Received: PRESSURE_READING:0.00
+[2026-04-27 12:03:25] Received: PRESSURE_READING:0.00
+[2026-04-27 12:03:25] Received: PRESSURE_READING:0.06
+[2026-04-27 12:03:26] Received: PRESSURE_READING:0.11
+[2026-04-27 12:03:26] Received: PRESSURE_READING:0.11
+[2026-04-27 12:03:26] Received: PRESSURE_READING:0.10
+[2026-04-27 12:03:26] Received: PRESSURE_READING:0.06
+[2026-04-27 12:03:27] Received: PRESSURE_READING:0.02
+[2026-04-27 12:03:27] Received: PRESSURE_READING:0.07
+[2026-04-27 12:03:27] Received: ARDUINO_READY
+[2026-04-27 12:03:27] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:03:27] Received: PRESSURE_READING:0.07
+[2026-04-27 12:03:27] Received: PRESSURE_READING:0.22
+[2026-04-27 12:03:28] Received: PRESSURE_READING:0.22
+[2026-04-27 12:03:28] Received: PRESSURE_READING:0.29
+[2026-04-27 12:03:28] Received: PRESSURE_READING:0.29
+[2026-04-27 12:03:28] Received: PRESSURE_READING:0.12
+[2026-04-27 12:03:29] Received: PRESSURE_READING:0.21
+[2026-04-27 12:03:29] Received: PRESSURE_READING:0.09
+[2026-04-27 12:03:29] Received: PRESSURE_READING:0.13
+[2026-04-27 12:03:29] Received: PRESSURE_READING:0.13
+[2026-04-27 12:03:30] Received: PRESSURE_READING:0.13
+[2026-04-27 12:03:30] Received: PRESSURE_READING:0.13
+[2026-04-27 12:03:30] Received: ARDUINO_READY
+[2026-04-27 12:03:30] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:03:30] Received: PRESSURE_READING:0.08
+[2026-04-27 12:03:30] Received: PRESSURE_READING:0.08
+[2026-04-27 12:03:31] Received: PRESSURE_READING:0.00
+[2026-04-27 12:03:31] Received: PRESSURE_READING:0.05
+[2026-04-27 12:03:31] Received: PRESSURE_READING:0.05
+[2026-04-27 12:03:31] Received: PRESSURE_READING:0.08
+[2026-04-27 12:03:32] Received: PRESSURE_READING:0.08
+[2026-04-27 12:03:32] Received: PRESSURE_READING:0.06
+[2026-04-27 12:03:32] Received: PRESSURE_READING:0.06
+[2026-04-27 12:03:32] Received: PRESSURE_READING:0.25
+[2026-04-27 12:03:33] Received: PRESSURE_READING:0.28
+[2026-04-27 12:03:33] Received: PRESSURE_READING:0.30
+[2026-04-27 12:03:33] Received: ARDUINO_READY
+[2026-04-27 12:03:33] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:03:33] Received: PRESSURE_READING:0.30
+[2026-04-27 12:03:33] Received: PRESSURE_READING:0.09
+[2026-04-27 12:03:34] Received: PRESSURE_READING:0.15
+[2026-04-27 12:03:34] Received: PRESSURE_READING:0.21
+[2026-04-27 12:03:34] Received: PRESSURE_READING:0.21
+[2026-04-27 12:03:34] Received: PRESSURE_READING:0.30
+[2026-04-27 12:03:35] Received: PRESSURE_READING:0.21
+[2026-04-27 12:03:35] Received: PRESSURE_READING:0.19
+[2026-04-27 12:03:35] Received: PRESSURE_READING:0.27
+[2026-04-27 12:03:35] Received: PRESSURE_READING:0.29
+[2026-04-27 12:03:36] Received: PRESSURE_READING:0.27
+[2026-04-27 12:03:36] Received: PRESSURE_READING:0.27
+[2026-04-27 12:03:36] Received: ARDUINO_READY
+[2026-04-27 12:03:36] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:03:36] Received: PRESSURE_READING:0.25
+[2026-04-27 12:03:37] Received: PRESSURE_READING:0.15
+[2026-04-27 12:03:37] Received: PRESSURE_READING:0.27
+[2026-04-27 12:03:37] Received: PRESSURE_READING:0.20
+[2026-04-27 12:03:37] Received: PRESSURE_READING:0.14
+[2026-04-27 12:03:38] Received: PRESSURE_READING:0.14
+[2026-04-27 12:03:38] Received: PRESSURE_READING:0.07
+[2026-04-27 12:03:38] Received: PRESSURE_READING:0.05
+[2026-04-27 12:03:38] Received: PRESSURE_READING:0.09
+[2026-04-27 12:03:39] Received: PRESSURE_READING:0.15
+[2026-04-27 12:03:39] Received: PRESSURE_READING:0.12
+[2026-04-27 12:03:39] Received: PRESSURE_READING:0.13
+[2026-04-27 12:03:39] Received: ARDUINO_READY
+[2026-04-27 12:03:39] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:03:39] Received: PRESSURE_READING:0.10
+[2026-04-27 12:03:40] Received: PRESSURE_READING:0.03
+[2026-04-27 12:03:40] Received: PRESSURE_READING:0.01
+[2026-04-27 12:03:40] Received: PRESSURE_READING:0.00
+[2026-04-27 12:03:40] Received: PRESSURE_READING:0.00
+[2026-04-27 12:03:41] Received: PRESSURE_READING:0.03
+[2026-04-27 12:03:41] Received: PRESSURE_READING:0.03
+[2026-04-27 12:03:41] Received: PRESSURE_READING:0.04
+[2026-04-27 12:03:41] Received: PRESSURE_READING:0.13
+[2026-04-27 12:03:42] Received: PRESSURE_READING:0.10
+[2026-04-27 12:03:42] Received: PRESSURE_READING:0.10
+[2026-04-27 12:03:42] Received: PRESSURE_READING:0.10
+[2026-04-27 12:03:42] Received: ARDUINO_READY
+[2026-04-27 12:03:42] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:03:42] Received: PRESSURE_READING:0.00
+[2026-04-27 12:03:43] Received: PRESSURE_READING:0.00
+[2026-04-27 12:03:43] Received: PRESSURE_READING:0.01
+[2026-04-27 12:03:43] Received: PRESSURE_READING:0.01
+[2026-04-27 12:03:43] Received: PRESSURE_READING:0.06
+[2026-04-27 12:03:44] Received: PRESSURE_READING:0.14
+[2026-04-27 12:03:44] Received: PRESSURE_READING:0.13
+[2026-04-27 12:03:44] Received: PRESSURE_READING:0.13
+[2026-04-27 12:03:44] Received: PRESSURE_READING:0.22
+[2026-04-27 12:03:45] Received: PRESSURE_READING:0.25
+[2026-04-27 12:03:45] Received: PRESSURE_READING:0.25
+[2026-04-27 12:03:45] Received: PRESSURE_READING:0.25
+[2026-04-27 12:03:45] Received: ARDUINO_READY
+[2026-04-27 12:03:45] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:03:45] Received: PRESSURE_READING:0.11
+[2026-04-27 12:03:46] Received: PRESSURE_READING:0.06
+[2026-04-27 12:03:46] Received: PRESSURE_READING:0.06
+[2026-04-27 12:03:46] Received: PRESSURE_READING:0.06
+[2026-04-27 12:03:46] Received: PRESSURE_READING:0.17
+[2026-04-27 12:03:47] Received: PRESSURE_READING:0.11
+[2026-04-27 12:03:47] Received: PRESSURE_READING:0.11
+[2026-04-27 12:03:47] Received: PRESSURE_READING:0.14
+[2026-04-27 12:03:47] Received: PRESSURE_READING:0.02
+[2026-04-27 12:03:48] Received: PRESSURE_READING:0.15
+[2026-04-27 12:03:48] Received: PRESSURE_READING:0.29
+[2026-04-27 12:03:48] Received: PRESSURE_READING:0.27
+[2026-04-27 12:03:48] Received: ARDUINO_READY
+[2026-04-27 12:03:48] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:03:49] Received: PRESSURE_READING:0.36
+[2026-04-27 12:03:49] Received: PRESSURE_READING:0.23
+[2026-04-27 12:03:49] Received: PRESSURE_READING:0.09
+[2026-04-27 12:03:49] Received: PRESSURE_READING:0.15
+[2026-04-27 12:03:50] Received: PRESSURE_READING:0.06
+[2026-04-27 12:03:50] Received: PRESSURE_READING:0.06
+[2026-04-27 12:03:50] Received: PRESSURE_READING:0.06
+[2026-04-27 12:03:50] Received: PRESSURE_READING:0.01
+[2026-04-27 12:03:51] Received: PRESSURE_READING:0.24
+[2026-04-27 12:03:51] Received: PRESSURE_READING:0.24
+[2026-04-27 12:03:51] Received: PRESSURE_READING:0.28
+[2026-04-27 12:03:51] Received: PRESSURE_READING:0.28
+[2026-04-27 12:03:51] Received: ARDUINO_READY
+[2026-04-27 12:03:51] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:03:52] Received: PRESSURE_READING:0.05
+[2026-04-27 12:03:52] Received: PRESSURE_READING:0.10
+[2026-04-27 12:03:52] Received: PRESSURE_READING:0.09
+[2026-04-27 12:03:52] Received: PRESSURE_READING:0.09
+[2026-04-27 12:03:53] Received: PRESSURE_READING:0.09
+[2026-04-27 12:03:53] Received: PRESSURE_READING:0.08
+[2026-04-27 12:03:53] Received: PRESSURE_READING:0.05
+[2026-04-27 12:03:53] Received: PRESSURE_READING:0.05
+[2026-04-27 12:03:54] Received: PRESSURE_READING:0.27
+[2026-04-27 12:03:54] Received: PRESSURE_READING:0.26
+[2026-04-27 12:03:54] Received: PRESSURE_READING:0.26
+[2026-04-27 12:03:54] Received: PRESSURE_READING:0.25
+[2026-04-27 12:03:54] Received: ARDUINO_READY
+[2026-04-27 12:03:55] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:03:55] Received: PRESSURE_READING:0.05
+[2026-04-27 12:03:55] Received: PRESSURE_READING:0.67
+[2026-04-27 12:03:55] Received: PRESSURE_READING:0.67
+[2026-04-27 12:03:55] Received: PRESSURE_READING:0.69
+[2026-04-27 12:03:56] Received: PRESSURE_READING:0.67
+[2026-04-27 12:03:56] Received: PRESSURE_READING:0.02
+[2026-04-27 12:03:56] Received: PRESSURE_READING:0.02
+[2026-04-27 12:03:56] Received: PRESSURE_READING:0.12
+[2026-04-27 12:03:57] Received: PRESSURE_READING:0.12
+[2026-04-27 12:03:57] Received: PRESSURE_READING:0.12
+[2026-04-27 12:03:57] Received: PRESSURE_READING:0.16
+[2026-04-27 12:03:57] Received: PRESSURE_READING:0.05
+[2026-04-27 12:03:58] Received: ARDUINO_READY
+[2026-04-27 12:03:58] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:03:58] Received: PRESSURE_READING:0.13
+[2026-04-27 12:03:58] Received: PRESSURE_READING:0.21
+[2026-04-27 12:03:58] Received: PRESSURE_READING:0.19
+[2026-04-27 12:03:58] Received: PRESSURE_READING:0.18
+[2026-04-27 12:03:59] Received: PRESSURE_READING:0.14
+[2026-04-27 12:03:59] Received: PRESSURE_READING:0.11
+[2026-04-27 12:03:59] Received: PRESSURE_READING:0.09
+[2026-04-27 12:03:59] Received: PRESSURE_READING:0.09
+[2026-04-27 12:04:00] Received: PRESSURE_READING:0.28
+[2026-04-27 12:04:00] Received: PRESSURE_READING:0.22
+[2026-04-27 12:04:00] Received: PRESSURE_READING:0.22
+[2026-04-27 12:04:01] Received: PRESSURE_READING:0.32
+[2026-04-27 12:04:01] Received: ARDUINO_READY
+[2026-04-27 12:04:01] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:04:01] Received: PRESSURE_READING:0.14
+[2026-04-27 12:04:01] Received: PRESSURE_READING:0.14
+[2026-04-27 12:04:01] Received: PRESSURE_READING:0.18
+[2026-04-27 12:04:01] Received: PRESSURE_READING:0.09
+[2026-04-27 12:04:02] Received: PRESSURE_READING:0.04
+[2026-04-27 12:04:02] Received: PRESSURE_READING:0.04
+[2026-04-27 12:04:02] Received: PRESSURE_READING:0.05
+[2026-04-27 12:04:03] Received: PRESSURE_READING:0.11
+[2026-04-27 12:04:03] Received: PRESSURE_READING:0.11
+[2026-04-27 12:04:03] Received: PRESSURE_READING:0.13
+[2026-04-27 12:04:03] Received: PRESSURE_READING:0.08
+[2026-04-27 12:04:04] Received: PRESSURE_READING:0.12
+[2026-04-27 12:04:04] Received: ARDUINO_READY
+[2026-04-27 12:04:04] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:04:04] Received: PRESSURE_READING:0.12
+[2026-04-27 12:04:04] Received: PRESSURE_READING:0.13
+[2026-04-27 12:04:04] Received: PRESSURE_READING:0.14
+[2026-04-27 12:04:05] Received: PRESSURE_READING:0.05
+[2026-04-27 12:04:05] Received: PRESSURE_READING:0.23
+[2026-04-27 12:04:05] Received: PRESSURE_READING:0.20
+[2026-04-27 12:04:05] Received: PRESSURE_READING:0.19
+[2026-04-27 12:04:06] Received: PRESSURE_READING:0.18
+[2026-04-27 12:04:06] Received: PRESSURE_READING:0.00
+[2026-04-27 12:04:06] Received: PRESSURE_READING:0.01
+[2026-04-27 12:04:06] Received: PRESSURE_READING:0.04
+[2026-04-27 12:04:07] Received: PRESSURE_READING:0.04
+[2026-04-27 12:04:07] Received: ARDUINO_READY
+[2026-04-27 12:04:07] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:04:07] Received: PRESSURE_READING:0.06
+[2026-04-27 12:04:07] Received: PRESSURE_READING:0.13
+[2026-04-27 12:04:07] Received: PRESSURE_READING:0.10
+[2026-04-27 12:04:08] Received: PRESSURE_READING:0.10
+[2026-04-27 12:04:08] Received: PRESSURE_READING:0.08
+[2026-04-27 12:04:08] Received: PRESSURE_READING:0.00
+[2026-04-27 12:04:08] Received: PRESSURE_READING:0.05
+[2026-04-27 12:04:09] Received: PRESSURE_READING:0.07
+[2026-04-27 12:04:09] Received: PRESSURE_READING:0.07
+[2026-04-27 12:04:09] Received: PRESSURE_READING:0.07
+[2026-04-27 12:04:09] Received: PRESSURE_READING:0.01
+[2026-04-27 12:04:10] Received: PRESSURE_READING:0.00
+[2026-04-27 12:04:10] Received: ARDUINO_READY
+[2026-04-27 12:04:10] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:04:10] Received: PRESSURE_READING:0.00
+[2026-04-27 12:04:10] Received: PRESSURE_READING:0.00
+[2026-04-27 12:04:10] Received: PRESSURE_READING:0.01
+[2026-04-27 12:04:11] Received: PRESSURE_READING:0.01
+[2026-04-27 12:04:11] Received: PRESSURE_READING:0.01
+[2026-04-27 12:04:11] Received: PRESSURE_READING:0.01
+[2026-04-27 12:04:11] Received: PRESSURE_READING:0.04
+[2026-04-27 12:04:12] Received: PRESSURE_READING:0.04
+[2026-04-27 12:04:12] Received: PRESSURE_READING:0.04
+[2026-04-27 12:04:12] Received: PRESSURE_READING:0.04
+[2026-04-27 12:04:12] Received: PRESSURE_READING:0.00
+[2026-04-27 12:04:13] Received: PRESSURE_READING:0.00
+[2026-04-27 12:04:13] Received: ARDUINO_READY
+[2026-04-27 12:04:13] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:04:13] Received: PRESSURE_READING:0.03
+[2026-04-27 12:04:13] Received: PRESSURE_READING:0.03
+[2026-04-27 12:04:13] Received: PRESSURE_READING:0.08
+[2026-04-27 12:04:14] Received: PRESSURE_READING:0.08
+[2026-04-27 12:04:14] Received: PRESSURE_READING:0.08
+[2026-04-27 12:04:14] Received: PRESSURE_READING:0.08
+[2026-04-27 12:04:14] Received: PRESSURE_READING:0.04
+[2026-04-27 12:04:15] Received: PRESSURE_READING:0.10
+[2026-04-27 12:04:15] Received: PRESSURE_READING:0.07
+[2026-04-27 12:04:15] Received: PRESSURE_READING:0.09
+[2026-04-27 12:04:16] Received: PRESSURE_READING:0.36
+[2026-04-27 12:04:16] Received: PRESSURE_READING:0.30
+[2026-04-27 12:04:16] Received: ARDUINO_READY
+[2026-04-27 12:04:16] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:04:16] Received: PRESSURE_READING:0.29
+[2026-04-27 12:04:16] Received: PRESSURE_READING:0.38
+[2026-04-27 12:04:17] Received: PRESSURE_READING:0.18
+[2026-04-27 12:04:17] Received: PRESSURE_READING:0.21
+[2026-04-27 12:04:17] Received: PRESSURE_READING:0.23
+[2026-04-27 12:04:17] Received: PRESSURE_READING:0.11
+[2026-04-27 12:04:18] Received: PRESSURE_READING:0.05
+[2026-04-27 12:04:18] Received: PRESSURE_READING:0.05
+[2026-04-27 12:04:18] Received: PRESSURE_READING:0.09
+[2026-04-27 12:04:18] Received: PRESSURE_READING:0.86
+[2026-04-27 12:04:19] Received: PRESSURE_READING:0.91
+[2026-04-27 12:04:19] Received: PRESSURE_READING:0.88
+[2026-04-27 12:04:19] Received: ARDUINO_READY
+[2026-04-27 12:04:19] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:04:19] Received: PRESSURE_READING:0.81
+[2026-04-27 12:04:19] Received: PRESSURE_READING:0.09
+[2026-04-27 12:04:20] Received: PRESSURE_READING:0.15
+[2026-04-27 12:04:20] Received: PRESSURE_READING:0.15
+[2026-04-27 12:04:20] Received: PRESSURE_READING:0.19
+[2026-04-27 12:04:20] Received: PRESSURE_READING:0.18
+[2026-04-27 12:04:21] Received: PRESSURE_READING:0.08
+[2026-04-27 12:04:21] Received: PRESSURE_READING:0.08
+[2026-04-27 12:04:21] Received: PRESSURE_READING:0.06
+[2026-04-27 12:04:21] Received: PRESSURE_READING:0.18
+[2026-04-27 12:04:22] Received: PRESSURE_READING:0.21
+[2026-04-27 12:04:22] Sent: SPEED:5000;DIST:10.0
+[2026-04-27 12:04:22] Received: DEBUG: Received char: S
+[2026-04-27 12:04:22] Received: DEBUG: Received char: P
+[2026-04-27 12:04:22] Received: DEBUG: Received char: E
+[2026-04-27 12:04:22] Received: DEBUG: Received char: E
+[2026-04-27 12:04:22] Received: DEBUG: Received char: D
+[2026-04-27 12:04:22] Received: DEBUG: Received char: :
+[2026-04-27 12:04:22] Received: DEBUG: Received char: 5
+[2026-04-27 12:04:22] Received: DEBUG: Received char: 0
+[2026-04-27 12:04:22] Received: DEBUG: Received char: 0
+[2026-04-27 12:04:22] Received: DEBUG: Received char: 0
+[2026-04-27 12:04:22] Received: DEBUG: Received char: ;
+[2026-04-27 12:04:22] Received: DEBUG: Received char: D
+[2026-04-27 12:04:23] Received: DEBUG: Received char: I
+[2026-04-27 12:04:23] Received: DEBUG: Received char: S
+[2026-04-27 12:04:23] Received: DEBUG: Received char: T
+[2026-04-27 12:04:23] Received: DEBUG: Received char: :
+[2026-04-27 12:04:23] Received: DEBUG: Received char: 1
+[2026-04-27 12:04:23] Received: DEBUG: Received char: 0
+[2026-04-27 12:04:23] Received: DEBUG: Received char: .
+[2026-04-27 12:04:23] Received: DEBUG: Received char: 0
+[2026-04-27 12:04:23] Received: DEBUG: Received char:
+[2026-04-27 12:04:23] Received: DEBUG: String complete flag set
+[2026-04-27 12:04:23] Received: DEBUG: Complete input string: 'SPEED:5000;DIST:10.0'
+[2026-04-27 12:04:23] Received: DEBUG: === COMMAND PROCESSING START ===
+[2026-04-27 12:04:23] Received: DEBUG: String complete, parsing command...
+[2026-04-27 12:04:23] Received: DEBUG: Input string: 'SPEED:5000;DIST:10.0'
+[2026-04-27 12:04:23] Received: DEBUG: Input string length: 20
+[2026-04-27 12:04:23] Received: DEBUG: Movement command received - parsing speed and distance
+[2026-04-27 12:04:23] Received: DEBUG: Speed index: 0, Distance index: 10
+[2026-04-27 12:04:23] Received: DEBUG: Parsed values - Speed: 5000, Distance: 10
+[2026-04-27 12:04:23] Received: Received speed: 5000
+[2026-04-27 12:04:24] Received: Received distance: 10
+[2026-04-27 12:04:24] Received: DEBUG: Calling executeMovement function
+[2026-04-27 12:04:24] Received: DEBUG: Executing movement - Speed: 5000, Distance: 10
+[2026-04-27 12:04:24] Received: MOVEMENT_START: Pos=0 Target=68000 Steps=68000
+[2026-04-27 12:04:24] Received: DEBUG: Movement timeout set to: 43600ms
+[2026-04-27 12:04:24] Received: DEBUG: Movement tracking started from position: 0
+[2026-04-27 12:04:24] Received: DEBUG: Command processing complete, waiting for next command
+[2026-04-27 12:04:24] Received: DEBUG: === COMMAND PROCESSING END ===
+[2026-04-27 12:04:24] Received: PRESSURE_READING:0.33
+[2026-04-27 12:04:24] Received: DEBUG: Periodic handshake skipped - movement in progress
+[2026-04-27 12:04:24] Received: DEBUG: Movement progress: 0%
+[2026-04-27 12:04:24] Received: DEBUG: Movement progress: 1%
+[2026-04-27 12:04:24] Received: PRESSURE_READING:0.30
+[2026-04-27 12:04:24] Received: DEBUG: Movement progress: 2%
+[2026-04-27 12:04:24] Received: DEBUG: Movement progress: 3%
+[2026-04-27 12:04:24] Received: PRESSURE_READING:0.19
+[2026-04-27 12:04:24] Received: DEBUG: Movement progress: 4%
+[2026-04-27 12:04:25] Received: DEBUG: Movement progress: 5%
+[2026-04-27 12:04:25] Received: PRESSURE_READING:0.16
+[2026-04-27 12:04:25] Received: DEBUG: Movement progress: 6%
+[2026-04-27 12:04:25] Received: DEBUG: Movement progress: 7%
+[2026-04-27 12:04:25] Received: PRESSURE_READING:0.07
+[2026-04-27 12:04:25] Received: DEBUG: Movement progress: 8%
+[2026-04-27 12:04:25] Received: PRESSURE_READING:0.09
+[2026-04-27 12:04:25] Received: DEBUG: Movement progress: 9%
+[2026-04-27 12:04:25] Received: DEBUG: Movement progress: 10%
+[2026-04-27 12:04:25] Received: DEBUG: Movement progress: 11%
+[2026-04-27 12:04:25] Received: PRESSURE_READING:0.05
+[2026-04-27 12:04:25] Received: DEBUG: Movement progress: 12%
+[2026-04-27 12:04:25] Received: PRESSURE_READING:0.10
+[2026-04-27 12:04:25] Received: DEBUG: Movement progress: 13%
+[2026-04-27 12:04:25] Received: DEBUG: Movement progress: 14%
+[2026-04-27 12:04:25] Received: PRESSURE_READING:0.12
+[2026-04-27 12:04:25] Received: DEBUG: Movement progress: 15%
+[2026-04-27 12:04:25] Received: DEBUG: Movement progress: 16%
+[2026-04-27 12:04:25] Received: PRESSURE_READING:0.19
+[2026-04-27 12:04:26] Received: DEBUG: Movement progress: 17%
+[2026-04-27 12:04:26] Received: DEBUG: Movement progress: 18%
+[2026-04-27 12:04:26] Received: PRESSURE_READING:0.20
+[2026-04-27 12:04:26] Received: DEBUG: Movement progress: 19%
+[2026-04-27 12:04:26] Received: PRESSURE_READING:0.23
+[2026-04-27 12:04:26] Received: DEBUG: Movement progress: 20%
+[2026-04-27 12:04:26] Received: DEBUG: Movement progress: 21%
+[2026-04-27 12:04:26] Received: DEBUG: Movement progress: 22%
+[2026-04-27 12:04:26] Received: DEBUG: Periodic handshake skipped - movement in progress
+[2026-04-27 12:04:26] Received: PRESSURE_READING:0.19
+[2026-04-27 12:04:26] Received: DEBUG: Movement progress: 23%
+[2026-04-27 12:04:26] Received: PRESSURE_READING:0.17
+[2026-04-27 12:04:26] Received: DEBUG: Movement progress: 24%
+[2026-04-27 12:04:26] Received: DEBUG: Movement progress: 25%
+[2026-04-27 12:04:26] Received: PRESSURE_READING:0.15
+[2026-04-27 12:04:26] Received: DEBUG: Movement progress: 26%
+[2026-04-27 12:04:26] Received: DEBUG: Movement progress: 27%
+[2026-04-27 12:04:26] Received: PRESSURE_READING:0.07
+[2026-04-27 12:04:26] Received: DEBUG: Movement progress: 28%
+[2026-04-27 12:04:27] Received: DEBUG: Movement progress: 29%
+[2026-04-27 12:04:27] Received: PRESSURE_READING:0.12
+[2026-04-27 12:04:27] Received: DEBUG: Movement progress: 30%
+[2026-04-27 12:04:27] Received: PRESSURE_READING:0.10
+[2026-04-27 12:04:27] Received: DEBUG: Movement progress: 31%
+[2026-04-27 12:04:27] Received: DEBUG: Movement progress: 32%
+[2026-04-27 12:04:27] Received: DEBUG: Movement progress: 33%
+[2026-04-27 12:04:27] Received: PRESSURE_READING:0.10
+[2026-04-27 12:04:27] Received: DEBUG: Movement progress: 34%
+[2026-04-27 12:04:27] Received: PRESSURE_READING:0.10
+[2026-04-27 12:04:27] Received: DEBUG: Movement progress: 35%
+[2026-04-27 12:04:27] Received: DEBUG: Movement progress: 36%
+[2026-04-27 12:04:27] Received: PRESSURE_READING:0.03
+[2026-04-27 12:04:27] Received: DEBUG: Movement progress: 37%
+[2026-04-27 12:04:27] Received: DEBUG: Movement progress: 38%
+[2026-04-27 12:04:27] Received: PRESSURE_READING:0.00
+[2026-04-27 12:04:27] Received: DEBUG: Movement progress: 39%
+[2026-04-27 12:04:27] Received: DEBUG: Movement progress: 40%
+[2026-04-27 12:04:28] Received: PRESSURE_READING:0.00
+[2026-04-27 12:04:28] Received: DEBUG: Movement progress: 41%
+[2026-04-27 12:04:28] Received: DEBUG: Movement progress: 42%
+[2026-04-27 12:04:28] Received: PRESSURE_READING:0.00
+[2026-04-27 12:04:28] Received: DEBUG: Movement progress: 43%
+[2026-04-27 12:04:28] Received: DEBUG: Periodic handshake skipped - movement in progress
+[2026-04-27 12:04:28] Received: DEBUG: Movement progress: 44%
+[2026-04-27 12:04:28] Received: PRESSURE_READING:0.00
+[2026-04-27 12:04:28] Received: DEBUG: Movement progress: 45%
+[2026-04-27 12:04:28] Received: PRESSURE_READING:0.04
+[2026-04-27 12:04:28] Received: DEBUG: Movement progress: 46%
+[2026-04-27 12:04:28] Received: DEBUG: Movement progress: 47%
+[2026-04-27 12:04:29] Received: PRESSURE_READING:0.04
+[2026-04-27 12:04:29] Received: DEBUG: Movement progress: 48%
+[2026-04-27 12:04:29] Received: DEBUG: Movement progress: 49%
+[2026-04-27 12:04:29] Received: PRESSURE_READING:0.04
+[2026-04-27 12:04:29] Received: DEBUG: Movement progress: 50%
+[2026-04-27 12:04:29] Received: DEBUG: Movement progress: 51%
+[2026-04-27 12:04:29] Received: PRESSURE_READING:0.04
+[2026-04-27 12:04:29] Received: DEBUG: Movement progress: 52%
+[2026-04-27 12:04:29] Received: DEBUG: Movement progress: 53%
+[2026-04-27 12:04:29] Received: PRESSURE_READING:0.04
+[2026-04-27 12:04:29] Received: DEBUG: Movement progress: 54%
+[2026-04-27 12:04:30] Received: PRESSURE_READING:0.04
+[2026-04-27 12:04:30] Received: DEBUG: Movement progress: 55%
+[2026-04-27 12:04:30] Received: DEBUG: Movement progress: 56%
+[2026-04-27 12:04:30] Received: PRESSURE_READING:0.11
+[2026-04-27 12:04:30] Received: DEBUG: Movement progress: 57%
+[2026-04-27 12:04:30] Received: DEBUG: Movement progress: 58%
+[2026-04-27 12:04:30] Received: PRESSURE_READING:0.11
+[2026-04-27 12:04:30] Received: DEBUG: Movement progress: 59%
+[2026-04-27 12:04:30] Received: DEBUG: Movement progress: 60%
+[2026-04-27 12:04:30] Received: PRESSURE_READING:0.06
+[2026-04-27 12:04:30] Received: DEBUG: Movement progress: 61%
+[2026-04-27 12:04:31] Received: PRESSURE_READING:0.09
+[2026-04-27 12:04:31] Received: DEBUG: Movement progress: 62%
+[2026-04-27 12:04:31] Received: DEBUG: Movement progress: 63%
+[2026-04-27 12:04:31] Received: DEBUG: Movement progress: 64%
+[2026-04-27 12:04:31] Received: PRESSURE_READING:0.08
+[2026-04-27 12:04:31] Received: DEBUG: Movement progress: 65%
+[2026-04-27 12:04:31] Received: DEBUG: Periodic handshake skipped - movement in progress
+[2026-04-27 12:04:31] Received: PRESSURE_READING:0.08
+[2026-04-27 12:04:31] Received: DEBUG: Movement progress: 66%
+[2026-04-27 12:04:31] Received: DEBUG: Movement progress: 67%
+[2026-04-27 12:04:31] Received: PRESSURE_READING:0.18
+[2026-04-27 12:04:31] Received: DEBUG: Movement progress: 68%
+[2026-04-27 12:04:32] Received: DEBUG: Movement progress: 69%
+[2026-04-27 12:04:32] Received: PRESSURE_READING:0.15
+[2026-04-27 12:04:32] Received: DEBUG: Movement progress: 70%
+[2026-04-27 12:04:32] Received: DEBUG: Movement progress: 71%
+[2026-04-27 12:04:32] Received: PRESSURE_READING:0.45
+[2026-04-27 12:04:32] Received: DEBUG: Movement progress: 72%
+[2026-04-27 12:04:32] Received: DEBUG: Movement progress: 73%
+[2026-04-27 12:04:32] Received: PRESSURE_READING:0.47
+[2026-04-27 12:04:32] Received: DEBUG: Movement progress: 74%
+[2026-04-27 12:04:32] Received: DEBUG: Movement progress: 75%
+[2026-04-27 12:04:32] Received: PRESSURE_READING:0.37
+[2026-04-27 12:04:33] Received: DEBUG: Movement progress: 76%
+[2026-04-27 12:04:33] Received: PRESSURE_READING:0.42
+[2026-04-27 12:04:33] Received: DEBUG: Movement progress: 77%
+[2026-04-27 12:04:33] Received: DEBUG: Movement progress: 78%
+[2026-04-27 12:04:33] Received: PRESSURE_READING:0.07
+[2026-04-27 12:04:33] Received: DEBUG: Movement progress: 79%
+[2026-04-27 12:04:33] Received: DEBUG: Movement progress: 80%
+[2026-04-27 12:04:33] Received: PRESSURE_READING:0.15
+[2026-04-27 12:04:33] Received: DEBUG: Movement progress: 81%
+[2026-04-27 12:04:33] Received: DEBUG: Movement progress: 82%
+[2026-04-27 12:04:33] Received: PRESSURE_READING:0.15
+[2026-04-27 12:04:33] Received: DEBUG: Movement progress: 83%
+[2026-04-27 12:04:34] Received: DEBUG: Movement progress: 84%
+[2026-04-27 12:04:34] Received: PRESSURE_READING:0.11
+[2026-04-27 12:04:34] Received: DEBUG: Movement progress: 85%
+[2026-04-27 12:04:34] Received: DEBUG: Movement progress: 86%
+[2026-04-27 12:04:34] Received: PRESSURE_READING:0.15
+[2026-04-27 12:04:34] Received: DEBUG: Movement progress: 87%
+[2026-04-27 12:04:34] Received: DEBUG: Periodic handshake skipped - movement in progress
+[2026-04-27 12:04:34] Received: PRESSURE_READING:0.07
+[2026-04-27 12:04:34] Received: DEBUG: Movement progress: 88%
+[2026-04-27 12:04:34] Received: DEBUG: Movement progress: 89%
+[2026-04-27 12:04:34] Received: PRESSURE_READING:0.07
+[2026-04-27 12:04:34] Received: DEBUG: Movement progress: 90%
+[2026-04-27 12:04:35] Received: DEBUG: Movement progress: 91%
+[2026-04-27 12:04:35] Received: PRESSURE_READING:0.11
+[2026-04-27 12:04:35] Received: DEBUG: Movement progress: 92%
+[2026-04-27 12:04:35] Received: DEBUG: Movement progress: 93%
+[2026-04-27 12:04:35] Received: PRESSURE_READING:0.07
+[2026-04-27 12:04:35] Received: DEBUG: Movement progress: 94%
+[2026-04-27 12:04:35] Received: DEBUG: Movement progress: 95%
+[2026-04-27 12:04:35] Received: PRESSURE_READING:0.08
+[2026-04-27 12:04:35] Received: DEBUG: Movement progress: 96%
+[2026-04-27 12:04:35] Received: DEBUG: Movement progress: 97%
+[2026-04-27 12:04:35] Received: PRESSURE_READING:0.11
+[2026-04-27 12:04:36] Received: DEBUG: Movement progress: 98%
+[2026-04-27 12:04:36] Received: PRESSURE_READING:0.06
+[2026-04-27 12:04:36] Received: DEBUG: Movement progress: 99%
+[2026-04-27 12:04:36] Received: DEBUG: Checking completion - Current: 68000, Target: 68000, Traveled: 68000
+[2026-04-27 12:04:36] Received: DEBUG: Movement completed! Distance traveled: 68000 steps
+[2026-04-27 12:04:36] Received: MOVEMENT_COMPLETE
+[2026-04-27 12:04:36] Received: ARDUINO_READY
+[2026-04-27 12:04:36] Received: DEBUG: Movement marked as complete, ready for next command
+[2026-04-27 12:04:36] Received: PRESSURE_READING:0.15
+[2026-04-27 12:04:36] Received: PRESSURE_READING:0.21
+[2026-04-27 12:04:36] Received: PRESSURE_READING:0.30
+[2026-04-27 12:04:37] Received: PRESSURE_READING:0.32
+[2026-04-27 12:04:37] Received: PRESSURE_READING:0.26
+[2026-04-27 12:04:37] Received: ARDUINO_READY
+[2026-04-27 12:04:37] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:04:37] Received: PRESSURE_READING:0.17
+[2026-04-27 12:04:37] Received: PRESSURE_READING:0.10
+[2026-04-27 12:04:38] Received: PRESSURE_READING:0.12
+[2026-04-27 12:04:38] Received: PRESSURE_READING:0.08
+[2026-04-27 12:04:38] Received: PRESSURE_READING:0.08
+[2026-04-27 12:04:38] Received: PRESSURE_READING:0.04
+[2026-04-27 12:04:39] Received: PRESSURE_READING:0.09
+[2026-04-27 12:04:39] Received: PRESSURE_READING:0.12
+[2026-04-27 12:04:39] Received: PRESSURE_READING:0.12
+[2026-04-27 12:04:39] Sent: HOME:1
+[2026-04-27 12:04:39] Received: DEBUG: Received char: H
+[2026-04-27 12:04:40] Received: DEBUG: Received char: O
+[2026-04-27 12:04:40] Received: DEBUG: Received char: M
+[2026-04-27 12:04:40] Received: DEBUG: Received char: E
+[2026-04-27 12:04:40] Received: DEBUG: Received char: :
+[2026-04-27 12:04:40] Received: DEBUG: Received char: 1
+[2026-04-27 12:04:40] Received: DEBUG: Received char:
+[2026-04-27 12:04:40] Received: DEBUG: String complete flag set
+[2026-04-27 12:04:40] Received: DEBUG: Complete input string: 'HOME:1'
+[2026-04-27 12:04:40] Received: DEBUG: === COMMAND PROCESSING START ===
+[2026-04-27 12:04:40] Received: DEBUG: String complete, parsing command...
+[2026-04-27 12:04:40] Received: DEBUG: Input string: 'HOME:1'
+[2026-04-27 12:04:40] Received: DEBUG: Input string length: 6
+[2026-04-27 12:04:40] Received: DEBUG: HOME command received - starting homing sequence
+[2026-04-27 12:04:40] Received: Stepper is Homing...
+[2026-04-27 12:04:40] Received: DEBUG: Starting homing sequence
+[2026-04-27 12:04:40] Received: DEBUG: Current optical switch state: LOW
+[2026-04-27 12:04:40] Received: DEBUG: Set homing speed to -10000
+[2026-04-27 12:04:40] Received: DEBUG: Moving towards optical switch...
+[2026-04-27 12:04:46] Received: DEBUG: Optical switch triggered - reached home position
+[2026-04-27 12:04:46] Received: DEBUG: Set current position to 0
+[2026-04-27 12:04:46] Received: DEBUG: Moving away from switch at speed 200
+[2026-04-27 12:04:46] Received: DEBUG: Moved away from switch
+[2026-04-27 12:04:47] Received: Homing Complete!
+[2026-04-27 12:04:47] Received: ARDUINO_READY
+[2026-04-27 12:04:47] Received: DEBUG: Homing sequence completed successfully
+[2026-04-27 12:04:47] Received: DEBUG: Homing sequence completed
+[2026-04-27 12:04:47] Received: DEBUG: Command processing complete, waiting for next command
+[2026-04-27 12:04:47] Received: DEBUG: === COMMAND PROCESSING END ===
+[2026-04-27 12:04:47] Received: ARDUINO_READY
+[2026-04-27 12:04:47] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:04:47] Received: PRESSURE_READING:0.12
+[2026-04-27 12:04:47] Received: PRESSURE_READING:0.06
+[2026-04-27 12:04:47] Received: PRESSURE_READING:0.03
+[2026-04-27 12:04:47] Received: PRESSURE_READING:0.03
+[2026-04-27 12:04:47] Received: PRESSURE_READING:0.03
+[2026-04-27 12:04:48] Received: PRESSURE_READING:0.03
+[2026-04-27 12:04:48] Received: PRESSURE_READING:0.04
+[2026-04-27 12:04:48] Received: PRESSURE_READING:0.04
+[2026-04-27 12:04:48] Received: PRESSURE_READING:0.09
+[2026-04-27 12:04:49] Received: PRESSURE_READING:0.09
+[2026-04-27 12:04:49] Received: PRESSURE_READING:0.08
+[2026-04-27 12:04:49] Received: PRESSURE_READING:0.11
+[2026-04-27 12:04:49] Received: ARDUINO_READY
+[2026-04-27 12:04:49] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:04:49] Received: PRESSURE_READING:0.08
+[2026-04-27 12:04:50] Received: PRESSURE_READING:0.08
+[2026-04-27 12:04:50] Received: PRESSURE_READING:0.18
+[2026-04-27 12:04:50] Received: PRESSURE_READING:0.15
+[2026-04-27 12:04:50] Received: PRESSURE_READING:0.13
+[2026-04-27 12:04:51] Received: PRESSURE_READING:0.10
+[2026-04-27 12:04:51] Received: PRESSURE_READING:0.02
+[2026-04-27 12:04:51] Received: PRESSURE_READING:0.05
+[2026-04-27 12:04:51] Received: PRESSURE_READING:0.05
+[2026-04-27 12:04:52] Received: PRESSURE_READING:0.06
+[2026-04-27 12:04:52] Received: PRESSURE_READING:0.05
+[2026-04-27 12:04:52] Received: PRESSURE_READING:0.63
+[2026-04-27 12:04:52] Received: ARDUINO_READY
+[2026-04-27 12:04:52] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:04:53] Received: PRESSURE_READING:0.64
+[2026-04-27 12:04:53] Received: PRESSURE_READING:0.64
+[2026-04-27 12:04:53] Received: PRESSURE_READING:0.63
+[2026-04-27 12:04:53] Received: PRESSURE_READING:0.13
+[2026-04-27 12:04:53] Received: PRESSURE_READING:0.14
+[2026-04-27 12:04:54] Received: PRESSURE_READING:0.17
+[2026-04-27 12:04:54] Received: PRESSURE_READING:0.17
+[2026-04-27 12:04:54] Received: PRESSURE_READING:0.13
+[2026-04-27 12:04:54] Received: PRESSURE_READING:0.13
+[2026-04-27 12:04:55] Received: PRESSURE_READING:0.10
+[2026-04-27 12:04:55] Received: PRESSURE_READING:0.10
+[2026-04-27 12:04:55] Received: PRESSURE_READING:0.03
+[2026-04-27 12:04:55] Received: ARDUINO_READY
+[2026-04-27 12:04:56] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:04:56] Received: PRESSURE_READING:0.03
+[2026-04-27 12:04:56] Received: PRESSURE_READING:0.03
+[2026-04-27 12:04:56] Received: PRESSURE_READING:0.03
+[2026-04-27 12:04:56] Received: PRESSURE_READING:0.02
+[2026-04-27 12:04:57] Received: PRESSURE_READING:0.05
+[2026-04-27 12:04:57] Received: PRESSURE_READING:0.07
+[2026-04-27 12:04:57] Received: PRESSURE_READING:0.11
+[2026-04-27 12:04:57] Sent: SPEED:10000;DIST:10.0
+[2026-04-27 12:04:57] Received: DEBUG: Received char: S
+[2026-04-27 12:04:57] Received: DEBUG: Received char: P
+[2026-04-27 12:04:57] Received: DEBUG: Received char: E
+[2026-04-27 12:04:57] Received: DEBUG: Received char: E
+[2026-04-27 12:04:57] Received: DEBUG: Received char: D
+[2026-04-27 12:04:58] Received: DEBUG: Received char: :
+[2026-04-27 12:04:58] Received: DEBUG: Received char: 1
+[2026-04-27 12:04:58] Received: DEBUG: Received char: 0
+[2026-04-27 12:04:58] Received: DEBUG: Received char: 0
+[2026-04-27 12:04:58] Received: DEBUG: Received char: 0
+[2026-04-27 12:04:58] Received: DEBUG: Received char: 0
+[2026-04-27 12:04:58] Received: DEBUG: Received char: ;
+[2026-04-27 12:04:58] Received: DEBUG: Received char: D
+[2026-04-27 12:04:58] Received: DEBUG: Received char: I
+[2026-04-27 12:04:58] Received: DEBUG: Received char: S
+[2026-04-27 12:04:58] Received: DEBUG: Received char: T
+[2026-04-27 12:04:58] Received: DEBUG: Received char: :
+[2026-04-27 12:04:58] Received: DEBUG: Received char: 1
+[2026-04-27 12:04:58] Received: DEBUG: Received char: 0
+[2026-04-27 12:04:58] Received: DEBUG: Received char: .
+[2026-04-27 12:04:58] Received: DEBUG: Received char: 0
+[2026-04-27 12:04:58] Received: DEBUG: Received char:
+[2026-04-27 12:04:58] Received: DEBUG: String complete flag set
+[2026-04-27 12:04:59] Received: DEBUG: Complete input string: 'SPEED:10000;DIST:10.0'
+[2026-04-27 12:04:59] Received: DEBUG: === COMMAND PROCESSING START ===
+[2026-04-27 12:04:59] Received: DEBUG: String complete, parsing command...
+[2026-04-27 12:04:59] Received: DEBUG: Input string: 'SPEED:10000;DIST:10.0'
+[2026-04-27 12:04:59] Received: DEBUG: Input string length: 21
+[2026-04-27 12:04:59] Received: DEBUG: Movement command received - parsing speed and distance
+[2026-04-27 12:04:59] Received: DEBUG: Speed index: 0, Distance index: 11
+[2026-04-27 12:04:59] Received: DEBUG: Parsed values - Speed: 10000, Distance: 10
+[2026-04-27 12:04:59] Received: Received speed: 10000
+[2026-04-27 12:04:59] Received: Received distance: 10
+[2026-04-27 12:04:59] Received: DEBUG: Calling executeMovement function
+[2026-04-27 12:04:59] Received: DEBUG: Executing movement - Speed: 10000, Distance: 10
+[2026-04-27 12:04:59] Received: MOVEMENT_START: Pos=0 Target=68000 Steps=68000
+[2026-04-27 12:04:59] Received: DEBUG: Movement timeout set to: 36800ms
+[2026-04-27 12:04:59] Received: DEBUG: Movement tracking started from position: 0
+[2026-04-27 12:04:59] Received: DEBUG: Command processing complete, waiting for next command
+[2026-04-27 12:04:59] Received: DEBUG: === COMMAND PROCESSING END ===
+[2026-04-27 12:04:59] Received: PRESSURE_READING:0.11
+[2026-04-27 12:04:59] Received: DEBUG: Movement progress: 1%
+[2026-04-27 12:04:59] Received: DEBUG: Movement progress: 2%
+[2026-04-27 12:05:00] Received: PRESSURE_READING:0.06
+[2026-04-27 12:05:00] Received: DEBUG: Movement progress: 4%
+[2026-04-27 12:05:00] Received: DEBUG: Movement progress: 5%
+[2026-04-27 12:05:00] Received: PRESSURE_READING:0.04
+[2026-04-27 12:05:00] Received: DEBUG: Movement progress: 7%
+[2026-04-27 12:05:00] Received: DEBUG: Movement progress: 8%
+[2026-04-27 12:05:00] Received: DEBUG: Movement progress: 10%
+[2026-04-27 12:05:00] Received: PRESSURE_READING:0.01
+[2026-04-27 12:05:00] Received: DEBUG: Movement progress: 11%
+[2026-04-27 12:05:00] Received: DEBUG: Movement progress: 13%
+[2026-04-27 12:05:00] Received: PRESSURE_READING:0.01
+[2026-04-27 12:05:00] Received: DEBUG: Movement progress: 14%
+[2026-04-27 12:05:00] Received: DEBUG: Movement progress: 15%
+[2026-04-27 12:05:00] Received: DEBUG: Periodic handshake skipped - movement in progress
+[2026-04-27 12:05:00] Received: DEBUG: Movement progress: 17%
+[2026-04-27 12:05:00] Received: PRESSURE_READING:0.01
+[2026-04-27 12:05:00] Received: DEBUG: Movement progress: 18%
+[2026-04-27 12:05:00] Received: DEBUG: Movement progress: 20%
+[2026-04-27 12:05:00] Received: PRESSURE_READING:0.01
+[2026-04-27 12:05:01] Received: DEBUG: Movement progress: 21%
+[2026-04-27 12:05:01] Received: DEBUG: Movement progress: 23%
+[2026-04-27 12:05:01] Received: DEBUG: Movement progress: 24%
+[2026-04-27 12:05:01] Received: PRESSURE_READING:0.04
+[2026-04-27 12:05:01] Received: DEBUG: Movement progress: 26%
+[2026-04-27 12:05:01] Received: DEBUG: Movement progress: 27%
+[2026-04-27 12:05:01] Received: PRESSURE_READING:0.04
+[2026-04-27 12:05:01] Received: DEBUG: Movement progress: 28%
+[2026-04-27 12:05:01] Received: DEBUG: Movement progress: 30%
+[2026-04-27 12:05:01] Received: DEBUG: Movement progress: 31%
+[2026-04-27 12:05:01] Received: PRESSURE_READING:0.04
+[2026-04-27 12:05:01] Received: DEBUG: Movement progress: 33%
+[2026-04-27 12:05:01] Received: DEBUG: Movement progress: 34%
+[2026-04-27 12:05:01] Received: PRESSURE_READING:0.07
+[2026-04-27 12:05:01] Received: DEBUG: Movement progress: 36%
+[2026-04-27 12:05:01] Received: DEBUG: Movement progress: 37%
+[2026-04-27 12:05:01] Received: DEBUG: Movement progress: 39%
+[2026-04-27 12:05:01] Received: PRESSURE_READING:0.07
+[2026-04-27 12:05:01] Received: DEBUG: Movement progress: 40%
+[2026-04-27 12:05:02] Received: DEBUG: Movement progress: 41%
+[2026-04-27 12:05:02] Received: PRESSURE_READING:0.08
+[2026-04-27 12:05:02] Received: DEBUG: Movement progress: 43%
+[2026-04-27 12:05:02] Received: DEBUG: Movement progress: 44%
+[2026-04-27 12:05:02] Received: DEBUG: Movement progress: 46%
+[2026-04-27 12:05:02] Received: PRESSURE_READING:0.10
+[2026-04-27 12:05:02] Received: DEBUG: Movement progress: 47%
+[2026-04-27 12:05:02] Received: DEBUG: Movement progress: 49%
+[2026-04-27 12:05:02] Received: PRESSURE_READING:0.13
+[2026-04-27 12:05:02] Received: DEBUG: Movement progress: 50%
+[2026-04-27 12:05:02] Received: DEBUG: Movement progress: 52%
+[2026-04-27 12:05:02] Received: DEBUG: Movement progress: 53%
+[2026-04-27 12:05:02] Received: PRESSURE_READING:0.09
+[2026-04-27 12:05:02] Received: DEBUG: Movement progress: 54%
+[2026-04-27 12:05:02] Received: DEBUG: Movement progress: 56%
+[2026-04-27 12:05:02] Received: PRESSURE_READING:0.11
+[2026-04-27 12:05:02] Received: DEBUG: Movement progress: 57%
+[2026-04-27 12:05:02] Received: DEBUG: Movement progress: 59%
+[2026-04-27 12:05:02] Received: DEBUG: Periodic handshake skipped - movement in progress
+[2026-04-27 12:05:03] Received: DEBUG: Movement progress: 60%
+[2026-04-27 12:05:03] Received: PRESSURE_READING:0.13
+[2026-04-27 12:05:03] Received: DEBUG: Movement progress: 62%
+[2026-04-27 12:05:03] Received: DEBUG: Movement progress: 63%
+[2026-04-27 12:05:03] Received: PRESSURE_READING:0.13
+[2026-04-27 12:05:03] Received: DEBUG: Movement progress: 65%
+[2026-04-27 12:05:03] Received: DEBUG: Movement progress: 66%
+[2026-04-27 12:05:03] Received: DEBUG: Movement progress: 67%
+[2026-04-27 12:05:03] Received: PRESSURE_READING:0.19
+[2026-04-27 12:05:03] Received: DEBUG: Movement progress: 69%
+[2026-04-27 12:05:03] Received: DEBUG: Movement progress: 70%
+[2026-04-27 12:05:03] Received: PRESSURE_READING:0.22
+[2026-04-27 12:05:03] Received: DEBUG: Movement progress: 72%
+[2026-04-27 12:05:03] Received: DEBUG: Movement progress: 73%
+[2026-04-27 12:05:03] Received: DEBUG: Movement progress: 75%
+[2026-04-27 12:05:03] Received: PRESSURE_READING:0.21
+[2026-04-27 12:05:03] Received: DEBUG: Movement progress: 76%
+[2026-04-27 12:05:03] Received: DEBUG: Movement progress: 78%
+[2026-04-27 12:05:03] Received: PRESSURE_READING:0.16
+[2026-04-27 12:05:04] Received: DEBUG: Movement progress: 79%
+[2026-04-27 12:05:04] Received: DEBUG: Movement progress: 81%
+[2026-04-27 12:05:04] Received: DEBUG: Movement progress: 82%
+[2026-04-27 12:05:04] Received: PRESSURE_READING:0.12
+[2026-04-27 12:05:04] Received: DEBUG: Movement progress: 83%
+[2026-04-27 12:05:04] Received: DEBUG: Movement progress: 85%
+[2026-04-27 12:05:04] Received: PRESSURE_READING:0.25
+[2026-04-27 12:05:04] Received: DEBUG: Movement progress: 86%
+[2026-04-27 12:05:04] Received: DEBUG: Movement progress: 88%
+[2026-04-27 12:05:04] Received: DEBUG: Movement progress: 89%
+[2026-04-27 12:05:04] Received: PRESSURE_READING:0.21
+[2026-04-27 12:05:04] Received: DEBUG: Movement progress: 91%
+[2026-04-27 12:05:04] Received: DEBUG: Movement progress: 92%
+[2026-04-27 12:05:04] Received: PRESSURE_READING:0.21
+[2026-04-27 12:05:04] Received: DEBUG: Movement progress: 94%
+[2026-04-27 12:05:04] Received: DEBUG: Movement progress: 95%
+[2026-04-27 12:05:04] Received: DEBUG: Movement progress: 96%
+[2026-04-27 12:05:04] Received: PRESSURE_READING:0.26
+[2026-04-27 12:05:04] Received: DEBUG: Movement progress: 98%
+[2026-04-27 12:05:04] Received: DEBUG: Movement progress: 99%
+[2026-04-27 12:05:05] Received: DEBUG: Checking completion - Current: 68000, Target: 68000, Traveled: 68000
+[2026-04-27 12:05:05] Received: DEBUG: Movement completed! Distance traveled: 68000 steps
+[2026-04-27 12:05:05] Received: MOVEMENT_COMPLETE
+[2026-04-27 12:05:05] Received: ARDUINO_READY
+[2026-04-27 12:05:05] Received: DEBUG: Movement marked as complete, ready for next command
+[2026-04-27 12:05:05] Received: PRESSURE_READING:0.07
+[2026-04-27 12:05:05] Received: ARDUINO_READY
+[2026-04-27 12:05:05] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:05:05] Received: PRESSURE_READING:0.17
+[2026-04-27 12:05:05] Received: PRESSURE_READING:0.25
+[2026-04-27 12:05:05] Received: PRESSURE_READING:0.19
+[2026-04-27 12:05:05] Received: PRESSURE_READING:0.18
+[2026-04-27 12:05:06] Received: PRESSURE_READING:0.08
+[2026-04-27 12:05:06] Sent: HOME:1
+[2026-04-27 12:05:06] Received: DEBUG: Received char: H
+[2026-04-27 12:05:06] Received: DEBUG: Received char: O
+[2026-04-27 12:05:06] Received: DEBUG: Received char: M
+[2026-04-27 12:05:06] Received: DEBUG: Received char: E
+[2026-04-27 12:05:06] Received: DEBUG: Received char: :
+[2026-04-27 12:05:06] Received: DEBUG: Received char: 1
+[2026-04-27 12:05:06] Received: DEBUG: Received char:
+[2026-04-27 12:05:06] Received: DEBUG: String complete flag set
+[2026-04-27 12:05:06] Received: DEBUG: Complete input string: 'HOME:1'
+[2026-04-27 12:05:07] Received: DEBUG: === COMMAND PROCESSING START ===
+[2026-04-27 12:05:07] Received: DEBUG: String complete, parsing command...
+[2026-04-27 12:05:07] Received: DEBUG: Input string: 'HOME:1'
+[2026-04-27 12:05:07] Received: DEBUG: Input string length: 6
+[2026-04-27 12:05:07] Received: DEBUG: HOME command received - starting homing sequence
+[2026-04-27 12:05:07] Received: Stepper is Homing...
+[2026-04-27 12:05:07] Received: DEBUG: Starting homing sequence
+[2026-04-27 12:05:07] Received: DEBUG: Current optical switch state: LOW
+[2026-04-27 12:05:07] Received: DEBUG: Set homing speed to -10000
+[2026-04-27 12:05:07] Received: DEBUG: Moving towards optical switch...
+[2026-04-27 12:05:13] Received: DEBUG: Optical switch triggered - reached home position
+[2026-04-27 12:05:13] Received: DEBUG: Set current position to 0
+[2026-04-27 12:05:13] Received: DEBUG: Moving away from switch at speed 200
+[2026-04-27 12:05:13] Received: DEBUG: Moved away from switch
+[2026-04-27 12:05:13] Received: Homing Complete!
+[2026-04-27 12:05:13] Received: ARDUINO_READY
+[2026-04-27 12:05:13] Received: DEBUG: Homing sequence completed successfully
+[2026-04-27 12:05:13] Received: DEBUG: Homing sequence completed
+[2026-04-27 12:05:13] Received: DEBUG: Command processing complete, waiting for next command
+[2026-04-27 12:05:13] Received: DEBUG: === COMMAND PROCESSING END ===
+[2026-04-27 12:05:13] Received: ARDUINO_READY
+[2026-04-27 12:05:13] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:05:13] Received: PRESSURE_READING:0.00
+[2026-04-27 12:05:13] Received: PRESSURE_READING:0.08
+[2026-04-27 12:05:13] Received: PRESSURE_READING:0.08
+[2026-04-27 12:05:13] Received: PRESSURE_READING:0.08
+[2026-04-27 12:05:14] Received: PRESSURE_READING:0.11
+[2026-04-27 12:05:14] Received: PRESSURE_READING:0.03
+[2026-04-27 12:05:14] Received: PRESSURE_READING:0.03
+[2026-04-27 12:05:14] Received: PRESSURE_READING:0.03
+[2026-04-27 12:05:15] Received: PRESSURE_READING:0.04
+[2026-04-27 12:05:15] Received: PRESSURE_READING:0.04
+[2026-04-27 12:05:15] Received: PRESSURE_READING:0.04
+[2026-04-27 12:05:15] Received: PRESSURE_READING:0.14
+[2026-04-27 12:05:16] Received: ARDUINO_READY
+[2026-04-27 12:05:16] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:05:16] Received: PRESSURE_READING:0.12
+[2026-04-27 12:05:16] Received: PRESSURE_READING:0.18
+[2026-04-27 12:05:16] Received: PRESSURE_READING:0.18
+[2026-04-27 12:05:17] Received: PRESSURE_READING:0.07
+[2026-04-27 12:05:17] Received: PRESSURE_READING:0.15
+[2026-04-27 12:05:17] Received: PRESSURE_READING:0.09
+[2026-04-27 12:05:17] Received: PRESSURE_READING:0.19
+[2026-04-27 12:05:17] Received: PRESSURE_READING:0.19
+[2026-04-27 12:05:18] Received: PRESSURE_READING:0.12
+[2026-04-27 12:05:18] Received: PRESSURE_READING:0.12
+[2026-04-27 12:05:18] Received: PRESSURE_READING:0.02
+[2026-04-27 12:05:19] Received: PRESSURE_READING:0.02
+[2026-04-27 12:05:19] Received: ARDUINO_READY
+[2026-04-27 12:05:19] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:05:19] Received: PRESSURE_READING:0.00
+[2026-04-27 12:05:19] Received: PRESSURE_READING:0.00
+[2026-04-27 12:05:19] Received: PRESSURE_READING:0.00
+[2026-04-27 12:05:20] Received: PRESSURE_READING:0.05
+[2026-04-27 12:05:20] Received: PRESSURE_READING:0.05
+[2026-04-27 12:05:20] Received: PRESSURE_READING:0.07
+[2026-04-27 12:05:20] Received: PRESSURE_READING:0.30
+[2026-04-27 12:05:21] Received: PRESSURE_READING:0.26
+[2026-04-27 12:05:21] Received: PRESSURE_READING:0.26
+[2026-04-27 12:05:21] Received: PRESSURE_READING:0.25
+[2026-04-27 12:05:21] Received: PRESSURE_READING:0.02
+[2026-04-27 12:05:22] Received: PRESSURE_READING:0.01
+[2026-04-27 12:05:22] Received: ARDUINO_READY
+[2026-04-27 12:05:22] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:05:22] Received: PRESSURE_READING:0.01
+[2026-04-27 12:05:22] Received: PRESSURE_READING:0.01
+[2026-04-27 12:05:22] Received: PRESSURE_READING:0.09
+[2026-04-27 12:05:23] Received: PRESSURE_READING:0.09
+[2026-04-27 12:05:23] Received: PRESSURE_READING:0.27
+[2026-04-27 12:05:23] Received: PRESSURE_READING:0.27
+[2026-04-27 12:05:23] Received: PRESSURE_READING:0.22
+[2026-04-27 12:05:24] Received: PRESSURE_READING:0.27
+[2026-04-27 12:05:24] Received: PRESSURE_READING:0.14
+[2026-04-27 12:05:24] Received: PRESSURE_READING:0.14
+[2026-04-27 12:05:24] Received: PRESSURE_READING:0.11
+[2026-04-27 12:05:25] Received: PRESSURE_READING:0.06
+[2026-04-27 12:05:25] Received: ARDUINO_READY
+[2026-04-27 12:05:25] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:05:25] Received: PRESSURE_READING:0.02
+[2026-04-27 12:05:25] Received: PRESSURE_READING:0.11
+[2026-04-27 12:05:25] Received: PRESSURE_READING:0.09
+[2026-04-27 12:05:26] Received: PRESSURE_READING:0.09
+[2026-04-27 12:05:26] Received: PRESSURE_READING:0.12
+[2026-04-27 12:05:26] Received: PRESSURE_READING:0.03
+[2026-04-27 12:05:26] Received: PRESSURE_READING:0.05
+[2026-04-27 12:05:27] Received: PRESSURE_READING:0.05
+[2026-04-27 12:05:27] Received: PRESSURE_READING:0.02
+[2026-04-27 12:05:27] Received: PRESSURE_READING:0.02
+[2026-04-27 12:05:27] Received: PRESSURE_READING:0.02
+[2026-04-27 12:05:28] Received: PRESSURE_READING:0.02
+[2026-04-27 12:05:28] Received: ARDUINO_READY
+[2026-04-27 12:05:28] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:05:28] Received: PRESSURE_READING:0.02
+[2026-04-27 12:05:28] Received: PRESSURE_READING:0.02
+[2026-04-27 12:05:29] Received: PRESSURE_READING:0.02
+[2026-04-27 12:05:29] Received: PRESSURE_READING:0.13
+[2026-04-27 12:05:29] Received: PRESSURE_READING:0.13
+[2026-04-27 12:05:29] Received: PRESSURE_READING:0.27
+[2026-04-27 12:05:30] Received: PRESSURE_READING:0.24
+[2026-04-27 12:05:30] Received: PRESSURE_READING:0.14
+[2026-04-27 12:05:30] Received: PRESSURE_READING:0.15
+[2026-04-27 12:05:30] Received: PRESSURE_READING:0.07
+[2026-04-27 12:05:31] Received: PRESSURE_READING:0.07
+[2026-04-27 12:05:31] Received: PRESSURE_READING:0.20
+[2026-04-27 12:05:31] Received: ARDUINO_READY
+[2026-04-27 12:05:31] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:05:31] Received: PRESSURE_READING:0.19
+[2026-04-27 12:05:31] Received: PRESSURE_READING:0.16
+[2026-04-27 12:05:32] Received: PRESSURE_READING:0.26
+[2026-04-27 12:05:32] Received: PRESSURE_READING:0.15
+[2026-04-27 12:05:32] Received: PRESSURE_READING:0.15
+[2026-04-27 12:05:32] Received: PRESSURE_READING:0.12
+[2026-04-27 12:05:33] Received: PRESSURE_READING:0.12
+[2026-04-27 12:05:33] Received: PRESSURE_READING:0.15
+[2026-04-27 12:05:33] Received: PRESSURE_READING:0.15
+[2026-04-27 12:05:33] Received: PRESSURE_READING:0.23
+[2026-04-27 12:05:34] Received: PRESSURE_READING:0.14
+[2026-04-27 12:05:34] Received: PRESSURE_READING:0.09
+[2026-04-27 12:05:34] Received: ARDUINO_READY
+[2026-04-27 12:05:34] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:05:34] Received: PRESSURE_READING:0.08
+[2026-04-27 12:05:34] Received: PRESSURE_READING:0.06
+[2026-04-27 12:05:35] Received: PRESSURE_READING:0.14
+[2026-04-27 12:05:35] Received: PRESSURE_READING:0.31
+[2026-04-27 12:05:35] Received: PRESSURE_READING:0.31
+[2026-04-27 12:05:35] Received: PRESSURE_READING:0.25
+[2026-04-27 12:05:36] Received: PRESSURE_READING:0.17
+[2026-04-27 12:05:36] Received: PRESSURE_READING:0.01
+[2026-04-27 12:05:36] Received: PRESSURE_READING:0.01
+[2026-04-27 12:05:36] Received: PRESSURE_READING:0.13
+[2026-04-27 12:05:37] Received: PRESSURE_READING:0.15
+[2026-04-27 12:05:37] Received: PRESSURE_READING:0.14
+[2026-04-27 12:05:37] Received: ARDUINO_READY
+[2026-04-27 12:05:37] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:05:37] Received: PRESSURE_READING:0.19
+[2026-04-27 12:05:37] Received: PRESSURE_READING:0.19
+[2026-04-27 12:05:38] Received: PRESSURE_READING:0.19
+[2026-04-27 12:05:38] Received: PRESSURE_READING:0.29
+[2026-04-27 12:05:38] Received: PRESSURE_READING:0.33
+[2026-04-27 12:05:38] Received: PRESSURE_READING:0.25
+[2026-04-27 12:05:39] Received: PRESSURE_READING:0.23
+[2026-04-27 12:05:39] Received: PRESSURE_READING:0.13
+[2026-04-27 12:05:39] Received: PRESSURE_READING:0.04
+[2026-04-27 12:05:39] Received: PRESSURE_READING:0.04
+[2026-04-27 12:05:40] Received: PRESSURE_READING:0.04
+[2026-04-27 12:05:40] Received: PRESSURE_READING:0.04
+[2026-04-27 12:05:40] Received: ARDUINO_READY
+[2026-04-27 12:05:40] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:05:40] Received: PRESSURE_READING:0.05
+[2026-04-27 12:05:40] Received: PRESSURE_READING:0.04
+[2026-04-27 12:05:41] Received: PRESSURE_READING:0.06
+[2026-04-27 12:05:41] Received: PRESSURE_READING:0.06
+[2026-04-27 12:05:41] Received: PRESSURE_READING:0.05
+[2026-04-27 12:05:42] Received: PRESSURE_READING:0.02
+[2026-04-27 12:05:42] Received: PRESSURE_READING:0.15
+[2026-04-27 12:05:42] Received: PRESSURE_READING:0.26
+[2026-04-27 12:05:42] Received: PRESSURE_READING:0.27
+[2026-04-27 12:05:43] Received: PRESSURE_READING:0.47
+[2026-04-27 12:05:43] Received: PRESSURE_READING:0.36
+[2026-04-27 12:05:43] Received: PRESSURE_READING:0.31
+[2026-04-27 12:05:43] Received: ARDUINO_READY
+[2026-04-27 12:05:43] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:05:43] Received: PRESSURE_READING:0.29
+[2026-04-27 12:05:44] Received: PRESSURE_READING:0.10
+[2026-04-27 12:05:44] Received: PRESSURE_READING:0.06
+[2026-04-27 12:05:44] Received: PRESSURE_READING:0.09
+[2026-04-27 12:05:44] Received: PRESSURE_READING:0.19
+[2026-04-27 12:05:45] Received: PRESSURE_READING:0.19
+[2026-04-27 12:05:45] Received: PRESSURE_READING:0.24
+[2026-04-27 12:05:45] Received: PRESSURE_READING:0.15
+[2026-04-27 12:05:45] Received: PRESSURE_READING:0.07
+[2026-04-27 12:05:46] Received: PRESSURE_READING:0.19
+[2026-04-27 12:05:46] Received: PRESSURE_READING:0.18
+[2026-04-27 12:05:46] Received: PRESSURE_READING:0.23
+[2026-04-27 12:05:46] Received: ARDUINO_READY
+[2026-04-27 12:05:46] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:05:46] Received: PRESSURE_READING:0.27
+[2026-04-27 12:05:47] Received: PRESSURE_READING:0.15
+[2026-04-27 12:05:47] Received: PRESSURE_READING:0.14
+[2026-04-27 12:05:47] Received: PRESSURE_READING:0.12
+[2026-04-27 12:05:47] Received: PRESSURE_READING:0.05
+[2026-04-27 12:05:48] Received: PRESSURE_READING:0.05
+[2026-04-27 12:05:48] Received: PRESSURE_READING:0.02
+[2026-04-27 12:05:48] Received: PRESSURE_READING:0.00
+[2026-04-27 12:05:48] Received: PRESSURE_READING:0.04
+[2026-04-27 12:05:49] Received: PRESSURE_READING:0.04
+[2026-04-27 12:05:49] Received: PRESSURE_READING:0.10
+[2026-04-27 12:05:49] Received: PRESSURE_READING:0.10
+[2026-04-27 12:05:49] Received: ARDUINO_READY
+[2026-04-27 12:05:49] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:05:49] Received: PRESSURE_READING:0.16
+[2026-04-27 12:05:50] Received: PRESSURE_READING:0.20
+[2026-04-27 12:05:50] Received: PRESSURE_READING:0.14
+[2026-04-27 12:05:50] Received: PRESSURE_READING:0.13
+[2026-04-27 12:05:50] Received: PRESSURE_READING:0.06
+[2026-04-27 12:05:51] Received: PRESSURE_READING:0.03
+[2026-04-27 12:05:51] Received: PRESSURE_READING:0.05
+[2026-04-27 12:05:51] Received: PRESSURE_READING:0.13
+[2026-04-27 12:05:51] Received: PRESSURE_READING:0.11
+[2026-04-27 12:05:52] Received: PRESSURE_READING:0.17
+[2026-04-27 12:05:52] Received: PRESSURE_READING:0.15
+[2026-04-27 12:05:52] Received: PRESSURE_READING:0.08
+[2026-04-27 12:05:52] Received: ARDUINO_READY
+[2026-04-27 12:05:52] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:05:53] Received: PRESSURE_READING:0.24
+[2026-04-27 12:05:53] Received: PRESSURE_READING:0.22
+[2026-04-27 12:05:53] Received: PRESSURE_READING:0.22
+[2026-04-27 12:05:53] Received: PRESSURE_READING:0.25
+[2026-04-27 12:05:53] Received: PRESSURE_READING:0.17
+[2026-04-27 12:05:54] Received: PRESSURE_READING:0.17
+[2026-04-27 12:05:54] Received: PRESSURE_READING:0.17
+[2026-04-27 12:05:54] Received: PRESSURE_READING:0.19
+[2026-04-27 12:05:55] Received: PRESSURE_READING:0.11
+[2026-04-27 12:05:55] Received: PRESSURE_READING:0.07
+[2026-04-27 12:05:55] Received: PRESSURE_READING:0.07
+[2026-04-27 12:05:55] Received: PRESSURE_READING:0.06
+[2026-04-27 12:05:55] Received: ARDUINO_READY
+[2026-04-27 12:05:55] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:05:56] Received: PRESSURE_READING:0.06
+[2026-04-27 12:05:56] Received: PRESSURE_READING:0.06
+[2026-04-27 12:05:56] Received: PRESSURE_READING:0.08
+[2026-04-27 12:05:56] Received: PRESSURE_READING:0.02
+[2026-04-27 12:05:57] Received: PRESSURE_READING:0.15
+[2026-04-27 12:05:57] Received: PRESSURE_READING:0.17
+[2026-04-27 12:05:57] Received: PRESSURE_READING:0.28
+[2026-04-27 12:05:57] Received: PRESSURE_READING:0.32
+[2026-04-27 12:05:58] Received: PRESSURE_READING:0.28
+[2026-04-27 12:05:58] Received: PRESSURE_READING:0.36
+[2026-04-27 12:05:58] Received: PRESSURE_READING:0.31
+[2026-04-27 12:05:58] Received: PRESSURE_READING:0.27
+[2026-04-27 12:05:58] Received: ARDUINO_READY
+[2026-04-27 12:05:58] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:05:59] Received: PRESSURE_READING:0.23
+[2026-04-27 12:05:59] Received: PRESSURE_READING:0.13
+[2026-04-27 12:05:59] Received: PRESSURE_READING:0.08
+[2026-04-27 12:05:59] Received: PRESSURE_READING:0.20
+[2026-04-27 12:06:00] Received: PRESSURE_READING:0.15
+[2026-04-27 12:06:00] Received: PRESSURE_READING:0.22
+[2026-04-27 12:06:00] Received: PRESSURE_READING:0.22
+[2026-04-27 12:06:01] Received: PRESSURE_READING:0.09
+[2026-04-27 12:06:01] Received: PRESSURE_READING:0.09
+[2026-04-27 12:06:01] Received: PRESSURE_READING:0.09
+[2026-04-27 12:06:01] Received: PRESSURE_READING:0.16
+[2026-04-27 12:06:01] Received: PRESSURE_READING:0.25
+[2026-04-27 12:06:01] Received: ARDUINO_READY
+[2026-04-27 12:06:02] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:06:02] Received: PRESSURE_READING:0.25
+[2026-04-27 12:06:02] Received: PRESSURE_READING:0.19
+[2026-04-27 12:06:02] Received: PRESSURE_READING:0.14
+[2026-04-27 12:06:02] Received: PRESSURE_READING:0.05
+[2026-04-27 12:06:03] Received: PRESSURE_READING:0.05
+[2026-04-27 12:06:03] Received: PRESSURE_READING:0.05
+[2026-04-27 12:06:03] Received: PRESSURE_READING:0.00
+[2026-04-27 12:06:03] Received: PRESSURE_READING:0.00
+[2026-04-27 12:06:04] Received: PRESSURE_READING:0.00
+[2026-04-27 12:06:04] Received: PRESSURE_READING:0.14
+[2026-04-27 12:06:04] Received: PRESSURE_READING:0.26
+[2026-04-27 12:06:04] Received: PRESSURE_READING:0.26
+[2026-04-27 12:06:05] Received: ARDUINO_READY
+[2026-04-27 12:06:05] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:06:05] Received: PRESSURE_READING:0.26
+[2026-04-27 12:06:05] Received: PRESSURE_READING:0.13
+[2026-04-27 12:06:05] Received: PRESSURE_READING:0.00
+[2026-04-27 12:06:06] Received: PRESSURE_READING:0.11
+[2026-04-27 12:06:06] Received: PRESSURE_READING:0.11
+[2026-04-27 12:06:06] Received: PRESSURE_READING:0.11
+[2026-04-27 12:06:06] Received: PRESSURE_READING:0.11
+[2026-04-27 12:06:07] Received: PRESSURE_READING:0.18
+[2026-04-27 12:06:07] Received: PRESSURE_READING:0.18
+[2026-04-27 12:06:07] Received: PRESSURE_READING:0.18
+[2026-04-27 12:06:07] Received: PRESSURE_READING:0.18
+[2026-04-27 12:06:08] Received: PRESSURE_READING:0.09
+[2026-04-27 12:06:08] Received: ARDUINO_READY
+[2026-04-27 12:06:08] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:06:08] Received: PRESSURE_READING:0.09
+[2026-04-27 12:06:08] Received: PRESSURE_READING:0.09
+[2026-04-27 12:06:08] Received: PRESSURE_READING:0.09
+[2026-04-27 12:06:09] Received: PRESSURE_READING:0.00
+[2026-04-27 12:06:09] Received: PRESSURE_READING:0.04
+[2026-04-27 12:06:09] Received: PRESSURE_READING:0.14
+[2026-04-27 12:06:09] Received: PRESSURE_READING:0.14
+[2026-04-27 12:06:10] Received: PRESSURE_READING:0.13
+[2026-04-27 12:06:10] Received: PRESSURE_READING:0.15
+[2026-04-27 12:06:10] Received: PRESSURE_READING:0.05
+[2026-04-27 12:06:10] Received: PRESSURE_READING:0.05
+[2026-04-27 12:06:11] Received: PRESSURE_READING:0.05
+[2026-04-27 12:06:11] Received: ARDUINO_READY
+[2026-04-27 12:06:11] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:06:11] Received: PRESSURE_READING:0.01
+[2026-04-27 12:06:11] Received: PRESSURE_READING:0.01
+[2026-04-27 12:06:11] Received: PRESSURE_READING:0.01
+[2026-04-27 12:06:12] Received: PRESSURE_READING:0.07
+[2026-04-27 12:06:12] Received: PRESSURE_READING:0.05
+[2026-04-27 12:06:12] Received: PRESSURE_READING:0.05
+[2026-04-27 12:06:12] Received: PRESSURE_READING:0.05
+[2026-04-27 12:06:13] Received: PRESSURE_READING:0.00
+[2026-04-27 12:06:13] Received: PRESSURE_READING:0.15
+[2026-04-27 12:06:13] Received: PRESSURE_READING:0.15
+[2026-04-27 12:06:13] Received: PRESSURE_READING:0.18
+[2026-04-27 12:06:14] Received: PRESSURE_READING:0.37
+[2026-04-27 12:06:14] Received: ARDUINO_READY
+[2026-04-27 12:06:14] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:06:14] Received: PRESSURE_READING:0.22
+[2026-04-27 12:06:14] Received: PRESSURE_READING:0.23
+[2026-04-27 12:06:14] Received: PRESSURE_READING:0.25
+[2026-04-27 12:06:15] Received: PRESSURE_READING:0.06
+[2026-04-27 12:06:15] Received: PRESSURE_READING:0.08
+[2026-04-27 12:06:15] Received: PRESSURE_READING:0.12
+[2026-04-27 12:06:15] Received: PRESSURE_READING:0.07
+[2026-04-27 12:06:16] Received: PRESSURE_READING:0.07
+[2026-04-27 12:06:16] Received: PRESSURE_READING:0.06
+[2026-04-27 12:06:16] Received: PRESSURE_READING:0.01
+[2026-04-27 12:06:16] Received: PRESSURE_READING:0.01
+[2026-04-27 12:06:17] Received: PRESSURE_READING:0.01
+[2026-04-27 12:06:17] Received: ARDUINO_READY
+[2026-04-27 12:06:17] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:06:17] Received: PRESSURE_READING:0.00
+[2026-04-27 12:06:17] Received: PRESSURE_READING:0.00
+[2026-04-27 12:06:18] Received: PRESSURE_READING:0.00
+[2026-04-27 12:06:18] Received: PRESSURE_READING:0.00
+[2026-04-27 12:06:18] Received: PRESSURE_READING:0.00
+[2026-04-27 12:06:18] Received: PRESSURE_READING:0.00
+[2026-04-27 12:06:19] Received: PRESSURE_READING:0.01
+[2026-04-27 12:06:19] Received: PRESSURE_READING:0.01
+[2026-04-27 12:06:19] Received: PRESSURE_READING:0.01
+[2026-04-27 12:06:19] Received: PRESSURE_READING:0.03
+[2026-04-27 12:06:20] Received: PRESSURE_READING:0.02
+[2026-04-27 12:06:20] Received: PRESSURE_READING:0.09
+[2026-04-27 12:06:20] Received: ARDUINO_READY
+[2026-04-27 12:06:20] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:06:20] Received: PRESSURE_READING:0.09
+[2026-04-27 12:06:20] Received: PRESSURE_READING:0.07
+[2026-04-27 12:06:21] Received: PRESSURE_READING:0.08
+[2026-04-27 12:06:21] Received: PRESSURE_READING:0.02
+[2026-04-27 12:06:21] Received: PRESSURE_READING:0.07
+[2026-04-27 12:06:21] Received: PRESSURE_READING:0.08
+[2026-04-27 12:06:22] Received: PRESSURE_READING:0.10
+[2026-04-27 12:06:22] Received: PRESSURE_READING:0.13
+[2026-04-27 12:06:22] Received: PRESSURE_READING:0.12
+[2026-04-27 12:06:22] Received: PRESSURE_READING:0.11
+[2026-04-27 12:06:23] Received: PRESSURE_READING:0.38
+[2026-04-27 12:06:23] Received: ARDUINO_READY
+[2026-04-27 12:06:23] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:06:23] Received: PRESSURE_READING:0.34
+[2026-04-27 12:06:23] Received: PRESSURE_READING:0.30
+[2026-04-27 12:06:23] Received: PRESSURE_READING:0.34
+[2026-04-27 12:06:24] Received: PRESSURE_READING:0.22
+[2026-04-27 12:06:24] Received: PRESSURE_READING:0.22
+[2026-04-27 12:06:24] Received: PRESSURE_READING:0.22
+[2026-04-27 12:06:24] Received: PRESSURE_READING:0.25
+[2026-04-27 12:06:25] Received: PRESSURE_READING:0.06
+[2026-04-27 12:06:25] Received: PRESSURE_READING:0.10
+[2026-04-27 12:06:25] Received: PRESSURE_READING:0.22
+[2026-04-27 12:06:25] Received: PRESSURE_READING:0.15
+[2026-04-27 12:06:26] Received: PRESSURE_READING:0.15
+[2026-04-27 12:06:26] Received: ARDUINO_READY
+[2026-04-27 12:06:26] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:06:26] Received: PRESSURE_READING:0.11
+[2026-04-27 12:06:26] Received: PRESSURE_READING:0.00
+[2026-04-27 12:06:26] Received: PRESSURE_READING:0.00
+[2026-04-27 12:06:27] Received: PRESSURE_READING:0.00
+[2026-04-27 12:06:27] Received: PRESSURE_READING:0.22
+[2026-04-27 12:06:27] Received: PRESSURE_READING:0.24
+[2026-04-27 12:06:27] Received: PRESSURE_READING:0.24
+[2026-04-27 12:06:28] Received: PRESSURE_READING:0.24
+[2026-04-27 12:06:28] Received: PRESSURE_READING:0.14
+[2026-04-27 12:06:28] Received: PRESSURE_READING:0.13
+[2026-04-27 12:06:28] Received: PRESSURE_READING:0.13
+[2026-04-27 12:06:29] Received: PRESSURE_READING:0.21
+[2026-04-27 12:06:29] Received: ARDUINO_READY
+[2026-04-27 12:06:29] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:06:29] Received: PRESSURE_READING:0.08
+[2026-04-27 12:06:29] Received: PRESSURE_READING:0.08
+[2026-04-27 12:06:29] Received: PRESSURE_READING:0.08
+[2026-04-27 12:06:30] Received: PRESSURE_READING:0.00
+[2026-04-27 12:06:30] Received: PRESSURE_READING:0.09
+[2026-04-27 12:06:30] Received: PRESSURE_READING:0.27
+[2026-04-27 12:06:31] Received: PRESSURE_READING:0.27
+[2026-04-27 12:06:31] Received: PRESSURE_READING:0.29
+[2026-04-27 12:06:31] Received: PRESSURE_READING:0.47
+[2026-04-27 12:06:31] Received: PRESSURE_READING:0.29
+[2026-04-27 12:06:32] Received: PRESSURE_READING:0.32
+[2026-04-27 12:06:32] Received: PRESSURE_READING:0.39
+[2026-04-27 12:06:32] Received: ARDUINO_READY
+[2026-04-27 12:06:32] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:06:32] Received: PRESSURE_READING:0.31
+[2026-04-27 12:06:32] Received: PRESSURE_READING:0.31
+[2026-04-27 12:06:33] Received: PRESSURE_READING:0.28
+[2026-04-27 12:06:33] Received: PRESSURE_READING:0.25
+[2026-04-27 12:06:33] Received: PRESSURE_READING:0.07
+[2026-04-27 12:06:33] Received: PRESSURE_READING:0.06
+[2026-04-27 12:06:34] Received: PRESSURE_READING:0.27
+[2026-04-27 12:06:34] Received: PRESSURE_READING:0.20
+[2026-04-27 12:06:34] Received: PRESSURE_READING:0.20
+[2026-04-27 12:06:34] Received: PRESSURE_READING:0.22
+[2026-04-27 12:06:35] Received: PRESSURE_READING:0.04
+[2026-04-27 12:06:35] Received: PRESSURE_READING:0.06
+[2026-04-27 12:06:35] Received: ARDUINO_READY
+[2026-04-27 12:06:35] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:06:35] Received: PRESSURE_READING:0.15
+[2026-04-27 12:06:35] Received: PRESSURE_READING:0.20
+[2026-04-27 12:06:36] Received: PRESSURE_READING:0.28
+[2026-04-27 12:06:36] Received: PRESSURE_READING:0.29
+[2026-04-27 12:06:36] Received: PRESSURE_READING:0.26
+[2026-04-27 12:06:36] Received: PRESSURE_READING:0.19
+[2026-04-27 12:06:37] Received: PRESSURE_READING:0.09
+[2026-04-27 12:06:37] Received: PRESSURE_READING:0.14
+[2026-04-27 12:06:37] Received: PRESSURE_READING:0.19
+[2026-04-27 12:06:37] Received: PRESSURE_READING:0.23
+[2026-04-27 12:06:38] Received: PRESSURE_READING:0.51
+[2026-04-27 12:06:38] Received: PRESSURE_READING:0.44
+[2026-04-27 12:06:38] Received: ARDUINO_READY
+[2026-04-27 12:06:38] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:06:38] Received: PRESSURE_READING:0.42
+[2026-04-27 12:06:38] Received: PRESSURE_READING:0.38
+[2026-04-27 12:06:39] Received: PRESSURE_READING:0.10
+[2026-04-27 12:06:39] Received: PRESSURE_READING:0.15
+[2026-04-27 12:06:39] Received: PRESSURE_READING:0.07
+[2026-04-27 12:06:39] Received: PRESSURE_READING:0.12
+[2026-04-27 12:06:40] Received: PRESSURE_READING:0.14
+[2026-04-27 12:06:40] Received: PRESSURE_READING:0.10
+[2026-04-27 12:06:40] Received: PRESSURE_READING:0.10
+[2026-04-27 12:06:40] Received: PRESSURE_READING:0.05
+[2026-04-27 12:06:41] Received: PRESSURE_READING:0.07
+[2026-04-27 12:06:41] Received: PRESSURE_READING:0.04
+[2026-04-27 12:06:41] Received: ARDUINO_READY
+[2026-04-27 12:06:41] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:06:41] Received: PRESSURE_READING:0.04
+[2026-04-27 12:06:42] Received: PRESSURE_READING:0.04
+[2026-04-27 12:06:42] Received: PRESSURE_READING:0.04
+[2026-04-27 12:06:42] Received: PRESSURE_READING:0.04
+[2026-04-27 12:06:42] Received: PRESSURE_READING:0.08
+[2026-04-27 12:06:43] Received: PRESSURE_READING:0.08
+[2026-04-27 12:06:43] Received: PRESSURE_READING:0.13
+[2026-04-27 12:06:43] Received: PRESSURE_READING:0.13
+[2026-04-27 12:06:43] Received: PRESSURE_READING:0.09
+[2026-04-27 12:06:44] Received: PRESSURE_READING:0.09
+[2026-04-27 12:06:44] Received: PRESSURE_READING:0.03
+[2026-04-27 12:06:44] Received: PRESSURE_READING:0.08
+[2026-04-27 12:06:44] Received: ARDUINO_READY
+[2026-04-27 12:06:44] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:06:44] Received: PRESSURE_READING:0.13
+[2026-04-27 12:06:45] Received: PRESSURE_READING:0.15
+[2026-04-27 12:06:45] Received: PRESSURE_READING:0.12
+[2026-04-27 12:06:45] Received: PRESSURE_READING:0.16
+[2026-04-27 12:06:45] Received: PRESSURE_READING:0.14
+[2026-04-27 12:06:46] Received: PRESSURE_READING:0.22
+[2026-04-27 12:06:46] Received: PRESSURE_READING:0.22
+[2026-04-27 12:06:46] Received: PRESSURE_READING:0.14
+[2026-04-27 12:06:46] Received: PRESSURE_READING:0.13
+[2026-04-27 12:06:47] Received: PRESSURE_READING:0.03
+[2026-04-27 12:06:47] Received: PRESSURE_READING:0.12
+[2026-04-27 12:06:47] Received: PRESSURE_READING:0.16
+[2026-04-27 12:06:47] Received: ARDUINO_READY
+[2026-04-27 12:06:47] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:06:47] Received: PRESSURE_READING:0.14
+[2026-04-27 12:06:48] Received: PRESSURE_READING:0.14
+[2026-04-27 12:06:48] Received: PRESSURE_READING:0.05
+[2026-04-27 12:06:48] Received: PRESSURE_READING:0.00
+[2026-04-27 12:06:48] Received: PRESSURE_READING:0.06
+[2026-04-27 12:06:49] Received: PRESSURE_READING:0.12
+[2026-04-27 12:06:49] Received: PRESSURE_READING:0.20
+[2026-04-27 12:06:49] Received: PRESSURE_READING:0.21
+[2026-04-27 12:06:49] Received: PRESSURE_READING:0.14
+[2026-04-27 12:06:50] Received: PRESSURE_READING:0.09
+[2026-04-27 12:06:50] Received: PRESSURE_READING:0.01
+[2026-04-27 12:06:50] Received: PRESSURE_READING:0.00
+[2026-04-27 12:06:50] Received: ARDUINO_READY
+[2026-04-27 12:06:50] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:06:50] Received: PRESSURE_READING:0.08
+[2026-04-27 12:06:51] Received: PRESSURE_READING:0.09
+[2026-04-27 12:06:51] Received: PRESSURE_READING:0.15
+[2026-04-27 12:06:51] Received: PRESSURE_READING:0.20
+[2026-04-27 12:06:51] Received: PRESSURE_READING:0.22
+[2026-04-27 12:06:52] Received: PRESSURE_READING:0.21
+[2026-04-27 12:06:52] Received: PRESSURE_READING:0.15
+[2026-04-27 12:06:52] Received: PRESSURE_READING:0.29
+[2026-04-27 12:06:52] Received: PRESSURE_READING:0.21
+[2026-04-27 12:06:53] Received: PRESSURE_READING:0.21
+[2026-04-27 12:06:53] Received: PRESSURE_READING:0.24
+[2026-04-27 12:06:53] Received: PRESSURE_READING:0.16
+[2026-04-27 12:06:53] Received: ARDUINO_READY
+[2026-04-27 12:06:53] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:06:53] Received: PRESSURE_READING:0.16
+[2026-04-27 12:06:54] Received: PRESSURE_READING:0.17
+[2026-04-27 12:06:54] Received: PRESSURE_READING:0.15
+[2026-04-27 12:06:54] Received: PRESSURE_READING:0.04
+[2026-04-27 12:06:55] Received: PRESSURE_READING:0.01
+[2026-04-27 12:06:55] Received: PRESSURE_READING:0.05
+[2026-04-27 12:06:55] Received: PRESSURE_READING:0.05
+[2026-04-27 12:06:55] Received: PRESSURE_READING:0.17
+[2026-04-27 12:06:56] Received: PRESSURE_READING:0.32
+[2026-04-27 12:06:56] Received: PRESSURE_READING:0.27
+[2026-04-27 12:06:56] Received: PRESSURE_READING:0.38
+[2026-04-27 12:06:56] Received: PRESSURE_READING:0.35
+[2026-04-27 12:06:56] Received: ARDUINO_READY
+[2026-04-27 12:06:56] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:06:57] Received: PRESSURE_READING:0.20
+[2026-04-27 12:06:57] Received: PRESSURE_READING:0.20
+[2026-04-27 12:06:57] Received: PRESSURE_READING:0.15
+[2026-04-27 12:06:57] Received: PRESSURE_READING:0.06
+[2026-04-27 12:06:58] Received: PRESSURE_READING:0.05
+[2026-04-27 12:06:58] Received: PRESSURE_READING:0.11
+[2026-04-27 12:06:58] Received: PRESSURE_READING:0.06
+[2026-04-27 12:06:58] Received: PRESSURE_READING:0.12
+[2026-04-27 12:06:59] Received: PRESSURE_READING:0.12
+[2026-04-27 12:06:59] Received: PRESSURE_READING:0.08
+[2026-04-27 12:06:59] Received: PRESSURE_READING:0.11
+[2026-04-27 12:06:59] Received: PRESSURE_READING:0.04
+[2026-04-27 12:06:59] Received: ARDUINO_READY
+[2026-04-27 12:07:00] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:07:00] Received: PRESSURE_READING:0.04
+[2026-04-27 12:07:00] Received: PRESSURE_READING:0.04
+[2026-04-27 12:07:00] Received: PRESSURE_READING:0.12
+[2026-04-27 12:07:00] Received: PRESSURE_READING:0.12
+[2026-04-27 12:07:01] Received: PRESSURE_READING:0.22
+[2026-04-27 12:07:01] Received: PRESSURE_READING:0.26
+[2026-04-27 12:07:01] Received: PRESSURE_READING:0.19
+[2026-04-27 12:07:01] Received: PRESSURE_READING:0.23
+[2026-04-27 12:07:02] Received: PRESSURE_READING:0.16
+[2026-04-27 12:07:02] Received: PRESSURE_READING:0.10
+[2026-04-27 12:07:02] Received: PRESSURE_READING:0.07
+[2026-04-27 12:07:02] Received: PRESSURE_READING:0.03
+[2026-04-27 12:07:03] Received: ARDUINO_READY
+[2026-04-27 12:07:03] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:07:03] Received: PRESSURE_READING:0.00
+[2026-04-27 12:07:03] Received: PRESSURE_READING:0.04
+[2026-04-27 12:07:03] Received: PRESSURE_READING:0.10
+[2026-04-27 12:07:03] Received: PRESSURE_READING:0.18
+[2026-04-27 12:07:04] Received: PRESSURE_READING:0.30
+[2026-04-27 12:07:04] Received: PRESSURE_READING:0.32
+[2026-04-27 12:07:04] Received: PRESSURE_READING:0.26
+[2026-04-27 12:07:04] Received: PRESSURE_READING:0.22
+[2026-04-27 12:07:05] Received: PRESSURE_READING:0.10
+[2026-04-27 12:07:05] Received: PRESSURE_READING:0.04
+[2026-04-27 12:07:05] Received: PRESSURE_READING:0.11
+[2026-04-27 12:07:05] Received: PRESSURE_READING:0.06
+[2026-04-27 12:07:06] Received: ARDUINO_READY
+[2026-04-27 12:07:06] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:07:06] Received: PRESSURE_READING:0.06
+[2026-04-27 12:07:06] Received: PRESSURE_READING:0.06
+[2026-04-27 12:07:06] Received: PRESSURE_READING:0.00
+[2026-04-27 12:07:06] Received: PRESSURE_READING:0.00
+[2026-04-27 12:07:07] Received: PRESSURE_READING:0.02
+[2026-04-27 12:07:07] Received: PRESSURE_READING:0.08
+[2026-04-27 12:07:07] Received: PRESSURE_READING:0.08
+[2026-04-27 12:07:08] Received: PRESSURE_READING:0.08
+[2026-04-27 12:07:08] Received: PRESSURE_READING:0.07
+[2026-04-27 12:07:08] Received: PRESSURE_READING:0.02
+[2026-04-27 12:07:08] Received: PRESSURE_READING:0.02
+[2026-04-27 12:07:09] Received: PRESSURE_READING:0.02
+[2026-04-27 12:07:09] Received: ARDUINO_READY
+[2026-04-27 12:07:09] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:07:09] Received: PRESSURE_READING:0.09
+[2026-04-27 12:07:09] Received: PRESSURE_READING:0.16
+[2026-04-27 12:07:09] Received: PRESSURE_READING:0.16
+[2026-04-27 12:07:10] Received: PRESSURE_READING:0.16
+[2026-04-27 12:07:10] Received: PRESSURE_READING:0.09
+[2026-04-27 12:07:10] Received: PRESSURE_READING:0.03
+[2026-04-27 12:07:10] Received: PRESSURE_READING:0.03
+[2026-04-27 12:07:11] Received: PRESSURE_READING:0.03
+[2026-04-27 12:07:11] Received: PRESSURE_READING:0.00
+[2026-04-27 12:07:11] Received: PRESSURE_READING:0.00
+[2026-04-27 12:07:11] Received: PRESSURE_READING:0.05
+[2026-04-27 12:07:12] Received: PRESSURE_READING:0.08
+[2026-04-27 12:07:12] Received: ARDUINO_READY
+[2026-04-27 12:07:12] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:07:12] Received: PRESSURE_READING:0.08
+[2026-04-27 12:07:12] Received: PRESSURE_READING:0.09
+[2026-04-27 12:07:12] Received: PRESSURE_READING:0.05
+[2026-04-27 12:07:13] Received: PRESSURE_READING:0.01
+[2026-04-27 12:07:13] Received: PRESSURE_READING:0.05
+[2026-04-27 12:07:13] Received: PRESSURE_READING:0.04
+[2026-04-27 12:07:13] Received: PRESSURE_READING:0.04
+[2026-04-27 12:07:14] Received: PRESSURE_READING:0.18
+[2026-04-27 12:07:14] Received: PRESSURE_READING:0.26
+[2026-04-27 12:07:14] Received: PRESSURE_READING:0.26
+[2026-04-27 12:07:14] Received: PRESSURE_READING:0.26
+[2026-04-27 12:07:15] Received: PRESSURE_READING:0.20
+[2026-04-27 12:07:15] Received: ARDUINO_READY
+[2026-04-27 12:07:15] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:07:15] Received: PRESSURE_READING:0.10
+[2026-04-27 12:07:15] Received: PRESSURE_READING:0.12
+[2026-04-27 12:07:15] Received: PRESSURE_READING:0.12
+[2026-04-27 12:07:16] Received: PRESSURE_READING:0.03
+[2026-04-27 12:07:16] Received: PRESSURE_READING:0.01
+[2026-04-27 12:07:16] Received: PRESSURE_READING:0.00
+[2026-04-27 12:07:16] Received: PRESSURE_READING:0.00
+[2026-04-27 12:07:17] Received: PRESSURE_READING:0.00
+[2026-04-27 12:07:17] Received: PRESSURE_READING:0.11
+[2026-04-27 12:07:17] Received: PRESSURE_READING:0.11
+[2026-04-27 12:07:17] Received: PRESSURE_READING:0.15
+[2026-04-27 12:07:18] Received: PRESSURE_READING:0.29
+[2026-04-27 12:07:18] Received: ARDUINO_READY
+[2026-04-27 12:07:18] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:07:18] Received: PRESSURE_READING:0.18
+[2026-04-27 12:07:18] Received: PRESSURE_READING:0.18
+[2026-04-27 12:07:19] Received: PRESSURE_READING:0.20
+[2026-04-27 12:07:19] Received: PRESSURE_READING:0.08
+[2026-04-27 12:07:19] Received: PRESSURE_READING:0.08
+[2026-04-27 12:07:19] Received: PRESSURE_READING:0.08
+[2026-04-27 12:07:19] Received: PRESSURE_READING:0.02
+[2026-04-27 12:07:20] Received: PRESSURE_READING:0.16
+[2026-04-27 12:07:20] Received: PRESSURE_READING:0.16
+[2026-04-27 12:07:20] Received: PRESSURE_READING:0.19
+[2026-04-27 12:07:21] Received: PRESSURE_READING:0.19
+[2026-04-27 12:07:21] Received: PRESSURE_READING:0.07
+[2026-04-27 12:07:21] Received: ARDUINO_READY
+[2026-04-27 12:07:21] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:07:21] Received: PRESSURE_READING:0.11
+[2026-04-27 12:07:21] Received: PRESSURE_READING:0.07
+[2026-04-27 12:07:22] Received: PRESSURE_READING:0.07
+[2026-04-27 12:07:22] Received: PRESSURE_READING:0.08
+[2026-04-27 12:07:22] Received: PRESSURE_READING:0.05
+[2026-04-27 12:07:22] Received: PRESSURE_READING:0.05
+[2026-04-27 12:07:23] Received: PRESSURE_READING:0.05
+[2026-04-27 12:07:23] Received: PRESSURE_READING:0.40
+[2026-04-27 12:07:23] Received: PRESSURE_READING:0.47
+[2026-04-27 12:07:23] Received: PRESSURE_READING:0.47
+[2026-04-27 12:07:24] Received: PRESSURE_READING:0.47
+[2026-04-27 12:07:24] Received: PRESSURE_READING:0.08
+[2026-04-27 12:07:24] Received: ARDUINO_READY
+[2026-04-27 12:07:24] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:07:24] Received: PRESSURE_READING:0.01
+[2026-04-27 12:07:24] Received: PRESSURE_READING:0.01
+[2026-04-27 12:07:25] Received: PRESSURE_READING:0.01
+[2026-04-27 12:07:25] Received: PRESSURE_READING:0.22
+[2026-04-27 12:07:25] Received: PRESSURE_READING:0.22
+[2026-04-27 12:07:26] Received: PRESSURE_READING:0.22
+[2026-04-27 12:07:26] Received: PRESSURE_READING:0.27
+[2026-04-27 12:07:26] Received: PRESSURE_READING:0.15
+[2026-04-27 12:07:26] Received: PRESSURE_READING:0.20
+[2026-04-27 12:07:26] Received: PRESSURE_READING:0.20
+[2026-04-27 12:07:27] Received: PRESSURE_READING:0.16
+[2026-04-27 12:07:27] Received: PRESSURE_READING:0.20
+[2026-04-27 12:07:27] Received: ARDUINO_READY
+[2026-04-27 12:07:27] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:07:27] Received: PRESSURE_READING:0.18
+[2026-04-27 12:07:27] Received: PRESSURE_READING:0.60
+[2026-04-27 12:07:28] Received: PRESSURE_READING:0.59
+[2026-04-27 12:07:28] Received: PRESSURE_READING:0.49
+[2026-04-27 12:07:28] Received: PRESSURE_READING:0.44
+[2026-04-27 12:07:28] Received: PRESSURE_READING:0.13
+[2026-04-27 12:07:29] Received: PRESSURE_READING:0.29
+[2026-04-27 12:07:29] Received: PRESSURE_READING:0.27
+[2026-04-27 12:07:29] Received: PRESSURE_READING:0.53
+[2026-04-27 12:07:30] Received: PRESSURE_READING:0.44
+[2026-04-27 12:07:30] Received: PRESSURE_READING:0.30
+[2026-04-27 12:07:30] Received: PRESSURE_READING:0.44
+[2026-04-27 12:07:30] Received: ARDUINO_READY
+[2026-04-27 12:07:30] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:07:30] Received: PRESSURE_READING:0.17
+[2026-04-27 12:07:30] Received: PRESSURE_READING:0.29
+[2026-04-27 12:07:31] Received: PRESSURE_READING:0.30
+[2026-04-27 12:07:31] Received: PRESSURE_READING:0.16
+[2026-04-27 12:07:31] Received: PRESSURE_READING:0.16
+[2026-04-27 12:07:32] Received: PRESSURE_READING:0.06
+[2026-04-27 12:07:32] Received: PRESSURE_READING:0.09
+[2026-04-27 12:07:32] Received: PRESSURE_READING:0.10
+[2026-04-27 12:07:32] Received: PRESSURE_READING:0.10
+[2026-04-27 12:07:33] Received: PRESSURE_READING:0.09
+[2026-04-27 12:07:33] Received: PRESSURE_READING:0.03
+[2026-04-27 12:07:33] Received: PRESSURE_READING:0.02
+[2026-04-27 12:07:33] Received: ARDUINO_READY
+[2026-04-27 12:07:33] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:07:33] Received: PRESSURE_READING:0.02
+[2026-04-27 12:07:34] Received: PRESSURE_READING:0.03
+[2026-04-27 12:07:34] Received: PRESSURE_READING:0.03
+[2026-04-27 12:07:34] Received: PRESSURE_READING:0.03
+[2026-04-27 12:07:34] Received: PRESSURE_READING:0.03
+[2026-04-27 12:07:35] Received: PRESSURE_READING:0.01
+[2026-04-27 12:07:35] Received: PRESSURE_READING:0.03
+[2026-04-27 12:07:35] Received: PRESSURE_READING:0.04
+[2026-04-27 12:07:35] Received: PRESSURE_READING:0.16
+[2026-04-27 12:07:36] Received: PRESSURE_READING:0.16
+[2026-04-27 12:07:36] Received: PRESSURE_READING:0.13
+[2026-04-27 12:07:36] Received: ARDUINO_READY
+[2026-04-27 12:07:36] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:07:36] Received: PRESSURE_READING:0.16
+[2026-04-27 12:07:36] Received: PRESSURE_READING:0.11
+[2026-04-27 12:07:37] Received: PRESSURE_READING:0.11
+[2026-04-27 12:07:37] Received: PRESSURE_READING:0.14
+[2026-04-27 12:07:37] Received: PRESSURE_READING:0.40
+[2026-04-27 12:07:37] Received: PRESSURE_READING:0.34
+[2026-04-27 12:07:38] Received: PRESSURE_READING:0.34
+[2026-04-27 12:07:38] Received: PRESSURE_READING:0.42
+[2026-04-27 12:07:38] Received: PRESSURE_READING:0.12
+[2026-04-27 12:07:38] Received: PRESSURE_READING:0.14
+[2026-04-27 12:07:39] Received: PRESSURE_READING:0.14
+[2026-04-27 12:07:39] Received: PRESSURE_READING:0.03
+[2026-04-27 12:07:39] Received: ARDUINO_READY
+[2026-04-27 12:07:39] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:07:39] Received: PRESSURE_READING:0.08
+[2026-04-27 12:07:39] Received: PRESSURE_READING:0.05
+[2026-04-27 12:07:40] Received: PRESSURE_READING:0.09
+[2026-04-27 12:07:40] Received: PRESSURE_READING:0.08
+[2026-04-27 12:07:40] Received: PRESSURE_READING:0.07
+[2026-04-27 12:07:40] Received: PRESSURE_READING:0.07
+[2026-04-27 12:07:41] Received: PRESSURE_READING:0.03
+[2026-04-27 12:07:41] Received: PRESSURE_READING:0.03
+[2026-04-27 12:07:41] Received: PRESSURE_READING:0.00
+[2026-04-27 12:07:41] Received: PRESSURE_READING:0.00
+[2026-04-27 12:07:42] Received: PRESSURE_READING:0.00
+[2026-04-27 12:07:42] Received: PRESSURE_READING:0.05
+[2026-04-27 12:07:42] Received: ARDUINO_READY
+[2026-04-27 12:07:42] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:07:42] Received: PRESSURE_READING:0.24
+[2026-04-27 12:07:42] Received: PRESSURE_READING:0.25
+[2026-04-27 12:07:43] Received: PRESSURE_READING:0.26
+[2026-04-27 12:07:43] Received: PRESSURE_READING:0.27
+[2026-04-27 12:07:43] Received: PRESSURE_READING:0.17
+[2026-04-27 12:07:43] Received: PRESSURE_READING:0.16
+[2026-04-27 12:07:44] Received: PRESSURE_READING:0.23
+[2026-04-27 12:07:44] Received: PRESSURE_READING:0.22
+[2026-04-27 12:07:44] Received: PRESSURE_READING:0.14
+[2026-04-27 12:07:45] Received: PRESSURE_READING:0.13
+[2026-04-27 12:07:45] Received: PRESSURE_READING:0.15
+[2026-04-27 12:07:45] Received: PRESSURE_READING:0.12
+[2026-04-27 12:07:45] Received: ARDUINO_READY
+[2026-04-27 12:07:45] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:07:45] Received: PRESSURE_READING:0.15
+[2026-04-27 12:07:46] Received: PRESSURE_READING:0.20
+[2026-04-27 12:07:46] Received: PRESSURE_READING:0.09
+[2026-04-27 12:07:46] Received: PRESSURE_READING:0.08
+[2026-04-27 12:07:46] Received: PRESSURE_READING:0.05
+[2026-04-27 12:07:47] Received: PRESSURE_READING:0.00
+[2026-04-27 12:07:47] Received: PRESSURE_READING:0.00
+[2026-04-27 12:07:47] Received: PRESSURE_READING:0.09
+[2026-04-27 12:07:47] Received: PRESSURE_READING:0.09
+[2026-04-27 12:07:48] Received: PRESSURE_READING:0.13
+[2026-04-27 12:07:48] Received: PRESSURE_READING:0.14
+[2026-04-27 12:07:48] Received: PRESSURE_READING:0.05
+[2026-04-27 12:07:48] Received: ARDUINO_READY
+[2026-04-27 12:07:48] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:07:48] Received: PRESSURE_READING:0.09
+[2026-04-27 12:07:49] Received: PRESSURE_READING:0.15
+[2026-04-27 12:07:49] Received: PRESSURE_READING:0.14
+[2026-04-27 12:07:49] Received: PRESSURE_READING:0.14
+[2026-04-27 12:07:49] Received: PRESSURE_READING:0.10
+[2026-04-27 12:07:50] Received: PRESSURE_READING:0.00
+[2026-04-27 12:07:50] Received: PRESSURE_READING:0.00
+[2026-04-27 12:07:50] Received: PRESSURE_READING:0.05
+[2026-04-27 12:07:50] Received: PRESSURE_READING:0.05
+[2026-04-27 12:07:51] Received: PRESSURE_READING:0.38
+[2026-04-27 12:07:51] Received: PRESSURE_READING:0.49
+[2026-04-27 12:07:51] Received: PRESSURE_READING:0.44
+[2026-04-27 12:07:51] Received: ARDUINO_READY
+[2026-04-27 12:07:51] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:07:51] Received: PRESSURE_READING:0.48
+[2026-04-27 12:07:52] Received: PRESSURE_READING:0.19
+[2026-04-27 12:07:52] Received: PRESSURE_READING:0.14
+[2026-04-27 12:07:52] Received: PRESSURE_READING:0.17
+[2026-04-27 12:07:52] Received: PRESSURE_READING:0.27
+[2026-04-27 12:07:53] Received: PRESSURE_READING:0.25
+[2026-04-27 12:07:53] Received: PRESSURE_READING:0.21
+[2026-04-27 12:07:53] Received: PRESSURE_READING:0.22
+[2026-04-27 12:07:53] Received: PRESSURE_READING:0.08
+[2026-04-27 12:07:54] Received: PRESSURE_READING:0.06
+[2026-04-27 12:07:54] Received: PRESSURE_READING:0.03
+[2026-04-27 12:07:54] Received: PRESSURE_READING:0.00
+[2026-04-27 12:07:54] Received: ARDUINO_READY
+[2026-04-27 12:07:54] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:07:55] Received: PRESSURE_READING:0.05
+[2026-04-27 12:07:55] Received: PRESSURE_READING:0.06
+[2026-04-27 12:07:55] Received: PRESSURE_READING:0.06
+[2026-04-27 12:07:55] Received: PRESSURE_READING:0.14
+[2026-04-27 12:07:56] Received: PRESSURE_READING:0.20
+[2026-04-27 12:07:56] Received: PRESSURE_READING:0.19
+[2026-04-27 12:07:56] Received: PRESSURE_READING:0.24
+[2026-04-27 12:07:56] Received: PRESSURE_READING:0.44
+[2026-04-27 12:07:57] Received: PRESSURE_READING:0.33
+[2026-04-27 12:07:57] Received: PRESSURE_READING:0.33
+[2026-04-27 12:07:57] Received: PRESSURE_READING:0.34
+[2026-04-27 12:07:57] Received: PRESSURE_READING:0.12
+[2026-04-27 12:07:57] Received: ARDUINO_READY
+[2026-04-27 12:07:58] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:07:58] Received: PRESSURE_READING:0.12
+[2026-04-27 12:07:58] Received: PRESSURE_READING:0.17
+[2026-04-27 12:07:58] Received: PRESSURE_READING:0.12
+[2026-04-27 12:07:58] Received: PRESSURE_READING:0.06
+[2026-04-27 12:07:59] Received: PRESSURE_READING:0.06
+[2026-04-27 12:07:59] Received: PRESSURE_READING:0.21
+[2026-04-27 12:07:59] Received: PRESSURE_READING:0.20
+[2026-04-27 12:07:59] Received: PRESSURE_READING:0.20
+[2026-04-27 12:08:00] Received: PRESSURE_READING:0.21
+[2026-04-27 12:08:00] Received: PRESSURE_READING:0.02
+[2026-04-27 12:08:00] Received: PRESSURE_READING:0.02
+[2026-04-27 12:08:00] Received: PRESSURE_READING:0.05
+[2026-04-27 12:08:01] Received: ARDUINO_READY
+[2026-04-27 12:08:01] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:08:01] Received: PRESSURE_READING:0.03
+[2026-04-27 12:08:01] Received: PRESSURE_READING:0.03
+[2026-04-27 12:08:01] Received: PRESSURE_READING:0.06
+[2026-04-27 12:08:01] Received: PRESSURE_READING:0.03
+[2026-04-27 12:08:02] Received: PRESSURE_READING:0.06
+[2026-04-27 12:08:02] Received: PRESSURE_READING:0.15
+[2026-04-27 12:08:02] Received: PRESSURE_READING:0.12
+[2026-04-27 12:08:02] Received: PRESSURE_READING:0.20
+[2026-04-27 12:08:03] Received: PRESSURE_READING:0.17
+[2026-04-27 12:08:03] Received: PRESSURE_READING:0.12
+[2026-04-27 12:08:03] Received: PRESSURE_READING:0.12
+[2026-04-27 12:08:03] Received: PRESSURE_READING:0.04
+[2026-04-27 12:08:04] Received: ARDUINO_READY
+[2026-04-27 12:08:04] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:08:04] Received: PRESSURE_READING:0.08
+[2026-04-27 12:08:04] Received: PRESSURE_READING:0.06
+[2026-04-27 12:08:04] Received: PRESSURE_READING:0.06
+[2026-04-27 12:08:04] Received: PRESSURE_READING:0.06
+[2026-04-27 12:08:05] Received: PRESSURE_READING:0.12
+[2026-04-27 12:08:05] Received: PRESSURE_READING:0.10
+[2026-04-27 12:08:05] Received: PRESSURE_READING:0.20
+[2026-04-27 12:08:05] Received: PRESSURE_READING:0.20
+[2026-04-27 12:08:06] Received: PRESSURE_READING:0.09
+[2026-04-27 12:08:06] Received: PRESSURE_READING:0.09
+[2026-04-27 12:08:06] Received: PRESSURE_READING:0.04
+[2026-04-27 12:08:06] Received: PRESSURE_READING:0.04
+[2026-04-27 12:08:07] Received: ARDUINO_READY
+[2026-04-27 12:08:07] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:08:07] Received: PRESSURE_READING:0.13
+[2026-04-27 12:08:07] Received: PRESSURE_READING:0.13
+[2026-04-27 12:08:07] Received: PRESSURE_READING:0.09
+[2026-04-27 12:08:08] Received: PRESSURE_READING:0.09
+[2026-04-27 12:08:08] Received: PRESSURE_READING:0.00
+[2026-04-27 12:08:08] Received: PRESSURE_READING:0.00
+[2026-04-27 12:08:08] Received: PRESSURE_READING:0.00
+[2026-04-27 12:08:09] Received: PRESSURE_READING:0.04
+[2026-04-27 12:08:09] Received: PRESSURE_READING:0.04
+[2026-04-27 12:08:09] Received: PRESSURE_READING:0.13
+[2026-04-27 12:08:09] Received: PRESSURE_READING:0.13
+[2026-04-27 12:08:10] Received: PRESSURE_READING:0.25
+[2026-04-27 12:08:10] Received: ARDUINO_READY
+[2026-04-27 12:08:10] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:08:10] Received: PRESSURE_READING:0.25
+[2026-04-27 12:08:10] Received: PRESSURE_READING:0.22
+[2026-04-27 12:08:10] Received: PRESSURE_READING:0.22
+[2026-04-27 12:08:11] Received: PRESSURE_READING:0.07
+[2026-04-27 12:08:11] Received: PRESSURE_READING:0.06
+[2026-04-27 12:08:11] Received: PRESSURE_READING:0.10
+[2026-04-27 12:08:11] Received: PRESSURE_READING:0.16
+[2026-04-27 12:08:12] Received: PRESSURE_READING:0.16
+[2026-04-27 12:08:12] Received: PRESSURE_READING:0.18
+[2026-04-27 12:08:12] Received: PRESSURE_READING:0.08
+[2026-04-27 12:08:12] Received: PRESSURE_READING:0.07
+[2026-04-27 12:08:13] Received: PRESSURE_READING:0.07
+[2026-04-27 12:08:13] Received: ARDUINO_READY
+[2026-04-27 12:08:13] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:08:13] Received: PRESSURE_READING:0.05
+[2026-04-27 12:08:13] Received: PRESSURE_READING:0.05
+[2026-04-27 12:08:13] Received: PRESSURE_READING:0.01
+[2026-04-27 12:08:14] Received: PRESSURE_READING:0.01
+[2026-04-27 12:08:14] Received: PRESSURE_READING:0.05
+[2026-04-27 12:08:14] Received: PRESSURE_READING:0.05
+[2026-04-27 12:08:14] Received: PRESSURE_READING:0.06
+[2026-04-27 12:08:15] Received: PRESSURE_READING:0.14
+[2026-04-27 12:08:15] Received: PRESSURE_READING:0.32
+[2026-04-27 12:08:15] Received: PRESSURE_READING:0.32
+[2026-04-27 12:08:15] Received: PRESSURE_READING:0.31
+[2026-04-27 12:08:16] Received: PRESSURE_READING:0.27
+[2026-04-27 12:08:16] Received: ARDUINO_READY
+[2026-04-27 12:08:16] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:08:16] Received: PRESSURE_READING:0.05
+[2026-04-27 12:08:16] Received: PRESSURE_READING:0.05
+[2026-04-27 12:08:16] Received: PRESSURE_READING:0.10
+[2026-04-27 12:08:17] Received: PRESSURE_READING:0.06
+[2026-04-27 12:08:17] Received: PRESSURE_READING:0.08
+[2026-04-27 12:08:17] Received: PRESSURE_READING:0.08
+[2026-04-27 12:08:17] Received: PRESSURE_READING:0.03
+[2026-04-27 12:08:18] Received: PRESSURE_READING:0.15
+[2026-04-27 12:08:18] Received: PRESSURE_READING:0.16
+[2026-04-27 12:08:18] Received: PRESSURE_READING:0.16
+[2026-04-27 12:08:18] Received: PRESSURE_READING:0.19
+[2026-04-27 12:08:19] Received: PRESSURE_READING:0.06
+[2026-04-27 12:08:19] Received: ARDUINO_READY
+[2026-04-27 12:08:19] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:08:19] Received: PRESSURE_READING:0.02
+[2026-04-27 12:08:19] Received: PRESSURE_READING:0.02
+[2026-04-27 12:08:20] Received: PRESSURE_READING:0.09
+[2026-04-27 12:08:20] Received: PRESSURE_READING:0.11
+[2026-04-27 12:08:20] Received: PRESSURE_READING:0.11
+[2026-04-27 12:08:20] Received: PRESSURE_READING:0.11
+[2026-04-27 12:08:21] Received: PRESSURE_READING:0.02
+[2026-04-27 12:08:21] Received: PRESSURE_READING:0.00
+[2026-04-27 12:08:21] Received: PRESSURE_READING:0.00
+[2026-04-27 12:08:21] Received: PRESSURE_READING:0.16
+[2026-04-27 12:08:22] Received: PRESSURE_READING:0.16
+[2026-04-27 12:08:22] Received: PRESSURE_READING:0.20
+[2026-04-27 12:08:22] Received: ARDUINO_READY
+[2026-04-27 12:08:22] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:08:22] Received: PRESSURE_READING:0.22
+[2026-04-27 12:08:22] Received: PRESSURE_READING:0.29
+[2026-04-27 12:08:23] Received: PRESSURE_READING:0.29
+[2026-04-27 12:08:23] Received: PRESSURE_READING:0.25
+[2026-04-27 12:08:23] Received: PRESSURE_READING:0.23
+[2026-04-27 12:08:23] Received: PRESSURE_READING:0.03
+[2026-04-27 12:08:24] Received: PRESSURE_READING:0.03
+[2026-04-27 12:08:24] Received: PRESSURE_READING:0.03
+[2026-04-27 12:08:24] Received: PRESSURE_READING:0.05
+[2026-04-27 12:08:24] Received: PRESSURE_READING:0.02
+[2026-04-27 12:08:25] Received: PRESSURE_READING:0.02
+[2026-04-27 12:08:25] Received: PRESSURE_READING:0.02
+[2026-04-27 12:08:25] Received: ARDUINO_READY
+[2026-04-27 12:08:25] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:08:25] Received: PRESSURE_READING:0.00
+[2026-04-27 12:08:25] Received: PRESSURE_READING:0.00
+[2026-04-27 12:08:26] Received: PRESSURE_READING:0.00
+[2026-04-27 12:08:26] Received: PRESSURE_READING:0.03
+[2026-04-27 12:08:26] Received: PRESSURE_READING:0.03
+[2026-04-27 12:08:26] Received: PRESSURE_READING:0.03
+[2026-04-27 12:08:27] Received: PRESSURE_READING:0.03
+[2026-04-27 12:08:27] Received: PRESSURE_READING:0.13
+[2026-04-27 12:08:27] Received: PRESSURE_READING:0.13
+[2026-04-27 12:08:27] Received: PRESSURE_READING:0.13
+[2026-04-27 12:08:28] Received: PRESSURE_READING:0.16
+[2026-04-27 12:08:28] Received: PRESSURE_READING:0.11
+[2026-04-27 12:08:28] Received: ARDUINO_READY
+[2026-04-27 12:08:28] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:08:28] Received: PRESSURE_READING:0.25
+[2026-04-27 12:08:28] Received: PRESSURE_READING:0.25
+[2026-04-27 12:08:29] Received: PRESSURE_READING:0.26
+[2026-04-27 12:08:29] Received: PRESSURE_READING:0.18
+[2026-04-27 12:08:29] Received: PRESSURE_READING:0.09
+[2026-04-27 12:08:29] Received: PRESSURE_READING:0.09
+[2026-04-27 12:08:30] Received: PRESSURE_READING:0.10
+[2026-04-27 12:08:30] Received: PRESSURE_READING:0.10
+[2026-04-27 12:08:30] Received: PRESSURE_READING:0.05
+[2026-04-27 12:08:30] Received: PRESSURE_READING:0.22
+[2026-04-27 12:08:31] Received: PRESSURE_READING:0.24
+[2026-04-27 12:08:31] Received: PRESSURE_READING:0.26
+[2026-04-27 12:08:31] Received: ARDUINO_READY
+[2026-04-27 12:08:31] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:08:31] Received: PRESSURE_READING:0.26
+[2026-04-27 12:08:32] Received: PRESSURE_READING:0.09
+[2026-04-27 12:08:32] Received: PRESSURE_READING:0.08
+[2026-04-27 12:08:32] Received: PRESSURE_READING:0.08
+[2026-04-27 12:08:32] Received: PRESSURE_READING:0.08
+[2026-04-27 12:08:33] Received: PRESSURE_READING:0.44
+[2026-04-27 12:08:33] Received: PRESSURE_READING:0.38
+[2026-04-27 12:08:33] Received: PRESSURE_READING:0.36
+[2026-04-27 12:08:33] Received: PRESSURE_READING:0.41
+[2026-04-27 12:08:34] Received: PRESSURE_READING:0.13
+[2026-04-27 12:08:34] Received: PRESSURE_READING:0.17
+[2026-04-27 12:08:34] Received: PRESSURE_READING:0.17
+[2026-04-27 12:08:34] Received: ARDUINO_READY
+[2026-04-27 12:08:34] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-04-27 12:08:34] Received: PRESSURE_READING:0.12
+[2026-04-27 12:08:35] Received: PRESSURE_READING:0.08
+[2026-04-27 12:08:35] Received: PRESSURE_READING:0.04
+[2026-04-27 12:08:35] Received: PRESSURE_READING:0.08
+[2026-04-27 12:08:35] Received: PRESSURE_READING:0.08
+[2026-04-27 12:08:36] Received: PRESSURE_READING:0.10
+[2026-04-27 12:08:36] Received: PRESSURE_READING:0.13
+[2026-04-27 12:08:36] Received: PRESSURE_READING:0.09
+[2026-04-27 12:08:36] Received: PRESSURE_READING:0.09
+[2026-04-27 12:08:37] Received: PRESSURE_READING:0.03

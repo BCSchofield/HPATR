@@ -2493,8 +2493,6 @@ class AtomisationApp(QMainWindow):
     @Slot()
     def _on_homed(self):
         self._homed_dot.setStyleSheet(f"color:{CLR_GREEN}; font-size:10px;")
-        self.cumulative_distance = 0.0
-        self._update_travel_bar()
 
     @Slot()
     def _on_movement_complete(self):
@@ -2545,6 +2543,8 @@ class AtomisationApp(QMainWindow):
         if not self._require_arduino(): return
         self.arduino.ser.write(b"HOME:1\n")
         log_serial("Sent: HOME:1")
+        self.cumulative_distance = 0.0
+        self._update_travel_bar()
         self._set_status("Homing…")
 
     def _start_cleaning(self):
