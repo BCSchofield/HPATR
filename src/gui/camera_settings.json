@@ -9,6 +9,7 @@
   "px_per_mm": 103.3,
   "cone_camera_index": 0,
   "save_video": true,
+  "run_ai_analysis": false,
   "cone_autofocus": true,
   "cone_focus": 250,
   "cone_top_crop": 0.37

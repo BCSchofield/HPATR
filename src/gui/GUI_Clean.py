@@ -25,6 +25,7 @@ import sys
 import math
 import time
 import json
+import queue
 import platform
 import threading
 
@@ -46,7 +47,7 @@ pg.setConfigOptions(antialias=True)
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QPushButton, QLineEdit, QComboBox, QCheckBox, QTextEdit,
+    QLabel, QPushButton, QLineEdit, QComboBox, QCheckBox, QTextEdit, QPlainTextEdit,
     QFrame, QTabWidget, QSizePolicy, QProgressBar, QScrollArea,
     QSpacerItem, QGridLayout, QMessageBox, QFileDialog, QSpinBox
 )
@@ -896,6 +897,23 @@ class Worker(QObject):
         except Exception as e:
             self.error.emit(str(e))
 
+class _GuiLogStream:
+    """Captures sys.stdout/stderr from pipeline/cone threads into the in-GUI log panel."""
+    def __init__(self, q: queue.Queue):
+        self._q = q
+
+    def write(self, text: str):
+        for line in text.splitlines():
+            if line.strip():
+                self._q.put(line)
+
+    def flush(self):
+        pass
+
+    def fileno(self):
+        raise io.UnsupportedOperation("fileno")
+
+
 # ── Main application window ───────────────────────────────────────────────────
 
 class AtomisationApp(QMainWindow):
@@ -923,6 +941,8 @@ class AtomisationApp(QMainWindow):
         self.camera_available = self.is_windows and PHANTOM_SDK_AVAILABLE
 
         self.cumulative_distance = 0.0
+        self._pre_move_cumulative  = 0.0   # cumulative_distance before the current motor move
+        self._pending_move_distance = 0.0  # distance of the move in progress
         self.cleaning_in_progress = False
         self._experiment_saved = True   # True until an experiment runs unsaved
         self._run_folder = None          # Set eagerly on Start Experiment, cleared on next start
@@ -944,7 +964,8 @@ class AtomisationApp(QMainWindow):
         self._EMA_ALPHA = 0.3
         self._pressure_ema = None   # reset when new readings arrive after a gap
 
-        self._cone_cap = None  # cv2.VideoCapture instance — must exist before _build_ui wires signals
+        self._cone_cap  = None  # cv2.VideoCapture instance — must exist before _build_ui wires signals
+        self._log_queue = queue.Queue()  # thread-safe sink for pipeline/cone stdout → GUI log panel
 
         # ── Build UI ──────────────────────────────────────────────────────────
         self._build_ui()
@@ -980,6 +1001,11 @@ class AtomisationApp(QMainWindow):
         self._experiment_watchdog = QTimer(self)
         self._experiment_watchdog.setSingleShot(True)
         self._experiment_watchdog.timeout.connect(self._on_experiment_timeout)
+
+        # Log panel queue drain — flushes pipeline/cone stdout into the right-panel log widget
+        self._log_poll_timer = QTimer(self)
+        self._log_poll_timer.timeout.connect(self._flush_log_queue)
+        self._log_poll_timer.start(100)
 
         # Auto-connect Arduino
         ports = self._get_serial_ports()
@@ -1289,6 +1315,7 @@ class AtomisationApp(QMainWindow):
 
         self._notes_text = QTextEdit()
         self._notes_text.setPlaceholderText("Fluid composition, temperature, observations...")
+        self._notes_text.setMinimumHeight(60)
         self._notes_text.setStyleSheet(f"""
             QTextEdit {{
                 background-color: {CLR_INPUT};
@@ -1320,7 +1347,52 @@ class AtomisationApp(QMainWindow):
         sr.addWidget(save_btn)
         notes_card.layout().addWidget(save_row)
 
-        vl.addWidget(notes_card, stretch=1)
+        vl.addWidget(notes_card, stretch=2)
+
+        # ── Console card ──────────────────────────────────────────────────────
+        log_card = card(padding=10)
+        log_hdr = QWidget()
+        lh = QHBoxLayout(log_hdr); lh.setContentsMargins(0, 0, 0, 0)
+        lh.addWidget(section_label("CONSOLE:"))
+        lh.addStretch()
+        _clear_btn = QPushButton("Clear")
+        _clear_btn.setFixedHeight(20)
+        _clear_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: {CLR_TEXT_SEC};
+                border: 1px solid {CLR_BORDER}; border-radius: 4px;
+                font-size: 10px; padding: 0 6px;
+            }}
+            QPushButton:hover {{ color: {CLR_TEXT}; }}
+        """)
+        _clear_btn.clicked.connect(lambda: self._pipeline_log.clear())
+        lh.addWidget(_clear_btn)
+        log_card.layout().addWidget(log_hdr)
+        log_card.layout().addWidget(separator())
+
+        self._pipeline_log = QPlainTextEdit()
+        self._pipeline_log.setReadOnly(True)
+        self._pipeline_log.setFont(QFont("Menlo, Monaco, Courier New", 10))
+        self._pipeline_log.setPlaceholderText(">")
+        self._pipeline_log.setStyleSheet(f"""
+            QPlainTextEdit {{
+                background-color: #1a1a1c;
+                color: #30d158;
+                border: 1px solid {CLR_BORDER};
+                border-radius: 8px;
+                padding: 6px;
+                font-size: 10px;
+            }}
+            QScrollBar:vertical {{
+                background: {CLR_PANEL}; width: 6px; border-radius: 3px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {CLR_BORDER}; border-radius: 3px; min-height: 20px;
+            }}
+        """)
+        log_card.layout().addWidget(self._pipeline_log)
+        vl.addWidget(log_card, stretch=1)
+
         return panel
 
     # ── Tab widget ────────────────────────────────────────────────────────────
@@ -2449,16 +2521,20 @@ class AtomisationApp(QMainWindow):
                         elif line.startswith("DEBUG: Movement progress:"):
                             try:
                                 pct = int(line.split(":")[-1].strip().replace("%", ""))
-                                QTimer.singleShot(0, self, lambda p=pct: (
-                                    self._exp_progress.setRange(0, 100),
-                                    self._exp_progress.setValue(p)
+                                live_dist = self._pre_move_cumulative + (self._pending_move_distance * pct / 100.0)
+                                QTimer.singleShot(0, self, lambda p=pct, d=live_dist: (
+                                    self._exp_progress.setValue(p),
+                                    self._update_travel_bar(d),
                                 ))
                             except: pass
+                else:
+                    # Only sleep when idle — sleeping with data waiting fills the Portenta TX buffer
+                    # and causes Serial.print() to block, stalling AccelStepper::run() on the board
+                    time.sleep(0.01)
             except serial.SerialException:
                 break  # port closed or disconnected — exit cleanly
             except Exception as e:
                 log_serial(f"Serial reader warning: {e}")
-            time.sleep(0.05)
 
     def _poll_serial(self):
         pass  # Serial reading handled by background thread above
@@ -2506,6 +2582,9 @@ class AtomisationApp(QMainWindow):
     @Slot()
     def _on_movement_complete(self):
         self._experiment_watchdog.stop()
+        self.cumulative_distance = self._pre_move_cumulative + self._pending_move_distance
+        self._pending_move_distance = 0.0
+        self._update_travel_bar()
         if self.pressure_data['experiment_active']:
             self.pressure_data['experiment_active'] = False
             self._cone_auto_timer.stop()
@@ -2564,7 +2643,9 @@ class AtomisationApp(QMainWindow):
         if not self._require_arduino(): return
         self.arduino.ser.write(b"HOME:1\n")
         log_serial("Sent: HOME:1")
-        self.cumulative_distance = 0.0
+        self.cumulative_distance      = 0.0
+        self._pre_move_cumulative     = 0.0
+        self._pending_move_distance   = 0.0
         self._update_travel_bar()
         self._set_status("Homing…")
 
@@ -2598,15 +2679,16 @@ class AtomisationApp(QMainWindow):
                        "Home the motor to reset.")
             return
         self.arduino.send_motor_command(speed, dist)
-        self.cumulative_distance += dist
-        self._update_travel_bar()
+        self._pre_move_cumulative   = self.cumulative_distance
+        self._pending_move_distance = dist
         self._set_status(f"Moving {dist} mm at {speed} steps/s")
 
-    def _update_travel_bar(self):
-        pct = self.cumulative_distance / self.MAX_MOTOR_MM
+    def _update_travel_bar(self, distance=None):
+        d = distance if distance is not None else self.cumulative_distance
+        pct = d / self.MAX_MOTOR_MM
         self._travel_bar.setValue(int(pct * 1000))
-        remaining = self.MAX_MOTOR_MM - self.cumulative_distance
-        self._travel_label.setText(f"{self.cumulative_distance:.1f} / {self.MAX_MOTOR_MM} mm")
+        remaining = self.MAX_MOTOR_MM - d
+        self._travel_label.setText(f"{d:.1f} / {self.MAX_MOTOR_MM} mm")
         if pct >= 0.9:
             self._travel_bar.setStyleSheet(
                 f"QProgressBar::chunk {{ background-color: {CLR_RED}; border-radius:4px; }}")
@@ -2619,8 +2701,34 @@ class AtomisationApp(QMainWindow):
             self._travel_bar.setStyleSheet(
                 f"QProgressBar::chunk {{ background-color: {CLR_ACCENT}; border-radius:4px; }}")
             self._travel_warning.setText("")
-        vol_ml = 25.8 * (self.cumulative_distance / self.MAX_MOTOR_MM)
+        vol_ml = 25.8 * (d / self.MAX_MOTOR_MM)
         self._vol_label.setText(f"{vol_ml:.2f} mL")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Logic — Pipeline log panel
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _log(self, text: str):
+        """Append a line directly to the log panel (main-thread safe)."""
+        ts = datetime.now().strftime("%H:%M:%S")
+        self._pipeline_log.appendPlainText(f"[{ts}]  {text}")
+        sb = self._pipeline_log.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
+    def _flush_log_queue(self):
+        """Drain the cross-thread log queue into the log widget (called by timer on main thread)."""
+        changed = False
+        while True:
+            try:
+                line = self._log_queue.get_nowait()
+                ts = datetime.now().strftime("%H:%M:%S")
+                self._pipeline_log.appendPlainText(f"[{ts}]  {line}")
+                changed = True
+            except queue.Empty:
+                break
+        if changed:
+            sb = self._pipeline_log.verticalScrollBar()
+            sb.setValue(sb.maximum())
 
     # ─────────────────────────────────────────────────────────────────────────
     # Logic — Pressure graph
@@ -2867,9 +2975,13 @@ class AtomisationApp(QMainWindow):
         self._ai_confidence_lbl.setText("Confidence: –")
         self._ai_diameter_lbl.setText("Avg droplet: –")
         self._ai_dl_lbl.setText("D/L: –")
+        self._log(f"── AI pipeline started ({os.path.basename(frames_folder)}) ──")
 
         import threading
         def _worker():
+            _stream = _GuiLogStream(self._log_queue)
+            _old_out, _old_err = sys.stdout, sys.stderr
+            sys.stdout = sys.stderr = _stream
             try:
                 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
                 from ai.process_run import run as ai_run
@@ -2877,10 +2989,13 @@ class AtomisationApp(QMainWindow):
                 self._pipeline_done.emit(results)
             except Exception as e:
                 self._pipeline_err.emit(str(e))
+            finally:
+                sys.stdout, sys.stderr = _old_out, _old_err
         threading.Thread(target=_worker, daemon=True).start()
 
     def _on_pipeline_complete(self, results: dict):
         self._pipeline_status.setText("Pipeline: complete ✓")
+        self._log("── AI pipeline complete ✓ ──")
         conf = results.get("mean_confidence")
         diam = results.get("avg_droplet_um")
         dl   = results.get("dl_ratio", "–")
@@ -2911,6 +3026,7 @@ class AtomisationApp(QMainWindow):
 
     def _on_pipeline_error(self, err: str):
         self._pipeline_status.setText(f"Pipeline error: {err}")
+        self._log(f"── AI pipeline error: {err} ──")
         if getattr(self, '_is_test_pipeline', False):
             self._test_pipeline_btn.setEnabled(True)
             self._test_pipeline_btn.setText("Test Pipeline")
@@ -2925,9 +3041,13 @@ class AtomisationApp(QMainWindow):
         self._test_pipeline_btn.setEnabled(False)
         self._test_pipeline_btn.setText("Running…")
         self._is_test_pipeline = True  # flag so _on_pipeline_complete re-enables btn
+        self._log(f"── AI pipeline (test run) started ──")
 
         import threading
         def _worker():
+            _stream = _GuiLogStream(self._log_queue)
+            _old_out, _old_err = sys.stdout, sys.stderr
+            sys.stdout = sys.stderr = _stream
             try:
                 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
                 from ai.process_run import run as ai_run
@@ -2935,6 +3055,8 @@ class AtomisationApp(QMainWindow):
                 self._pipeline_done.emit(results)
             except Exception as e:
                 self._pipeline_err.emit(str(e))
+            finally:
+                sys.stdout, sys.stderr = _old_out, _old_err
         threading.Thread(target=_worker, daemon=True).start()
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -3229,19 +3351,26 @@ class AtomisationApp(QMainWindow):
         self._cone_angle_lbl.setText("Analysing…")
         self._cone_angle_lbl.setVisible(True)
         top_crop = self._cone_top_crop_spin.value()
+        self._log(f"── Cone analysis started ({os.path.basename(raw_path)}) ──")
 
         def _analyse():
+            _stream = _GuiLogStream(self._log_queue)
+            _old_out, _old_err = sys.stdout, sys.stderr
+            sys.stdout = sys.stderr = _stream
             try:
                 from pathlib import Path as _Path
                 angle, annotated_bgr, _debug = detect_cone_angle(
                     _Path(raw_path), top_crop_ratio=top_crop)
             except Exception as e:
+                sys.stdout, sys.stderr = _old_out, _old_err
                 def _on_err():
                     self._cone_angle_lbl.setText(f"Analysis error: {e}")
                     self._cone_angle_lbl.setVisible(True)
                     self._cone_capture_btn.setEnabled(True)
                 QTimer.singleShot(0, self, _on_err)
                 return
+            finally:
+                sys.stdout, sys.stderr = _old_out, _old_err
 
             annotated_path = os.path.join(save_dir, f"cone_{ts}.png")
             cv2.imwrite(annotated_path, annotated_bgr)
@@ -3401,15 +3530,17 @@ class AtomisationApp(QMainWindow):
         self._pressure_ema = None   # seed EMA fresh from the first reading of the run
 
         self._start_btn.setEnabled(False)
-        self._exp_progress.setRange(0, 0)   # indeterminate pulsing
+        self._exp_progress.setRange(0, 100)
+        self._exp_progress.setValue(0)
         self._exp_progress.setVisible(True)
         self._set_status("Experiment running…", CLR_ACCENT)
 
         self.arduino.send_pressure_command(pressure)
         # Send motor command 500 ms later without blocking the UI
         QTimer.singleShot(500, lambda: self.arduino.send_motor_command(speed, distance))
-        self.cumulative_distance += distance
-        self._update_travel_bar()
+        self._pre_move_cumulative   = self.cumulative_distance
+        self._pending_move_distance = distance
+        # cumulative_distance is finalised in _on_movement_complete so the travel bar fills live
 
         # Start watchdog: if serial reader dies, pressure would stay on forever without this
         _steps_per_mm = 13600
