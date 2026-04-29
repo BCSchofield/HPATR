@@ -872,7 +872,7 @@ class AFGController:
     def disconnect(self):
         try:
             if self.afg:
-                try: self.afg.write('SOUR1:OUTP OFF'); self.afg.write('SOUR2:OUTP OFF')
+                try: self.afg.write('OUTP1:STAT OFF'); self.afg.write('OUTP2:STAT OFF')
                 except: pass
                 self.afg.close(); self.afg = None
             if self.rm: self.rm.close(); self.rm = None
@@ -944,6 +944,8 @@ class AtomisationApp(QMainWindow):
         self._EMA_ALPHA = 0.3
         self._pressure_ema = None   # reset when new readings arrive after a gap
 
+        self._cone_cap = None  # cv2.VideoCapture instance — must exist before _build_ui wires signals
+
         # ── Build UI ──────────────────────────────────────────────────────────
         self._build_ui()
         self._load_camera_settings()
@@ -953,10 +955,6 @@ class AtomisationApp(QMainWindow):
         self._pipeline_err.connect(self._on_pipeline_error)
 
         # ── Timers ────────────────────────────────────────────────────────────
-        self._serial_timer = QTimer(self)
-        self._serial_timer.timeout.connect(self._poll_serial)
-        self._serial_timer.start(200)
-
         self._graph_timer = QTimer(self)
         self._graph_timer.timeout.connect(self._update_pressure_graph)
         self._graph_timer.start(500)
@@ -975,7 +973,13 @@ class AtomisationApp(QMainWindow):
         self._live_feed_timer.timeout.connect(self._live_feed_tick)
         self._live_feed_pending = False          # throttle: only one grab in-flight at a time
 
-        self._cone_cap = None  # cv2.VideoCapture instance
+        # Experiment watchdog — fires if MOVEMENT_COMPLETE is never received (P4-C3)
+        # NOTE: this timer is started in _start_experiment and stopped in _on_movement_complete.
+        # If it fires it means the serial reader died mid-experiment — pressure will stay on
+        # indefinitely without this safety net.
+        self._experiment_watchdog = QTimer(self)
+        self._experiment_watchdog.setSingleShot(True)
+        self._experiment_watchdog.timeout.connect(self._on_experiment_timeout)
 
         # Auto-connect Arduino
         ports = self._get_serial_ports()
@@ -1653,6 +1657,11 @@ class AtomisationApp(QMainWindow):
         self._cam_capacity_frames_lbl.setWordWrap(True)
         cap_vl.addWidget(self._cam_capacity_frames_lbl)
         cap_vl.addStretch()
+        cap_vl.addSpacing(8)
+        self._cam_save_video_chk = QCheckBox("Save video (.cine)")
+        self._cam_save_video_chk.setChecked(True)
+        self._cam_save_video_chk.setStyleSheet(f"color:{CLR_TEXT}; font-size:11px;")
+        cap_vl.addWidget(self._cam_save_video_chk)
 
         body_row = QWidget()
         br = QHBoxLayout(body_row)
@@ -2496,6 +2505,7 @@ class AtomisationApp(QMainWindow):
 
     @Slot()
     def _on_movement_complete(self):
+        self._experiment_watchdog.stop()
         if self.pressure_data['experiment_active']:
             self.pressure_data['experiment_active'] = False
             self._cone_auto_timer.stop()
@@ -2516,6 +2526,17 @@ class AtomisationApp(QMainWindow):
             self._start_btn.setEnabled(True)
             self._set_status("Experiment complete ✓ — remember to Save to Excel", CLR_GREEN)
             threading.Thread(target=self.arduino.reset_state, daemon=True).start()
+
+    def _on_experiment_timeout(self):
+        """Watchdog fired — serial reader likely died. Kill pressure and recover UI."""
+        if self.pressure_data['experiment_active']:
+            self.pressure_data['experiment_active'] = False
+            self._cone_auto_timer.stop()
+            self.arduino.send_pressure_off_command()
+            self._exp_progress.setVisible(False)
+            self._exp_progress.setRange(0, 0)
+            self._start_btn.setEnabled(True)
+            self._set_status("Experiment timed out — pressure turned off", CLR_RED)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Logic — Pressure / Motor
@@ -2718,6 +2739,7 @@ class AtomisationApp(QMainWindow):
         """Fire the trigger — freeze the ring buffer and save pre+post window."""
         if not self.phantom: return
         run_pipeline  = self._pipeline_check.isChecked()
+        save_video    = self._cam_save_video_chk.isChecked()
         pre_frames    = self._cam_pre_frames
         post_frames   = self._cam_post_frames
         run_folder    = self._run_folder
@@ -2784,11 +2806,13 @@ class AtomisationApp(QMainWindow):
             import shutil
             try:
                 self.phantom.trigger()
-                time.sleep(0.5)   # wait for cine to be marked complete in camera RAM
+                fps_val = float(self._cam_fps.text()) if self._cam_fps.text() else 1000.0
+                time.sleep(post_frames / fps_val + 0.5)  # wait for post-trigger frames + margin
 
-                # 1 — save .cine with exact pre+post frame range
-                self.phantom.save_recording(cine_path, file_format='cine',
-                                            frame_range=frame_range)
+                # 1 — save .cine with exact pre+post frame range (optional)
+                if save_video:
+                    self.phantom.save_recording(cine_path, file_format='cine',
+                                                frame_range=frame_range)
 
                 # 2 — save frames as TIFFs (same range)
                 os.makedirs(tiff_dir, exist_ok=True)
@@ -3387,6 +3411,11 @@ class AtomisationApp(QMainWindow):
         self.cumulative_distance += distance
         self._update_travel_bar()
 
+        # Start watchdog: if serial reader dies, pressure would stay on forever without this
+        _steps_per_mm = 13600
+        _move_time_ms = int((distance * _steps_per_mm / speed + 30) * 1000)
+        self._experiment_watchdog.start(_move_time_ms)
+
         # Camera is managed independently — arm/trigger from the Camera tab
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -3667,6 +3696,8 @@ class AtomisationApp(QMainWindow):
             self._cam_height.setText(str(s.get("height", "480")))
             self._cam_pre_s.setText(str(s.get("pre_trigger_s", "0.5")))
             self._cam_post_s.setText(str(s.get("post_trigger_s", "0.5")))
+            self._cam_save_video_chk.setChecked(bool(s.get("save_video", True)))
+            self._pipeline_check.setChecked(bool(s.get("run_ai_analysis", False)))
             self._update_cam_capacity()
             px_per_mm = float(s.get("px_per_mm", 0.0))
             if px_per_mm > 0:
@@ -3707,6 +3738,8 @@ class AtomisationApp(QMainWindow):
                 "post_trigger_s":    self._cam_post_s.text(),
                 "px_per_mm":         px_per_mm,
                 "cone_camera_index": self._cone_idx_spin.value() if (self._cone_cap is not None and self._cone_cap.isOpened()) else existing.get("cone_camera_index", -1),
+                "save_video":        self._cam_save_video_chk.isChecked(),
+                "run_ai_analysis":   self._pipeline_check.isChecked(),
                 "cone_autofocus":    self._cone_autofocus_chk.isChecked(),
                 "cone_focus":        self._cone_focus_spin.value(),
                 "cone_top_crop":     self._cone_top_crop_spin.value(),

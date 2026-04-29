@@ -8,6 +8,7 @@
   "post_trigger_s": "0.5",
   "px_per_mm": 103.3,
   "cone_camera_index": 0,
+  "save_video": true,
   "cone_autofocus": true,
   "cone_focus": 250,
   "cone_top_crop": 0.37
