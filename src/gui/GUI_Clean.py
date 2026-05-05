@@ -28,6 +28,7 @@ import json
 import queue
 import platform
 import threading
+from collections import deque
 
 import serial
 import serial.tools.list_ports
@@ -338,6 +339,15 @@ def separator():
     return line
 
 # ── Calibration image widget ──────────────────────────────────────────────────
+
+class ClickableLabel(QLabel):
+    """Plain QLabel that emits clicked() when pressed."""
+    clicked = Signal()
+
+    def mousePressEvent(self, event):
+        self.clicked.emit()
+        super().mousePressEvent(event)
+
 
 class ClickableImageWidget(QLabel):
     """Calibration image widget with pan/zoom and sub-pixel-accurate point picking.
@@ -898,7 +908,7 @@ class Worker(QObject):
             self.error.emit(str(e))
 
 class _GuiLogStream:
-    """Captures sys.stdout/stderr from pipeline/cone threads into the in-GUI log panel."""
+    """Sink that routes written text into the GUI log queue."""
     def __init__(self, q: queue.Queue):
         self._q = q
 
@@ -909,6 +919,42 @@ class _GuiLogStream:
 
     def flush(self):
         pass
+
+    def isatty(self):
+        return False
+
+    def fileno(self):
+        raise io.UnsupportedOperation("fileno")
+
+
+class _ThreadLocalStream:
+    """Thread-local stdout/stderr router installed once at app startup.
+
+    Each worker thread calls set(stream) to route its prints into the GUI log,
+    and clear() in its finally block when done.  All other threads (including
+    the main thread) fall through to the original stdout/stderr.
+    """
+    _local = threading.local()
+
+    def __init__(self, fallback):
+        self._fallback = fallback
+
+    def set(self, stream):
+        self._local.stream = stream
+
+    def clear(self):
+        self._local.stream = None
+
+    def write(self, text: str):
+        s = getattr(self._local, 'stream', None)
+        (s or self._fallback).write(text)
+
+    def flush(self):
+        s = getattr(self._local, 'stream', None)
+        (s or self._fallback).flush()
+
+    def isatty(self):
+        return False
 
     def fileno(self):
         raise io.UnsupportedOperation("fileno")
@@ -927,6 +973,14 @@ class AtomisationApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Atomisation Control Panel")
+
+        # Install thread-local stdout/stderr router so pipeline and cone threads
+        # can route their prints to the GUI log independently without fighting
+        # over the global sys.stdout.
+        self._tl_stdout = _ThreadLocalStream(sys.stdout)
+        self._tl_stderr = _ThreadLocalStream(sys.stderr)
+        sys.stdout = self._tl_stdout
+        sys.stderr = self._tl_stderr
 
         # ── State ─────────────────────────────────────────────────────────────
         self.arduino: ArduinoController | None = None
@@ -958,6 +1012,8 @@ class AtomisationApp(QMainWindow):
         self.pressure_data['live_buffer_start_time'] = time.time()
         self._last_experiment_snapshot = {'timestamps': [], 'pressures': []}
         self._last_cone_path = None   # path of most recent cone image (raw or annotated)
+        self._cone_history: deque = deque(maxlen=5)  # (annotated_path, angle) tuples, newest last
+        self._last_pressure: float | None = None     # last successfully set pressure (persisted)
 
         # EMA smoothing state (α=0.3: strong noise rejection, <2.5s lag on step changes)
         self._pressure_smooth_enabled = True
@@ -968,8 +1024,11 @@ class AtomisationApp(QMainWindow):
         self._log_queue = queue.Queue()  # thread-safe sink for pipeline/cone stdout → GUI log panel
 
         # ── Build UI ──────────────────────────────────────────────────────────
+        self._last_saved_run_folder: str | None = None
         self._build_ui()
         self._load_camera_settings()
+        QTimer.singleShot(0, self, self._poll_lacie)
+        QTimer.singleShot(0, self, self._update_next_save_preview)
 
         # Pipeline cross-thread signal connections (UI must exist first)
         self._pipeline_done.connect(self._on_pipeline_complete)
@@ -1001,6 +1060,16 @@ class AtomisationApp(QMainWindow):
         self._experiment_watchdog = QTimer(self)
         self._experiment_watchdog.setSingleShot(True)
         self._experiment_watchdog.timeout.connect(self._on_experiment_timeout)
+
+        self._run_elapsed_timer = QTimer(self)
+        self._run_elapsed_timer.setInterval(1000)
+        self._run_elapsed_timer.timeout.connect(self._tick_run_timer)
+        self._run_start_time: float | None = None
+
+        self._lacie_poll_timer = QTimer(self)
+        self._lacie_poll_timer.setInterval(5000)
+        self._lacie_poll_timer.timeout.connect(self._poll_lacie)
+        self._lacie_poll_timer.start()
 
         # Log panel queue drain — flushes pipeline/cone stdout into the right-panel log widget
         self._log_poll_timer = QTimer(self)
@@ -1058,7 +1127,33 @@ class AtomisationApp(QMainWindow):
         app_title = QLabel("ATOMISATION CONTROL")
         app_title.setStyleSheet(f"color: {CLR_TEXT}; font-size: 15px; font-weight: 700; letter-spacing: 1px;")
         hl.addWidget(app_title)
+
+        self._hdr_lacie_dot = dot_indicator(CLR_RED)
+        self._hdr_lacie_lbl = QLabel("LaCie")
+        self._hdr_lacie_lbl.setStyleSheet(f"color: {CLR_TEXT_SEC}; font-size: 12px;")
+        hl.addWidget(self._hdr_lacie_dot)
+        hl.addWidget(self._hdr_lacie_lbl)
+
         hl.addStretch()
+
+        # Last save path — "No Current Runs" until first save; becomes clickable afterwards
+        self._hdr_last_save_lbl = ClickableLabel("No Current Runs")
+        self._hdr_last_save_lbl.setStyleSheet(f"color: {CLR_TEXT_SEC}; font-size: 12px;")
+        self._hdr_last_save_lbl.clicked.connect(self._open_last_save_folder)
+        hl.addWidget(self._hdr_last_save_lbl)
+
+        _sep_paths = QLabel("|")
+        _sep_paths.setStyleSheet(f"color: {CLR_BORDER}; font-size: 12px;")
+        hl.addWidget(_sep_paths)
+
+        # Next save path — live preview built from current parameter state
+        self._hdr_next_save_lbl = QLabel("…")
+        self._hdr_next_save_lbl.setStyleSheet(f"color: {CLR_TEXT_SEC}; font-size: 12px;")
+        hl.addWidget(self._hdr_next_save_lbl)
+
+        _sep_after_paths = QFrame(); _sep_after_paths.setFixedWidth(1); _sep_after_paths.setFixedHeight(18)
+        _sep_after_paths.setStyleSheet(f"background: {CLR_BORDER};")
+        hl.addWidget(_sep_after_paths)
 
         # Pixels/mm display (updated by calibration; persists via settings)
         self._hdr_pxmm_lbl = QLabel("– px/mm")
@@ -1068,26 +1163,65 @@ class AtomisationApp(QMainWindow):
         _sep.setStyleSheet(f"background: {CLR_BORDER};")
         hl.addWidget(_sep)
 
-        # Status dots
+        # Status dots — order: Arduino · Camera · AFG · BAR
         self._hdr_arduino_dot  = dot_indicator(CLR_TEXT_SEC)
         self._hdr_arduino_lbl  = QLabel("Arduino")
-        self._hdr_pressure_dot = dot_indicator(CLR_TEXT_SEC)
-        self._hdr_pressure_lbl = QLabel("– BAR")
         self._hdr_camera_dot   = dot_indicator(CLR_TEXT_SEC)
         self._hdr_camera_lbl   = QLabel("Camera")
+        self._hdr_afg_dot      = dot_indicator(CLR_RED)
+        self._hdr_afg_lbl      = QLabel("AFG")
+        self._hdr_pressure_dot = dot_indicator(CLR_TEXT_SEC)
+        self._hdr_pressure_lbl = QLabel("– BAR")
 
+        # Arduino, AFG, BAR — plain dot + label
         for dot, lbl in [
             (self._hdr_arduino_dot,  self._hdr_arduino_lbl),
+            (self._hdr_afg_dot,      self._hdr_afg_lbl),
             (self._hdr_pressure_dot, self._hdr_pressure_lbl),
-            (self._hdr_camera_dot,   self._hdr_camera_lbl),
         ]:
             lbl.setStyleSheet(f"color: {CLR_TEXT_SEC}; font-size: 12px;")
-            hl.addWidget(dot)
-            hl.addWidget(lbl)
-            sp = QFrame()
-            sp.setFixedWidth(16)
-            sp.setStyleSheet("background: transparent;")
-            hl.addWidget(sp)
+
+        # Camera — dot + label wrapped in a box frame (lights up green when armed)
+        self._hdr_camera_lbl.setStyleSheet(f"color: {CLR_TEXT_SEC}; font-size: 12px;")
+        self._hdr_camera_box = QFrame()
+        self._hdr_camera_box.setStyleSheet(f"""
+            QFrame {{
+                background: transparent;
+                border: 1px solid transparent;
+                border-radius: 5px;
+            }}
+        """)
+        _cam_box_hl = QHBoxLayout(self._hdr_camera_box)
+        _cam_box_hl.setContentsMargins(5, 2, 5, 2)
+        _cam_box_hl.setSpacing(4)
+        _cam_box_hl.addWidget(self._hdr_camera_dot)
+        _cam_box_hl.addWidget(self._hdr_camera_lbl)
+
+        # Add all indicators in order: Arduino · Camera · AFG · BAR
+        hl.addWidget(self._hdr_arduino_dot)
+        hl.addWidget(self._hdr_arduino_lbl)
+        _sp = QFrame(); _sp.setFixedWidth(10); _sp.setStyleSheet("background: transparent;")
+        hl.addWidget(_sp)
+
+        hl.addWidget(self._hdr_camera_box)
+        _sp2 = QFrame(); _sp2.setFixedWidth(10); _sp2.setStyleSheet("background: transparent;")
+        hl.addWidget(_sp2)
+
+        hl.addWidget(self._hdr_afg_dot)
+        hl.addWidget(self._hdr_afg_lbl)
+        _sp3 = QFrame(); _sp3.setFixedWidth(10); _sp3.setStyleSheet("background: transparent;")
+        hl.addWidget(_sp3)
+
+        hl.addWidget(self._hdr_pressure_dot)
+        hl.addWidget(self._hdr_pressure_lbl)
+
+        _sep2 = QFrame(); _sep2.setFixedWidth(1); _sep2.setFixedHeight(18)
+        _sep2.setStyleSheet(f"background: {CLR_BORDER};")
+        hl.addWidget(_sep2)
+
+        self._hdr_timer_lbl = QLabel("00:00")
+        self._hdr_timer_lbl.setStyleSheet(f"color: {CLR_TEXT}; font-size: 12px; font-weight: 700;")
+        hl.addWidget(self._hdr_timer_lbl)
 
         return header
 
@@ -1300,6 +1434,7 @@ class AtomisationApp(QMainWindow):
         self._nozzle_entry = QLineEdit()
         self._nozzle_entry.setPlaceholderText("e.g. 1")
         self._nozzle_entry.setValidator(QRegularExpressionValidator(QRegularExpression(r'[A-Za-z0-9]*')))
+        self._nozzle_entry.textChanged.connect(self._update_next_save_preview)
         nozzle_card.layout().addWidget(input_row("Nozzle No.", self._nozzle_entry, label_width=90))
 
         self._orifice_combo = QComboBox()
@@ -1391,6 +1526,7 @@ class AtomisationApp(QMainWindow):
             }}
         """)
         log_card.layout().addWidget(self._pipeline_log)
+        self._pipeline_log_base_style = self._pipeline_log.styleSheet()
         vl.addWidget(log_card, stretch=1)
 
         return panel
@@ -1533,6 +1669,7 @@ class AtomisationApp(QMainWindow):
         self._pressure_entry.setMinimumWidth(80)
         self._pressure_entry.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._pressure_entry.setValidator(QDoubleValidator(0.0, 26.4, 2))
+        self._pressure_entry.textChanged.connect(self._update_next_save_preview)
         set_p_btn = accent_button("Set Pressure", CLR_ACCENT)
         set_p_btn.setFixedHeight(36)
         set_p_btn.setToolTip(
@@ -1549,8 +1686,34 @@ class AtomisationApp(QMainWindow):
             "2. Zeroes the AliCat setpoint<br>"
             "Same as the Emergency button in the left panel")
         off_p_btn.clicked.connect(self._pressure_off)
+
+        self._last_pressure_btn = QPushButton("Set last pressure")
+        self._last_pressure_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {CLR_INPUT};
+                color: {CLR_TEXT_SEC};
+                border: 1px solid {CLR_BORDER};
+                border-radius: 8px;
+                padding: 5px 14px;
+                font-size: 12px;
+                font-weight: 500;
+            }}
+            QPushButton:hover {{ background-color: #3a3a3c; color: {CLR_TEXT}; }}
+            QPushButton:pressed {{ background-color: #4a4a4e; }}
+            QPushButton:disabled {{ color: #555; border-color: #333; }}
+        """)
+        self._last_pressure_btn.setEnabled(False)
+        self._last_pressure_btn.clicked.connect(self._set_last_pressure)
+
+        # Stack Set Pressure + Set last pressure vertically, then slot into pir
+        set_p_stack = QWidget()
+        set_p_vl = QVBoxLayout(set_p_stack)
+        set_p_vl.setContentsMargins(0, 0, 0, 0)
+        set_p_vl.setSpacing(4)
+        set_p_vl.addWidget(set_p_btn)
+        set_p_vl.addWidget(self._last_pressure_btn)
         pir.addWidget(p_lbl); pir.addWidget(self._pressure_entry)
-        pir.addWidget(set_p_btn); pir.addStretch(); pir.addWidget(off_p_btn)
+        pir.addWidget(set_p_stack); pir.addStretch(); pir.addWidget(off_p_btn)
         c2.layout().addWidget(p_input_row)
 
         cur_row = QWidget()
@@ -1772,6 +1935,7 @@ class AtomisationApp(QMainWindow):
 
         self._pipeline_check = QCheckBox("Run AI analysis after capture")
         self._pipeline_check.setStyleSheet(f"color:{CLR_TEXT}; font-size:13px;")
+        self._pipeline_check.stateChanged.connect(self._save_camera_settings)
         c3.layout().addWidget(self._pipeline_check)
         _pipeline_desc = QLabel("When enabled, Dennis (Mask R-CNN) runs automatically after each capture — detecting droplets and ligaments and saving ai_result.png + metrics to the run folder.")
         _pipeline_desc.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
@@ -2101,11 +2265,18 @@ class AtomisationApp(QMainWindow):
             c1.layout().addWidget(warn)
 
         self._cone_feed_lbl = QLabel("No camera")
-        self._cone_feed_lbl.setFixedSize(500, 300)
+        self._cone_feed_lbl.setFixedHeight(300)
+        self._cone_feed_lbl.setMinimumWidth(120)
         self._cone_feed_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._cone_feed_lbl.setStyleSheet(
             f"background:{CLR_INPUT}; color:{CLR_TEXT_SEC}; border-radius:8px; font-size:13px;")
-        c1.layout().addWidget(self._cone_feed_lbl)
+        feed_row = QWidget()
+        feed_hl  = QHBoxLayout(feed_row)
+        feed_hl.setContentsMargins(0, 0, 0, 0)
+        feed_hl.addStretch()
+        feed_hl.addWidget(self._cone_feed_lbl)
+        feed_hl.addStretch()
+        c1.layout().addWidget(feed_row)
 
         spin_style = f"background:{CLR_INPUT}; color:{CLR_TEXT}; border:1px solid {CLR_BORDER}; border-radius:6px; padding:4px;"
 
@@ -2140,6 +2311,41 @@ class AtomisationApp(QMainWindow):
         self._cone_cam_status_lbl = QLabel("Camera stopped")
         self._cone_cam_status_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
         c1.layout().addWidget(self._cone_cam_status_lbl)
+
+        c1.layout().addWidget(separator())
+        c1.layout().addWidget(section_label("ANGLE HISTORY"))
+
+        hist_row = QWidget()
+        hist_hl = QHBoxLayout(hist_row)
+        hist_hl.setContentsMargins(0, 4, 0, 4)
+        hist_hl.setSpacing(8)
+
+        THUMB_H = 150
+        self._cone_hist_cells = []
+        for _ in range(5):
+            cell = QWidget()
+            cell.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            cell_vl = QVBoxLayout(cell)
+            cell_vl.setContentsMargins(0, 0, 0, 0)
+            cell_vl.setSpacing(3)
+
+            img_lbl = QLabel()
+            img_lbl.setFixedHeight(THUMB_H)
+            img_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            img_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            img_lbl.setStyleSheet(
+                f"background:{CLR_INPUT}; border:1px solid {CLR_BORDER}; border-radius:5px; color:{CLR_TEXT_SEC}; font-size:9px;")
+            img_lbl.setText("–")
+
+            ang_lbl = QLabel("–")
+            ang_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            ang_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:10px;")
+
+            cell_vl.addWidget(img_lbl)
+            cell_vl.addWidget(ang_lbl)
+            hist_hl.addWidget(cell)
+            self._cone_hist_cells.append((img_lbl, ang_lbl))
+        c1.layout().addWidget(hist_row)
 
         c1.layout().addWidget(separator())
         c1.layout().addWidget(section_label("CROP REGION"))
@@ -2603,8 +2809,65 @@ class AtomisationApp(QMainWindow):
                 self._exp_progress.setRange(0, 0),
             ))
             self._start_btn.setEnabled(True)
+            self._stop_run_timer()
             self._set_status("Experiment complete ✓ — remember to Save to Excel", CLR_GREEN)
             threading.Thread(target=self.arduino.reset_state, daemon=True).start()
+
+    @staticmethod
+    def _open_folder(path: str):
+        import subprocess, sys as _sys
+        if _sys.platform == "win32":
+            os.startfile(path)
+        elif _sys.platform == "darwin":
+            subprocess.run(["open", path])
+        else:
+            subprocess.run(["xdg-open", path])
+
+    def _open_last_save_folder(self):
+        path = getattr(self, "_last_saved_run_folder", None)
+        if path and os.path.exists(path):
+            self._open_folder(path)
+
+    def _update_next_save_preview(self):
+        now = datetime.now()
+        nozzle_raw = self._nozzle_entry.text().strip() if hasattr(self, "_nozzle_entry") else ""
+        nozzle_label = (nozzle_raw or "NoNozzle").replace(" ", "_")
+        pressure_raw = self._pressure_entry.text().strip() if hasattr(self, "_pressure_entry") else ""
+        try:
+            pressure_val = float(pressure_raw)
+            pressure_str = f"{pressure_val:.1f}BAR"
+        except ValueError:
+            pressure_str = "?.?BAR"
+        run_id = f"{now.strftime('%H%M%S')}_N{nozzle_label}_{pressure_str}"
+        lacie = find_lacie_drive()
+        exp_base = os.path.join(lacie, "Experiments") if lacie else os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            "experiment_logs", "Experiments")
+        preview = os.path.join(exp_base, now.strftime("%Y"), now.strftime("%m"), now.strftime("%d"), run_id)
+        colour = "#FFA500" if os.path.exists(preview) else CLR_TEXT_SEC
+        self._hdr_next_save_lbl.setText(preview)
+        self._hdr_next_save_lbl.setStyleSheet(f"color: {colour}; font-size: 12px;")
+
+    def _tick_run_timer(self):
+        if self._run_start_time is None: return
+        elapsed = int(time.time() - self._run_start_time)
+        m, s = divmod(elapsed, 60)
+        self._hdr_timer_lbl.setText(f"{m:02d}:{s:02d}")
+        self._hdr_timer_lbl.setStyleSheet(f"color: {CLR_TEXT}; font-size: 12px; font-weight: 700;")
+
+    def _stop_run_timer(self):
+        self._run_elapsed_timer.stop()
+        self._run_start_time = None
+        self._hdr_timer_lbl.setText("00:00")
+        self._hdr_timer_lbl.setStyleSheet(f"color: {CLR_TEXT}; font-size: 12px; font-weight: 700;")
+
+    def _poll_lacie(self):
+        connected = find_lacie_drive() is not None
+        colour = CLR_GREEN if connected else CLR_RED
+        self._hdr_lacie_dot.setStyleSheet(
+            f"color:{colour}; font-size:10px; background:transparent;")
+        self._hdr_lacie_lbl.setStyleSheet(
+            f"color:{'#e5e5ea' if connected else CLR_TEXT_SEC}; font-size:12px;")
 
     def _on_experiment_timeout(self):
         """Watchdog fired — serial reader likely died. Kill pressure and recover UI."""
@@ -2615,6 +2878,7 @@ class AtomisationApp(QMainWindow):
             self._exp_progress.setVisible(False)
             self._exp_progress.setRange(0, 0)
             self._start_btn.setEnabled(True)
+            self._stop_run_timer()
             self._set_status("Experiment timed out — pressure turned off", CLR_RED)
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -2629,10 +2893,20 @@ class AtomisationApp(QMainWindow):
                 raise ValueError("out of range")
             self.arduino.send_pressure_command(val)
             self._set_status(f"Pressure set to {val:.1f} BAR")
+            self._last_pressure = val
+            self._last_pressure_btn.setText(f"Set last: {val:.2f} BAR")
+            self._last_pressure_btn.setEnabled(True)
+            self._save_camera_settings()
         except ValueError:
             self._set_status("Invalid pressure value", CLR_ORANGE)
             self._warn("Invalid Pressure",
                        "Please enter a pressure between 0.0 and 26.4 BAR.")
+
+    def _set_last_pressure(self):
+        if self._last_pressure is None:
+            return
+        self._pressure_entry.setText(f"{self._last_pressure:.2f}")
+        self._set_pressure()
 
     def _pressure_off(self):
         if not self._require_arduino(): return
@@ -2708,6 +2982,16 @@ class AtomisationApp(QMainWindow):
     # Logic — Pipeline log panel
     # ─────────────────────────────────────────────────────────────────────────
 
+    def _flash_log_border(self, colour: str, duration_ms: int = 5000):
+        """Briefly colour the console border, then restore it."""
+        flashed = self._pipeline_log_base_style.replace(
+            f"border: 1px solid {CLR_BORDER}", f"border: 2px solid {colour}"
+        )
+        self._pipeline_log.setStyleSheet(flashed)
+        QTimer.singleShot(duration_ms, lambda:
+            self._pipeline_log.setStyleSheet(self._pipeline_log_base_style)
+        )
+
     def _log(self, text: str):
         """Append a line directly to the log panel (main-thread safe)."""
         ts = datetime.now().strftime("%H:%M:%S")
@@ -2724,6 +3008,8 @@ class AtomisationApp(QMainWindow):
                 ts = datetime.now().strftime("%H:%M:%S")
                 self._pipeline_log.appendPlainText(f"[{ts}]  {line}")
                 changed = True
+                if "low fit quality" in line.lower():
+                    self._flash_log_border(CLR_ORANGE)
             except queue.Empty:
                 break
         if changed:
@@ -2813,6 +3099,16 @@ class AtomisationApp(QMainWindow):
         except Exception as e:
             self._set_status(f"Camera config error: {e}", CLR_RED)
 
+    def _set_camera_armed_indicator(self, colour: str):
+        """Coloured border on the Camera header box: orange=armed, green=recording, transparent=off."""
+        self._hdr_camera_box.setStyleSheet(f"""
+            QFrame {{
+                background: transparent;
+                border: 1px solid {colour};
+                border-radius: 5px;
+            }}
+        """)
+
     def _cam_arm(self):
         """Start continuous ring-buffer recording. Camera buffers until Trigger is clicked."""
         if not self.phantom: return
@@ -2826,6 +3122,7 @@ class AtomisationApp(QMainWindow):
                     self._cam_arm_status_lbl.setStyleSheet(f"color:{CLR_GREEN}; font-size:12px;"),
                     self._cam_arm_btn.setEnabled(False),
                     self._cam_trigger_btn.setEnabled(True),
+                    self._set_camera_armed_indicator(CLR_ORANGE),
                 ))
             except Exception as e:
                 err = str(e)
@@ -2842,6 +3139,7 @@ class AtomisationApp(QMainWindow):
         self._cam_arm_status_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
         self._cam_arm_btn.setEnabled(True)
         self._cam_trigger_btn.setEnabled(False)
+        self._set_camera_armed_indicator("transparent")
 
     def _cam_trigger(self):
         """Fire the trigger — freeze the ring buffer and save pre+post window."""
@@ -2858,6 +3156,7 @@ class AtomisationApp(QMainWindow):
         self._cam_arm_btn.setEnabled(False)
         self._cam_arm_status_lbl.setText("Triggered — saving…")
         self._cam_arm_status_lbl.setStyleSheet(f"color:{CLR_ORANGE}; font-size:12px;")
+        self._set_camera_armed_indicator(CLR_GREEN)
 
         if run_folder:
             # Mid-experiment: write into the active run folder
@@ -2955,6 +3254,7 @@ class AtomisationApp(QMainWindow):
                     self._set_status(f"Trigger error: {err}", CLR_RED),
                     self._cam_arm_status_lbl.setText("Error — re-arm manually"),
                     self._cam_arm_btn.setEnabled(True),
+                    self._set_camera_armed_indicator("transparent"),
                 ))
 
         threading.Thread(target=_do_trigger, daemon=True).start()
@@ -2977,11 +3277,10 @@ class AtomisationApp(QMainWindow):
         self._ai_dl_lbl.setText("D/L: –")
         self._log(f"── AI pipeline started ({os.path.basename(frames_folder)}) ──")
 
-        import threading
         def _worker():
             _stream = _GuiLogStream(self._log_queue)
-            _old_out, _old_err = sys.stdout, sys.stderr
-            sys.stdout = sys.stderr = _stream
+            self._tl_stdout.set(_stream)
+            self._tl_stderr.set(_stream)
             try:
                 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
                 from ai.process_run import run as ai_run
@@ -2990,12 +3289,14 @@ class AtomisationApp(QMainWindow):
             except Exception as e:
                 self._pipeline_err.emit(str(e))
             finally:
-                sys.stdout, sys.stderr = _old_out, _old_err
+                self._tl_stdout.clear()
+                self._tl_stderr.clear()
         threading.Thread(target=_worker, daemon=True).start()
 
     def _on_pipeline_complete(self, results: dict):
         self._pipeline_status.setText("Pipeline: complete ✓")
         self._log("── AI pipeline complete ✓ ──")
+        self._flash_log_border(CLR_GREEN)
         conf = results.get("mean_confidence")
         diam = results.get("avg_droplet_um")
         dl   = results.get("dl_ratio", "–")
@@ -3027,6 +3328,7 @@ class AtomisationApp(QMainWindow):
     def _on_pipeline_error(self, err: str):
         self._pipeline_status.setText(f"Pipeline error: {err}")
         self._log(f"── AI pipeline error: {err} ──")
+        self._flash_log_border("#ff3b30")
         if getattr(self, '_is_test_pipeline', False):
             self._test_pipeline_btn.setEnabled(True)
             self._test_pipeline_btn.setText("Test Pipeline")
@@ -3041,23 +3343,7 @@ class AtomisationApp(QMainWindow):
         self._test_pipeline_btn.setEnabled(False)
         self._test_pipeline_btn.setText("Running…")
         self._is_test_pipeline = True  # flag so _on_pipeline_complete re-enables btn
-        self._log(f"── AI pipeline (test run) started ──")
-
-        import threading
-        def _worker():
-            _stream = _GuiLogStream(self._log_queue)
-            _old_out, _old_err = sys.stdout, sys.stderr
-            sys.stdout = sys.stderr = _stream
-            try:
-                sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-                from ai.process_run import run as ai_run
-                results = ai_run(frames_folder, output_folder, px_per_mm)
-                self._pipeline_done.emit(results)
-            except Exception as e:
-                self._pipeline_err.emit(str(e))
-            finally:
-                sys.stdout, sys.stderr = _old_out, _old_err
-        threading.Thread(target=_worker, daemon=True).start()
+        self._run_pipeline(frames_folder, output_folder, px_per_mm)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Logic — Calibration
@@ -3243,6 +3529,30 @@ class AtomisationApp(QMainWindow):
         img = QImage(bytes(rgb.data), w, h, w * ch, QImage.Format.Format_RGB888)
         return QPixmap.fromImage(img)
 
+    def _cone_history_push(self, annotated_path: str, angle: float):
+        """Add a result to the rolling history strip and refresh the thumbnails."""
+        self._cone_history.append((annotated_path, angle))
+        THUMB_H = 150
+        history_list = list(self._cone_history)
+        for i, (img_lbl, ang_lbl) in enumerate(self._cone_hist_cells):
+            if i < len(history_list):
+                path, ang = history_list[i]
+                pix = QPixmap(path)
+                if not pix.isNull():
+                    w = img_lbl.width() if img_lbl.width() > 0 else 200
+                    pix = pix.scaled(w, THUMB_H,
+                                     Qt.AspectRatioMode.KeepAspectRatio,
+                                     Qt.TransformationMode.SmoothTransformation)
+                    img_lbl.setPixmap(pix)
+                    img_lbl.setText("")
+                ang_lbl.setText(f"{ang:.1f}°")
+                ang_lbl.setStyleSheet(f"color:{CLR_TEXT}; font-size:10px; font-weight:600;")
+            else:
+                img_lbl.setPixmap(QPixmap())
+                img_lbl.setText("–")
+                ang_lbl.setText("–")
+                ang_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:10px;")
+
     def _cone_start_camera(self):
         if not CV2_AVAILABLE:
             return
@@ -3284,6 +3594,8 @@ class AtomisationApp(QMainWindow):
         if self._cone_cap is not None:
             self._cone_cap.release()
             self._cone_cap = None
+        self._cone_feed_lbl.setMinimumWidth(120)
+        self._cone_feed_lbl.setMaximumWidth(16777215)
         self._cone_feed_lbl.setText("No camera")
         self._cone_feed_lbl.setPixmap(QPixmap())
         self._cone_cam_status_lbl.setText("Camera stopped")
@@ -3312,10 +3624,11 @@ class AtomisationApp(QMainWindow):
                 cv2.addWeighted(overlay, 0.45, frame, 0.55, 0, frame)
                 cv2.line(frame, (0, top_px), (frame.shape[1] - 1, top_px), (0, 0, 255), 1)
         pm = self._cone_bgr_to_pixmap(frame).scaled(
-            self._cone_feed_lbl.width(), self._cone_feed_lbl.height(),
+            9999, self._cone_feed_lbl.height(),
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
+        self._cone_feed_lbl.setFixedWidth(pm.width())
         self._cone_feed_lbl.setPixmap(pm)
 
     def _cone_capture(self):
@@ -3354,29 +3667,49 @@ class AtomisationApp(QMainWindow):
         self._log(f"── Cone analysis started ({os.path.basename(raw_path)}) ──")
 
         def _analyse():
+            import io as _io
+
+            class _TeeStream:
+                def __init__(self, gui_stream, buf):
+                    self._g, self._b = gui_stream, buf
+                def write(self, text):
+                    self._g.write(text); self._b.write(text)
+                def flush(self):
+                    self._g.flush()
+                def isatty(self): return False
+                def fileno(self): raise _io.UnsupportedOperation("fileno")
+
+            _buf    = _io.StringIO()
             _stream = _GuiLogStream(self._log_queue)
-            _old_out, _old_err = sys.stdout, sys.stderr
-            sys.stdout = sys.stderr = _stream
+            _tee    = _TeeStream(_stream, _buf)
+            self._tl_stdout.set(_tee)
+            self._tl_stderr.set(_tee)
             try:
                 from pathlib import Path as _Path
                 angle, annotated_bgr, _debug = detect_cone_angle(
                     _Path(raw_path), top_crop_ratio=top_crop)
             except Exception as e:
-                sys.stdout, sys.stderr = _old_out, _old_err
                 def _on_err():
                     self._cone_angle_lbl.setText(f"Analysis error: {e}")
                     self._cone_angle_lbl.setVisible(True)
                     self._cone_capture_btn.setEnabled(True)
+                    self._flash_log_border("#ff3b30")
                 QTimer.singleShot(0, self, _on_err)
                 return
             finally:
-                sys.stdout, sys.stderr = _old_out, _old_err
+                self._tl_stdout.clear()
+                self._tl_stderr.clear()
+
+            had_warning = "low fit quality" in _buf.getvalue().lower()
 
             annotated_path = os.path.join(save_dir, f"cone_{ts}.png")
             cv2.imwrite(annotated_path, annotated_bgr)
 
             def _update_ui():
+                if not had_warning:
+                    self._flash_log_border(CLR_GREEN)
                 self._last_cone_path = annotated_path
+                self._cone_history_push(annotated_path, angle)
                 pm = self._cone_bgr_to_pixmap(annotated_bgr).scaled(
                     self._cone_result_img_lbl.width(), self._cone_result_img_lbl.height(),
                     Qt.AspectRatioMode.KeepAspectRatio,
@@ -3406,6 +3739,8 @@ class AtomisationApp(QMainWindow):
             self.afg.connect()
             self._afg_status_lbl.setText("AFG: connected")
             self._afg_status_lbl.setStyleSheet(f"color:{CLR_GREEN}; font-size:12px;")
+            self._hdr_afg_dot.setStyleSheet(f"color:{CLR_ORANGE}; font-size:10px; background:transparent;")
+            self._hdr_afg_lbl.setStyleSheet(f"color:{CLR_TEXT}; font-size:12px;")
         except Exception as e:
             self._afg_status_lbl.setText(f"AFG error: {e}")
             self._set_status(f"AFG: {e}", CLR_RED)
@@ -3422,6 +3757,8 @@ class AtomisationApp(QMainWindow):
             else:
                 pulse_str = f"{pulse_us:.0f} µs"
             self._afg_status_lbl.setText(f"AFG: configured ({pulse_str} pulse, CH{ch})")
+            self._hdr_afg_dot.setStyleSheet(f"color:{CLR_GREEN}; font-size:10px; background:transparent;")
+            self._hdr_afg_lbl.setStyleSheet(f"color:{CLR_TEXT}; font-size:12px;")
         except Exception as e:
             self._set_status(f"AFG config error: {e}", CLR_RED)
 
@@ -3439,6 +3776,8 @@ class AtomisationApp(QMainWindow):
         if self.afg: self.afg.disconnect()
         self._afg_status_lbl.setText("AFG: disconnected")
         self._afg_status_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
+        self._hdr_afg_dot.setStyleSheet(f"color:{CLR_RED}; font-size:10px; background:transparent;")
+        self._hdr_afg_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Logic — Experiment
@@ -3534,6 +3873,8 @@ class AtomisationApp(QMainWindow):
         self._exp_progress.setValue(0)
         self._exp_progress.setVisible(True)
         self._set_status("Experiment running…", CLR_ACCENT)
+        self._run_start_time = time.time()
+        self._run_elapsed_timer.start()
 
         self.arduino.send_pressure_command(pressure)
         # Send motor command 500 ms later without blocking the UI
@@ -3806,6 +4147,17 @@ class AtomisationApp(QMainWindow):
             self._experiment_saved = True
             self._set_status("Saved: run_summary.xlsx  +  master_log.xlsx updated", CLR_GREEN)
             self._save_path_lbl.setText(f"{ind_path}\nMaster: {master_path}")
+
+            # Update header last-save label to this run folder (clickable, bold, underlined)
+            self._last_saved_run_folder = run_dir
+            _folder_name = os.path.basename(run_dir)
+            self._hdr_last_save_lbl.setText(_folder_name)
+            self._hdr_last_save_lbl.setStyleSheet(
+                f"color: {CLR_TEXT}; font-size: 12px; font-weight: 700; text-decoration: underline;"
+                " cursor: pointer;"
+            )
+            self._hdr_last_save_lbl.setCursor(Qt.CursorShape.PointingHandCursor)
+            self._update_next_save_preview()
         except Exception as e:
             self._set_status(f"Save error: {e}", CLR_RED)
 
@@ -3843,6 +4195,11 @@ class AtomisationApp(QMainWindow):
             self._cone_focus_spin.setValue(int(s.get("cone_focus", 0)))
             self._cone_focus_spin.setEnabled(not autofocus)
             self._cone_top_crop_spin.setValue(float(s.get("cone_top_crop", 0.05)))
+            last_p = s.get("last_pressure")
+            if last_p is not None:
+                self._last_pressure = float(last_p)
+                self._last_pressure_btn.setText(f"Set last: {self._last_pressure:.2f} BAR")
+                self._last_pressure_btn.setEnabled(True)
         except Exception as e:
             print(f"[WARNING] Could not load camera settings: {e}")
 
@@ -3874,6 +4231,7 @@ class AtomisationApp(QMainWindow):
                 "cone_autofocus":    self._cone_autofocus_chk.isChecked(),
                 "cone_focus":        self._cone_focus_spin.value(),
                 "cone_top_crop":     self._cone_top_crop_spin.value(),
+                "last_pressure":     self._last_pressure,
             }
             with open(self._settings_path(), "w") as f:
                 json.dump(s, f, indent=2)
@@ -3948,6 +4306,20 @@ class AtomisationApp(QMainWindow):
         self._status_lbl.setStyleSheet(f"color:{c}; font-size:13px;")
         self._status_dot.setStyleSheet(
             f"color:{c}; font-size:12px; background:transparent;")
+
+    def keyPressEvent(self, event):
+        focus = self.focusWidget()
+        in_text_field = isinstance(focus, (QLineEdit, QTextEdit, QPlainTextEdit))
+        if not in_text_field:
+            if event.key() == Qt.Key.Key_Space and self._cam_trigger_btn.isEnabled():
+                self._cam_trigger()
+                event.accept()
+                return
+            if event.key() == Qt.Key.Key_C and self._cone_capture_btn.isEnabled():
+                self._cone_capture()
+                event.accept()
+                return
+        super().keyPressEvent(event)
 
     def closeEvent(self, event):
         self.serial_reading_active = False
