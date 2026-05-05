@@ -1151,6 +1151,8 @@ class AtomisationApp(QMainWindow):
         self._hdr_next_save_lbl.setStyleSheet(f"color: {CLR_TEXT_SEC}; font-size: 12px;")
         hl.addWidget(self._hdr_next_save_lbl)
 
+        hl.addStretch()
+
         _sep_after_paths = QFrame(); _sep_after_paths.setFixedWidth(1); _sep_after_paths.setFixedHeight(18)
         _sep_after_paths.setStyleSheet(f"background: {CLR_BORDER};")
         hl.addWidget(_sep_after_paths)
