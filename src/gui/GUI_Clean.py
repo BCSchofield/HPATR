@@ -2731,9 +2731,9 @@ class AtomisationApp(QMainWindow):
                                 QTimer.singleShot(0, self, lambda v=val: self._handle_pressure_reading(v))
                             except: pass
                         elif "MOVEMENT_COMPLETE" in line or "MOVEMENT_TIMEOUT" in line:
-                            QTimer.singleShot(0, self._on_movement_complete)
+                            QTimer.singleShot(0, self, self._on_movement_complete)
                         elif "Homing Complete" in line:
-                            QTimer.singleShot(0, self._on_homed)
+                            QTimer.singleShot(0, self, self._on_homed)
                         elif line.startswith("DEBUG: Movement progress:"):
                             try:
                                 pct = int(line.split(":")[-1].strip().replace("%", ""))
@@ -2794,6 +2794,7 @@ class AtomisationApp(QMainWindow):
     @Slot()
     def _on_homed(self):
         self._homed_dot.setStyleSheet(f"color:{CLR_GREEN}; font-size:10px;")
+        self._set_status("Homed", CLR_GREEN)
 
     @Slot()
     def _on_movement_complete(self):

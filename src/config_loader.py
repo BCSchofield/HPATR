@@ -60,24 +60,17 @@ def find_lacie_drive():
                     has_phantom = (drive_path / "Phantom").exists()
                     has_shadowgraph = (drive_path / "Shadowgraph").exists()
                     
-                    print(f"[DEBUG] Checking drive {drive_letter}:\\ - LaCie: {has_lacie}, Phantom: {has_phantom}, Shadowgraph: {has_shadowgraph}")
-                    
                     if has_lacie or has_phantom or has_shadowgraph:
-                        print(f"[DEBUG] LaCie drive detected at {drive_letter}:\\")
                         return f"{drive_letter}:\\"
                     # Also check volume label (Windows-specific)
                     try:
                         import win32api
                         volume_label = win32api.GetVolumeInformation(f"{drive_letter}:\\")[0]
-                        print(f"[DEBUG] Drive {drive_letter}:\\ volume label: '{volume_label}'")
                         if "lacie" in volume_label.lower():
-                            print(f"[DEBUG] LaCie drive detected by volume label at {drive_letter}:\\")
                             return f"{drive_letter}:\\"
-                    except (ImportError, Exception) as e:
-                        print(f"[DEBUG] Could not check volume label for {drive_letter}:\\ - {e}")
+                    except (ImportError, Exception):
                         pass  # win32api not available, skip volume label check
-                except (PermissionError, OSError) as e:
-                    print(f"[DEBUG] Permission/OS error checking drive {drive_letter}:\\ - {e}")
+                except (PermissionError, OSError):
                     continue  # Can't access this drive, try next
     
     # Linux/other - check /media and /mnt
