@@ -1737,8 +1737,16 @@ class AtomisationApp(QMainWindow):
         self._distance_entry = QLineEdit(); self._distance_entry.setPlaceholderText("e.g. 10.0  mm")
         self._speed_entry.setValidator(QDoubleValidator(0.0, 100000.0, 0))
         self._distance_entry.setValidator(QDoubleValidator(0.0, 72.5, 2))
+        self._distance_entry.textChanged.connect(self._update_volume_label)
         c3.layout().addWidget(input_row("Speed (steps/s)", self._speed_entry))
-        c3.layout().addWidget(input_row("Distance (mm)",   self._distance_entry))
+
+        _dist_row = QWidget()
+        _dist_rl = QHBoxLayout(_dist_row); _dist_rl.setContentsMargins(0,0,0,0); _dist_rl.setSpacing(6)
+        self._volume_lbl = QLabel("≈ – mL")
+        self._volume_lbl.setStyleSheet(f"color: {CLR_TEXT_SEC}; font-size: 12px;")
+        _dist_rl.addWidget(input_row("Distance (mm)", self._distance_entry))
+        _dist_rl.addWidget(self._volume_lbl)
+        c3.layout().addWidget(_dist_row)
 
         motor_btns = QWidget()
         mb = QHBoxLayout(motor_btns); mb.setContentsMargins(0,0,0,0); mb.setSpacing(8)
@@ -2829,6 +2837,16 @@ class AtomisationApp(QMainWindow):
         path = getattr(self, "_last_saved_run_folder", None)
         if path and os.path.exists(path):
             self._open_folder(path)
+
+    def _update_volume_label(self):
+        import math as _math
+        try:
+            dist_mm = float(self._distance_entry.text())
+            vol_ul = _math.pi * 10.0 ** 2 * dist_mm   # µL  (radius=10mm, area in mm²)
+            vol_ml = vol_ul / 1000.0
+            self._volume_lbl.setText(f"≈ {vol_ml:.2f} mL")
+        except (ValueError, AttributeError):
+            self._volume_lbl.setText("≈ – mL")
 
     def _update_next_save_preview(self):
         now = datetime.now()
