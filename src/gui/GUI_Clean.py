@@ -997,6 +997,7 @@ class AtomisationApp(QMainWindow):
         self.cumulative_distance = 0.0
         self._pre_move_cumulative  = 0.0   # cumulative_distance before the current motor move
         self._pending_move_distance = 0.0  # distance of the move in progress
+        self._jogging = False
         self.cleaning_in_progress = False
         self._experiment_saved = True   # True until an experiment runs unsaved
         self._run_folder = None          # Set eagerly on Start Experiment, cleared on next start
@@ -1763,6 +1764,41 @@ class AtomisationApp(QMainWindow):
         self._move_btn  = accent_button("Move",        CLR_ACCENT)
         self._homed_dot = dot_indicator(CLR_RED)
         homed_lbl = QLabel("Homed"); homed_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
+        # Jog buttons (▲ / ▼) — hold to move, release to stop
+        jog_widget = QWidget()
+        jog_vl = QVBoxLayout(jog_widget)
+        jog_vl.setContentsMargins(0, 0, 0, 0)
+        jog_vl.setSpacing(2)
+        self._jog_up_btn   = QPushButton("↑")
+        self._jog_down_btn = QPushButton("↓")
+        _jog_style = f"""
+            QPushButton {{
+                background-color: {CLR_INPUT};
+                color: {CLR_TEXT};
+                border: 1px solid {CLR_BORDER};
+                border-radius: 5px;
+                font-size: 14px;
+                font-weight: 700;
+                padding: 0px;
+                margin: 0px;
+            }}
+            QPushButton:hover   {{ background-color: {CLR_ACCENT}; color: white; border-color: {CLR_ACCENT}; }}
+            QPushButton:pressed {{ background-color: {_darken_hex(CLR_ACCENT)}; color: white; }}
+            QPushButton:disabled {{ color: {CLR_TEXT_SEC}; border-color: {CLR_BORDER}; }}
+        """
+        self._jog_up_btn.setStyleSheet(_jog_style)
+        self._jog_down_btn.setStyleSheet(_jog_style)
+        self._jog_up_btn.setFixedSize(32, 20)
+        self._jog_down_btn.setFixedSize(32, 20)
+        self._jog_up_btn.setToolTip("<b>Jog forward</b><br>Hold to move motor forward at the current speed")
+        self._jog_down_btn.setToolTip("<b>Jog backward</b><br>Hold to move motor backward at the current speed")
+        self._jog_up_btn.pressed.connect(lambda: self._jog_start(1))
+        self._jog_up_btn.released.connect(self._jog_stop)
+        self._jog_down_btn.pressed.connect(lambda: self._jog_start(-1))
+        self._jog_down_btn.released.connect(self._jog_stop)
+        jog_vl.addWidget(self._jog_up_btn)
+        jog_vl.addWidget(self._jog_down_btn)
+
         self._home_btn.setFixedHeight(36); self._clean_btn.setFixedHeight(36); self._move_btn.setFixedHeight(36)
         self._home_btn.setToolTip(
             "<b>Home motor</b><br>"
@@ -1784,7 +1820,7 @@ class AtomisationApp(QMainWindow):
         self._move_btn.clicked.connect(self._move_motor)
         mb.addWidget(self._home_btn); mb.addWidget(self._clean_btn)
         mb.addStretch(); mb.addWidget(self._homed_dot); mb.addWidget(homed_lbl)
-        mb.addStretch(); mb.addWidget(self._move_btn)
+        mb.addStretch(); mb.addWidget(jog_widget); mb.addWidget(self._move_btn)
         c3.layout().addWidget(motor_btns)
         vl.addWidget(c3)
 
@@ -2740,6 +2776,15 @@ class AtomisationApp(QMainWindow):
                             except: pass
                         elif "MOVEMENT_COMPLETE" in line or "MOVEMENT_TIMEOUT" in line:
                             QTimer.singleShot(0, self, self._on_movement_complete)
+                        elif line.startswith("JOG_POS:"):
+                            try:
+                                steps = int(line.split(":")[1])
+                                QTimer.singleShot(0, self, lambda s=steps: self._on_jog_pos(s))
+                            except: pass
+                        elif line == "ARDUINO_READY" and self._jogging:
+                            QTimer.singleShot(0, self, self._on_jog_complete)
+                        elif "JOG_LIMIT" in line and self._jogging:
+                            QTimer.singleShot(0, self, self._on_jog_complete)
                         elif "Homing Complete" in line:
                             QTimer.singleShot(0, self, self._on_homed)
                         elif line.startswith("DEBUG: Movement progress:"):
@@ -2859,7 +2904,7 @@ class AtomisationApp(QMainWindow):
 
     def _update_flowrate_label(self):
         import math as _math
-        _STEPS_PER_MM = 13600
+        _STEPS_PER_MM = 6800
         _RADIUS_MM    = 20.27 / 2          # bore diameter 20.27 mm
         _AREA_MM2     = _math.pi * _RADIUS_MM ** 2
         try:
@@ -2998,6 +3043,50 @@ class AtomisationApp(QMainWindow):
         self._pre_move_cumulative   = self.cumulative_distance
         self._pending_move_distance = dist
         self._set_status(f"Moving {dist} mm at {speed} steps/s")
+
+    def _jog_start(self, direction: int):
+        if not self._require_arduino(): return
+        try:
+            speed = int(float(self._speed_entry.text()))
+            if speed <= 0:
+                raise ValueError
+        except ValueError:
+            self._set_status("Enter a valid speed before jogging", CLR_ORANGE)
+            return
+        if direction > 0 and self.cumulative_distance >= self.MAX_MOTOR_MM:
+            self._set_status("At travel limit — home to reset", CLR_ORANGE)
+            return
+        if direction < 0 and self.cumulative_distance <= 0:
+            self._set_status("Already at home position", CLR_ORANGE)
+            return
+        self._jogging = True
+        self._move_btn.setEnabled(False)
+        self._home_btn.setEnabled(False)
+        self._clean_btn.setEnabled(False)
+        cmd = f"JOG:{speed};DIR:{direction}\n"
+        self.arduino.ser.write(cmd.encode())
+        log_serial(f"Sent: {cmd.strip()}")
+        label = "forward" if direction > 0 else "backward"
+        self._set_status(f"Jogging {label} at {speed} steps/s — release to stop")
+
+    def _jog_stop(self):
+        if not self._jogging: return
+        if not self.arduino or not self.arduino.ser: return
+        self.arduino.ser.write(b"STOP\n")
+        log_serial("Sent: STOP")
+
+    @Slot()
+    def _on_jog_complete(self):
+        self._jogging = False
+        self._move_btn.setEnabled(True)
+        self._home_btn.setEnabled(True)
+        self._clean_btn.setEnabled(True)
+        self._set_status("Jog stopped")
+
+    def _on_jog_pos(self, steps: int):
+        mm = max(0.0, min(self.MAX_MOTOR_MM, steps / 6800.0))
+        self.cumulative_distance = mm
+        self._update_travel_bar()
 
     def _update_travel_bar(self, distance=None):
         d = distance if distance is not None else self.cumulative_distance
@@ -3926,7 +4015,7 @@ class AtomisationApp(QMainWindow):
         # cumulative_distance is finalised in _on_movement_complete so the travel bar fills live
 
         # Start watchdog: if serial reader dies, pressure would stay on forever without this
-        _steps_per_mm = 13600
+        _steps_per_mm = 6800
         _move_time_ms = int((distance * _steps_per_mm / speed + 30) * 1000)
         self._experiment_watchdog.start(_move_time_ms)
 

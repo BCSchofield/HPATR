@@ -32,7 +32,7 @@
 // Select your stepper driver type
 TMC5160Stepper driver = TMC5160Stepper(CS_PIN, R_SENSE);
 
-constexpr uint32_t steps_per_mm = ((200 * 16) / 2) * 4.25; // ((200*16)/2)*4.25  (((Steps per rotation of motor * MicroSteps)/Lead of screw)*GearBox). = 13,600
+constexpr uint32_t steps_per_mm = ((200 * 16) / 2) * 4.25; // ((200*16)/2)*4.25  (((Steps per rotation of motor * MicroSteps)/Lead of screw)*GearBox). = 6,800
 const int frontOpticalSwitchPin = 1; //Creates a variable to store the front optical switch pin
 const int backOpticalSwitchPin = 5; //Creates a variable to store the back optical switch pin 
 long dist; //Creates a variable to store the distance
@@ -49,6 +49,8 @@ int lastProgressPercent = -1; //Used to track the last reported progress percent
 String inputString = "";
 unsigned long movementStartTime = 0; // Track when movement started
 unsigned long movementTimeout = 0; // Track movement timeout value
+bool jogMode = false;
+int jogDirection = 1;
 AccelStepper stepper = AccelStepper(stepper.DRIVER, STEP_PIN, DIR_PIN); //Creates a stepper object, with the driver, step pin and direction pin
 
 // Pressure controller variables
@@ -245,8 +247,8 @@ void loop() {
   // Send periodic handshake to ensure GUI can detect us
   static unsigned long lastHandshake = 0;
   if (millis() - lastHandshake > 3000) { // Send every 3 seconds
-    // Only send handshake if we're not in the middle of a movement
-    if (moveFinished == 1) {
+    // Only send handshake if we're not in the middle of a movement or jog
+    if (moveFinished == 1 && !jogMode) {
       Serial.println("ARDUINO_READY");
       debugLog("Periodic handshake sent - system ready for commands");
     } else {
@@ -289,6 +291,7 @@ void loop() {
       stringComplete = true;
       debugLog("String complete flag set");
       debugLog("Complete input string: '" + inputString + "'");
+      break; // Process one command per loop() iteration — prevents JOG+STOP merging
     }
     else {
       inputString += inChar;
@@ -376,7 +379,32 @@ void loop() {
       executeMovement(receivedSpeed, reveivedDist);
       
       debugLog("Movement tracking started from position: " + String(initialPosition));
-    } else {
+    }
+    // Check for JOG command
+    else if (inputString.indexOf("JOG:") != -1 && inputString.indexOf(";DIR:") != -1) {
+      int jogSpeedIdx = inputString.indexOf("JOG:");
+      int jogDirIdx   = inputString.indexOf(";DIR:");
+      int jogSpeed    = inputString.substring(jogSpeedIdx + 4, jogDirIdx).toInt();
+      jogDirection    = inputString.substring(jogDirIdx + 5).toInt();
+      debugLog("JOG command - Speed: " + String(jogSpeed) + ", Dir: " + String(jogDirection));
+      stepper.enableOutputs();
+      stepper.setMaxSpeed(jogSpeed);
+      stepper.setSpeed((float)(jogDirection * jogSpeed));
+      jogMode  = true;
+      lastMillis = millis();
+    }
+    // Check for STOP command (ends jog)
+    else if (inputString.indexOf("STOP") != -1) {
+      if (jogMode) {
+        jogMode = false;
+        stepper.setSpeed(0);
+        long finalPos = stepper.currentPosition();
+        stepper.setCurrentPosition(finalPos);
+        Serial.println("JOG_POS:" + String(finalPos));
+      }
+      Serial.println("ARDUINO_READY");
+    }
+    else {
       debugLog("Unknown command format: '" + inputString + "'");
       Serial.println("ARDUINO_READY"); // Signal ready for next command
     }
@@ -480,14 +508,35 @@ void loop() {
     debugLog("Movement timeout reached - forcing completion");
     Serial.println("MOVEMENT_TIMEOUT");
     moveFinished = 1;
-    
+
     // Reset stepper state
     long targetPosition = stepper.targetPosition();
     stepper.setCurrentPosition(targetPosition);
     initialPosition = targetPosition;
-    
+
     Serial.println("ARDUINO_READY");
     debugLog("Movement timeout - system reset and ready");
+  }
+
+  // Jog mode: constant-speed movement driven by held GUI button
+  if (jogMode) {
+    long currentPos = stepper.currentPosition();
+    bool atLimit = (jogDirection > 0 && currentPos >= 986000) ||
+                   (jogDirection < 0 && currentPos <= 0);
+    if (atLimit) {
+      jogMode = false;
+      stepper.setSpeed(0);
+      stepper.setCurrentPosition(currentPos);
+      Serial.println("JOG_POS:" + String(currentPos));
+      Serial.println("JOG_LIMIT");
+      Serial.println("ARDUINO_READY");
+    } else {
+      stepper.runSpeed();
+      if (millis() - lastMillis > 100) {
+        Serial.println("JOG_POS:" + String(currentPos));
+        lastMillis = millis();
+      }
+    }
   }
 }
 
@@ -589,6 +638,7 @@ void serialEvent() {
     if (inChar == '\n') {
       stringComplete = true;
       debugLog("String complete flag set");
+      break;
     }
     else {
       inputString += inChar;

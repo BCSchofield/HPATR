@@ -51,7 +51,9 @@
       "WebFetch(domain:docplayer.net)",
       "Bash(python -m py_compile src/gui/GUI_Clean.py)",
       "Bash(python3 -c \"import ast; ast.parse\\(open\\('/Users/benschofield/Documents/GitHub/HPATR/src/gui/GUI_Clean.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
-      "Bash(python -c \"import ast; ast.parse\\(open\\('src/gui/GUI_Clean.py'\\).read\\(\\)\\); print\\('OK'\\)\")"
+      "Bash(python -c \"import ast; ast.parse\\(open\\('src/gui/GUI_Clean.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\55154111\\\\Documents\\\\GitHub\\\\HPATR\" -Recurse -Directory)",
+      "Bash(Select-Object -First 30)"
     ]
   }
 }
