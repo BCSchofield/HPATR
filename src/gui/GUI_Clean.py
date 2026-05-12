@@ -1738,7 +1738,15 @@ class AtomisationApp(QMainWindow):
         self._speed_entry.setValidator(QDoubleValidator(0.0, 100000.0, 0))
         self._distance_entry.setValidator(QDoubleValidator(0.0, 72.5, 2))
         self._distance_entry.textChanged.connect(self._update_volume_label)
-        c3.layout().addWidget(input_row("Speed (steps/s)", self._speed_entry))
+        self._speed_entry.textChanged.connect(self._update_flowrate_label)
+
+        _speed_row = QWidget()
+        _speed_rl = QHBoxLayout(_speed_row); _speed_rl.setContentsMargins(0,0,0,0); _speed_rl.setSpacing(6)
+        self._flowrate_lbl = QLabel("≈ – mL/min")
+        self._flowrate_lbl.setStyleSheet(f"color: {CLR_TEXT_SEC}; font-size: 12px;")
+        _speed_rl.addWidget(input_row("Speed (steps/s)", self._speed_entry))
+        _speed_rl.addWidget(self._flowrate_lbl)
+        c3.layout().addWidget(_speed_row)
 
         _dist_row = QWidget()
         _dist_rl = QHBoxLayout(_dist_row); _dist_rl.setContentsMargins(0,0,0,0); _dist_rl.setSpacing(6)
@@ -2848,6 +2856,19 @@ class AtomisationApp(QMainWindow):
             self._volume_lbl.setText(f"≈ {vol_ml:.2f} mL")
         except (ValueError, AttributeError):
             self._volume_lbl.setText("≈ – mL")
+
+    def _update_flowrate_label(self):
+        import math as _math
+        _STEPS_PER_MM = 13600
+        _RADIUS_MM    = 20.27 / 2          # bore diameter 20.27 mm
+        _AREA_MM2     = _math.pi * _RADIUS_MM ** 2
+        try:
+            speed_steps_s = float(self._speed_entry.text())
+            mm_per_s  = speed_steps_s / _STEPS_PER_MM
+            ml_per_min = (_AREA_MM2 * mm_per_s / 1000.0) * 60.0
+            self._flowrate_lbl.setText(f"≈ {ml_per_min:.2f} mL/min")
+        except (ValueError, AttributeError):
+            self._flowrate_lbl.setText("≈ – mL/min")
 
     def _update_next_save_preview(self):
         now = datetime.now()
