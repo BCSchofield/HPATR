@@ -794,7 +794,41 @@ class PhantomController:
         else:
             self.current_cine.save_range = utils.FrameRange(frame_range[0], frame_range[1])
         self.current_cine.save_name = output_path
-        self.current_cine.save()
+        # The SDK's blocking save() has a known bug where it throws even on success.
+        # Use save_non_blocking() and poll save_percentage until complete.
+        # The callback sometimes stalls before reaching 100 — treat >= 90% stable
+        # for 30 s as done (file is effectively complete at that point).
+        self.current_cine._save_percentage = -1
+        self.current_cine.save_non_blocking()
+        deadline = time.time() + 600.0  # 10-min hard ceiling
+        last_pct, last_change = -1, time.time()
+        while time.time() < deadline:
+            pct = self.current_cine.save_percentage
+            if pct >= 100:
+                break
+            if pct != last_pct:
+                last_change = time.time()
+                last_pct = pct
+            elif pct >= 90 and time.time() - last_change > 30.0:
+                break  # stalled near end — assume complete
+            time.sleep(0.25)
+        else:
+            raise RuntimeError(
+                f"CINE save timed out (progress: {self.current_cine.save_percentage}%)")
+        return True
+
+    def save_tiffs_from_ram(self, output_dir, tiff_prefix='frame', cine_index=1, frame_range=None):
+        """Read frames from camera RAM and write TIFFs directly — no SDK save() involved."""
+        c = self.cam.Cine(cine_index)
+        r = c.range
+        if frame_range is not None:
+            f_start = max(r.first_image, frame_range[0])
+            f_end   = min(r.last_image,  frame_range[1])
+        else:
+            f_start, f_end = r.first_image, r.last_image
+        # get_imagessave uses range() which is exclusive at the end — pass f_end + 1
+        for i, (_, img) in enumerate(c.get_imagessave(utils.FrameRange(f_start, f_end + 1))):
+            cv2.imwrite(os.path.join(output_dir, f"{tiff_prefix}{i:06d}.tif"), img)
         return True
 
     def abort(self):
@@ -3341,21 +3375,36 @@ class AtomisationApp(QMainWindow):
             return best
 
         def _do_trigger():
-            import shutil
+            import shutil, glob as _glob
             try:
+                QTimer.singleShot(0, self, lambda: self._cam_arm_status_lbl.setText("Triggering…"))
                 self.phantom.trigger()
                 fps_val = float(self._cam_fps.text()) if self._cam_fps.text() else 1000.0
-                time.sleep(post_frames / fps_val + 0.5)  # wait for post-trigger frames + margin
+                # Fixed settle: post-trigger frames + 2 s for the camera to commit the cine.
+                # wait_for_cine() polling was replaced because cam.Cine() can block at the
+                # SDK level without raising, leaving the thread stuck indefinitely.
+                settle = post_frames / fps_val + 2.0
+                QTimer.singleShot(0, self,
+                    lambda s=settle: self._cam_arm_status_lbl.setText(f"Settling {s:.1f} s…"))
+                time.sleep(settle)
 
-                # 1 — save .cine with exact pre+post frame range (optional)
+                # 1 — save .cine (optional)
                 if save_video:
+                    QTimer.singleShot(0, self, lambda: self._cam_arm_status_lbl.setText("Saving .cine…"))
                     self.phantom.save_recording(cine_path, file_format='cine',
                                                 frame_range=frame_range)
 
-                # 2 — save frames as TIFFs (same range)
+                # 2 — read frames from camera RAM and write TIFFs ourselves.
+                # This bypasses the SDK's save() which has a known bug that throws
+                # an exception even when the save succeeds.
+                QTimer.singleShot(0, self, lambda: self._cam_arm_status_lbl.setText("Saving TIFFs…"))
                 os.makedirs(tiff_dir, exist_ok=True)
-                self.phantom.save_recording(tiff_prefix, file_format='tiff',
-                                            frame_range=frame_range)
+                for _old in (_glob.glob(os.path.join(tiff_dir, "*.tif")) +
+                             _glob.glob(os.path.join(tiff_dir, "*.tiff"))):
+                    try: os.remove(_old)
+                    except OSError: pass
+                self.phantom.save_tiffs_from_ram(tiff_dir, tiff_prefix='frame',
+                                                 frame_range=frame_range)
 
                 # 3 — find brightest frame, copy to Brightest_Frame/
                 os.makedirs(bright_dir, exist_ok=True)
@@ -4442,9 +4491,10 @@ class AtomisationApp(QMainWindow):
         focus = self.focusWidget()
         in_text_field = isinstance(focus, (QLineEdit, QTextEdit, QPlainTextEdit))
         if not in_text_field:
-            if event.key() == Qt.Key.Key_Space and self._cam_trigger_btn.isEnabled():
-                self._cam_trigger()
-                event.accept()
+            if event.key() == Qt.Key.Key_Space:
+                if self._cam_trigger_btn.isEnabled():
+                    self._cam_trigger()
+                event.accept()  # always consume space — prevents focused buttons activating
                 return
             if event.key() == Qt.Key.Key_C and self._cone_capture_btn.isEnabled():
                 self._cone_capture()
