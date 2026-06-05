@@ -725,6 +725,35 @@ class ArduinoController:
             print(f"Reset error: {e}")
 
 
+class RpmController:
+    def __init__(self, port, baudrate=115200):
+        self.port = port
+        self.baudrate = baudrate
+        self.ser = None
+
+    def connect(self):
+        try:
+            self.ser = serial.Serial(self.port, self.baudrate, timeout=2)
+            time.sleep(2)  # Arduino resets on serial open; wait for it to boot
+            try: self.ser.reset_input_buffer()
+            except Exception: pass
+        except serial.SerialException as e:
+            if "Resource busy" in str(e):
+                raise RuntimeError(f"Port {self.port} is busy.")
+            raise RuntimeError(f"Could not open port {self.port}: {e}")
+
+    def send_rpm(self, rpm: float):
+        cmd = f"RPM:{rpm:.1f}\n"
+        self.ser.write(cmd.encode())
+
+    def send_stop(self):
+        self.ser.write(b"STOP\n")
+
+    def disconnect(self):
+        if hasattr(self, 'ser') and self.ser and self.ser.is_open:
+            self.ser.close()
+
+
 class PhantomController:
     def __init__(self):
         self.ph = None; self.cam = None; self.current_cine = None
@@ -1022,6 +1051,10 @@ class AtomisationApp(QMainWindow):
         self.serial_reading_active = False
         self.serial_reader_thread = None
 
+        self.rpm_arduino: RpmController | None = None
+        self.rpm_connected = False
+        self.rpm_spinning = False
+
         self.phantom = PhantomController() if PHANTOM_SDK_AVAILABLE else None
         self.afg     = AFGController()     if PYVISA_AVAILABLE       else None
 
@@ -1202,7 +1235,7 @@ class AtomisationApp(QMainWindow):
 
         # Status dots — order: Arduino · Camera · AFG · BAR
         self._hdr_arduino_dot  = dot_indicator(CLR_TEXT_SEC)
-        self._hdr_arduino_lbl  = QLabel("Arduino")
+        self._hdr_arduino_lbl  = QLabel("Portenta")
         self._hdr_camera_dot   = dot_indicator(CLR_TEXT_SEC)
         self._hdr_camera_lbl   = QLabel("Camera")
         self._hdr_afg_dot      = dot_indicator(CLR_RED)
@@ -1644,9 +1677,9 @@ class AtomisationApp(QMainWindow):
         vl.setContentsMargins(20, 20, 20, 20)
         vl.setSpacing(14)
 
-        # ── Arduino ───────────────────────────────────────────────────────────
+        # ── Portenta ──────────────────────────────────────────────────────────
         c = card(w)
-        c.layout().addWidget(section_label("ARDUINO"))
+        c.layout().addWidget(section_label("PORTENTA"))
         c.layout().addWidget(separator())
 
         port_row = QWidget()
@@ -1658,6 +1691,7 @@ class AtomisationApp(QMainWindow):
         self._port_combo.addItems(self._get_serial_ports())
         self._port_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._port_combo.setMinimumWidth(120)
+        self._port_combo.setFixedHeight(51)
         refresh_port_btn = ghost_button("Refresh")
         refresh_port_btn.setFixedHeight(34)
         refresh_port_btn.setToolTip(
@@ -1692,6 +1726,72 @@ class AtomisationApp(QMainWindow):
         br.addStretch(); br.addWidget(self._arduino_status_lbl)
         c.layout().addWidget(btn_row)
         vl.addWidget(c)
+
+        # ── Arduino Uno (RPM motor) ────────────────────────────────────────────
+        cu = card(w)
+        cu.layout().addWidget(section_label("ARDUINO UNO"))
+        cu.layout().addWidget(separator())
+
+        rpm_port_row = QWidget()
+        rpr = QHBoxLayout(rpm_port_row); rpr.setContentsMargins(0,0,0,0); rpr.setSpacing(8)
+        rpm_port_lbl = QLabel("Port"); rpm_port_lbl.setFixedWidth(80)
+        rpm_port_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
+        self._rpm_port_combo = QComboBox()
+        self._rpm_port_combo.setEditable(True)
+        self._rpm_port_combo.addItems(self._get_serial_ports())
+        self._rpm_port_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._rpm_port_combo.setMinimumWidth(120)
+        self._rpm_port_combo.setFixedHeight(51)
+        rpm_refresh_btn = ghost_button("Refresh")
+        rpm_refresh_btn.setFixedHeight(34)
+        rpm_refresh_btn.setToolTip(
+            "<b>Refresh serial ports</b><br>"
+            "Re-scans all COM/USB serial ports and updates the dropdown")
+        rpm_refresh_btn.clicked.connect(self._refresh_rpm_ports)
+        rpr.addWidget(rpm_port_lbl); rpr.addWidget(self._rpm_port_combo); rpr.addWidget(rpm_refresh_btn)
+        cu.layout().addWidget(rpm_port_row)
+
+        rpm_btn_row = QWidget()
+        rbr = QHBoxLayout(rpm_btn_row); rbr.setContentsMargins(0,0,0,0); rbr.setSpacing(8)
+        self._rpm_connect_btn    = accent_button("Connect",    CLR_ACCENT)
+        self._rpm_disconnect_btn = ghost_button("Disconnect")
+        self._rpm_disconnect_btn.setEnabled(False)
+        self._rpm_connect_btn.setFixedHeight(36)
+        self._rpm_disconnect_btn.setFixedHeight(36)
+        self._rpm_connect_btn.setToolTip(
+            "<b>Connect to Arduino Uno</b><br>"
+            "Opens a serial connection on the selected port at 115200 baud")
+        self._rpm_disconnect_btn.setToolTip(
+            "<b>Disconnect Arduino Uno</b><br>"
+            "Stops the motor and closes the serial port")
+        self._rpm_connect_btn.clicked.connect(self._trigger_rpm_connect)
+        self._rpm_disconnect_btn.clicked.connect(self._trigger_rpm_disconnect)
+        self._rpm_status_lbl = QLabel("Not connected")
+        self._rpm_status_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
+        rbr.addWidget(self._rpm_connect_btn); rbr.addWidget(self._rpm_disconnect_btn)
+        rbr.addStretch(); rbr.addWidget(self._rpm_status_lbl)
+        cu.layout().addWidget(rpm_btn_row)
+
+        rpm_ctrl_row = QWidget()
+        rcr = QHBoxLayout(rpm_ctrl_row); rcr.setContentsMargins(0,0,0,0); rcr.setSpacing(8)
+        rpm_lbl = QLabel("RPM"); rpm_lbl.setFixedWidth(80)
+        rpm_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
+        self._rpm_entry = QLineEdit()
+        self._rpm_entry.setPlaceholderText("e.g. 100")
+        self._rpm_entry.setMinimumWidth(80)
+        self._rpm_entry.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._rpm_entry.setValidator(QDoubleValidator(0.0, 10000.0, 1))
+        self._rpm_spin_btn = accent_button("Spin", CLR_RED)
+        self._rpm_spin_btn.setFixedHeight(36)
+        self._rpm_spin_btn.setEnabled(False)
+        self._rpm_spin_btn.setToolTip(
+            "<b>Spin / Stop motor</b><br>"
+            "Sends the RPM value to the Arduino and starts the motor.<br>"
+            "Click again to stop.")
+        self._rpm_spin_btn.clicked.connect(self._toggle_spin)
+        rcr.addWidget(rpm_lbl); rcr.addWidget(self._rpm_entry); rcr.addWidget(self._rpm_spin_btn)
+        cu.layout().addWidget(rpm_ctrl_row)
+        vl.addWidget(cu)
 
         # ── Pressure ──────────────────────────────────────────────────────────
         c2 = card(w)
@@ -2721,14 +2821,26 @@ class AtomisationApp(QMainWindow):
     # Logic — Arduino
     # ─────────────────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _extract_port(text: str) -> str:
+        """Strip the description suffix from a combo entry like 'COM3 — Arduino Uno'."""
+        return text.split(" — ")[0].strip()
+
     def _get_serial_ports(self):
+        import re
         ports = serial.tools.list_ports.comports()
         result = []
         for p in ports:
             dev  = p.device
-            desc = (p.description or "").lower()
-            if dev.upper().startswith("COM") or "usb" in desc or "serial" in desc:
-                result.append(dev)
+            desc = (p.description or "").strip()
+            lower_desc = desc.lower()
+            if dev.upper().startswith("COM") or "usb" in lower_desc or "serial" in lower_desc:
+                if desc and desc != dev:
+                    # Windows appends "(COMx)" to the description — strip it since we show the port separately
+                    desc_clean = re.sub(r'\s*\(COM\d+\)\s*$', '', desc, flags=re.IGNORECASE).strip()
+                    result.append(f"{dev} — {desc_clean}")
+                else:
+                    result.append(dev)
         return result
 
     def _refresh_ports(self):
@@ -2738,8 +2850,15 @@ class AtomisationApp(QMainWindow):
         if ports:
             self._set_status(f"Found {len(ports)} port(s)")
 
+    def _refresh_rpm_ports(self):
+        ports = self._get_serial_ports()
+        self._rpm_port_combo.clear()
+        self._rpm_port_combo.addItems(ports)
+        if ports:
+            self._set_status(f"Found {len(ports)} port(s)")
+
     def _trigger_arduino_connect(self):
-        port = self._port_combo.currentText()
+        port = self._extract_port(self._port_combo.currentText())
         if not port:
             self._set_status("No port selected", CLR_ORANGE); return
         self._connect_btn.setEnabled(False)
@@ -2789,6 +2908,86 @@ class AtomisationApp(QMainWindow):
         self._arduino_status_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
         self._hdr_arduino_dot.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:10px; background:transparent;")
         self._set_status("Arduino disconnected")
+
+    # ── RPM Arduino (Uno) ─────────────────────────────────────────────────────
+
+    def _trigger_rpm_connect(self):
+        port = self._extract_port(self._rpm_port_combo.currentText())
+        if not port:
+            self._set_status("No port selected for RPM Arduino", CLR_ORANGE); return
+        self._rpm_connect_btn.setEnabled(False)
+        self._set_status(f"Connecting RPM Arduino on {port}…")
+        thread = QThread(self)
+        worker = Worker(self._do_rpm_connect, port)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.result.connect(self._on_rpm_connected)
+        worker.error.connect(self._on_rpm_error)
+        worker.result.connect(thread.quit)
+        worker.error.connect(thread.quit)
+        thread.start()
+        self._rpm_thread = thread; self._rpm_worker = worker
+
+    def _do_rpm_connect(self, port):
+        ctrl = RpmController(port)
+        ctrl.connect()
+        return ctrl
+
+    def _on_rpm_connected(self, ctrl):
+        self.rpm_arduino = ctrl
+        self.rpm_connected = True
+        self._rpm_connect_btn.setEnabled(False)
+        self._rpm_disconnect_btn.setEnabled(True)
+        self._rpm_spin_btn.setEnabled(True)
+        self._rpm_status_lbl.setText("Connected")
+        self._rpm_status_lbl.setStyleSheet(f"color:{CLR_GREEN}; font-size:12px; font-weight:600;")
+        self._set_status("RPM Arduino connected", CLR_GREEN)
+
+    def _on_rpm_error(self, msg):
+        self._rpm_connect_btn.setEnabled(True)
+        self._set_status(f"RPM Arduino error: {msg}", CLR_RED)
+
+    def _trigger_rpm_disconnect(self):
+        if self.rpm_arduino:
+            if self.rpm_spinning:
+                try: self.rpm_arduino.send_stop()
+                except Exception: pass
+            self.rpm_arduino.disconnect()
+            self.rpm_arduino = None
+        self.rpm_connected = False
+        self.rpm_spinning = False
+        self._rpm_connect_btn.setEnabled(True)
+        self._rpm_disconnect_btn.setEnabled(False)
+        self._rpm_spin_btn.setEnabled(False)
+        self._rpm_spin_btn.setText("Spin")
+        self._rpm_spin_btn.setStyleSheet(accent_button("Spin", CLR_RED).styleSheet())
+        self._rpm_status_lbl.setText("Not connected")
+        self._rpm_status_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
+        self._set_status("RPM Arduino disconnected")
+
+    def _toggle_spin(self):
+        if not self.rpm_connected or not self.rpm_arduino:
+            self._set_status("RPM Arduino not connected", CLR_ORANGE); return
+        if self.rpm_spinning:
+            try:
+                self.rpm_arduino.send_stop()
+            except Exception as e:
+                self._set_status(f"RPM stop error: {e}", CLR_RED); return
+            self.rpm_spinning = False
+            self._rpm_spin_btn.setText("Spin")
+            self._rpm_spin_btn.setStyleSheet(accent_button("Spin", CLR_RED).styleSheet())
+            self._set_status("Motor stopped")
+        else:
+            try:
+                rpm_text = self._rpm_entry.text().strip()
+                rpm = float(rpm_text) if rpm_text else 100.0
+                self.rpm_arduino.send_rpm(rpm)
+            except Exception as e:
+                self._set_status(f"RPM send error: {e}", CLR_RED); return
+            self.rpm_spinning = True
+            self._rpm_spin_btn.setText("Stop")
+            self._rpm_spin_btn.setStyleSheet(accent_button("Stop", CLR_GREEN).styleSheet())
+            self._set_status(f"Motor spinning at {rpm:.0f} RPM", CLR_GREEN)
 
     def _start_serial_reader(self):
         if not self.arduino or not self.arduino.ser: return
@@ -4506,6 +4705,10 @@ class AtomisationApp(QMainWindow):
         self.serial_reading_active = False
         self._live_feed_timer.stop()
         if self.arduino:     self.arduino.disconnect()
+        if self.rpm_arduino:
+            try: self.rpm_arduino.send_stop()
+            except Exception: pass
+            self.rpm_arduino.disconnect()
         if self.phantom:     self.phantom.disconnect()
         if self.afg:         self.afg.disconnect()
         plt.close('all')
