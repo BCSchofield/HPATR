@@ -1508,7 +1508,7 @@ class AtomisationApp(QMainWindow):
         nozzle_card.layout().addWidget(input_row("Nozzle No.", self._nozzle_entry, label_width=90))
 
         self._orifice_combo = QComboBox()
-        self._orifice_combo.addItems(["1mm","1.2mm","1.4mm","1.6mm","1.8mm","2mm"])
+        self._orifice_combo.addItems(["0.2mm","0.3mm","0.5mm","0.8mm","1mm","1.2mm","1.4mm","1.6mm","1.8mm","2mm"])
         nozzle_card.layout().addWidget(input_row("Orifice", self._orifice_combo, label_width=90))
 
         vl.addWidget(nozzle_card)
