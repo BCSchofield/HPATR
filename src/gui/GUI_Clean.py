@@ -3095,8 +3095,9 @@ class AtomisationApp(QMainWindow):
             self._cone_auto_status_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
             self.arduino.send_pressure_off_command()
             self._last_experiment_snapshot = {
-                'timestamps': list(self.pressure_data['experiment_data']['timestamps']),
-                'pressures':  list(self.pressure_data['experiment_data']['pressures']),
+                'timestamps':     list(self.pressure_data['experiment_data']['timestamps']),
+                'pressures':      list(self.pressure_data['experiment_data']['pressures']),
+                'camera_windows': list(self.pressure_data.get('camera_windows', [])),
             }
             self._experiment_saved = False
             self._exp_progress.setRange(0, 100)
@@ -3578,7 +3579,15 @@ class AtomisationApp(QMainWindow):
             try:
                 QTimer.singleShot(0, self, lambda: self._cam_arm_status_lbl.setText("Triggering…"))
                 self.phantom.trigger()
+                _trigger_wall = time.time()
                 fps_val = float(self._cam_fps.text()) if self._cam_fps.text() else 1000.0
+                if self.pressure_data.get('experiment_active') and \
+                        self.pressure_data.get('experiment_start_time') is not None:
+                    _trel = _trigger_wall - self.pressure_data['experiment_start_time']
+                    self.pressure_data['camera_windows'].append((
+                        _trel - pre_frames / fps_val,
+                        _trel + post_frames / fps_val,
+                    ))
                 # Fixed settle: post-trigger frames + 2 s for the camera to commit the cine.
                 # wait_for_cine() polling was replaced because cam.Cine() can block at the
                 # SDK level without raising, leaving the thread stuck indefinitely.
@@ -4215,6 +4224,7 @@ class AtomisationApp(QMainWindow):
         self.pressure_data['experiment_active'] = True
         self.pressure_data['experiment_start_time'] = time.time()
         self.pressure_data['experiment_data'] = {'timestamps':[], 'pressures':[]}
+        self.pressure_data['camera_windows'] = []
         self._last_cone_path = None   # reset so we only capture this experiment's image
 
         # ── Create run folder eagerly ──────────────────────────────────────────
@@ -4354,6 +4364,7 @@ class AtomisationApp(QMainWindow):
 
             # Use the frozen snapshot taken at experiment end — not the live buffer
             snap = self._last_experiment_snapshot
+            camera_windows = snap.get('camera_windows', [])
             pressures = snap['pressures']
             if pressures:
                 p_min, p_max = min(pressures), max(pressures)
@@ -4381,32 +4392,36 @@ class AtomisationApp(QMainWindow):
                 self._run_folder = run_dir
             ind_path = os.path.join(run_dir, "run_summary.xlsx")
 
-            meta = {
-                'Field': ['Timestamp', 'Nozzle', 'Orifice', 'Pressure Range',
-                          'Speed (steps/s)', 'Distance (mm)', 'Notes'],
-                'Value': [ts_str, nozzle, orifice, p_range_str,
-                          speed_str, distance_str, notes],
-            }
-            with pd.ExcelWriter(ind_path, engine='openpyxl') as writer:
-                pd.DataFrame(meta).to_excel(writer, sheet_name='Metadata', index=False)
-                if snap['timestamps']:
-                    pd.DataFrame(snap).to_excel(writer, sheet_name='Pressure', index=False)
+            # ── Build Pressure DataFrame with camera window annotations ──────────
+            # cam_start_N / cam_end_N values appear only on the row whose timestamp
+            # is closest to the camera window boundary; all other rows are blank.
+            press_df = None
+            if snap['timestamps']:
+                press_df = pd.DataFrame({'timestamps': snap['timestamps'],
+                                         'pressures':  snap['pressures']})
+                if camera_windows:
+                    _ts_arr = snap['timestamps']
+                    for _i, (_cw_s, _cw_e) in enumerate(camera_windows, start=1):
+                        _col_s, _col_e = f'cam_start_{_i}', f'cam_end_{_i}'
+                        press_df[_col_s] = float('nan')
+                        press_df[_col_e] = float('nan')
+                        _idx_s = min(range(len(_ts_arr)), key=lambda j: abs(_ts_arr[j] - _cw_s))
+                        _idx_e = min(range(len(_ts_arr)), key=lambda j: abs(_ts_arr[j] - _cw_e))
+                        press_df.at[_idx_s, _col_s] = round(_cw_s, 3)
+                        press_df.at[_idx_e, _col_e] = round(_cw_e, 3)
 
-            # ── Render pressure thumbnail ─────────────────────────────────────
-            # Strategy: set DPI = DISPLAY_H / fig_h so the PNG renders at
-            # exactly DISPLAY_H pixels tall.  That means we embed at 1:1 scale
-            # vertically — no squash/stretch — and text always appears the same
-            # visual size regardless of how wide the chart is.
-            DISPLAY_H   = 165          # Excel display height, pixels
-            MIN_W_PX    = 347          # minimum display width (= 10 s baseline)
-            PX_PER_SEC  = MIN_W_PX / 10.0
-            FIG_H_IN    = 2.0
-            DPI         = DISPLAY_H / FIG_H_IN   # ≈ 82.5 — height is always 165 px
-            pressure_buf = None
+            # ── Render pressure chart (shared between run_summary and master_log) ─
+            # DPI = DISPLAY_H / fig_h → PNG always renders at exactly DISPLAY_H px tall.
+            DISPLAY_H          = 165
+            MIN_W_PX           = 347
+            PX_PER_SEC         = MIN_W_PX / 10.0
+            FIG_H_IN           = 2.0
+            DPI                = DISPLAY_H / FIG_H_IN
+            pressure_buf       = None
             pressure_img_width = MIN_W_PX
             if pressures:
-                t0 = snap['timestamps'][0]
-                rel_ts = [t - t0 for t in snap['timestamps']]
+                t0         = snap['timestamps'][0]
+                rel_ts     = [t - t0 for t in snap['timestamps']]
                 duration_s = rel_ts[-1] if rel_ts else 0.0
                 target_w_px = max(MIN_W_PX, int(duration_s * PX_PER_SEC))
                 fig_w = target_w_px / DPI
@@ -4415,6 +4430,8 @@ class AtomisationApp(QMainWindow):
                 ax.set_facecolor('#f5f5f7')
                 ax.plot(rel_ts, pressures, color='#0a84ff', linewidth=2.5, solid_capstyle='round')
                 ax.fill_between(rel_ts, pressures, alpha=0.12, color='#0a84ff')
+                for _cw_s, _cw_e in camera_windows:
+                    ax.axvspan(_cw_s - t0, _cw_e - t0, alpha=0.2, color='red', zorder=0)
                 ax.set_xlabel('Time (s)', fontsize=8, color='#3a3a3c')
                 ax.set_ylabel('Pressure (BAR)', fontsize=8, color='#3a3a3c')
                 ax.set_title(f'N{nozzle}  {orifice}  {p_range_str}',
@@ -4429,15 +4446,31 @@ class AtomisationApp(QMainWindow):
                 fig.savefig(pressure_buf, format='png', dpi=DPI,
                             bbox_inches='tight', facecolor='white')
                 plt.close(fig)
-                # Read actual PNG dimensions from header; bbox_inches='tight' may
-                # trim a few pixels, so derive final Excel width from true size.
                 import struct as _struct
                 pressure_buf.seek(16)
                 actual_w = _struct.unpack('>I', pressure_buf.read(4))[0]
                 actual_h = _struct.unpack('>I', pressure_buf.read(4))[0]
-                # Scale to DISPLAY_H — height ratio ≈ 1 so width ≈ actual_w
                 pressure_img_width = max(MIN_W_PX, int(actual_w * DISPLAY_H / actual_h))
                 pressure_buf.seek(0)
+
+            meta = {
+                'Field': ['Timestamp', 'Nozzle', 'Orifice', 'Pressure Range',
+                          'Speed (steps/s)', 'Distance (mm)', 'Notes'],
+                'Value': [ts_str, nozzle, orifice, p_range_str,
+                          speed_str, distance_str, notes],
+            }
+            with pd.ExcelWriter(ind_path, engine='openpyxl') as writer:
+                pd.DataFrame(meta).to_excel(writer, sheet_name='Metadata', index=False)
+                if press_df is not None:
+                    press_df.to_excel(writer, sheet_name='Pressure', index=False)
+                    if pressure_buf:
+                        pressure_buf.seek(0)
+                        _rs_img = XLImage(pressure_buf)
+                        _rs_img.width  = pressure_img_width
+                        _rs_img.height = DISPLAY_H
+                        writer.sheets['Pressure'].add_image(
+                            _rs_img, f'A{len(press_df) + 3}')
+                        pressure_buf.seek(0)
 
             # ── Master log: insert at row 2, shift image anchors first ───────
             import re as _re
