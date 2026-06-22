@@ -43,7 +43,7 @@ bool homed = false; //Used to check if stepper has been homed
 int lastMillis; //Used to store the last time the motor was updated
 bool stringComplete = false; //Used to check if the string has been completed
 int receivedSpeed = 0;
-int reveivedDist = 0;
+float reveivedDist = 0.0f;
 long initialPosition = 0; //Used to store the starting position for movement tracking
 int lastProgressPercent = -1; //Used to track the last reported progress percentage
 String inputString = "";
@@ -364,7 +364,7 @@ void loop() {
       debugLog("Speed index: " + String(speedIndex) + ", Distance index: " + String(distIndex));
       
       receivedSpeed = inputString.substring(speedIndex + 6, distIndex).toInt();
-      reveivedDist = inputString.substring(distIndex + 6).toInt();
+      reveivedDist = inputString.substring(distIndex + 6).toFloat();
       
       debugLog("Parsed values - Speed: " + String(receivedSpeed) + ", Distance: " + String(reveivedDist));
       
@@ -587,11 +587,11 @@ void homing() {
   debugLog("Homing sequence completed successfully");
 }
 
-void executeMovement(int speed, int distance) {
+void executeMovement(int speed, float distance) {
   debugLog("Executing movement - Speed: " + String(speed) + ", Distance: " + String(distance));
-  
+
   // Calculate travel distance in steps
-  long travelSteps = distance * steps_per_mm;
+  long travelSteps = (long)round((float)distance * steps_per_mm);
   
   // Get current position and calculate target position
   long currentPos = stepper.currentPosition();

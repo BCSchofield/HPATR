@@ -1055,6 +1055,9 @@ class AtomisationApp(QMainWindow):
         self.rpm_connected = False
         self.rpm_spinning = False
 
+        self._ramp_running = False
+        self._movement_done_event = threading.Event()
+
         self.phantom = PhantomController() if PHANTOM_SDK_AVAILABLE else None
         self.afg     = AFGController()     if PYVISA_AVAILABLE       else None
 
@@ -1632,8 +1635,9 @@ class AtomisationApp(QMainWindow):
         self._tabs.addTab(self._build_afg_tab(),          "  AFG1062  ")
         self._tabs.addTab(self._build_calibration_tab(),  "  Calibration  ")
         self._tabs.addTab(self._build_cone_tab(),         "  Cone  ")
+        self._tabs.addTab(self._build_testers_tab(),      "  Testers  ")
         self._tabs.addTab(self._build_how_to_tab(),       "")
-        self._tabs.setTabVisible(5, False)   # content shown via corner button
+        self._tabs.setTabVisible(6, False)   # content shown via corner button
 
         # "How To" corner button — styled as a tab, physically right-aligned
         _how_to_btn = QPushButton("  How To  ")
@@ -1655,7 +1659,7 @@ class AtomisationApp(QMainWindow):
             }}
         """)
         _how_to_btn.clicked.connect(
-            lambda checked: self._tabs.setCurrentIndex(5 if checked else 0)
+            lambda checked: self._tabs.setCurrentIndex(6 if checked else 0)
         )
         self._tabs.currentChanged.connect(
             lambda idx: _how_to_btn.setChecked(idx == 5)
@@ -2632,6 +2636,69 @@ class AtomisationApp(QMainWindow):
         vl.addStretch()
         scroll.setWidget(w); return scroll
 
+    # ── Testers tab ───────────────────────────────────────────────────────────
+
+    def _build_testers_tab(self):
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("background: transparent; border: none;")
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        w = QWidget()
+        w.setMinimumWidth(0)
+        vl = QVBoxLayout(w)
+        vl.setContentsMargins(20, 20, 20, 20)
+        vl.setSpacing(14)
+
+        # ── Ramp Speed Test ───────────────────────────────────────────────────
+        c = card(w)
+        c.layout().addWidget(section_label("RAMP SPEED TEST"))
+        c.layout().addWidget(separator())
+
+        desc = QLabel(
+            "Increases motor speed by a fixed increment at regular intervals until the "
+            "syringe limit (72.5 mm) is reached or STOP is pressed. "
+            "Output is printed to the Console panel on the right."
+        )
+        desc.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
+        desc.setWordWrap(True)
+        c.layout().addWidget(desc)
+
+        self._ramp_start_speed_entry = QLineEdit()
+        self._ramp_start_speed_entry.setPlaceholderText("e.g. 250")
+        self._ramp_start_speed_entry.setValidator(QIntValidator(1, 100000))
+        c.layout().addWidget(input_row("Start Speed (steps/s)", self._ramp_start_speed_entry))
+
+        self._ramp_step_time_entry = QLineEdit()
+        self._ramp_step_time_entry.setPlaceholderText("e.g. 5")
+        self._ramp_step_time_entry.setValidator(QDoubleValidator(0.1, 3600.0, 1))
+        c.layout().addWidget(input_row("Step Time (s)", self._ramp_step_time_entry))
+
+        self._ramp_increment_entry = QLineEdit()
+        self._ramp_increment_entry.setPlaceholderText("e.g. 25")
+        self._ramp_increment_entry.setValidator(QIntValidator(1, 100000))
+        c.layout().addWidget(input_row("Speed Increment (steps/s)", self._ramp_increment_entry))
+
+        ramp_btn_row = QWidget()
+        rbr = QHBoxLayout(ramp_btn_row); rbr.setContentsMargins(0, 0, 0, 0); rbr.setSpacing(8)
+        self._ramp_start_btn = accent_button("Start Ramp", CLR_ACCENT)
+        self._ramp_start_btn.setFixedHeight(36)
+        self._ramp_stop_btn  = accent_button("STOP", CLR_RED)
+        self._ramp_stop_btn.setFixedHeight(36)
+        self._ramp_stop_btn.setEnabled(False)
+        self._ramp_start_btn.clicked.connect(self._start_ramp_test)
+        self._ramp_stop_btn.clicked.connect(self._stop_ramp_test)
+        rbr.addWidget(self._ramp_start_btn)
+        rbr.addWidget(self._ramp_stop_btn)
+        rbr.addStretch()
+        c.layout().addWidget(ramp_btn_row)
+
+        vl.addWidget(c)
+        vl.addStretch()
+
+        scroll.setWidget(w)
+        return scroll
+
     # ── How To tab ────────────────────────────────────────────────────────────
 
     def _build_how_to_tab(self):
@@ -3088,6 +3155,7 @@ class AtomisationApp(QMainWindow):
         self.cumulative_distance = self._pre_move_cumulative + self._pending_move_distance
         self._pending_move_distance = 0.0
         self._update_travel_bar()
+        self._movement_done_event.set()
         if self.pressure_data['experiment_active']:
             self.pressure_data['experiment_active'] = False
             self._cone_auto_timer.stop()
@@ -4674,6 +4742,93 @@ class AtomisationApp(QMainWindow):
             return os.path.join(lacie, "Experiments", "YYYY", "MM", "DD",
                                 "HHMMSS_Nnozzle_pressureBAR", "run_summary.xlsx")
         return "Saving to: experiment_logs/ (no LaCie drive found)"
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Logic — Testers
+    # ─────────────────────────────────────────────────────────────────────────
+
+    # steps/mm from the Portenta sketch: ((200 * 16) / 2) * 4.25
+    _STEPS_PER_MM = 6800
+
+    def _start_ramp_test(self):
+        if not self._require_arduino(): return
+        try:
+            start_speed = int(self._ramp_start_speed_entry.text())
+            step_time   = float(self._ramp_step_time_entry.text())
+            increment   = int(self._ramp_increment_entry.text())
+            if start_speed <= 0 or step_time <= 0 or increment <= 0:
+                raise ValueError
+        except ValueError:
+            self._set_status("Fill in all ramp test fields with valid values", CLR_ORANGE)
+            return
+
+        self._ramp_running = True
+        self._ramp_start_btn.setEnabled(False)
+        self._ramp_stop_btn.setEnabled(True)
+        self._log(f"Ramp test started — start: {start_speed} steps/s, "
+                  f"+{increment} steps/s every {step_time}s")
+
+        def _run():
+            speed = start_speed
+            try:
+                while self._ramp_running:
+                    remaining_mm = self.MAX_MOTOR_MM - self.cumulative_distance
+                    if remaining_mm <= 0.01:
+                        QTimer.singleShot(0, self,
+                            lambda: self._log("Syringe limit reached — ramp test complete"))
+                        break
+
+                    dist_mm = (speed * step_time) / self._STEPS_PER_MM
+                    dist_mm = min(dist_mm, remaining_mm)
+                    clipped  = dist_mm < (speed * step_time) / self._STEPS_PER_MM
+
+                    QTimer.singleShot(0, self,
+                        lambda s=speed, d=dist_mm: self._log(
+                            f"Speed: {s} steps/s  |  moving {d:.3f} mm"))
+
+                    self._movement_done_event.clear()
+                    self._pre_move_cumulative   = self.cumulative_distance
+                    self._pending_move_distance = dist_mm
+                    self.arduino.send_motor_command(speed, round(dist_mm, 3))
+
+                    if clipped:
+                        QTimer.singleShot(0, self,
+                            lambda: self._log("Syringe limit reached — ramp test complete"))
+                        self._movement_done_event.wait(timeout=step_time * 3)
+                        break
+
+                    # Wait for Portenta to confirm move complete before next command
+                    if not self._movement_done_event.wait(timeout=step_time * 3):
+                        QTimer.singleShot(0, self,
+                            lambda: self._log("Warning: move timed out — ramp stopped"))
+                        break
+
+                    if not self._ramp_running:
+                        break
+
+                    speed += increment
+
+            except Exception as e:
+                err = str(e)
+                QTimer.singleShot(0, self, lambda: self._log(f"Ramp error: {err}"))
+            finally:
+                QTimer.singleShot(0, self, self._on_ramp_finished)
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _stop_ramp_test(self):
+        self._ramp_running = False
+        self._movement_done_event.set()  # unblock any waiting ramp step
+        if self.arduino and self.arduino.ser:
+            try: self.arduino.ser.write(b"STOP\n")
+            except Exception: pass
+        self._log("Ramp test stopped")
+
+    def _on_ramp_finished(self):
+        self._ramp_running = False
+        self._ramp_start_btn.setEnabled(True)
+        self._ramp_stop_btn.setEnabled(False)
+        self._set_status("Ramp test finished")
 
     def _warn(self, title, message):
         dlg = QMessageBox(self)

@@ -4,14 +4,14 @@
   "exposure_us": "500",
   "width": "2560",
   "height": "1600",
-  "pre_trigger_s": "0.1",
-  "post_trigger_s": "0.1",
-  "px_per_mm": 103.3,
+  "pre_trigger_s": "0.25",
+  "post_trigger_s": "0.25",
+  "px_per_mm": 98.8,
   "cone_camera_index": 0,
-  "save_video": false,
+  "save_video": true,
   "run_ai_analysis": false,
   "cone_autofocus": true,
   "cone_focus": 50,
   "cone_top_crop": 0.24,
-  "last_pressure": 1.0
+  "last_pressure": 5.0
 }
