@@ -707,6 +707,10 @@ class ArduinoController:
         self.ser.write("PRESSURE_OFF\n".encode())
         log_serial("Sent: PRESSURE_OFF")
 
+    def send_stop(self):
+        self.ser.write(b"STOP\n")
+        log_serial("Sent: STOP")
+
     def disconnect(self):
         if hasattr(self, 'ser') and self.ser and self.ser.is_open:
             self.ser.close()
@@ -813,7 +817,8 @@ class PhantomController:
     def trigger(self):
         self.cam.trigger(); self.recording_started = True; self.is_armed = False; return True
 
-    def save_recording(self, output_path, cine_index=1, file_format='cine', frame_range=None):
+    def save_recording(self, output_path, cine_index=1, file_format='cine', frame_range=None,
+                       progress_cb=None):
         self.current_cine = self.cam.Cine(cine_index)
         fmt_map = {'cine': 0, 'tiff': -8, 'tif': -8, 'avi': -7}
         self.current_cine.save_type = utils.FileTypeEnum(fmt_map.get(file_format, 0))
@@ -834,11 +839,14 @@ class PhantomController:
         while time.time() < deadline:
             pct = self.current_cine.save_percentage
             if pct >= 100:
+                if progress_cb: progress_cb(100)
                 break
             if pct != last_pct:
                 last_change = time.time()
                 last_pct = pct
+                if progress_cb: progress_cb(max(0, pct))
             elif pct >= 90 and time.time() - last_change > 30.0:
+                if progress_cb: progress_cb(100)
                 break  # stalled near end — assume complete
             time.sleep(0.25)
         else:
@@ -846,7 +854,8 @@ class PhantomController:
                 f"CINE save timed out (progress: {self.current_cine.save_percentage}%)")
         return True
 
-    def save_tiffs_from_ram(self, output_dir, tiff_prefix='frame', cine_index=1, frame_range=None):
+    def save_tiffs_from_ram(self, output_dir, tiff_prefix='frame', cine_index=1, frame_range=None,
+                            progress_cb=None):
         """Read frames from camera RAM and write TIFFs directly — no SDK save() involved."""
         c = self.cam.Cine(cine_index)
         r = c.range
@@ -855,9 +864,11 @@ class PhantomController:
             f_end   = min(r.last_image,  frame_range[1])
         else:
             f_start, f_end = r.first_image, r.last_image
+        total = max(1, f_end - f_start + 1)
         # get_imagessave uses range() which is exclusive at the end — pass f_end + 1
         for i, (_, img) in enumerate(c.get_imagessave(utils.FrameRange(f_start, f_end + 1))):
             cv2.imwrite(os.path.join(output_dir, f"{tiff_prefix}{i:06d}.tif"), img)
+            if progress_cb: progress_cb(int((i + 1) / total * 100))
         return True
 
     def abort(self):
@@ -1469,7 +1480,7 @@ class AtomisationApp(QMainWindow):
         pressure_off_card.layout().setSpacing(6)
         pressure_off_card.layout().addWidget(title_label("Emergency", 13))
 
-        self._pressure_off_btn_left = accent_button("Pressure Off", CLR_RED)
+        self._pressure_off_btn_left = accent_button("Motor and Pressure Off", CLR_RED)
         self._pressure_off_btn_left.setFixedHeight(40)
         self._pressure_off_btn_left.setToolTip(
             "<b>Emergency pressure off</b><br>"
@@ -1824,9 +1835,8 @@ class AtomisationApp(QMainWindow):
         off_p_btn.setToolTip(
             "<b>Pressure off</b><br>"
             "1. Immediately closes the pressure valve<br>"
-            "2. Zeroes the AliCat setpoint<br>"
-            "Same as the Emergency button in the left panel")
-        off_p_btn.clicked.connect(self._pressure_off)
+            "2. Zeroes the AliCat setpoint")
+        off_p_btn.clicked.connect(self._pressure_off_only)
 
         self._last_pressure_btn = QPushButton("Set last pressure")
         self._last_pressure_btn.setStyleSheet(f"""
@@ -2137,6 +2147,18 @@ class AtomisationApp(QMainWindow):
         self._cam_arm_status_lbl = QLabel("Not armed")
         self._cam_arm_status_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
         c3.layout().addWidget(self._cam_arm_status_lbl)
+
+        self._cam_save_progress = QProgressBar()
+        self._cam_save_progress.setRange(0, 100)
+        self._cam_save_progress.setValue(0)
+        self._cam_save_progress.setFixedHeight(6)
+        self._cam_save_progress.setTextVisible(False)
+        self._cam_save_progress.setStyleSheet(
+            f"QProgressBar {{ background-color:{CLR_INPUT}; border:none; border-radius:3px; }}"
+            f"QProgressBar::chunk {{ background-color:{CLR_ACCENT}; border-radius:3px; }}"
+        )
+        self._cam_save_progress.setVisible(False)
+        c3.layout().addWidget(self._cam_save_progress)
 
         cap_row = QWidget()
         cpr = QHBoxLayout(cap_row); cpr.setContentsMargins(0,0,0,0); cpr.setSpacing(8)
@@ -3297,10 +3319,19 @@ class AtomisationApp(QMainWindow):
         self._pressure_entry.setText(f"{self._last_pressure:.2f}")
         self._set_pressure()
 
-    def _pressure_off(self):
+    def _pressure_off_only(self):
         if not self._require_arduino(): return
         self.arduino.send_pressure_off_command()
         self._set_status("Pressure off")
+
+    def _pressure_off(self):
+        if not self._require_arduino(): return
+        self.arduino.send_pressure_off_command()
+        try: self.arduino.send_stop()
+        except Exception: pass
+        if self._ramp_running:
+            self._stop_ramp_test()
+        self._set_status("Motor and pressure off")
 
     def _home_motor(self):
         if not self._require_arduino(): return
@@ -3664,23 +3695,38 @@ class AtomisationApp(QMainWindow):
                     lambda s=settle: self._cam_arm_status_lbl.setText(f"Settling {s:.1f} s…"))
                 time.sleep(settle)
 
+                def _update_progress(pct):
+                    QTimer.singleShot(0, self, lambda p=pct: self._cam_save_progress.setValue(p))
+
                 # 1 — save .cine (optional)
                 if save_video:
-                    QTimer.singleShot(0, self, lambda: self._cam_arm_status_lbl.setText("Saving .cine…"))
+                    QTimer.singleShot(0, self, lambda: (
+                        self._cam_arm_status_lbl.setText("Saving .cine…"),
+                        self._cam_save_progress.setValue(0),
+                        self._cam_save_progress.setVisible(True),
+                    ))
                     self.phantom.save_recording(cine_path, file_format='cine',
-                                                frame_range=frame_range)
+                                                frame_range=frame_range,
+                                                progress_cb=_update_progress)
+                    QTimer.singleShot(0, self, lambda: self._cam_save_progress.setValue(0))
 
                 # 2 — read frames from camera RAM and write TIFFs ourselves.
                 # This bypasses the SDK's save() which has a known bug that throws
                 # an exception even when the save succeeds.
-                QTimer.singleShot(0, self, lambda: self._cam_arm_status_lbl.setText("Saving TIFFs…"))
+                QTimer.singleShot(0, self, lambda: (
+                    self._cam_arm_status_lbl.setText("Saving TIFFs…"),
+                    self._cam_save_progress.setValue(0),
+                    self._cam_save_progress.setVisible(True),
+                ))
                 os.makedirs(tiff_dir, exist_ok=True)
                 for _old in (_glob.glob(os.path.join(tiff_dir, "*.tif")) +
                              _glob.glob(os.path.join(tiff_dir, "*.tiff"))):
                     try: os.remove(_old)
                     except OSError: pass
                 self.phantom.save_tiffs_from_ram(tiff_dir, tiff_prefix='frame',
-                                                 frame_range=frame_range)
+                                                 frame_range=frame_range,
+                                                 progress_cb=_update_progress)
+                QTimer.singleShot(0, self, lambda: self._cam_save_progress.setVisible(False))
 
                 # 3 — find brightest frame, copy to Brightest_Frame/
                 os.makedirs(bright_dir, exist_ok=True)
@@ -3711,6 +3757,7 @@ class AtomisationApp(QMainWindow):
                     self._cam_arm_status_lbl.setText("Error — re-arm manually"),
                     self._cam_arm_btn.setEnabled(True),
                     self._set_camera_armed_indicator("transparent"),
+                    self._cam_save_progress.setVisible(False),
                 ))
 
         threading.Thread(target=_do_trigger, daemon=True).start()
@@ -4520,6 +4567,9 @@ class AtomisationApp(QMainWindow):
                 actual_h = _struct.unpack('>I', pressure_buf.read(4))[0]
                 pressure_img_width = max(MIN_W_PX, int(actual_w * DISPLAY_H / actual_h))
                 pressure_buf.seek(0)
+            # Extract bytes now so PIL closing the BytesIO inside XLImage doesn't break
+            # the second use of the same buffer for the master log
+            pressure_bytes = pressure_buf.getvalue() if pressure_buf else None
 
             meta = {
                 'Field': ['Timestamp', 'Nozzle', 'Orifice', 'Pressure Range',
@@ -4531,14 +4581,12 @@ class AtomisationApp(QMainWindow):
                 pd.DataFrame(meta).to_excel(writer, sheet_name='Metadata', index=False)
                 if press_df is not None:
                     press_df.to_excel(writer, sheet_name='Pressure', index=False)
-                    if pressure_buf:
-                        pressure_buf.seek(0)
-                        _rs_img = XLImage(pressure_buf)
+                    if pressure_bytes:
+                        _rs_img = XLImage(io.BytesIO(pressure_bytes))
                         _rs_img.width  = pressure_img_width
                         _rs_img.height = DISPLAY_H
                         writer.sheets['Pressure'].add_image(
                             _rs_img, f'A{len(press_df) + 3}')
-                        pressure_buf.seek(0)
 
             # ── Master log: insert at row 2, shift image anchors first ───────
             import re as _re
@@ -4613,8 +4661,8 @@ class AtomisationApp(QMainWindow):
             else:
                 ws.cell(row=row_num, column=9).value = 'NO DATA AVAILABLE'
 
-            if pressure_buf:
-                pimg = XLImage(pressure_buf)
+            if pressure_bytes:
+                pimg = XLImage(io.BytesIO(pressure_bytes))
                 pimg.width = pressure_img_width; pimg.height = DISPLAY_H
                 # Widen column J to fit this image (56 chars ≈ 347 px baseline)
                 ws.column_dimensions['J'].width = max(56, pressure_img_width * 56 / 347)
