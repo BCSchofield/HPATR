@@ -13,5 +13,13 @@
   "cone_autofocus": true,
   "cone_focus": 50,
   "cone_top_crop": 0.24,
-  "last_pressure": 5.0
+  "last_pressure": 5.0,
+  "lamella_crop": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 256
+  },
+  "lamella_model_path": "",
+  "lamella_arch": "smp"
 }
