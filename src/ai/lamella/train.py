@@ -45,7 +45,9 @@ class ProgressTracker:
     def update(self, epoch: int, loss: float):
         self.train_losses.append(loss)
         elapsed = time.time() - self._start
-        print(f"  Epoch {epoch:3d} | loss={loss:.4f} | elapsed={elapsed:.0f}s")
+        print(f"  Epoch {epoch:3d} | loss={loss:.4f} | elapsed={elapsed:.0f}s", flush=True)
+        if epoch % 5 == 0:
+            self.save_plot()
 
     def update_val(self, epoch: int, iou: float):
         self.val_ious.append(iou)
@@ -103,6 +105,8 @@ def train(
     batch_size: int,
     device: str,
     resume: str | None = None,
+    image_subdir: str = "images",
+    mask_subdir: str = "masks",
 ):
     import torch
     from torch.utils.data import DataLoader, random_split
@@ -116,7 +120,7 @@ def train(
 
     os.makedirs(output_dir, exist_ok=True)
 
-    ds = LamellaDataset(data_dir, augment=True)
+    ds = LamellaDataset(data_dir, image_subdir=image_subdir, mask_subdir=mask_subdir, augment=True)
     val_size  = max(1, int(len(ds) * 0.1))
     train_size = len(ds) - val_size
     train_ds, val_ds = random_split(ds, [train_size, val_size],
@@ -194,19 +198,30 @@ def train(
     return final_path
 
 
+def _best_device() -> str:
+    import torch
+    if torch.cuda.is_available():
+        return "cuda"
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
 def _main():
     parser = argparse.ArgumentParser(description="Train lamella segmentation U-Net.")
-    parser.add_argument("--arch",       default="smp",  choices=["smp", "tiny"])
-    parser.add_argument("--data",       required=True,  help="Data dir with images/ and masks/.")
-    parser.add_argument("--output",     default=None,   help="Output dir (default: auto-timestamped).")
-    parser.add_argument("--epochs",     type=int,       default=None)
-    parser.add_argument("--lr",         type=float,     default=None)
-    parser.add_argument("--batch-size", type=int,       default=None)
-    parser.add_argument("--resume",     default=None,   help="Resume from checkpoint .pt.")
+    parser.add_argument("--arch",          default="smp",    choices=["smp", "tiny"])
+    parser.add_argument("--data",          required=True,    help="Data root dir.")
+    parser.add_argument("--image-subdir",  default="images", help="Subfolder name for images.")
+    parser.add_argument("--mask-subdir",   default="masks",  help="Subfolder name for masks.")
+    parser.add_argument("--output",        default=None,     help="Output dir (default: auto-timestamped).")
+    parser.add_argument("--epochs",        type=int,         default=None)
+    parser.add_argument("--lr",            type=float,       default=None)
+    parser.add_argument("--batch-size",    type=int,         default=None)
+    parser.add_argument("--resume",        default=None,     help="Resume from checkpoint .pt.")
     args = parser.parse_args()
 
-    import torch
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = _best_device()
+    print(f"Device: {device}")
 
     defaults = DEFAULTS[args.arch]
     epochs     = args.epochs     or defaults["epochs"]
@@ -225,6 +240,8 @@ def _main():
         batch_size=batch_size,
         device=device,
         resume=args.resume,
+        image_subdir=args.image_subdir,
+        mask_subdir=args.mask_subdir,
     )
 
 

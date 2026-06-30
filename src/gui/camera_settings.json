@@ -15,11 +15,11 @@
   "cone_top_crop": 0.24,
   "last_pressure": 5.0,
   "lamella_crop": {
-    "x": 10,
-    "y": 10,
-    "w": 256,
-    "h": 256
+    "x": 860,
+    "y": 829,
+    "w": 307,
+    "h": 583
   },
-  "lamella_model_path": "",
-  "lamella_arch": "smp"
+  "lamella_model_path": "/Volumes/LaCie/Experiments/Lamella/LamellaDataSet/lamella_tiny_2026_06_30_13_25_37/lamella_tiny_best.pt",
+  "lamella_arch": "tiny"
 }

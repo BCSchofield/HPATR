@@ -1154,9 +1154,9 @@ class AtomisationApp(QMainWindow):
         self._last_pressure: float | None = None     # last successfully set pressure (persisted)
 
         # Lamella analysis state (populated by _load_camera_settings; used by Phase 1 GUI)
-        self._lamella_crop_cfg:   dict = {"x": 0, "y": 0, "w": 256, "h": 256}
+        self._lamella_crop_cfg:   dict = {"x": 860, "y": 829, "w": 307, "h": 583}
         self._lamella_model_path: str  = ""
-        self._lamella_arch:       str  = "smp"
+        self._lamella_arch:       str  = "tiny"
         self._lamella_on:         bool = False   # toggle flag — True only when user enables
         self._lamella_seg        = None          # StubSegmenter or LamellaSegmenter instance
         self._lamella_busy:       bool = False   # True while inference thread is running
@@ -2519,18 +2519,22 @@ class AtomisationApp(QMainWindow):
         lam_model_lbl = QLabel("Model:")
         lam_model_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
         self._lamella_arch_combo = QComboBox()
-        self._lamella_arch_combo.addItems(["stub", "smp", "tiny"])
-        self._lamella_arch_combo.setCurrentText("stub")
+        self._lamella_arch_combo.addItems(["tiny", "smp"])
+        self._lamella_arch_combo.setCurrentText("tiny")
         self._lamella_arch_combo.setFixedHeight(28)
         self._lamella_arch_combo.setToolTip(
-            "<b>stub</b> — synthetic test mask (no model required)<br>"
-            "<b>smp</b> — transfer-learning U-Net (MobileNetV2, recommended)<br>"
-            "<b>tiny</b> — hand-written from-scratch U-Net (thesis baseline)")
+            "<b>tiny</b> — hand-written from-scratch U-Net (fastest, best on this dataset)<br>"
+            "<b>smp</b> — transfer-learning U-Net (MobileNetV2)")
         self._lamella_arch_combo.currentTextChanged.connect(self._lamella_arch_changed)
+        self._lamella_browse_btn = ghost_button("Browse…")
+        self._lamella_browse_btn.setFixedHeight(26)
+        self._lamella_browse_btn.setToolTip("Select a trained .pt model file")
+        self._lamella_browse_btn.clicked.connect(self._lamella_browse_model)
         self._lamella_status_lbl = QLabel("No model loaded")
         self._lamella_status_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
         lam_model_rl.addWidget(lam_model_lbl)
         lam_model_rl.addWidget(self._lamella_arch_combo)
+        lam_model_rl.addWidget(self._lamella_browse_btn)
         lam_model_rl.addStretch()
         lam_model_rl.addWidget(self._lamella_status_lbl)
         c_lam.layout().addWidget(lam_model_row)
@@ -2542,7 +2546,7 @@ class AtomisationApp(QMainWindow):
         crop_lbl = QLabel("Outlet crop:")
         crop_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
         lam_crop_rl.addWidget(crop_lbl)
-        for axis, default in [("x", 0), ("y", 0), ("w", 256), ("h", 256)]:
+        for axis, default in [("x", 860), ("y", 829), ("w", 307), ("h", 583)]:
             lbl = QLabel(axis + ":")
             lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
             spin = QSpinBox(); spin.setRange(0, 4096); spin.setValue(default)
@@ -2575,7 +2579,11 @@ class AtomisationApp(QMainWindow):
             f"QProgressBar::chunk {{ background-color:{CLR_GREEN}; border-radius:3px; }}"
         )
         self._lamella_batch_progress.setVisible(False)
+        self._lamella_save_masks_cb = QCheckBox("Output masks")
+        self._lamella_save_masks_cb.setToolTip(
+            "Save a 2-panel image for each frame: original crop | masked overlay with probe lines")
         lam_batch_rl.addWidget(self._lamella_batch_btn)
+        lam_batch_rl.addWidget(self._lamella_save_masks_cb)
         lam_batch_rl.addWidget(self._lamella_batch_progress, stretch=1)
         c_lam.layout().addWidget(lam_batch_row)
 
@@ -4160,24 +4168,48 @@ class AtomisationApp(QMainWindow):
             self._lamella_result = None
             self._lamella_pending_frame = None
 
+    def _lamella_browse_model(self):
+        """Open file picker to select a trained .pt model file."""
+        start_dir = os.path.dirname(self._lamella_model_path) if self._lamella_model_path else os.path.expanduser("~")
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select Lamella Model", start_dir, "PyTorch Model (*.pt *.pth)"
+        )
+        if not path:
+            return
+        self._lamella_model_path = path
+        fname = os.path.basename(path)
+        self._lamella_status_lbl.setText(f"{fname} — click toggle to load")
+        self._lamella_status_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
+        self._lamella_seg = None
+        self._save_camera_settings()
+
     def _lamella_load_segmenter(self):
         """Instantiate the selected segmenter (stub, smp, or tiny)."""
         arch = self._lamella_arch_combo.currentText()
         model_path = getattr(self, "_lamella_model_path", "")
         try:
-            if arch == "stub" or not model_path:
-                from src.ai.lamella.infer import StubSegmenter
-                self._lamella_seg = StubSegmenter()
-                self._lamella_status_lbl.setText("Stub segmenter active")
+            if not model_path:
+                self._lamella_status_lbl.setText("No model selected — use Browse…")
+                self._lamella_status_lbl.setStyleSheet(f"color:#e05252; font-size:11px;")
+                self._lamella_toggle_btn.setChecked(False)
+                return
             else:
                 import torch
-                from src.ai.lamella.infer import LamellaSegmenter
-                device = "cuda" if torch.cuda.is_available() else "cpu"
+                from ai.lamella.infer import LamellaSegmenter
+                if torch.cuda.is_available():
+                    device = "cuda"
+                elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                    device = "mps"
+                else:
+                    device = "cpu"
                 self._lamella_seg = LamellaSegmenter.load(model_path, arch=arch, device=device)
-                self._lamella_status_lbl.setText(f"{arch} model loaded ({device})")
+                fname = os.path.basename(model_path)
+                self._lamella_status_lbl.setText(f"{fname} ({device})")
+                self._lamella_status_lbl.setStyleSheet(f"color:{CLR_GREEN}; font-size:11px;")
         except Exception as e:
             self._lamella_seg = None
             self._lamella_status_lbl.setText(f"Load error: {e}")
+            self._lamella_status_lbl.setStyleSheet(f"color:#e05252; font-size:11px;")
             self._lamella_toggle_btn.setChecked(False)
 
     def _lamella_arch_changed(self, arch: str):
@@ -4205,7 +4237,7 @@ class AtomisationApp(QMainWindow):
         self._lamella_pending_frame = None
         self._lamella_busy = True
 
-        from src.ai.lamella.crop import OutletCrop
+        from ai.lamella.crop import OutletCrop
         crop_box = OutletCrop.from_dict(self._lamella_crop_cfg)
         px_per_mm = self._get_px_per_mm()
         seg = self._lamella_seg
@@ -4249,18 +4281,27 @@ class AtomisationApp(QMainWindow):
         if self._lamella_seg is None:
             return
 
-        from src.ai.lamella.crop import OutletCrop
-        from src.ai.lamella.batch_tiff import run_batch
+        from ai.lamella.crop import OutletCrop
+        from ai.lamella.batch_tiff import run_batch
 
         crop_box  = OutletCrop.from_dict(self._lamella_crop_cfg)
         px_per_mm = self._get_px_per_mm()
-        seg       = self._lamella_seg
+        seg        = self._lamella_seg
+        save_masks = self._lamella_save_masks_cb.isChecked()
 
         self._lamella_batch_btn.setEnabled(False)
         self._lamella_batch_progress.setValue(0)
         self._lamella_batch_progress.setVisible(True)
 
+        self._log(f"── Lamella batch started ({tiff_dir}){' [masks ON]' if save_masks else ''} ──")
+
+        _last_milestone = [-1]
+
         def _update_progress(pct):
+            milestone = (pct // 10) * 10
+            if milestone > _last_milestone[0]:
+                _last_milestone[0] = milestone
+                QTimer.singleShot(0, self, lambda p=milestone: self._log(f"Lamella batch: {p}%"))
             QTimer.singleShot(0, self, lambda p=pct: self._lamella_batch_progress.setValue(p))
 
         def _run():
@@ -4271,9 +4312,12 @@ class AtomisationApp(QMainWindow):
                     crop_box=crop_box,
                     px_per_mm=px_per_mm,
                     progress_cb=_update_progress,
+                    save_masks=save_masks,
                 )
                 QTimer.singleShot(0, self, lambda: self._lamella_batch_done(out_csv))
             except Exception as e:
+                import traceback
+                traceback.print_exc()
                 QTimer.singleShot(0, self, lambda: self._lamella_batch_error(str(e)))
 
         threading.Thread(target=_run, daemon=True).start()
@@ -4281,11 +4325,16 @@ class AtomisationApp(QMainWindow):
     def _lamella_batch_done(self, out_csv: str):
         self._lamella_batch_btn.setEnabled(True)
         self._lamella_batch_progress.setVisible(False)
+        self._log(f"── Lamella batch complete → {os.path.basename(out_csv)} ──")
+        self._flash_log_border(CLR_GREEN)
         self._set_status(f"Lamella batch complete — {out_csv}", CLR_GREEN)
 
     def _lamella_batch_error(self, err: str):
         self._lamella_batch_btn.setEnabled(True)
         self._lamella_batch_progress.setVisible(False)
+        self._log(f"── Lamella batch error: {err} ──")
+        self._flash_log_border("#ff3b30")
+        self._set_status(f"Lamella batch error — {err}", "#e05252")
         self._warn("Lamella Batch Error", err)
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -4317,7 +4366,7 @@ class AtomisationApp(QMainWindow):
         """Main-thread callback — paint the latest frame into the feed label."""
         display = frame
         if self._lamella_on and self._lamella_result is not None:
-            from src.ai.lamella.overlay import draw_overlay
+            from ai.lamella.overlay import draw_overlay
             display = draw_overlay(frame, self._lamella_result)
         pix = self._phantom_frame_to_pixmap(display)
         pix = pix.scaled(
@@ -5125,9 +5174,22 @@ class AtomisationApp(QMainWindow):
                 self._last_pressure_btn.setText(f"Set last: {self._last_pressure:.2f} BAR")
                 self._last_pressure_btn.setEnabled(True)
             # Lamella analysis settings
-            self._lamella_crop_cfg   = s.get("lamella_crop",       {"x": 0, "y": 0, "w": 256, "h": 256})
+            self._lamella_crop_cfg   = s.get("lamella_crop",       {"x": 860, "y": 829, "w": 307, "h": 583})
             self._lamella_model_path = s.get("lamella_model_path", "")
-            self._lamella_arch       = s.get("lamella_arch",       "smp")
+            self._lamella_arch       = s.get("lamella_arch",       "tiny")
+            # Push loaded values into the widgets
+            for axis in ("x", "y", "w", "h"):
+                spin = getattr(self, f"_lamella_crop_{axis}", None)
+                if spin is not None:
+                    spin.blockSignals(True)
+                    spin.setValue(self._lamella_crop_cfg.get(axis, 0))
+                    spin.blockSignals(False)
+            self._lamella_arch_combo.blockSignals(True)
+            self._lamella_arch_combo.setCurrentText(self._lamella_arch)
+            self._lamella_arch_combo.blockSignals(False)
+            if self._lamella_model_path:
+                fname = os.path.basename(self._lamella_model_path)
+                self._lamella_status_lbl.setText(f"{fname} — click toggle to load")
         except Exception as e:
             print(f"[WARNING] Could not load camera settings: {e}")
 
@@ -5161,7 +5223,7 @@ class AtomisationApp(QMainWindow):
                 "cone_top_crop":     self._cone_top_crop_spin.value(),
                 "last_pressure":     self._last_pressure,
                 # Lamella analysis settings
-                "lamella_crop":       getattr(self, "_lamella_crop_cfg",   {"x": 0, "y": 0, "w": 256, "h": 256}),
+                "lamella_crop":       getattr(self, "_lamella_crop_cfg",   {"x": 860, "y": 829, "w": 307, "h": 583}),
                 "lamella_model_path": getattr(self, "_lamella_model_path", ""),
                 "lamella_arch":       getattr(self, "_lamella_arch",       "smp"),
             }

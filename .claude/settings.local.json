@@ -55,7 +55,17 @@
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\55154111\\\\Documents\\\\GitHub\\\\HPATR\" -Recurse -Directory)",
       "Bash(Select-Object -First 30)",
       "Bash(python -c \"from pyphantom import Phantom, utils, cine; import inspect; c_src = inspect.getfile\\(cine\\); print\\(c_src\\)\")",
-      "Bash(python3 -c \"import ast; ast.parse\\(open\\('/Users/benschofield/Documents/GitHub/HPATR/src/gui/GUI_Clean.py'\\).read\\(\\)\\); print\\('AST OK'\\)\")"
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('/Users/benschofield/Documents/GitHub/HPATR/src/gui/GUI_Clean.py'\\).read\\(\\)\\); print\\('AST OK'\\)\")",
+      "Read(//Volumes/LaCie/Experiments/Lamella/LamellaDataSet/Images/**)",
+      "Bash(python3 -c ' *)",
+      "Bash(python3 crop_to_png.py)",
+      "Bash(python3 -c \"import torch; print\\('torch:', torch.__version__\\); print\\('CUDA:', torch.cuda.is_available\\(\\)\\); import platform; print\\('chip:', platform.processor\\(\\)\\)\")",
+      "Bash(python3 -c \"import segmentation_models_pytorch; print\\('smp:', segmentation_models_pytorch.__version__\\)\")",
+      "Bash(python3 -c \"import torch; print\\(torch.__version__\\)\")",
+      "Bash(ls /Volumes/LaCie/Experiments/Lamella/Tester_Tiffs/ | head -5)",
+      "Read(//Volumes/LaCie/Experiments/Lamella/Tester_Tiffs/**)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('src/gui/GUI_Clean.py'\\).read\\(\\)\\); print\\('AST OK'\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('/Users/benschofield/Documents/GitHub/HPATR/src/ai/lamella/batch_tiff.py'\\).read\\(\\)\\); print\\('OK'\\)\")"
     ]
   }
 }

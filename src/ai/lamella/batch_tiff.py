@@ -23,6 +23,50 @@ from .infer import LamellaSegmenter, StubSegmenter, Result
 _CSV_FIELDS = ["frame_index", "filename", "thickness_px", "thickness_mm", "ok"]
 
 
+def _save_mask_image(
+    crop: np.ndarray,
+    result,
+    out_path: str,
+) -> None:
+    """Save a 2-panel PNG: original crop | masked overlay with probe lines."""
+    h, w = crop.shape[:2]
+
+    # Normalise crop to 8-bit for display
+    crop8 = crop.astype(np.float32)
+    lo, hi = crop8.min(), crop8.max()
+    crop8 = ((crop8 - lo) / max(hi - lo, 1.0) * 255).astype(np.uint8)
+
+    left  = cv2.cvtColor(crop8, cv2.COLOR_GRAY2BGR)
+    right = left.copy()
+
+    mask = result.mask
+    t    = result.thickness
+
+    # Green tint on liquid pixels
+    liquid = mask > 0
+    right[liquid] = (right[liquid] * 0.4 + np.array([0, 200, 80]) * 0.6).astype(np.uint8)
+
+    # Draw all probe lines in cyan
+    for y, x_left, x_right in t.probe_lines:
+        cv2.line(right, (0, y), (w - 1, y), (255, 200, 0), 1, cv2.LINE_AA)
+
+    # Highlight the median probe row in yellow (middle index)
+    if t.probe_lines:
+        mid = t.probe_lines[len(t.probe_lines) // 2]
+        cv2.line(right, (0, mid[0]), (w - 1, mid[0]), (0, 220, 255), 2, cv2.LINE_AA)
+
+    # Thickness text bottom-left of right panel
+    if t.ok:
+        label = f"{t.thickness_px:.1f}px"
+        if t.thickness_mm is not None:
+            label += f"  {t.thickness_mm:.3f}mm"
+        cv2.putText(right, label, (4, h - 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1, cv2.LINE_AA)
+
+    panel = np.hstack([left, right])
+    cv2.imwrite(out_path, panel)
+
+
 def run_batch(
     tiff_dir: str,
     segmenter,
@@ -30,6 +74,7 @@ def run_batch(
     px_per_mm: float = 0.0,
     output_csv: Optional[str] = None,
     progress_cb: Optional[Callable[[int], None]] = None,
+    save_masks: bool = False,
 ) -> str:
     """
     Iterate over sorted TIFF files in tiff_dir, run segmenter on each, write CSV.
@@ -58,6 +103,11 @@ def run_batch(
     if output_csv is None:
         output_csv = os.path.join(tiff_dir, "lamella_thickness.csv")
 
+    masks_dir = None
+    if save_masks:
+        masks_dir = os.path.join(tiff_dir, "masks")
+        os.makedirs(masks_dir, exist_ok=True)
+
     total = len(files)
 
     with open(output_csv, "w", newline="") as f:
@@ -85,7 +135,10 @@ def run_batch(
                     "thickness_mm": f"{t.thickness_mm:.4f}" if t.thickness_mm is not None else "",
                     "ok": str(t.ok),
                 })
-
+                if masks_dir is not None:
+                    crop = crop_box.apply(frame)
+                    stem = os.path.splitext(os.path.basename(fpath))[0]
+                    _save_mask_image(crop, result, os.path.join(masks_dir, stem + "_mask.png"))
             if progress_cb is not None:
                 progress_cb(int((idx + 1) / total * 100))
 

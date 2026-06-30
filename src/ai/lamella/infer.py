@@ -169,21 +169,22 @@ class LamellaSegmenter:
         if self._model is None:
             raise RuntimeError("Model not loaded — call LamellaSegmenter.load() first.")
         import torch
-        import torch.nn.functional as F
+        import cv2
 
         h, w = crop.shape[:2]
-        # Normalise to float32 [0,1], add batch+channel dims
-        img = crop.astype(np.float32)
-        if img.max() > 1.0:
-            img = img / (img.max() + 1e-6)
-        tensor = torch.from_numpy(img).unsqueeze(0).unsqueeze(0).to(self._device)  # [1,1,H,W]
+        # Model was trained at 256×256; resize in, resize mask back out
+        resized = cv2.resize(crop, (256, 256), interpolation=cv2.INTER_LINEAR)
+        img = resized.astype(np.float32)
+        lo, hi = img.min(), img.max()
+        img = (img - lo) / max(hi - lo, 1.0)   # normalise to [0,1] — handles 8-bit and 16-bit
+        tensor = torch.from_numpy(img).unsqueeze(0).unsqueeze(0).to(self._device)  # [1,1,256,256]
 
         with torch.no_grad():
-            logits = self._model(tensor)           # [1,1,H,W]
+            logits = self._model(tensor)
             prob = torch.sigmoid(logits)
-            pred = (prob > 0.5).squeeze().cpu().numpy().astype(np.uint8) * 255
+            pred_256 = (prob > 0.5).squeeze().cpu().numpy().astype(np.uint8) * 255
 
-        return pred
+        return cv2.resize(pred_256, (w, h), interpolation=cv2.INTER_NEAREST)
 
     def analyse_frame(
         self,
