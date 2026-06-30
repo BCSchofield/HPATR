@@ -381,6 +381,7 @@ class ClickableImageWidget(QLabel):
         self._pan_x       = 0.0   # top-left of view in original image px
         self._pan_y       = 0.0
         self._drag_start  = None  # (screen_x, screen_y, pan_x, pan_y) on right-drag start
+        self._hover_img   = None  # (img_x, img_y) of cursor — drives snap preview
         self.setMouseTracking(True)
         self.setCursor(Qt.CursorShape.CrossCursor)
 
@@ -472,10 +473,15 @@ class ClickableImageWidget(QLabel):
         img_x, img_y = self._screen_to_img(event.position().x(), event.position().y())
         img_x = int(max(0, min(img_x, self._pixmap_orig.width()  - 1)))
         img_y = int(max(0, min(img_y, self._pixmap_orig.height() - 1)))
-        # Second point locked to same x-column as first (vertical measurement)
+        # Second point: auto-snap to the dominant axis relative to P1
         if len(self._points) == 1:
-            img_x = self._points[0][0]
+            x1, y1 = self._points[0]
+            if abs(img_y - y1) >= abs(img_x - x1):
+                img_x = x1   # vertical measurement — lock X
+            else:
+                img_y = y1   # horizontal measurement — lock Y
         self._points.append((img_x, img_y))
+        self._hover_img = None
         self._redraw()
         self.pointsChanged.emit(self._points)
 
@@ -488,6 +494,13 @@ class ClickableImageWidget(QLabel):
             self._pan_x = px0 - dx / s
             self._pan_y = py0 - dy / s
             self._clamp_pan()
+            self._redraw()
+        elif len(self._points) == 1 and self._pixmap_orig is not None:
+            # Track cursor for snap preview while placing P2
+            hx, hy = self._screen_to_img(event.position().x(), event.position().y())
+            hx = int(max(0, min(hx, self._pixmap_orig.width()  - 1)))
+            hy = int(max(0, min(hy, self._pixmap_orig.height() - 1)))
+            self._hover_img = (hx, hy)
             self._redraw()
 
     def mouseReleaseEvent(self, event):
@@ -608,6 +621,48 @@ class ClickableImageWidget(QLabel):
             painter.fillRect(lx, ly, lw_px, lh_px, backing)
             painter.setPen(QColor("#ffffff"))
             painter.drawText(lx + 3, ly + lh_px - 5, label)
+
+        # ── Snap preview: dashed line + V/H badge while placing P2 ──────────
+        if len(self._points) == 1 and self._hover_img is not None:
+            x1, y1 = self._points[0]
+            hx, hy = self._hover_img
+            if abs(hy - y1) >= abs(hx - x1):
+                # vertical snap — P2 will lock to x1
+                snap_x, snap_y = x1, hy
+                snap_mode = "V"
+            else:
+                # horizontal snap — P2 will lock to y1
+                snap_x, snap_y = hx, y1
+                snap_mode = "H"
+            sx1, sy1   = self._img_to_screen(x1,     y1)
+            sx2, sy2   = self._img_to_screen(snap_x, snap_y)
+            dash_pen = QPen(QColor("#f5a623"), 1.5)
+            dash_pen.setStyle(Qt.PenStyle.DashLine)
+            painter.setPen(dash_pen)
+            painter.drawLine(int(sx1), int(sy1), int(sx2), int(sy2))
+            # Ghost point at snapped position
+            painter.setPen(QPen(QColor("#f5a623"), 1.5))
+            painter.drawEllipse(int(sx2) - 4, int(sy2) - 4, 8, 8)
+            # V / H mode badge (bottom-left of canvas)
+            font = painter.font(); font.setPointSize(9); font.setBold(True)
+            painter.setFont(font)
+            fm    = painter.fontMetrics()
+            badge = f" {snap_mode} "
+            bw = fm.horizontalAdvance(badge) + 4
+            bh = fm.height() + 4
+            painter.fillRect(6, canvas.height() - bh - 6, bw, bh, QColor(0, 0, 0, 180))
+            painter.setPen(QColor("#f5a623"))
+            painter.drawText(8, canvas.height() - 8, badge)
+
+        # ── Measurement line between P1 and P2 ───────────────────────────────
+        if len(self._points) == 2:
+            (x1, y1), (x2, y2) = self._points
+            sx1, sy1 = self._img_to_screen(x1, y1)
+            sx2, sy2 = self._img_to_screen(x2, y2)
+            mpen = QPen(QColor("#f5a623"), 1.5)
+            mpen.setStyle(Qt.PenStyle.SolidLine)
+            painter.setPen(mpen)
+            painter.drawLine(int(sx1), int(sy1), int(sx2), int(sy2))
 
         # ── Zoom badge (top-right corner) ─────────────────────────────────────
         if self._zoom > 1.01:
@@ -1065,6 +1120,7 @@ class AtomisationApp(QMainWindow):
         self.rpm_arduino: RpmController | None = None
         self.rpm_connected = False
         self.rpm_spinning = False
+        self._rpm_serial_active = False
 
         self._ramp_running = False
         self._movement_done_event = threading.Event()
@@ -1814,7 +1870,11 @@ class AtomisationApp(QMainWindow):
             "Sends the RPM value to the Arduino and starts the motor.<br>"
             "Click again to stop.")
         self._rpm_spin_btn.clicked.connect(self._toggle_spin)
+        self._rpm_actual_lbl = QLabel("● 0 RPM")
+        self._rpm_actual_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px; min-width:80px;")
+        self._rpm_actual_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         rcr.addWidget(rpm_lbl); rcr.addWidget(self._rpm_entry); rcr.addWidget(self._rpm_spin_btn)
+        rcr.addWidget(self._rpm_actual_lbl)
         cu.layout().addWidget(rpm_ctrl_row)
         vl.addWidget(cu)
 
@@ -3159,12 +3219,14 @@ class AtomisationApp(QMainWindow):
         self._rpm_status_lbl.setText("Connected")
         self._rpm_status_lbl.setStyleSheet(f"color:{CLR_GREEN}; font-size:12px; font-weight:600;")
         self._set_status("RPM Arduino connected", CLR_GREEN)
+        self._start_rpm_serial_reader()
 
     def _on_rpm_error(self, msg):
         self._rpm_connect_btn.setEnabled(True)
         self._set_status(f"RPM Arduino error: {msg}", CLR_RED)
 
     def _trigger_rpm_disconnect(self):
+        self._rpm_serial_active = False
         if self.rpm_arduino:
             if self.rpm_spinning:
                 try: self.rpm_arduino.send_stop()
@@ -3180,6 +3242,8 @@ class AtomisationApp(QMainWindow):
         self._rpm_spin_btn.setStyleSheet(accent_button("Spin", CLR_RED).styleSheet())
         self._rpm_status_lbl.setText("Not connected")
         self._rpm_status_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
+        self._rpm_actual_lbl.setText("● 0 RPM")
+        self._rpm_actual_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px; min-width:80px;")
         self._set_status("RPM Arduino disconnected")
 
     def _toggle_spin(self):
@@ -3193,6 +3257,8 @@ class AtomisationApp(QMainWindow):
             self.rpm_spinning = False
             self._rpm_spin_btn.setText("Spin")
             self._rpm_spin_btn.setStyleSheet(accent_button("Spin", CLR_RED).styleSheet())
+            self._rpm_actual_lbl.setText("● 0 RPM")
+            self._rpm_actual_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px; min-width:80px;")
             self._set_status("Motor stopped")
         else:
             try:
@@ -3205,6 +3271,38 @@ class AtomisationApp(QMainWindow):
             self._rpm_spin_btn.setText("Stop")
             self._rpm_spin_btn.setStyleSheet(accent_button("Stop", CLR_GREEN).styleSheet())
             self._set_status(f"Motor spinning at {rpm:.0f} RPM", CLR_GREEN)
+
+    def _start_rpm_serial_reader(self):
+        if not self.rpm_arduino or not self.rpm_arduino.ser: return
+        self._rpm_serial_active = True
+        t = threading.Thread(target=self._rpm_serial_reader_loop, daemon=True)
+        t.start()
+
+    def _rpm_serial_reader_loop(self):
+        while self._rpm_serial_active and self.rpm_arduino and self.rpm_arduino.ser:
+            try:
+                if self.rpm_arduino.ser.in_waiting > 0:
+                    line = self.rpm_arduino.ser.readline().decode('utf-8', errors='replace').strip()
+                    if line.startswith("RPM_ACTUAL:"):
+                        try:
+                            val = float(line.split(":")[1])
+                            QTimer.singleShot(0, self, lambda v=val: self._on_rpm_actual_reading(v))
+                        except Exception:
+                            pass
+                else:
+                    time.sleep(0.02)
+            except serial.SerialException:
+                break
+            except Exception:
+                pass
+
+    def _on_rpm_actual_reading(self, rpm: float):
+        if rpm > 0.5:
+            self._rpm_actual_lbl.setText(f"▶ {rpm:.0f} RPM")
+            self._rpm_actual_lbl.setStyleSheet(f"color:{CLR_GREEN}; font-size:12px; font-weight:600; min-width:80px;")
+        else:
+            self._rpm_actual_lbl.setText("● 0 RPM")
+            self._rpm_actual_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px; min-width:80px;")
 
     def _start_serial_reader(self):
         if not self.arduino or not self.arduino.ser: return
@@ -4254,6 +4352,11 @@ class AtomisationApp(QMainWindow):
             labels.append(f"Point {i + 1}: ({x}, {y})")
         for i in range(len(points), 2):
             labels.append(f"Point {i + 1}: not set")
+        if len(points) == 2:
+            (x1, y1), (x2, y2) = points
+            axis = "vertical" if abs(y2 - y1) >= abs(x2 - x1) else "horizontal"
+            px   = max(abs(x2 - x1), abs(y2 - y1))
+            labels.append(f"[{axis}  {px} px]")
         self._cal_point_status.setText("  |  ".join(labels))
         self._cal_calc_btn.setEnabled(len(points) == 2)
 
@@ -4275,7 +4378,7 @@ class AtomisationApp(QMainWindow):
             self._warn("Invalid Distance", "Enter a positive real-world distance in millimetres.")
             return
         (x1, y1), (x2, y2) = points
-        pixel_dist = abs(y2 - y1)  # vertical only — calibration target is always mounted vertically
+        pixel_dist = max(abs(x2 - x1), abs(y2 - y1))  # one axis is always 0 after snap
         if pixel_dist < 1:
             self._warn("Points Too Close",
                        "The two points are too close together.\nSelect points further apart.")

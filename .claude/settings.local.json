@@ -54,7 +54,8 @@
       "Bash(python -c \"import ast; ast.parse\\(open\\('src/gui/GUI_Clean.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\55154111\\\\Documents\\\\GitHub\\\\HPATR\" -Recurse -Directory)",
       "Bash(Select-Object -First 30)",
-      "Bash(python -c \"from pyphantom import Phantom, utils, cine; import inspect; c_src = inspect.getfile\\(cine\\); print\\(c_src\\)\")"
+      "Bash(python -c \"from pyphantom import Phantom, utils, cine; import inspect; c_src = inspect.getfile\\(cine\\); print\\(c_src\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('/Users/benschofield/Documents/GitHub/HPATR/src/gui/GUI_Clean.py'\\).read\\(\\)\\); print\\('AST OK'\\)\")"
     ]
   }
 }

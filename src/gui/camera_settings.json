@@ -6,7 +6,7 @@
   "height": "1536",
   "pre_trigger_s": "0",
   "post_trigger_s": "90",
-  "px_per_mm": 97.5,
+  "px_per_mm": 98.3,
   "cone_camera_index": 0,
   "save_video": true,
   "run_ai_analysis": false,
