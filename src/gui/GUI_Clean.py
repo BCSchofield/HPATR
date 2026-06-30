@@ -50,7 +50,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QLineEdit, QComboBox, QCheckBox, QTextEdit, QPlainTextEdit,
     QFrame, QTabWidget, QSizePolicy, QProgressBar, QScrollArea,
-    QSpacerItem, QGridLayout, QMessageBox, QFileDialog, QSpinBox
+    QSpacerItem, QGridLayout, QMessageBox, QFileDialog, QSpinBox, QInputDialog
 )
 from PySide6.QtCore import Qt, QTimer, Signal, Slot, QObject, QThread, QSize, QEvent, QRegularExpression
 from PySide6.QtGui import QFont, QPixmap, QImage, QColor, QPalette, QIcon, QPainter, QPen, QIntValidator, QDoubleValidator, QRegularExpressionValidator
@@ -4328,6 +4328,95 @@ class AtomisationApp(QMainWindow):
         self._log(f"── Lamella batch complete → {os.path.basename(out_csv)} ──")
         self._flash_log_border(CLR_GREEN)
         self._set_status(f"Lamella batch complete — {out_csv}", CLR_GREEN)
+        self._lamella_try_analysis(out_csv)
+
+    def _lamella_try_analysis(self, thickness_csv: str):
+        """Auto-detect run_summary, ask for fps/run if needed, generate analysis Excel."""
+        from ai.lamella.analysis import find_run_summary, read_run_summary, generate_analysis_excel
+
+        tiff_dir = os.path.dirname(thickness_csv)
+        summary_path = find_run_summary(tiff_dir)
+        if summary_path is None:
+            self._log("No run_summary.xlsx found — skipping analysis Excel.")
+            return
+
+        self._log(f"Found run_summary: {summary_path}")
+        info = read_run_summary(summary_path)
+
+        _dlg_style = (
+            "QDialog { background: white; }"
+            "QLabel  { color: black; }"
+            "QLineEdit, QDoubleSpinBox, QComboBox, QListView { color: black; background: white; }"
+            "QPushButton { color: black; }"
+        )
+
+        # FPS: use run_summary value, or ask
+        fps = info["fps"]
+        if fps is None:
+            dlg = QInputDialog(self)
+            dlg.setWindowTitle("Camera FPS")
+            dlg.setLabelText("FPS not found in run_summary.\nEnter the camera FPS for this recording:")
+            dlg.setInputMode(QInputDialog.InputMode.DoubleInput)
+            dlg.setDoubleValue(40.0)
+            dlg.setDoubleMinimum(1.0)
+            dlg.setDoubleMaximum(1000000.0)
+            dlg.setDoubleDecimals(1)
+            dlg.setStyleSheet(_dlg_style)
+            if not dlg.exec():
+                self._log("Analysis Excel cancelled — no FPS provided.")
+                return
+            fps = dlg.doubleValue()
+
+        # Camera run: ask if more than one
+        windows = info["camera_windows"]  # list of (cam_start, cam_end, run_index)
+        if not windows:
+            self._log("No camera windows found in run_summary — skipping analysis Excel.")
+            return
+
+        if len(windows) == 1:
+            cam_start, cam_end, run_index = windows[0]
+        else:
+            choices = [
+                f"Run {idx}:  start={start:.2f}s  end={end:.2f}s"
+                for start, end, idx in windows
+            ]
+            dlg = QInputDialog(self)
+            dlg.setWindowTitle("Select Camera Run")
+            dlg.setLabelText("Multiple camera captures found.\nWhich run do these TIFFs belong to?")
+            dlg.setInputMode(QInputDialog.InputMode.TextInput)
+            dlg.setComboBoxItems(choices)
+            dlg.setComboBoxEditable(False)
+            dlg.setStyleSheet(_dlg_style)
+            if not dlg.exec():
+                self._log("Analysis Excel cancelled — no run selected.")
+                return
+            sel = choices.index(dlg.textValue())
+            cam_start, cam_end, run_index = windows[sel]
+
+        self._log(f"Generating analysis Excel (run {run_index}, fps={fps}, cam_start={cam_start:.3f}s)…")
+
+        def _run():
+            try:
+                out = generate_analysis_excel(
+                    tiff_dir=tiff_dir,
+                    thickness_csv=thickness_csv,
+                    fps=fps,
+                    cam_start=cam_start,
+                    cam_end=cam_end,
+                    run_index=run_index,
+                    summary_path=summary_path,
+                )
+                QTimer.singleShot(0, self, lambda: self._lamella_analysis_done(out))
+            except Exception as e:
+                import traceback; traceback.print_exc()
+                QTimer.singleShot(0, self, lambda: self._log(f"Analysis Excel error: {e}"))
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _lamella_analysis_done(self, out_path: str):
+        self._log(f"── Analysis Excel saved → {os.path.basename(out_path)} ──")
+        self._flash_log_border(CLR_GREEN)
+        self._set_status(f"Analysis saved — {os.path.basename(out_path)}", CLR_GREEN)
 
     def _lamella_batch_error(self, err: str):
         self._lamella_batch_btn.setEnabled(True)
@@ -5016,11 +5105,12 @@ class AtomisationApp(QMainWindow):
             # the second use of the same buffer for the master log
             pressure_bytes = pressure_buf.getvalue() if pressure_buf else None
 
+            fps_val = float(self._cam_fps.text()) if self._cam_fps.text() else 1000.0
             meta = {
                 'Field': ['Timestamp', 'Nozzle', 'Orifice', 'Pressure Range',
-                          'Speed (steps/s)', 'Distance (mm)', 'Notes'],
+                          'Speed (steps/s)', 'Distance (mm)', 'FPS', 'Notes'],
                 'Value': [ts_str, nozzle, orifice, p_range_str,
-                          speed_str, distance_str, notes],
+                          speed_str, distance_str, fps_val, notes],
             }
             with pd.ExcelWriter(ind_path, engine='openpyxl') as writer:
                 pd.DataFrame(meta).to_excel(writer, sheet_name='Metadata', index=False)

@@ -65,7 +65,11 @@
       "Bash(ls /Volumes/LaCie/Experiments/Lamella/Tester_Tiffs/ | head -5)",
       "Read(//Volumes/LaCie/Experiments/Lamella/Tester_Tiffs/**)",
       "Bash(python3 -c \"import ast; ast.parse\\(open\\('src/gui/GUI_Clean.py'\\).read\\(\\)\\); print\\('AST OK'\\)\")",
-      "Bash(python3 -c \"import ast; ast.parse\\(open\\('/Users/benschofield/Documents/GitHub/HPATR/src/ai/lamella/batch_tiff.py'\\).read\\(\\)\\); print\\('OK'\\)\")"
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('/Users/benschofield/Documents/GitHub/HPATR/src/ai/lamella/batch_tiff.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('/Users/benschofield/Documents/GitHub/HPATR/src/ai/lamella/analysis.py'\\).read\\(\\)\\); print\\('analysis.py OK'\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('/Users/benschofield/Documents/GitHub/HPATR/src/gui/GUI_Clean.py'\\).read\\(\\)\\); print\\('GUI_Clean.py OK'\\)\")",
+      "Bash(find /Volumes/LaCie -name \"metrics.json\" -o -name \"lamella_comparison.csv\" -o -name \"*loss*\" -o -name \"*train_log*\" 2>/dev/null | head -20)",
+      "Read(//Volumes/LaCie/**)"
     ]
   }
 }
