@@ -15,8 +15,8 @@
   "cone_top_crop": 0.24,
   "last_pressure": 5.0,
   "lamella_crop": {
-    "x": 0,
-    "y": 0,
+    "x": 10,
+    "y": 10,
     "w": 256,
     "h": 256
   },
