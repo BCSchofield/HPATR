@@ -1157,11 +1157,12 @@ class AtomisationApp(QMainWindow):
         self._lamella_crop_cfg:   dict = {"x": 860, "y": 829, "w": 307, "h": 583}
         self._lamella_model_path: str  = ""
         self._lamella_arch:       str  = "tiny"
-        self._lamella_on:         bool = False   # toggle flag — True only when user enables
+        self._lamella_on:         bool = False   # mirrors checkbox — True when user enables
         self._lamella_seg        = None          # StubSegmenter or LamellaSegmenter instance
         self._lamella_busy:       bool = False   # True while inference thread is running
         self._lamella_pending_frame             = None  # latest-frame slot (replaced, never queued)
         self._lamella_result                    = None  # most recent Result — used by _live_feed_update for overlay
+        self._last_tiff_dir:      str | None = None  # TIFF folder from last camera trigger (for master_log)
 
         # EMA smoothing state (α=0.3: strong noise rejection, <2.5s lag on step changes)
         self._pressure_smooth_enabled = True
@@ -2491,14 +2492,12 @@ class AtomisationApp(QMainWindow):
                 color: white; border-color: {CLR_GREEN};
             }}
             QPushButton:checked:hover {{ background-color: #25a244; }}
-            QPushButton:disabled {{ color: {CLR_TEXT_SEC}; border-color: {CLR_BORDER}; }}
         """)
-        self._lamella_toggle_btn.setEnabled(False)   # enabled once feed is running
         self._lamella_toggle_btn.setToolTip(
             "<b>Lamella Analysis</b><br>"
-            "Toggle ON to overlay detected lamella thickness on the live feed.<br>"
-            "Requires the live feed to be running.<br>"
-            "Has no effect on droplet detection or other modes.")
+            "Persistent — stays ON across feed start/stop and experiments.<br>"
+            "Overlay appears on the live feed when active.<br>"
+            "Auto-runs batch analysis on TIFFs after each camera trigger.")
         self._lamella_toggle_btn.toggled.connect(self._lamella_toggle)
 
         self._lamella_thickness_lbl = QLabel("–")
@@ -3962,6 +3961,13 @@ class AtomisationApp(QMainWindow):
                                                  progress_cb=_update_progress)
                 QTimer.singleShot(0, self, lambda: self._cam_save_progress.setVisible(False))
 
+                # 2b — auto-run lamella batch on saved TIFFs if analysis is enabled
+                if self._lamella_on:
+                    _captured_tiff_dir = tiff_dir
+                    self._last_tiff_dir = _captured_tiff_dir
+                    QTimer.singleShot(0, self,
+                        lambda d=_captured_tiff_dir: self._lamella_run_batch_auto(d))
+
                 # 3 — find brightest frame, copy to Brightest_Frame/
                 os.makedirs(bright_dir, exist_ok=True)
                 best = _brightest_frame(tiff_dir)
@@ -4134,7 +4140,6 @@ class AtomisationApp(QMainWindow):
         self._cal_feed_start_btn.setEnabled(False)
         self._cal_feed_stop_btn.setEnabled(True)
         self._cal_feed_label.setText("")
-        self._lamella_toggle_btn.setEnabled(True)
 
     def _cal_stop_feed(self):
         self._live_feed_timer.stop()
@@ -4142,10 +4147,7 @@ class AtomisationApp(QMainWindow):
         self._cal_feed_start_btn.setEnabled(True)
         self._cal_feed_stop_btn.setEnabled(False)
         self._cal_feed_label.setText("Live feed not active")
-        # Reset lamella state when feed stops
-        if self._lamella_on:
-            self._lamella_toggle_btn.setChecked(False)
-        self._lamella_toggle_btn.setEnabled(False)
+        # Clear live-feed lamella state — overlay pauses but checkbox stays as-is
         self._lamella_result = None
         self._lamella_pending_frame = None
 
@@ -4425,6 +4427,60 @@ class AtomisationApp(QMainWindow):
         self._flash_log_border("#ff3b30")
         self._set_status(f"Lamella batch error — {err}", "#e05252")
         self._warn("Lamella Batch Error", err)
+
+    def _lamella_run_batch_auto(self, tiff_dir: str):
+        """Auto-triggered lamella batch after camera save — no dialog, no masks."""
+        if self._lamella_seg is None:
+            self._lamella_load_segmenter()
+        if self._lamella_seg is None:
+            self._log("Lamella auto-batch skipped — no model loaded.")
+            return
+
+        from ai.lamella.crop import OutletCrop
+        from ai.lamella.batch_tiff import run_batch
+
+        crop_box  = OutletCrop.from_dict(self._lamella_crop_cfg)
+        px_per_mm = self._get_px_per_mm()
+        seg       = self._lamella_seg
+
+        self._lamella_batch_btn.setEnabled(False)
+        self._lamella_batch_progress.setValue(0)
+        self._lamella_batch_progress.setVisible(True)
+        self._log(f"── Lamella auto-batch started ({os.path.basename(tiff_dir)}) ──")
+
+        _last_milestone = [-1]
+
+        def _update_progress(pct):
+            milestone = (pct // 10) * 10
+            if milestone > _last_milestone[0]:
+                _last_milestone[0] = milestone
+                QTimer.singleShot(0, self, lambda p=milestone: self._log(f"Lamella batch: {p}%"))
+            QTimer.singleShot(0, self, lambda p=pct: self._lamella_batch_progress.setValue(p))
+
+        def _run():
+            try:
+                out_csv = run_batch(
+                    tiff_dir=tiff_dir,
+                    segmenter=seg,
+                    crop_box=crop_box,
+                    px_per_mm=px_per_mm,
+                    progress_cb=_update_progress,
+                    save_masks=False,
+                )
+                QTimer.singleShot(0, self, lambda: self._lamella_batch_done_auto(out_csv))
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                QTimer.singleShot(0, self, lambda: self._lamella_batch_error(str(e)))
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _lamella_batch_done_auto(self, out_csv: str):
+        """Auto-batch complete — analysis Excel deferred until after Save Experiment."""
+        self._lamella_batch_btn.setEnabled(True)
+        self._lamella_batch_progress.setVisible(False)
+        self._log(f"── Lamella auto-batch complete → {os.path.basename(out_csv)} ──")
+        self._log("  (Run 'Run on TIFF Folder…' after Save Experiment for analysis Excel)")
 
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -4905,6 +4961,7 @@ class AtomisationApp(QMainWindow):
         self.pressure_data['live_buffer'] = {'timestamps': [], 'pressures': []}
         self.pressure_data['live_buffer_start_time'] = time.time()
         self._pressure_ema = None   # seed EMA fresh from the first reading of the run
+        self._last_tiff_dir = None  # reset so previous experiment's CSV doesn't bleed over
 
         self._start_btn.setEnabled(False)
         self._exp_progress.setRange(0, 100)
@@ -4999,7 +5056,8 @@ class AtomisationApp(QMainWindow):
         try:
             from openpyxl import load_workbook, Workbook
             from openpyxl.drawing.image import Image as XLImage
-            from openpyxl.styles import Alignment
+            from openpyxl.styles import Alignment, PatternFill, Font
+            from openpyxl.utils import get_column_letter, column_index_from_string
 
             lacie        = find_lacie_drive()
             now          = datetime.now()
@@ -5123,8 +5181,36 @@ class AtomisationApp(QMainWindow):
                         writer.sheets['Pressure'].add_image(
                             _rs_img, f'A{len(press_df) + 3}')
 
+            # ── Compute lamella thickness value for master_log ────────────────
+            import csv as _csv_mod, re as _re
+            _lamella_cell_val = 'N/A'
+            _lamella_orange   = False
+            if self._last_tiff_dir:
+                _lam_csv = os.path.join(self._last_tiff_dir, 'lamella_thickness.csv')
+                if os.path.exists(_lam_csv):
+                    _thicknesses = []
+                    with open(_lam_csv, newline='') as _lf:
+                        for _lr in _csv_mod.DictReader(_lf):
+                            if str(_lr.get('ok', '')).lower() == 'true':
+                                try:
+                                    _thicknesses.append(float(_lr['thickness_px']))
+                                except (ValueError, KeyError):
+                                    pass
+                    if _thicknesses:
+                        _avg_px    = sum(_thicknesses) / len(_thicknesses)
+                        _pxmm      = self._get_px_per_mm()
+                        if _pxmm > 0:
+                            _lamella_cell_val = f"{_avg_px:.1f} px / {_avg_px / _pxmm:.3f} mm"
+                        else:
+                            _lamella_cell_val = f"{_avg_px:.1f} px"
+                    else:
+                        _lamella_orange   = True
+                        _lamella_cell_val = 'Input Self'
+                else:
+                    _lamella_orange   = True
+                    _lamella_cell_val = 'Input Self'
+
             # ── Master log: insert at row 2, shift image anchors first ───────
-            import re as _re
             _master_base = os.path.join(lacie, "Experiments", "Logs") if lacie else os.path.join(
                 os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                 "experiment_logs")
@@ -5133,6 +5219,27 @@ class AtomisationApp(QMainWindow):
             if os.path.exists(master_path):
                 wb = load_workbook(master_path)
                 ws = wb.active
+
+                # ── Migrate old header format (no Avg Lamella Thickness column) ──
+                _hdr = [ws.cell(row=1, column=c).value for c in range(1, ws.max_column + 1)]
+                if len(_hdr) >= 7 and _hdr[6] == 'Notes':
+                    ws.insert_cols(7)
+                    ws.cell(row=1, column=7).value = 'Avg Lamella Thickness'
+                    ws.column_dimensions['G'].width = 12
+                    # Shift image anchors that were in columns H+ (index >= 7, 1-based)
+                    for _img in ws._images:
+                        _anc = _img.anchor
+                        if isinstance(_anc, str):
+                            _m = _re.match(r'^([A-Z]+)(\d+)$', _anc)
+                            if _m and column_index_from_string(_m.group(1)) >= 8:
+                                _new_col = get_column_letter(column_index_from_string(_m.group(1)) + 1)
+                                _img.anchor = f'{_new_col}{_m.group(2)}'
+                        elif hasattr(_anc, '_from'):
+                            if _anc._from.col >= 7:  # 0-indexed: 7 = Excel col H
+                                _anc._from.col += 1
+                            if hasattr(_anc, 'to') and _anc.to and _anc.to.col >= 7:
+                                _anc.to.col += 1
+
                 # Shift row_dimensions down one row before inserting
                 old_dims = {r: ws.row_dimensions[r].height
                             for r in list(ws.row_dimensions.keys()) if r >= 2}
@@ -5156,9 +5263,9 @@ class AtomisationApp(QMainWindow):
                 ws = wb.active
                 ws.title = 'Experiments'
                 ws.append(['Timestamp', 'Nozzle', 'Orifice', 'Pressure Range',
-                           'Speed (steps/s)', 'Distance (mm)', 'Notes',
-                           'Cone Image', 'Shadowgraph', 'Pressure Graph'])
-                for col, width in zip('ABCDEFGHIJ', [20, 8, 8, 18, 14, 12, 35, 36.5, 36.5, 56]):
+                           'Speed (steps/s)', 'Distance (mm)', 'Avg Lamella Thickness',
+                           'Notes', 'Cone Image', 'Shadowgraph', 'Pressure Graph'])
+                for col, width in zip('ABCDEFGHIJK', [20, 8, 8, 18, 14, 12, 12, 35, 36.5, 36.5, 56]):
                     ws.column_dimensions[col].width = width
 
             ws.insert_rows(2)
@@ -5166,10 +5273,16 @@ class AtomisationApp(QMainWindow):
             center_mid = Alignment(horizontal='center', vertical='center', wrap_text=True)
             top_left   = Alignment(horizontal='left',   vertical='top',    wrap_text=True)
             for col, val in enumerate([ts_str, nozzle, orifice, p_range_str,
-                                       speed_str, distance_str, notes, '', '', ''], start=1):
+                                       speed_str, distance_str, _lamella_cell_val,
+                                       notes, '', '', ''], start=1):
                 cell = ws.cell(row=row_num, column=col)
                 cell.value = val
-                cell.alignment = top_left if col == 7 else center_mid
+                cell.alignment = top_left if col == 8 else center_mid
+            # Orange highlight for "Input Self" lamella cell
+            if _lamella_orange:
+                _lc = ws.cell(row=row_num, column=7)
+                _lc.fill = PatternFill(start_color='FFA500', end_color='FFA500', fill_type='solid')
+                _lc.font = Font(color='000000', bold=True)
             ws.row_dimensions[row_num].height = 125
 
             _cone_img_path = self._last_cone_path or ""
@@ -5182,28 +5295,28 @@ class AtomisationApp(QMainWindow):
                     _cone_disp_w = max(1, int(_cw * _cone_disp_h / _ch))
                     cimg = XLImage(_cone_img_path)
                     cimg.width = _cone_disp_w; cimg.height = _cone_disp_h
-                    ws.column_dimensions['H'].width = max(10, _cone_disp_w / 7.0)
-                    ws.add_image(cimg, f'H{row_num}')
+                    ws.column_dimensions['I'].width = max(10, _cone_disp_w / 7.0)
+                    ws.add_image(cimg, f'I{row_num}')
                 else:
-                    ws.cell(row=row_num, column=8).value = 'NO DATA AVAILABLE'
+                    ws.cell(row=row_num, column=9).value = 'NO DATA AVAILABLE'
             else:
-                ws.cell(row=row_num, column=8).value = 'NO DATA AVAILABLE'
+                ws.cell(row=row_num, column=9).value = 'NO DATA AVAILABLE'
 
             shadow_src = self._result_path_label.text()
             if shadow_src and os.path.exists(shadow_src):
                 simg = XLImage(shadow_src); simg.width = 300; simg.height = 165
-                ws.add_image(simg, f'I{row_num}')
+                ws.add_image(simg, f'J{row_num}')
             else:
-                ws.cell(row=row_num, column=9).value = 'NO DATA AVAILABLE'
+                ws.cell(row=row_num, column=10).value = 'NO DATA AVAILABLE'
 
             if pressure_bytes:
                 pimg = XLImage(io.BytesIO(pressure_bytes))
                 pimg.width = pressure_img_width; pimg.height = DISPLAY_H
-                # Widen column J to fit this image (56 chars ≈ 347 px baseline)
-                ws.column_dimensions['J'].width = max(56, pressure_img_width * 56 / 347)
-                ws.add_image(pimg, f'J{row_num}')
+                # Widen column K to fit this image (56 chars ≈ 347 px baseline)
+                ws.column_dimensions['K'].width = max(56, pressure_img_width * 56 / 347)
+                ws.add_image(pimg, f'K{row_num}')
             else:
-                ws.cell(row=row_num, column=10).value = 'NO DATA AVAILABLE'
+                ws.cell(row=row_num, column=11).value = 'NO DATA AVAILABLE'
 
             wb.save(master_path)
 
@@ -5280,6 +5393,8 @@ class AtomisationApp(QMainWindow):
             if self._lamella_model_path:
                 fname = os.path.basename(self._lamella_model_path)
                 self._lamella_status_lbl.setText(f"{fname} — click toggle to load")
+            if s.get("lamella_on") and self._lamella_model_path:
+                self._lamella_toggle_btn.setChecked(True)
         except Exception as e:
             print(f"[WARNING] Could not load camera settings: {e}")
 
@@ -5316,6 +5431,7 @@ class AtomisationApp(QMainWindow):
                 "lamella_crop":       getattr(self, "_lamella_crop_cfg",   {"x": 860, "y": 829, "w": 307, "h": 583}),
                 "lamella_model_path": getattr(self, "_lamella_model_path", ""),
                 "lamella_arch":       getattr(self, "_lamella_arch",       "smp"),
+                "lamella_on":         getattr(self, "_lamella_on",         False),
             }
             with open(self._settings_path(), "w") as f:
                 json.dump(s, f, indent=2)
