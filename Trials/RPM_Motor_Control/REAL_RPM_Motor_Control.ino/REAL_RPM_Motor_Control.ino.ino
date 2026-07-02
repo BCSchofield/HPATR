@@ -29,9 +29,10 @@ float         targetRPM     = 0.0;
 bool          running       = false;
 bool          ramping       = false;
 long          halfPeriodUs  = 0;
-unsigned long rampStartTime = 0;
+unsigned long rampStartTime  = 0;
 unsigned long lastRampUpdate = 0;
-String        inputBuffer   = "";
+unsigned long lastRPMReport  = 0;
+String        inputBuffer    = "";
 
 void computeHalfPeriod() {
   if (currentRPM <= 0.0) { halfPeriodUs = 0; return; }
@@ -117,6 +118,16 @@ void loop() {
         currentRPM = startRPM + (targetRPM - startRPM) * t;
       }
       computeHalfPeriod();
+    }
+  }
+
+  // Report current RPM to GUI every 250 ms
+  if (running) {
+    unsigned long now = micros();
+    if (now - lastRPMReport >= 250000UL) {
+      lastRPMReport = now;
+      Serial.print("RPM_ACTUAL:");
+      Serial.println(currentRPM, 1);
     }
   }
 

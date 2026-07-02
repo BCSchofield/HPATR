@@ -4186,16 +4186,21 @@ class AtomisationApp(QMainWindow):
         self._save_camera_settings()
 
     def _lamella_load_segmenter(self):
-        """Instantiate the selected segmenter (stub, smp, or tiny)."""
+        """Instantiate the selected segmenter in a background thread so the GUI stays responsive."""
         arch = self._lamella_arch_combo.currentText()
         model_path = getattr(self, "_lamella_model_path", "")
-        try:
-            if not model_path:
-                self._lamella_status_lbl.setText("No model selected — use Browse…")
-                self._lamella_status_lbl.setStyleSheet(f"color:#e05252; font-size:11px;")
-                self._lamella_toggle_btn.setChecked(False)
-                return
-            else:
+
+        if not model_path:
+            self._lamella_status_lbl.setText("No model selected — use Browse…")
+            self._lamella_status_lbl.setStyleSheet(f"color:#e05252; font-size:11px;")
+            self._lamella_toggle_btn.setChecked(False)
+            return
+
+        self._lamella_status_lbl.setText("Loading model…")
+        self._lamella_status_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
+
+        def _load():
+            try:
                 import torch
                 from ai.lamella.infer import LamellaSegmenter
                 if torch.cuda.is_available():
@@ -4204,15 +4209,27 @@ class AtomisationApp(QMainWindow):
                     device = "mps"
                 else:
                     device = "cpu"
-                self._lamella_seg = LamellaSegmenter.load(model_path, arch=arch, device=device)
+                seg = LamellaSegmenter.load(model_path, arch=arch, device=device)
                 fname = os.path.basename(model_path)
+                QTimer.singleShot(0, self, lambda: _on_done(seg, fname, device, None))
+            except Exception as e:
+                QTimer.singleShot(0, self, lambda: _on_done(None, None, None, e))
+
+        def _on_done(seg, fname, device, err):
+            if err:
+                self._lamella_seg = None
+                self._lamella_status_lbl.setText(f"Load error: {err}")
+                self._lamella_status_lbl.setStyleSheet(f"color:#e05252; font-size:11px;")
+                self._lamella_toggle_btn.setChecked(False)
+            else:
+                self._lamella_seg = seg
                 self._lamella_status_lbl.setText(f"{fname} ({device})")
                 self._lamella_status_lbl.setStyleSheet(f"color:{CLR_GREEN}; font-size:11px;")
-        except Exception as e:
-            self._lamella_seg = None
-            self._lamella_status_lbl.setText(f"Load error: {e}")
-            self._lamella_status_lbl.setStyleSheet(f"color:#e05252; font-size:11px;")
-            self._lamella_toggle_btn.setChecked(False)
+                # If user toggled off while model was loading, honour their intent
+                if not self._lamella_on:
+                    self._lamella_toggle_btn.setChecked(False)
+
+        threading.Thread(target=_load, daemon=True).start()
 
     def _lamella_arch_changed(self, arch: str):
         """Reset segmenter when arch selector changes so it reloads on next toggle."""

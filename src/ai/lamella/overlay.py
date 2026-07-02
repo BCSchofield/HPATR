@@ -82,4 +82,5 @@ def draw_overlay(frame: np.ndarray, result: Result) -> np.ndarray:
     cv2.putText(out, label, (tx, ty), _FONT, font_scale, _CLR_TEXT, thickness_px,
                 cv2.LINE_AA)
 
-    return out
+    # _phantom_frame_to_pixmap uses Format_RGB888, so convert BGR → RGB here
+    return cv2.cvtColor(out, cv2.COLOR_BGR2RGB)

@@ -37,7 +37,7 @@ def _build_smp() -> nn.Module:
 
     model = smp.Unet(
         encoder_name="mobilenet_v2",
-        encoder_weights="imagenet",
+        encoder_weights=None,  # checkpoint supplies weights; no download needed
         in_channels=1,         # grayscale shadowgraph input
         classes=1,             # binary: liquid vs gas
         activation=None,       # raw logits — sigmoid applied at inference time
