@@ -5,22 +5,22 @@
   "width": "2048",
   "height": "1536",
   "pre_trigger_s": "0",
-  "post_trigger_s": "90",
-  "px_per_mm": 97.5,
+  "post_trigger_s": "30",
+  "px_per_mm": 100.0,
   "cone_camera_index": 0,
   "save_video": true,
   "run_ai_analysis": false,
   "cone_autofocus": true,
   "cone_focus": 50,
   "cone_top_crop": 0.24,
-  "last_pressure": 5.0,
+  "last_pressure": 2.0,
   "lamella_crop": {
-    "x": 144,
-    "y": 20,
-    "w": 250,
-    "h": 450
+    "x": 750,
+    "y": 100,
+    "w": 200,
+    "h": 200
   },
-  "lamella_model_path": "E:/Experiments/Lamella/LamellaDataSet/lamella_smp_2026_06_30_13_25_25/lamella_smp_best.pt",
-  "lamella_arch": "smp",
-  "lamella_on": false
+  "lamella_model_path": "E:/Experiments/Lamella/LamellaDataSet/lamella_tiny_2026_06_30_13_25_37/lamella_tiny_best.pt",
+  "lamella_arch": "tiny",
+  "lamella_on": true
 }
