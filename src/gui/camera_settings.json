@@ -2,8 +2,8 @@
   "ip": "100.100.100.1",
   "fps": "40",
   "exposure_us": "24000",
-  "width": "2048",
-  "height": "1536",
+  "width": "2560",
+  "height": "1600",
   "pre_trigger_s": "0",
   "post_trigger_s": "30",
   "px_per_mm": 100.0,
@@ -22,5 +22,5 @@
   },
   "lamella_model_path": "E:/Experiments/Lamella/LamellaDataSet/lamella_tiny_2026_06_30_13_25_37/lamella_tiny_best.pt",
   "lamella_arch": "tiny",
-  "lamella_on": true
+  "lamella_on": false
 }
