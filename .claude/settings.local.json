@@ -69,7 +69,16 @@
       "Bash(python3 -c \"import ast; ast.parse\\(open\\('/Users/benschofield/Documents/GitHub/HPATR/src/ai/lamella/analysis.py'\\).read\\(\\)\\); print\\('analysis.py OK'\\)\")",
       "Bash(python3 -c \"import ast; ast.parse\\(open\\('/Users/benschofield/Documents/GitHub/HPATR/src/gui/GUI_Clean.py'\\).read\\(\\)\\); print\\('GUI_Clean.py OK'\\)\")",
       "Bash(find /Volumes/LaCie -name \"metrics.json\" -o -name \"lamella_comparison.csv\" -o -name \"*loss*\" -o -name \"*train_log*\" 2>/dev/null | head -20)",
-      "Read(//Volumes/LaCie/**)"
+      "Read(//Volumes/LaCie/**)",
+      "Bash(git -C \"c:\\\\Users\\\\55154111\\\\Documents\\\\GitHub\\\\HPATR\" log --oneline --all -- \"Trials/RPM_Motor_Control/RAMP_RPM_Motor_Control/RAMP_RPM_Motor_Control.ino\")",
+      "Bash(git -C \"c:\\\\Users\\\\55154111\\\\Documents\\\\GitHub\\\\HPATR\" log --oneline --all -- \"Trials/RPM_Motor_Control/\")",
+      "Bash(git -C \"c:\\\\Users\\\\55154111\\\\Documents\\\\GitHub\\\\HPATR\" show 5142e2e --stat)",
+      "Bash(git -C \"c:\\\\Users\\\\55154111\\\\Documents\\\\GitHub\\\\HPATR\" show d21edf0 --stat)",
+      "Bash(git -C \"c:\\\\Users\\\\55154111\\\\Documents\\\\GitHub\\\\HPATR\" show 969770a --stat)",
+      "Bash(git -C \"c:\\\\Users\\\\55154111\\\\Documents\\\\GitHub\\\\HPATR\" ls-tree -r 969770a --name-only)",
+      "Bash(git -C \"c:\\\\Users\\\\55154111\\\\Documents\\\\GitHub\\\\HPATR\" show 969770a:\"Trials/RPM_Motor_Control/RAMP_RPM_Motor_Control/RAMP_RPM_Motor_Control.ino\")",
+      "Bash(git -C \"c:\\\\Users\\\\55154111\\\\Documents\\\\GitHub\\\\HPATR\" show 969770a:\"Trials/RPM_Motor_Control/RPM_Motor_Control.ino\")",
+      "Bash(git -C \"c:\\\\Users\\\\55154111\\\\Documents\\\\GitHub\\\\HPATR\" show HEAD:\"Trials/RPM_Motor_Control/RAMP_RPM_Motor_Control/RAMP_RPM_Motor_Control.ino\")"
     ]
   }
 }
