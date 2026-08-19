@@ -10,11 +10,11 @@
 
 // ── Driver config ─────────────────────────────────────────────
 #define R_SENSE       0.022f   // TMC5160T Plus sense resistor
-#define MOTOR_CURRENT 1500     // mA RMS — HH17-101 rated 2A/phase
+#define MOTOR_CURRENT 1500     // mA RMS — 23HS26-2004H rated 2A/phase
 
 // ── Motion config ─────────────────────────────────────────────
 #define STEPS_PER_REV  200     // 1.8 degree motor
-#define MICROSTEPS     32
+#define MICROSTEPS     16
 
 // ── Ramp config ───────────────────────────────────────────────
 #define RAMP_DURATION_US  5000000UL  // 5 seconds

@@ -1,8 +1,8 @@
 // RAMP_RPM_Motor_Control.ino
 //
 // Non-blocking step/dir ramp using micros() — no Timer1 interrupts.
-// Identical logic to REAL_RPM_Motor_Control.ino but without blocking
-// delayMicroseconds(), so loop() stays free for serial + ramp updates.
+// Step pin toggled via direct PORTD write (~62 ns) instead of digitalWrite.
+// Linear RPM ramp (constant angular acceleration) with 1 ms update interval.
 //
 // Serial protocol (115200 baud):
 //   Receive:  RPM:xxx.x\n   — ramp to target RPM over 5 seconds
@@ -22,47 +22,47 @@
 
 // ── Driver config ─────────────────────────────────────────────────────────────
 #define R_SENSE        0.022f
-#define MOTOR_CURRENT  1500
+#define MOTOR_CURRENT  1800       // mA RMS — 23HS26-2004H rated 2A/phase
 
 // ── Motion config ─────────────────────────────────────────────────────────────
 #define STEPS_PER_REV  200
-#define MICROSTEPS     32
+#define MICROSTEPS     8
 
 // ── Ramp config ───────────────────────────────────────────────────────────────
-#define RAMP_DURATION_US  5000000UL   // 5 second ramp
-#define RAMP_UPDATE_US      20000UL   // recalculate speed every 20 ms
+#define RAMP_DURATION_US  10000000UL  // 10 second ramp
+#define RAMP_UPDATE_US      10000UL   // recalculate speed every 10 ms
 
 // ─────────────────────────────────────────────────────────────────────────────
 TMC5160Stepper driver(CS_PIN, R_SENSE);
 
-float         currentRPM     = 0.0;
-float         startRPM       = 0.0;
-float         targetRPM      = 0.0;
-bool          running        = false;
-bool          ramping        = false;
-long          halfPeriodUs   = 0;
-unsigned long rampStartTime  = 0;
-unsigned long lastRampUpdate = 0;
-unsigned long lastStepUs     = 0;
-unsigned long lastReportMs   = 0;
-bool          stepHigh       = false;
-String        inputBuffer    = "";
+float         currentRPM         = 0.0;
+float         startRPM           = 0.0;
+float         targetRPM          = 0.0;
+long          halfPeriodUs       = 0;
+bool          running            = false;
+bool          ramping            = false;
+unsigned long rampStartTime      = 0;
+unsigned long lastRampUpdate     = 0;
+unsigned long lastStepUs         = 0;
+unsigned long lastReportMs       = 0;
+String        inputBuffer        = "";
 
-void computeHalfPeriod() {
-  if (currentRPM <= 0.0) { halfPeriodUs = 0; return; }
-  float stepsPerSec = (currentRPM * STEPS_PER_REV * MICROSTEPS) / 60.0;
-  halfPeriodUs = (long)(500000.0 / stepsPerSec);
+long rpmToHalfPeriod(float rpm) {
+  if (rpm <= 0.0) return 0;
+  float stepsPerSec = (rpm * STEPS_PER_REV * MICROSTEPS) / 60.0;
+  return (long)(500000.0 / stepsPerSec);
 }
 
+
 void startRamp(float target) {
-  startRPM      = (currentRPM < 1.0) ? 1.0 : currentRPM;
-  currentRPM    = startRPM;
-  targetRPM     = target;
-  rampStartTime = micros();
+  startRPM       = (currentRPM < 1.0) ? 1.0 : currentRPM;
+  currentRPM     = startRPM;
+  targetRPM      = target;
+  halfPeriodUs   = rpmToHalfPeriod(startRPM);
+  rampStartTime  = micros();
   lastRampUpdate = 0;
-  ramping       = true;
-  running       = true;
-  computeHalfPeriod();
+  ramping        = true;
+  running        = true;
 }
 
 void setup() {
@@ -115,20 +115,20 @@ void loop() {
     }
   }
 
-  // ── Ramp update ───────────────────────────────────────────────────────────
+  // ── Ramp update (linear RPM = constant angular acceleration) ────────────
   if (running && ramping) {
     unsigned long now = micros();
     if (now - lastRampUpdate >= RAMP_UPDATE_US) {
       lastRampUpdate = now;
       unsigned long elapsed = now - rampStartTime;
       if (elapsed >= RAMP_DURATION_US) {
-        currentRPM = targetRPM;
-        ramping    = false;
+        currentRPM   = targetRPM;
+        ramping      = false;
       } else {
         float t    = (float)elapsed / (float)RAMP_DURATION_US;
         currentRPM = startRPM + (targetRPM - startRPM) * t;
       }
-      computeHalfPeriod();
+      halfPeriodUs = rpmToHalfPeriod(currentRPM);
     }
   }
 
@@ -137,8 +137,7 @@ void loop() {
     unsigned long now = micros();
     if (now - lastStepUs >= (unsigned long)halfPeriodUs) {
       lastStepUs = now;
-      stepHigh = !stepHigh;
-      digitalWrite(STEP_PIN, stepHigh);
+      PORTD ^= (1 << STEP_PIN);  // toggle step pin directly — ~62 ns vs ~3.5 µs digitalWrite
     }
   }
 
