@@ -52,8 +52,8 @@ from PySide6.QtWidgets import (
     QFrame, QTabWidget, QSizePolicy, QProgressBar, QScrollArea,
     QSpacerItem, QGridLayout, QMessageBox, QFileDialog, QSpinBox, QInputDialog
 )
-from PySide6.QtCore import Qt, QTimer, Signal, Slot, QObject, QThread, QSize, QEvent, QRegularExpression
-from PySide6.QtGui import QFont, QPixmap, QImage, QColor, QPalette, QIcon, QPainter, QPen, QIntValidator, QDoubleValidator, QRegularExpressionValidator
+from PySide6.QtCore import Qt, QTimer, Signal, Slot, QObject, QThread, QSize, QEvent, QRegularExpression, QRectF, QPointF
+from PySide6.QtGui import QFont, QPixmap, QImage, QColor, QPalette, QIcon, QPainter, QPen, QPolygonF, QIntValidator, QDoubleValidator, QRegularExpressionValidator
 
 # ── Path setup ──────────────────────────────────────────────────────────────
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -325,6 +325,44 @@ def input_row(label_text, widget, label_width=130):
     hl.addWidget(lbl)
     hl.addWidget(widget)
     return row
+
+def refresh_icon(color=CLR_ACCENT, size=20):
+    """Circular reload arrow, painted at runtime so the repo needs no icon asset."""
+    # Back the pixmap with 2x the pixels for crisp edges on HiDPI screens.  The
+    # device pixel ratio makes QPainter take logical coordinates, so the geometry
+    # below is still written in plain `size` units — do not scale the painter too.
+    ss = 2
+    px = QPixmap(size * ss, size * ss)
+    px.fill(Qt.GlobalColor.transparent)
+    px.setDevicePixelRatio(ss)
+    p = QPainter(px)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+    margin = size * 0.20
+    r  = (size - 2 * margin) / 2.0
+    cx = cy = size / 2.0
+
+    pen = QPen(QColor(color))
+    pen.setWidthF(max(1.4, size * 0.13))
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    p.setPen(pen)
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    # Open arc: 270° starting at the top, leaving the upper-right quadrant free
+    # for the arrowhead.  Qt angles are 1/16°, counter-clockwise from 3 o'clock.
+    p.drawArc(QRectF(margin, margin, 2 * r, 2 * r), 90 * 16, 270 * 16)
+
+    # Arrowhead sitting on the open end at the top, pointing clockwise
+    a = size * 0.17
+    head = QPolygonF([
+        QPointF(cx + a,       cy - r),
+        QPointF(cx - a * 0.3, cy - r - a * 0.8),
+        QPointF(cx - a * 0.3, cy - r + a * 0.8),
+    ])
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(color))
+    p.drawPolygon(head)
+    p.end()
+    return QIcon(px)
 
 def dot_indicator(color=CLR_TEXT_SEC, size=10):
     lbl = QLabel("●")
@@ -753,15 +791,6 @@ class ArduinoController:
         self.ser.write(command.encode())
         log_serial(f"Sent: {command.strip()}")
 
-    def send_pressure_command(self, pressure):
-        command = f"PRESSURE:{pressure}\n"
-        self.ser.write(command.encode())
-        log_serial(f"Sent: {command.strip()}")
-
-    def send_pressure_off_command(self):
-        self.ser.write("PRESSURE_OFF\n".encode())
-        log_serial("Sent: PRESSURE_OFF")
-
     def send_stop(self):
         self.ser.write(b"STOP\n")
         log_serial("Sent: STOP")
@@ -811,6 +840,154 @@ class RpmController:
     def disconnect(self):
         if hasattr(self, 'ser') and self.ser and self.ser.is_open:
             self.ser.close()
+
+
+ALICAT_DEBUG = False   # True to log every TX/RX frame to the console
+
+
+class AlicatMFC:
+    """Serial driver for an Alicat MCQ mass flow controller (19200 8N1).
+
+    The unit never streams — it answers exactly one frame per command.  Commands
+    and replies are both terminated by a bare CR, e.g.
+
+        A +00.995 +030.17 +00000 +00500 +00500 +0000000     N2
+
+    Send CR only, never CRLF: the unit ends the line at the CR and leaves the LF
+    sitting in its own input buffer, so the next command reaches it as "\nA…",
+    which is not a valid unit ID.  It is silently dropped and another LF is left
+    behind, so one CRLF command deafens the unit until it is power-cycled.
+
+    DTR and RTS are held high: on an RS-232 link those lines feed the adapter's
+    line driver, and dropping them kills transmit while leaving receive alive.
+
+    Threading: every port operation belongs to the reader thread.  Other threads
+    only ever call set_flow()/flow_off(), which enqueue a command string.
+    """
+    DEVICE_ID = "A"
+    BAUD      = 19200
+
+    def __init__(self, port: str):
+        self.port = port
+        self.ser: serial.Serial | None = None
+        self._cmd_queue: queue.SimpleQueue = queue.SimpleQueue()
+
+    # ── command builders ──────────────────────────────────────────────────
+    @classmethod
+    def cmd_poll(cls) -> str:
+        return f"{cls.DEVICE_ID}\r"
+
+    @classmethod
+    def cmd_setpoint(cls, sccm: float) -> str:
+        return f"{cls.DEVICE_ID}S{sccm:.1f}\r"
+
+    # ── lifecycle ─────────────────────────────────────────────────────────
+    def connect(self):
+        try:
+            self.ser = serial.Serial(
+                self.port, self.BAUD,
+                bytesize=serial.EIGHTBITS,
+                parity=serial.PARITY_NONE,
+                stopbits=serial.STOPBITS_ONE,
+                timeout=0,          # non-blocking; the reader drains in_waiting
+                rtscts=False,
+                dsrdtr=False,
+                xonxoff=False,
+            )
+        except serial.SerialException as e:
+            if "Resource busy" in str(e) or "Access is denied" in str(e):
+                raise RuntimeError(f"Port {self.port} is busy — close whatever else is using it.")
+            raise RuntimeError(f"Could not open {self.port}: {e}")
+
+        self.ser.dtr = True
+        self.ser.rts = True
+        time.sleep(0.2)             # let the line drivers settle
+
+        # A lone CR terminates whatever partial line the unit may be holding
+        # (e.g. from an earlier program that sent CRLF), so we start clean.
+        self.ser.write(b"\r")
+        self.ser.flush()
+        time.sleep(0.2)
+        self.ser.reset_input_buffer()
+        self.ser.reset_output_buffer()
+
+        if not self._probe():
+            self.ser.close()
+            raise RuntimeError(
+                f"No reply from the Alicat on {self.port}. Check the cable, that unit ID "
+                f"is '{self.DEVICE_ID}', baud is {self.BAUD}, and control mode is Serial/Front Panel."
+            )
+
+        self._cmd_queue.put(self.cmd_setpoint(0.0))   # always start from 0 sccm
+
+    def _probe(self, attempts: int = 3) -> bool:
+        """Poll a few times and report whether the unit answers at all."""
+        for _ in range(attempts):
+            self.write(self.cmd_poll())
+            if self.read_frame(timeout_s=0.5) is not None:
+                return True
+        return False
+
+    def close(self):
+        """Reader-thread only — sets 0 sccm, then releases the port."""
+        if self.ser and self.ser.is_open:
+            try:
+                self.write(self.cmd_setpoint(0.0))
+                time.sleep(0.1)
+            except Exception:
+                pass
+            try: self.ser.close()
+            except Exception: pass
+
+    # ── queued commands (safe from any thread) ────────────────────────────
+    def set_flow(self, sccm: float):
+        self._cmd_queue.put(self.cmd_setpoint(sccm))
+
+    def flow_off(self):
+        self._cmd_queue.put(self.cmd_setpoint(0.0))
+
+    def next_command(self) -> str:
+        """A pending setpoint if one is queued, otherwise a plain status poll."""
+        try:
+            return self._cmd_queue.get_nowait()
+        except queue.Empty:
+            return self.cmd_poll()
+
+    # ── raw I/O (reader thread only) ──────────────────────────────────────
+    def write(self, cmd: str):
+        if self.ser and self.ser.is_open:
+            raw = cmd.encode("ascii")
+            if ALICAT_DEBUG:
+                print(f"[ALICAT TX] {raw!r}", flush=True)
+            self.ser.write(raw)
+            self.ser.flush()
+
+    def read_frame(self, timeout_s: float) -> str | None:
+        """Accumulate bytes until a CR arrives; None if the unit stayed quiet.
+
+        Leftovers after the CR are kept in _rx_buf so a frame split across two
+        reads — or arriving late behind the FTDI latency timer — is never lost.
+        """
+        buf = getattr(self, "_rx_buf", b"")
+        deadline = time.monotonic() + timeout_s
+        while True:
+            if b"\r" in buf:
+                line, _, buf = buf.partition(b"\r")
+                self._rx_buf = buf
+                text = line.decode("ascii", errors="replace").strip()
+                if text:
+                    if ALICAT_DEBUG:
+                        print(f"[ALICAT RX] {text!r}", flush=True)
+                    return text
+                continue                 # empty line (stray LF) — keep looking
+            if time.monotonic() >= deadline:
+                self._rx_buf = buf
+                return None
+            n = self.ser.in_waiting if self.ser else 0
+            if n:
+                buf += self.ser.read(n)
+            else:
+                time.sleep(0.005)
 
 
 class PhantomController:
@@ -1095,6 +1272,10 @@ class AtomisationApp(QMainWindow):
 
     MAX_MOTOR_MM = 72.5   # physical travel limit
 
+    # Alicat MFC lives on the FTDI RS232 adapter, which enumerates as COM4 on
+    # this rig.  Used when camera_settings.json has no saved port yet.
+    ALICAT_DEFAULT_PORT = "COM4"
+
     # Cross-thread signals for pipeline callbacks
     _pipeline_done = Signal(object)
     _pipeline_err  = Signal(str)
@@ -1122,6 +1303,13 @@ class AtomisationApp(QMainWindow):
         self.rpm_spinning = False
         self._rpm_serial_active = False
 
+        self.alicat: AlicatMFC | None = None
+        self.alicat_connected = False
+        self._alicat_serial_active = False
+        self._alicat_thread: threading.Thread | None = None
+        self._last_flow: float | None = None
+        self._alicat_saved_port: str = self.ALICAT_DEFAULT_PORT
+
         self._ramp_running = False
         self._movement_done_event = threading.Event()
 
@@ -1141,17 +1329,18 @@ class AtomisationApp(QMainWindow):
         self._cam_pre_frames  = 0        # computed from pre-trigger seconds × fps at Apply Config
         self._cam_post_frames = 0        # computed from post-trigger seconds × fps at Apply Config
 
+        # Pressure and mass flow both arrive in the same Alicat frame, so they
+        # share one timestamp series.
         self.pressure_data = {
-            'live_buffer': {'timestamps': [], 'pressures': []},
-            'experiment_data': {'timestamps': [], 'pressures': []},
+            'live_buffer':     {'timestamps': [], 'pressures': [], 'flows': []},
+            'experiment_data': {'timestamps': [], 'pressures': [], 'flows': []},
             'experiment_active': False,
             'experiment_start_time': None,
         }
         self.pressure_data['live_buffer_start_time'] = time.time()
-        self._last_experiment_snapshot = {'timestamps': [], 'pressures': []}
+        self._last_experiment_snapshot = {'timestamps': [], 'pressures': [], 'flows': []}
         self._last_cone_path = None   # path of most recent cone image (raw or annotated)
         self._cone_history: deque = deque(maxlen=5)  # (annotated_path, angle) tuples, newest last
-        self._last_pressure: float | None = None     # last successfully set pressure (persisted)
 
         # Lamella analysis state (populated by _load_camera_settings; used by Phase 1 GUI)
         self._lamella_crop_cfg:   dict = {"x": 860, "y": 829, "w": 307, "h": 583}
@@ -1165,9 +1354,11 @@ class AtomisationApp(QMainWindow):
         self._last_tiff_dir:      str | None = None  # TIFF folder from last camera trigger (for master_log)
 
         # EMA smoothing state (α=0.3: strong noise rejection, <2.5s lag on step changes)
-        self._pressure_smooth_enabled = True
+        # One toggle drives both the pressure and mass flow traces.
+        self._smooth_enabled = True
         self._EMA_ALPHA = 0.3
         self._pressure_ema = None   # reset when new readings arrive after a gap
+        self._flow_ema     = None
 
         self._cone_cap  = None  # cv2.VideoCapture instance — must exist before _build_ui wires signals
         self._log_queue = queue.Queue()  # thread-safe sink for pipeline/cone stdout → GUI log panel
@@ -1176,6 +1367,9 @@ class AtomisationApp(QMainWindow):
         self._last_saved_run_folder: str | None = None
         self._build_ui()
         self._load_camera_settings()
+        # Bring the MFC up on its own — the rig always has one, and every run
+        # needs the flow and pressure trace it provides.
+        QTimer.singleShot(800, self, self._auto_connect_alicat)
         QTimer.singleShot(0, self, self._poll_lacie)
         QTimer.singleShot(0, self, self._update_next_save_preview)
 
@@ -1185,7 +1379,7 @@ class AtomisationApp(QMainWindow):
 
         # ── Timers ────────────────────────────────────────────────────────────
         self._graph_timer = QTimer(self)
-        self._graph_timer.timeout.connect(self._update_pressure_graph)
+        self._graph_timer.timeout.connect(self._update_graphs)
         self._graph_timer.start(500)
 
         self._cone_feed_timer = QTimer(self)
@@ -1322,13 +1516,16 @@ class AtomisationApp(QMainWindow):
         self._hdr_afg_dot      = dot_indicator(CLR_RED)
         self._hdr_afg_lbl      = QLabel("AFG")
         self._hdr_pressure_dot = dot_indicator(CLR_TEXT_SEC)
-        self._hdr_pressure_lbl = QLabel("– BAR")
+        self._hdr_pressure_lbl = QLabel("– barA")
+        self._hdr_mfc_dot      = dot_indicator(CLR_TEXT_SEC)
+        self._hdr_mfc_lbl      = QLabel("MFC")
 
-        # Arduino, AFG, BAR — plain dot + label
+        # Arduino, AFG, BAR, MFC — plain dot + label
         for dot, lbl in [
             (self._hdr_arduino_dot,  self._hdr_arduino_lbl),
             (self._hdr_afg_dot,      self._hdr_afg_lbl),
             (self._hdr_pressure_dot, self._hdr_pressure_lbl),
+            (self._hdr_mfc_dot,      self._hdr_mfc_lbl),
         ]:
             lbl.setStyleSheet(f"color: {CLR_TEXT_SEC}; font-size: 12px;")
 
@@ -1365,6 +1562,10 @@ class AtomisationApp(QMainWindow):
 
         hl.addWidget(self._hdr_pressure_dot)
         hl.addWidget(self._hdr_pressure_lbl)
+        _sp_mfc = QFrame(); _sp_mfc.setFixedWidth(10); _sp_mfc.setStyleSheet("background: transparent;")
+        hl.addWidget(_sp_mfc)
+        hl.addWidget(self._hdr_mfc_dot)
+        hl.addWidget(self._hdr_mfc_lbl)
 
         _sep2 = QFrame(); _sep2.setFixedWidth(1); _sep2.setFixedHeight(18)
         _sep2.setStyleSheet(f"background: {CLR_BORDER};")
@@ -1448,112 +1649,81 @@ class AtomisationApp(QMainWindow):
 
         vl.addWidget(preview_card)
 
-        # ── Pressure graph card ───────────────────────────────────────────────
-        graph_card = card()
-        graph_card.layout().setSpacing(6)
+        # ── Live graph cards (mass flow above pressure) ───────────────────────
+        # Both traces come from the Alicat MFC and share the Smooth toggle.
+        GRAPH_H = 108      # 0.6 × the original 180 px so both fit without scrolling
 
-        graph_hdr = QWidget()
-        graph_hdr_l = QHBoxLayout(graph_hdr)
-        graph_hdr_l.setContentsMargins(0, 0, 0, 0)
-        graph_hdr_l.setSpacing(8)
-        graph_hdr_l.addWidget(title_label("Pressure (live)", 13))
-        graph_hdr_l.addStretch()
+        def _live_plot(ylabel, units, colour):
+            """Build a styled PlotWidget and return (widget, curve)."""
+            pw = pg.PlotWidget()
+            pw.setFixedHeight(GRAPH_H)
+            pw.setBackground('#2c2c2e')
+            pi = pw.getPlotItem()
+            pi.setLabel('left', ylabel, units=units,
+                        color='#8e8e93', **{'font-size': '9pt'})
+            pi.setLabel('bottom', 'Time', units='s',
+                        color='#8e8e93', **{'font-size': '9pt'})
+            pi.getAxis('left').setTextPen(pg.mkPen('#8e8e93'))
+            pi.getAxis('bottom').setTextPen(pg.mkPen('#8e8e93'))
+            pi.getAxis('left').setPen(pg.mkPen('#3a3a3c'))
+            pi.getAxis('bottom').setPen(pg.mkPen('#3a3a3c'))
+            pi.showGrid(x=True, y=True, alpha=0.15)
+            pi.setMouseEnabled(x=False, y=False)
+            pi.hideButtons()
+            return pw, pi.plot(pen=pg.mkPen(color=colour, width=2.5))
+
+        # Mass flow card — carries the shared Smooth checkbox
+        flow_card = card()
+        flow_card.layout().setSpacing(6)
+
+        flow_hdr = QWidget()
+        flow_hdr_l = QHBoxLayout(flow_hdr)
+        flow_hdr_l.setContentsMargins(0, 0, 0, 0)
+        flow_hdr_l.setSpacing(8)
+        flow_hdr_l.addWidget(title_label("Mass Flow (live)", 13))
+        flow_hdr_l.addStretch()
         self._smooth_cb = QCheckBox("Smooth")
         self._smooth_cb.setChecked(True)
         self._smooth_cb.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
         self._smooth_cb.setToolTip(
             "<b>EMA smoothing (α=0.3)</b><br>"
-            "Exponential moving average — reduces electrical noise on the ADC line "
-            "without introducing the step-change lag of a simple rolling average.<br>"
+            "Exponential moving average — reduces measurement noise without the "
+            "step-change lag of a simple rolling average.<br>"
+            "Applies to both the mass flow and pressure traces.<br>"
             "Raw values are always stored for export regardless of this setting.")
         self._smooth_cb.toggled.connect(self._on_smooth_toggled)
-        graph_hdr_l.addWidget(self._smooth_cb)
-        graph_card.layout().addWidget(graph_hdr)
+        flow_hdr_l.addWidget(self._smooth_cb)
+        flow_card.layout().addWidget(flow_hdr)
 
-        self._graph_widget = pg.PlotWidget()
-        self._graph_widget.setFixedHeight(180)
-        self._graph_widget.setBackground('#2c2c2e')
+        self._flow_graph_widget, self._flow_curve = _live_plot(
+            'Mass Flow', 'sccm', CLR_GREEN)
+        flow_card.layout().addWidget(self._flow_graph_widget)
+        vl.addWidget(flow_card)
 
-        _plot = self._graph_widget.getPlotItem()
-        _plot.setLabel('left',  'Pressure', units='BAR',
-                       color='#8e8e93', **{'font-size': '9pt'})
-        _plot.setLabel('bottom', 'Time', units='s',
-                       color='#8e8e93', **{'font-size': '9pt'})
-        _plot.getAxis('left').setTextPen(pg.mkPen('#8e8e93'))
-        _plot.getAxis('bottom').setTextPen(pg.mkPen('#8e8e93'))
-        _plot.getAxis('left').setPen(pg.mkPen('#3a3a3c'))
-        _plot.getAxis('bottom').setPen(pg.mkPen('#3a3a3c'))
-        _plot.showGrid(x=True, y=True, alpha=0.15)
-        _plot.setMouseEnabled(x=False, y=False)
-        _plot.hideButtons()
+        # Pressure card
+        graph_card = card()
+        graph_card.layout().setSpacing(6)
+        graph_card.layout().addWidget(title_label("Pressure (live)", 13))
 
-        self._pressure_curve = _plot.plot(
-            pen=pg.mkPen(color=CLR_ACCENT, width=2.5)
-        )
+        self._graph_widget, self._pressure_curve = _live_plot(
+            'Pressure', 'barA', CLR_ACCENT)
         graph_card.layout().addWidget(self._graph_widget)
         vl.addWidget(graph_card)
 
-        # ── Motor travel + Volume row ──────────────────────────────────────────
-        motor_vol_row = QWidget()
-        motor_vol_row.setStyleSheet("background: transparent;")
-        mvrl = QHBoxLayout(motor_vol_row)
-        mvrl.setContentsMargins(0, 0, 0, 0)
-        mvrl.setSpacing(6)
+        # Motor travel and Volume now live in the status bar, left of START —
+        # see _build_status_bar().
 
-        # Motor travel card (3/4 width)
-        motor_card = card(padding=10)
-        motor_card.layout().setSpacing(6)
-
-        mh = QWidget()
-        mhl = QHBoxLayout(mh); mhl.setContentsMargins(0,0,0,0)
-        mhl.addWidget(title_label("Motor Travel", 13))
-        mhl.addStretch()
-        self._travel_label = QLabel(f"0.0 / {self.MAX_MOTOR_MM} mm")
-        self._travel_label.setStyleSheet(f"color: {CLR_TEXT_SEC}; font-size: 12px;")
-        mhl.addWidget(self._travel_label)
-        motor_card.layout().addWidget(mh)
-
-        self._travel_bar = QProgressBar()
-        self._travel_bar.setRange(0, 1000)
-        self._travel_bar.setValue(0)
-        self._travel_bar.setTextVisible(False)
-        self._travel_bar.setFixedHeight(8)
-        motor_card.layout().addWidget(self._travel_bar)
-
-        self._travel_warning = QLabel("")
-        self._travel_warning.setStyleSheet(f"color: {CLR_ORANGE}; font-size: 11px;")
-        motor_card.layout().addWidget(self._travel_warning)
-
-        mvrl.addWidget(motor_card, 3)
-
-        # Volume card (1/4 width)
-        vol_card = card(padding=10)
-        vol_card.layout().setSpacing(4)
-
-        vol_card.layout().addWidget(title_label("Volume", 13))
-
-        self._vol_label = QLabel("0.00 mL")
-        self._vol_label.setStyleSheet(
-            f"color: {CLR_TEXT}; font-size: 14px; font-weight: 700;")
-        self._vol_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        vol_card.layout().addWidget(self._vol_label)
-
-        mvrl.addWidget(vol_card, 1)
-
-        vl.addWidget(motor_vol_row)
-
-        # ── Pressure Off (always visible) ─────────────────────────────────────
+        # ── Emergency off (always visible) ────────────────────────────────────
         pressure_off_card = card(padding=10)
         pressure_off_card.layout().setSpacing(6)
         pressure_off_card.layout().addWidget(title_label("Emergency", 13))
 
-        self._pressure_off_btn_left = accent_button("Motor and Pressure Off", CLR_RED)
+        self._pressure_off_btn_left = accent_button("Motor and Gas Off", CLR_RED)
         self._pressure_off_btn_left.setFixedHeight(40)
         self._pressure_off_btn_left.setToolTip(
-            "<b>Emergency pressure off</b><br>"
+            "<b>Emergency off</b><br>"
             "1. Sends an immediate stop command to the Arduino<br>"
-            "2. Closes the pressure valve<br>"
-            "3. Zeroes the AliCat setpoint")
+            "2. Zeroes the AliCat flow setpoint")
         self._pressure_off_btn_left.clicked.connect(self._pressure_off)
         pressure_off_card.layout().addWidget(self._pressure_off_btn_left)
 
@@ -1759,100 +1929,124 @@ class AtomisationApp(QMainWindow):
         vl.setContentsMargins(20, 20, 20, 20)
         vl.setSpacing(14)
 
-        # ── Portenta ──────────────────────────────────────────────────────────
-        c = card(w)
-        c.layout().addWidget(section_label("PORTENTA"))
-        c.layout().addWidget(separator())
+        # ── Connections (Portenta · Arduino Uno · Alicat MFC) ─────────────────
+        # All three share the same shape, so build them from one helper and lay
+        # them out a third of the width each in a single row.
+        COMBO_H = 56      # tall enough to read the port + description comfortably
+        BTN_H   = 46      # sized so the card lands at 1.3x its previous height
+        ICON_PX = 16      # refresh glyph, well inside the 56px square button
 
-        port_row = QWidget()
-        pr = QHBoxLayout(port_row); pr.setContentsMargins(0,0,0,0); pr.setSpacing(8)
-        lbl = QLabel("Port"); lbl.setFixedWidth(80)
-        lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
-        self._port_combo = QComboBox()
-        self._port_combo.setEditable(True)
-        self._port_combo.addItems(self._get_serial_ports())
-        self._port_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self._port_combo.setMinimumWidth(120)
-        self._port_combo.setFixedHeight(51)
-        refresh_port_btn = ghost_button("Refresh")
-        refresh_port_btn.setFixedHeight(34)
-        refresh_port_btn.setToolTip(
+        def connection_card(title, on_refresh, on_connect, on_disconnect,
+                            refresh_tip, connect_tip, disconnect_tip):
+            cd = card(w, padding=20)
+            cd.layout().setSpacing(12)
+            cd.layout().addWidget(section_label(title))
+            cd.layout().addWidget(separator())
+
+            prow = QWidget()
+            prow.setStyleSheet("background: transparent;")
+            prl = QHBoxLayout(prow); prl.setContentsMargins(0,0,0,0); prl.setSpacing(6)
+            combo = QComboBox()
+            combo.setEditable(True)
+            combo.addItems(self._get_serial_ports())
+            combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            combo.setMinimumWidth(0)          # must be free to shrink at 1/3 width
+            combo.setFixedHeight(COMBO_H)
+            combo.setStyleSheet("QComboBox { font-size: 14px; padding-left: 10px; }")
+            # Icon-only button: ghost_button's 7px/16px padding would squeeze the
+            # content rect to ~22px and clip the glyph, so restate the style with
+            # zero padding rather than trying to override it.
+            rfb = QPushButton("")
+            rfb.setIcon(refresh_icon(size=ICON_PX))
+            rfb.setIconSize(QSize(ICON_PX, ICON_PX))
+            rfb.setFixedSize(COMBO_H, COMBO_H)   # square, matched to the dropdown
+            rfb.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: transparent;
+                    border: 1px solid {CLR_ACCENT};
+                    border-radius: 8px;
+                    padding: 0px;
+                }}
+                QPushButton:hover {{ background-color: rgba(10,132,255,0.15); }}
+                QPushButton:pressed {{ background-color: rgba(10,132,255,0.30); }}
+            """)
+            rfb.setToolTip(refresh_tip)
+            rfb.clicked.connect(on_refresh)
+            prl.addWidget(combo, 1); prl.addWidget(rfb)
+            cd.layout().addWidget(prow)
+
+            brow = QWidget()
+            brow.setStyleSheet("background: transparent;")
+            brl = QHBoxLayout(brow); brl.setContentsMargins(0,0,0,0); brl.setSpacing(6)
+            cbtn = accent_button("Connect", CLR_ACCENT)
+            dbtn = ghost_button("Disconnect")
+            for b in (cbtn, dbtn):
+                b.setFixedHeight(BTN_H)
+                b.setMinimumWidth(0)
+                b.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            dbtn.setEnabled(False)
+            cbtn.setToolTip(connect_tip); dbtn.setToolTip(disconnect_tip)
+            cbtn.clicked.connect(on_connect); dbtn.clicked.connect(on_disconnect)
+            brl.addWidget(cbtn); brl.addWidget(dbtn)
+            cd.layout().addWidget(brow)
+
+            # Status on its own line — there is no room beside the buttons here
+            status = QLabel("Not connected")
+            status.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
+            cd.layout().addWidget(status)
+            return cd, combo, cbtn, dbtn, status
+
+        conn_row = QWidget()
+        conn_row.setStyleSheet("background: transparent;")
+        crl = QHBoxLayout(conn_row)
+        crl.setContentsMargins(0, 0, 0, 0)
+        crl.setSpacing(10)
+
+        (c, self._port_combo, self._connect_btn,
+         self._disconnect_btn, self._arduino_status_lbl) = connection_card(
+            "PORTENTA", self._refresh_ports,
+            self._trigger_arduino_connect, self._trigger_arduino_disconnect,
             "<b>Refresh serial ports</b><br>"
             "1. Re-scans all COM/USB serial ports on this computer<br>"
-            "2. Updates the dropdown list with the new results")
-        refresh_port_btn.clicked.connect(self._refresh_ports)
-        pr.addWidget(lbl); pr.addWidget(self._port_combo); pr.addWidget(refresh_port_btn)
-        c.layout().addWidget(port_row)
-
-        btn_row = QWidget()
-        br = QHBoxLayout(btn_row); br.setContentsMargins(0,0,0,0); br.setSpacing(8)
-        self._connect_btn    = accent_button("Connect",    CLR_ACCENT)
-        self._disconnect_btn = ghost_button("Disconnect")
-        self._disconnect_btn.setEnabled(False)
-        self._connect_btn.setFixedHeight(36)
-        self._disconnect_btn.setFixedHeight(36)
-        self._connect_btn.setToolTip(
+            "2. Updates the dropdown list with the new results",
             "<b>Connect to Arduino</b><br>"
             "1. Opens a serial connection on the selected port<br>"
             "2. Handshakes with the Portenta H7<br>"
-            "3. Enables pressure and motor controls")
-        self._disconnect_btn.setToolTip(
+            "3. Enables the motor controls",
             "<b>Disconnect Arduino</b><br>"
             "1. Sends a disconnect command to the Portenta<br>"
             "2. Closes the serial port and releases it")
-        self._connect_btn.clicked.connect(self._trigger_arduino_connect)
-        self._disconnect_btn.clicked.connect(self._trigger_arduino_disconnect)
-        self._arduino_status_lbl = QLabel("Not connected")
-        self._arduino_status_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
-        br.addWidget(self._connect_btn); br.addWidget(self._disconnect_btn)
-        br.addStretch(); br.addWidget(self._arduino_status_lbl)
-        c.layout().addWidget(btn_row)
-        vl.addWidget(c)
 
-        # ── Arduino Uno (RPM motor) ────────────────────────────────────────────
-        cu = card(w)
-        cu.layout().addWidget(section_label("ARDUINO UNO"))
-        cu.layout().addWidget(separator())
-
-        rpm_port_row = QWidget()
-        rpr = QHBoxLayout(rpm_port_row); rpr.setContentsMargins(0,0,0,0); rpr.setSpacing(8)
-        rpm_port_lbl = QLabel("Port"); rpm_port_lbl.setFixedWidth(80)
-        rpm_port_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
-        self._rpm_port_combo = QComboBox()
-        self._rpm_port_combo.setEditable(True)
-        self._rpm_port_combo.addItems(self._get_serial_ports())
-        self._rpm_port_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self._rpm_port_combo.setMinimumWidth(120)
-        self._rpm_port_combo.setFixedHeight(51)
-        rpm_refresh_btn = ghost_button("Refresh")
-        rpm_refresh_btn.setFixedHeight(34)
-        rpm_refresh_btn.setToolTip(
+        (cu, self._rpm_port_combo, self._rpm_connect_btn,
+         self._rpm_disconnect_btn, self._rpm_status_lbl) = connection_card(
+            "ARDUINO UNO", self._refresh_rpm_ports,
+            self._trigger_rpm_connect, self._trigger_rpm_disconnect,
             "<b>Refresh serial ports</b><br>"
-            "Re-scans all COM/USB serial ports and updates the dropdown")
-        rpm_refresh_btn.clicked.connect(self._refresh_rpm_ports)
-        rpr.addWidget(rpm_port_lbl); rpr.addWidget(self._rpm_port_combo); rpr.addWidget(rpm_refresh_btn)
-        cu.layout().addWidget(rpm_port_row)
-
-        rpm_btn_row = QWidget()
-        rbr = QHBoxLayout(rpm_btn_row); rbr.setContentsMargins(0,0,0,0); rbr.setSpacing(8)
-        self._rpm_connect_btn    = accent_button("Connect",    CLR_ACCENT)
-        self._rpm_disconnect_btn = ghost_button("Disconnect")
-        self._rpm_disconnect_btn.setEnabled(False)
-        self._rpm_connect_btn.setFixedHeight(36)
-        self._rpm_disconnect_btn.setFixedHeight(36)
-        self._rpm_connect_btn.setToolTip(
+            "Re-scans all COM/USB serial ports and updates the dropdown",
             "<b>Connect to Arduino Uno</b><br>"
-            "Opens a serial connection on the selected port at 115200 baud")
-        self._rpm_disconnect_btn.setToolTip(
+            "Opens a serial connection on the selected port at 115200 baud",
             "<b>Disconnect Arduino Uno</b><br>"
             "Stops the motor and closes the serial port")
-        self._rpm_connect_btn.clicked.connect(self._trigger_rpm_connect)
-        self._rpm_disconnect_btn.clicked.connect(self._trigger_rpm_disconnect)
-        self._rpm_status_lbl = QLabel("Not connected")
-        self._rpm_status_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
-        rbr.addWidget(self._rpm_connect_btn); rbr.addWidget(self._rpm_disconnect_btn)
-        rbr.addStretch(); rbr.addWidget(self._rpm_status_lbl)
-        cu.layout().addWidget(rpm_btn_row)
+
+        (ca, self._mfc_port_combo, self._mfc_connect_btn,
+         self._mfc_disconnect_btn, self._mfc_status_lbl) = connection_card(
+            "ALICAT MFC", self._refresh_mfc_ports,
+            self._trigger_mfc_connect, self._trigger_mfc_disconnect,
+            "Re-scans all COM/USB serial ports and updates the dropdown",
+            "<b>Connect to Alicat MFC</b><br>"
+            "Opens RS232 at 19200 baud and sets flow to 0 sccm",
+            "<b>Disconnect Alicat MFC</b><br>"
+            "Sets flow to 0 sccm then closes the serial port")
+
+        for _cd in (c, cu, ca):
+            crl.addWidget(_cd, 1)
+        vl.addWidget(conn_row)
+
+        # ── Motor speed (Arduino Uno) ─────────────────────────────────────────
+        # Split out of the Uno card: it needs more width than a third of the row.
+        cu_ctrl = card(w)
+        cu_ctrl.layout().addWidget(section_label("MOTOR SPEED"))
+        cu_ctrl.layout().addWidget(separator())
 
         rpm_ctrl_row = QWidget()
         rcr = QHBoxLayout(rpm_ctrl_row); rcr.setContentsMargins(0,0,0,0); rcr.setSpacing(8)
@@ -1876,41 +2070,40 @@ class AtomisationApp(QMainWindow):
         self._rpm_actual_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         rcr.addWidget(rpm_lbl); rcr.addWidget(self._rpm_entry); rcr.addWidget(self._rpm_spin_btn)
         rcr.addWidget(self._rpm_actual_lbl)
-        cu.layout().addWidget(rpm_ctrl_row)
-        vl.addWidget(cu)
+        cu_ctrl.layout().addWidget(rpm_ctrl_row)
+        vl.addWidget(cu_ctrl)
 
-        # ── Pressure ──────────────────────────────────────────────────────────
-        c2 = card(w)
-        c2.layout().addWidget(section_label("PRESSURE"))
-        c2.layout().addWidget(separator())
+        # ── Mass Flow Control ─────────────────────────────────────────────────
+        c_mfc = card(w)
+        c_mfc.layout().addWidget(section_label("MASS FLOW CONTROL"))
+        c_mfc.layout().addWidget(separator())
 
-        p_input_row = QWidget()
-        pir = QHBoxLayout(p_input_row); pir.setContentsMargins(0,0,0,0); pir.setSpacing(8)
-        p_lbl = QLabel("Target (BAR)"); p_lbl.setFixedWidth(110)
-        p_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
-        self._pressure_entry = QLineEdit(); self._pressure_entry.setPlaceholderText("0.0 – 26.4")
-        self._pressure_entry.setMinimumWidth(80)
-        self._pressure_entry.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self._pressure_entry.setValidator(QDoubleValidator(0.0, 26.4, 2))
-        self._pressure_entry.textChanged.connect(self._update_next_save_preview)
-        set_p_btn = accent_button("Set Pressure", CLR_ACCENT)
-        set_p_btn.setFixedHeight(36)
-        set_p_btn.setToolTip(
-            "<b>Set pressure</b><br>"
-            "1. Validates the entered value (0.0 – 26.4 BAR)<br>"
-            "2. Sends the setpoint to the Arduino over serial<br>"
-            "3. Arduino forwards it to the AliCat controller")
-        set_p_btn.clicked.connect(self._set_pressure)
-        off_p_btn = accent_button("Pressure Off", CLR_RED)
-        off_p_btn.setFixedHeight(36)
-        off_p_btn.setToolTip(
-            "<b>Pressure off</b><br>"
-            "1. Immediately closes the pressure valve<br>"
-            "2. Zeroes the AliCat setpoint")
-        off_p_btn.clicked.connect(self._pressure_off_only)
+        mf_input_row = QWidget()
+        mfir = QHBoxLayout(mf_input_row); mfir.setContentsMargins(0,0,0,0); mfir.setSpacing(8)
+        mf_lbl = QLabel("Target (sccm)"); mf_lbl.setFixedWidth(110)
+        mf_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
+        self._flow_entry = QLineEdit()
+        self._flow_entry.setPlaceholderText("0 – 12000")
+        self._flow_entry.setMinimumWidth(80)
+        self._flow_entry.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._flow_entry.setValidator(QDoubleValidator(0.0, 12000.0, 1))
+        self._flow_entry.textChanged.connect(self._update_next_save_preview)
+        set_f_btn = accent_button("Set Flow", CLR_ACCENT)
+        set_f_btn.setFixedHeight(36)
+        set_f_btn.setToolTip(
+            "<b>Set mass flow</b><br>"
+            "1. Validates the entered value (0 – 12000 sccm)<br>"
+            "2. Sends the setpoint to the Alicat MFC over RS232")
+        set_f_btn.clicked.connect(self._set_flow)
+        off_f_btn = accent_button("Gas Flow Off", CLR_RED)
+        off_f_btn.setFixedHeight(36)
+        off_f_btn.setToolTip(
+            "<b>Gas flow off</b><br>"
+            "Immediately sets the Alicat setpoint to 0 sccm")
+        off_f_btn.clicked.connect(self._flow_off)
 
-        self._last_pressure_btn = QPushButton("Set last pressure")
-        self._last_pressure_btn.setStyleSheet(f"""
+        self._last_flow_btn = QPushButton("Set last flow")
+        self._last_flow_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: {CLR_INPUT};
                 color: {CLR_TEXT_SEC};
@@ -1924,29 +2117,41 @@ class AtomisationApp(QMainWindow):
             QPushButton:pressed {{ background-color: #4a4a4e; }}
             QPushButton:disabled {{ color: #555; border-color: #333; }}
         """)
-        self._last_pressure_btn.setEnabled(False)
-        self._last_pressure_btn.clicked.connect(self._set_last_pressure)
+        self._last_flow_btn.setEnabled(False)
+        self._last_flow_btn.clicked.connect(self._set_last_flow)
 
-        # Stack Set Pressure + Set last pressure vertically, then slot into pir
-        set_p_stack = QWidget()
-        set_p_vl = QVBoxLayout(set_p_stack)
-        set_p_vl.setContentsMargins(0, 0, 0, 0)
-        set_p_vl.setSpacing(4)
-        set_p_vl.addWidget(set_p_btn)
-        set_p_vl.addWidget(self._last_pressure_btn)
-        pir.addWidget(p_lbl); pir.addWidget(self._pressure_entry)
-        pir.addWidget(set_p_stack); pir.addStretch(); pir.addWidget(off_p_btn)
-        c2.layout().addWidget(p_input_row)
+        set_f_stack = QWidget()
+        set_f_vl = QVBoxLayout(set_f_stack)
+        set_f_vl.setContentsMargins(0, 0, 0, 0)
+        set_f_vl.setSpacing(4)
+        set_f_vl.addWidget(set_f_btn)
+        set_f_vl.addWidget(self._last_flow_btn)
+        mfir.addWidget(mf_lbl); mfir.addWidget(self._flow_entry)
+        mfir.addWidget(set_f_stack); mfir.addStretch(); mfir.addWidget(off_f_btn)
+        c_mfc.layout().addWidget(mf_input_row)
 
-        cur_row = QWidget()
-        crr = QHBoxLayout(cur_row); crr.setContentsMargins(0,0,0,0); crr.setSpacing(8)
-        cur_lbl = QLabel("Current"); cur_lbl.setFixedWidth(110)
-        cur_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
-        self._cur_pressure_lbl = QLabel("0.0 BAR")
-        self._cur_pressure_lbl.setStyleSheet(f"color:{CLR_TEXT}; font-size:16px; font-weight:700;")
-        crr.addWidget(cur_lbl); crr.addWidget(self._cur_pressure_lbl); crr.addStretch()
-        c2.layout().addWidget(cur_row)
-        vl.addWidget(c2)
+        # Live readouts
+        mf_readout_row = QWidget()
+        mfrr = QHBoxLayout(mf_readout_row); mfrr.setContentsMargins(0,0,0,0); mfrr.setSpacing(20)
+
+        def _mfc_readout(label_text):
+            rw = QWidget()
+            rvl = QVBoxLayout(rw); rvl.setContentsMargins(0,0,0,0); rvl.setSpacing(2)
+            rl = QLabel(label_text)
+            rl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
+            rv = QLabel("–")
+            rv.setStyleSheet(f"color:{CLR_TEXT}; font-size:14px; font-weight:700;")
+            rvl.addWidget(rl); rvl.addWidget(rv)
+            return rw, rv
+
+        _fw,  self._mfc_flow_lbl  = _mfc_readout("Mass Flow")
+        _sw,  self._mfc_setpt_lbl = _mfc_readout("Setpoint")
+        _pw,  self._mfc_pres_lbl  = _mfc_readout("Pressure")
+        _tw,  self._mfc_temp_lbl  = _mfc_readout("Temperature")
+        mfrr.addWidget(_fw); mfrr.addWidget(_sw)
+        mfrr.addWidget(_pw); mfrr.addWidget(_tw); mfrr.addStretch()
+        c_mfc.layout().addWidget(mf_readout_row)
+        vl.addWidget(c_mfc)
 
         # ── Motor ─────────────────────────────────────────────────────────────
         c3 = card(w)
@@ -2929,14 +3134,16 @@ class AtomisationApp(QMainWindow):
                 ("1. Connect the Arduino",
                  "Go to the Hardware tab. Select the correct serial port from the dropdown and click Connect. "
                  "The status dot in the header turns green when connected. The Arduino controls the stepper "
-                 "motor and reads pressure from the AliCat flow controller."),
+                 "motor. Gas flow and pressure come from the AliCat MFC, connected separately below it."),
                 ("2. Home the motor",
                  "Before moving the nozzle, click Home. This zeroes the position counter. The Motor Travel "
                  "bar on the left updates in real-time. Never exceed the maximum travel shown — the motor "
                  f"hard limit is {AtomisationApp.MAX_MOTOR_MM} mm."),
-                ("3. Set pressure",
-                 "Enter a target pressure (0.0 – 26.4 BAR) and click Set Pressure. The current reading "
-                 "updates live. Click Pressure Off to close the valve immediately."),
+                ("3. Set the gas flow",
+                 "Connect the AliCat MFC in the Hardware tab, enter a target flow (0 – 12000 sccm) and "
+                 "click Set Flow. Measured flow, pressure, temperature and setpoint update live, and the "
+                 "Mass Flow and Pressure graphs on the left plot them. Click Gas Flow Off to zero the "
+                 "setpoint immediately."),
             ]),
             ("PHANTOM HIGH-SPEED CAMERA", [
                 ("Connecting",
@@ -2994,7 +3201,7 @@ class AtomisationApp(QMainWindow):
                 ("Excel log",
                  "Fill in Nozzle No. and Orifice in the right panel, add any notes (fluid composition, "
                  "temperature, observations), then click Save to Excel. Results are written to a per-run "
-                 "folder on the LaCie drive: Experiments/YYYY/MM/DD/HHMMSS_Nnozzle_pressureBAR/run_summary.xlsx."),
+                 "folder on the LaCie drive: Experiments/YYYY/MM/DD/HHMMSS_Nnozzle_flowsccm/run_summary.xlsx."),
                 ("Shadowgraph result",
                  "The Latest Result panel (left) shows the most recent FINAL_OPTIMIZED_RESULT.png found "
                  "in the current run's shadowgraph/analysis/ folder. Click ↻ Refresh to scan for a newer result after analysis."),
@@ -3055,12 +3262,73 @@ class AtomisationApp(QMainWindow):
         hl.addWidget(self._status_lbl)
         hl.addStretch()
 
+        # ── Motor travel + Volume ─────────────────────────────────────────────
+        # Compact versions of the old left-panel cards, sized to the 56 px bar.
+        # Plain QWidgets rather than card(): the bar's own "QFrame { ... }" rule
+        # would cascade a border-top onto any QFrame child.
+        travel_box = QWidget()
+        travel_box.setFixedSize(210, 38)    # 14 title + 6 bar + 12 warning + spacing
+        travel_box.setStyleSheet("background: transparent;")
+        tvl = QVBoxLayout(travel_box)
+        tvl.setContentsMargins(0, 0, 0, 0)
+        tvl.setSpacing(3)
+
+        travel_hdr = QWidget()
+        travel_hdr.setStyleSheet("background: transparent;")
+        thl = QHBoxLayout(travel_hdr)
+        thl.setContentsMargins(0, 0, 0, 0)
+        thl.setSpacing(6)
+        _travel_title = QLabel("Motor Travel")
+        _travel_title.setStyleSheet(f"color:{CLR_TEXT}; font-size:11px; font-weight:600;")
+        self._travel_label = QLabel(f"0.0 / {self.MAX_MOTOR_MM} mm")
+        self._travel_label.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
+        thl.addWidget(_travel_title)
+        thl.addStretch()
+        thl.addWidget(self._travel_label)
+        tvl.addWidget(travel_hdr)
+
+        self._travel_bar = QProgressBar()
+        self._travel_bar.setRange(0, 1000)
+        self._travel_bar.setValue(0)
+        self._travel_bar.setTextVisible(False)
+        self._travel_bar.setFixedHeight(6)
+        tvl.addWidget(self._travel_bar)
+
+        # Fixed height so the bar above doesn't shift when the warning appears
+        self._travel_warning = QLabel("")
+        self._travel_warning.setStyleSheet(f"color:{CLR_ORANGE}; font-size:10px;")
+        self._travel_warning.setFixedHeight(12)
+        tvl.addWidget(self._travel_warning)
+
+        hl.addWidget(travel_box, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        vol_box = QWidget()
+        vol_box.setFixedSize(72, 38)
+        vol_box.setStyleSheet("background: transparent;")
+        vvl = QVBoxLayout(vol_box)
+        vvl.setContentsMargins(0, 0, 0, 0)
+        vvl.setSpacing(3)
+        _vol_title = QLabel("Volume")
+        _vol_title.setStyleSheet(f"color:{CLR_TEXT}; font-size:11px; font-weight:600;")
+        _vol_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._vol_label = QLabel("0.00 mL")
+        self._vol_label.setStyleSheet(f"color:{CLR_TEXT}; font-size:13px; font-weight:700;")
+        self._vol_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        vvl.addWidget(_vol_title)
+        vvl.addWidget(self._vol_label)
+        hl.addWidget(vol_box, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        _sb_sep = QFrame()
+        _sb_sep.setFixedSize(1, 32)
+        _sb_sep.setStyleSheet(f"background-color:{CLR_BORDER}; border:none;")
+        hl.addWidget(_sb_sep)
+
         self._start_btn = accent_button("▶  START EXPERIMENT", CLR_GREEN)
         self._start_btn.setFixedSize(200, 40)
         self._start_btn.setToolTip(
             "<b>Start experiment</b><br>"
-            "1. Sets pressure to the target BAR<br>"
-            "2. Waits for pressure to stabilise<br>"
+            "1. Sets the AliCat to the target flow (sccm)<br>"
+            "2. Starts logging mass flow and pressure<br>"
             "3. Triggers the AFG pulse (atomiser)<br>"
             "4. Captures video with the Phantom camera<br>"
             "5. Runs Dennis AI analysis (if checkbox ticked)<br>"
@@ -3253,6 +3521,192 @@ class AtomisationApp(QMainWindow):
         self._rpm_actual_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px; min-width:80px;")
         self._set_status("RPM Arduino disconnected")
 
+    # ── Alicat MFC ────────────────────────────────────────────────────────────
+
+    def _refresh_mfc_ports(self):
+        ports = self._get_serial_ports()
+        self._mfc_port_combo.clear()
+        self._mfc_port_combo.addItems(ports)
+
+    def _trigger_mfc_connect(self):
+        port = self._extract_port(self._mfc_port_combo.currentText())
+        if not port:
+            self._set_status("No port selected for Alicat MFC", CLR_ORANGE); return
+        self._mfc_connect_btn.setEnabled(False)
+        self._set_status(f"Connecting Alicat MFC on {port}…")
+        thread = QThread(self)
+        worker = Worker(self._do_mfc_connect, port)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.result.connect(self._on_mfc_connected)
+        worker.error.connect(self._on_mfc_error)
+        worker.result.connect(thread.quit)
+        worker.error.connect(thread.quit)
+        thread.start()
+        self._mfc_thread = thread; self._mfc_worker = worker
+
+    def _do_mfc_connect(self, port):
+        ctrl = AlicatMFC(port)
+        ctrl.connect()
+        return ctrl
+
+    def _on_mfc_connected(self, ctrl):
+        self.alicat = ctrl
+        self.alicat_connected = True
+        self._alicat_saved_port = ctrl.port
+        self._mfc_connect_btn.setEnabled(False)
+        self._mfc_disconnect_btn.setEnabled(True)
+        self._mfc_status_lbl.setText("Connected")
+        self._mfc_status_lbl.setStyleSheet(f"color:{CLR_GREEN}; font-size:12px; font-weight:600;")
+        self._hdr_mfc_dot.setStyleSheet(f"color:{CLR_GREEN}; font-size:10px; background:transparent;")
+        self._hdr_mfc_lbl.setStyleSheet(f"color:{CLR_TEXT}; font-size:12px;")
+        self._set_status("Alicat MFC connected — flow at 0 sccm", CLR_GREEN)
+        self._save_camera_settings()
+        self._start_alicat_reader()
+
+    def _on_mfc_error(self, msg):
+        self._mfc_connect_btn.setEnabled(True)
+        self._set_status(f"Alicat MFC error: {msg}", CLR_RED)
+
+    def _trigger_mfc_disconnect(self):
+        # The reader thread owns the port: signal it to stop and let its finally
+        # block set 0 sccm and close, rather than closing under it from here.
+        self._alicat_serial_active = False
+        t = getattr(self, "_alicat_thread", None)
+        if t and t.is_alive():
+            t.join(timeout=1.0)
+        if self.alicat:
+            if self.alicat.ser and self.alicat.ser.is_open:
+                try: self.alicat.ser.close()      # fallback if the thread hung
+                except Exception: pass
+            self.alicat = None
+        self.alicat_connected = False
+        self._mfc_connect_btn.setEnabled(True)
+        self._mfc_disconnect_btn.setEnabled(False)
+        self._mfc_status_lbl.setText("Not connected")
+        self._mfc_status_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
+        self._hdr_mfc_dot.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:10px; background:transparent;")
+        self._hdr_mfc_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
+        self._mfc_flow_lbl.setText("–")
+        self._mfc_setpt_lbl.setText("–")
+        self._mfc_pres_lbl.setText("–")
+        self._mfc_temp_lbl.setText("–")
+        self._set_status("Alicat MFC disconnected")
+
+    def _auto_connect_alicat(self):
+        """Connect the MFC on startup — the saved port, or COM4 if none is saved."""
+        if self.alicat_connected:
+            return
+        port = self._alicat_saved_port or self.ALICAT_DEFAULT_PORT
+        for i in range(self._mfc_port_combo.count()):
+            if self._extract_port(self._mfc_port_combo.itemText(i)) == port:
+                self._mfc_port_combo.setCurrentIndex(i)
+                break
+        else:
+            self._mfc_port_combo.setCurrentText(port)
+        self._trigger_mfc_connect()
+
+    # One request/response exchange every 200 ms; the unit replies in ~30–50 ms.
+    ALICAT_POLL_INTERVAL = 0.2
+    ALICAT_REPLY_TIMEOUT = 0.15
+
+    def _start_alicat_reader(self):
+        if not self.alicat or not self.alicat.ser: return
+        self._alicat_serial_active = True
+        self._alicat_thread = threading.Thread(target=self._alicat_reader_loop, daemon=True)
+        self._alicat_thread.start()
+
+    def _alicat_reader_loop(self):
+        """Sole owner of the serial port once connected.
+
+        Each cycle sends one command — a queued setpoint if the GUI asked for
+        one, otherwise a status poll — waits for the reply, then sleeps out the
+        rest of the 200 ms window so the port is never hammered back-to-back.
+        """
+        mfc = self.alicat
+        misses = 0
+        try:
+            while self._alicat_serial_active:
+                cycle_start = time.monotonic()
+
+                mfc.write(mfc.next_command())
+                frame = mfc.read_frame(self.ALICAT_REPLY_TIMEOUT)
+
+                if frame is None:
+                    misses += 1
+                    if misses in (25, 250):      # ~5 s and ~50 s of silence
+                        print(f"[ALICAT] no reply to {misses} consecutive polls "
+                              f"on {mfc.port}", flush=True)
+                else:
+                    misses = 0
+                    self._parse_alicat_line(frame)
+
+                remaining = self.ALICAT_POLL_INTERVAL - (time.monotonic() - cycle_start)
+                if remaining > 0:
+                    time.sleep(remaining)
+        except serial.SerialException as e:
+            print(f"[ALICAT] serial error: {e}", flush=True)
+        except Exception as e:
+            print(f"[ALICAT] reader stopped: {e}", flush=True)
+        finally:
+            self._alicat_serial_active = False
+            try: mfc.close()
+            except Exception: pass
+
+    def _parse_alicat_line(self, line: str):
+        # Frame: A +00.995 +030.17 +00000 +00500 +00500 +0000000     N2
+        #        id  press   temp   volum   mass   setpt    total    gas
+        parts = line.split()
+        if len(parts) < 6 or parts[0] != AlicatMFC.DEVICE_ID:
+            return
+        try:
+            pressure  = float(parts[1])
+            temp      = float(parts[2])
+            mass_flow = float(parts[4])
+            setpoint  = float(parts[5])
+            QTimer.singleShot(0, self, lambda p=pressure, t=temp, m=mass_flow, s=setpoint:
+                self._on_alicat_reading(p, t, m, s))
+        except (ValueError, IndexError):
+            pass
+
+    def _on_alicat_reading(self, pressure: float, temp: float, mass_flow: float, setpoint: float):
+        self._mfc_flow_lbl.setText(f"{mass_flow:.1f} sccm")
+        self._mfc_setpt_lbl.setText(f"{setpoint:.1f} sccm")
+        self._mfc_pres_lbl.setText(f"{pressure:.2f} barA")
+        self._mfc_temp_lbl.setText(f"{temp:.1f} °C")
+        clr = CLR_GREEN if mass_flow > 0.5 else CLR_TEXT
+        self._mfc_flow_lbl.setStyleSheet(f"color:{clr}; font-size:14px; font-weight:700;")
+        # The Alicat is the only source for the live graphs and the run log.
+        self._record_alicat_sample(pressure, mass_flow)
+
+    def _set_flow(self):
+        if not self.alicat_connected or not self.alicat:
+            self._set_status("Alicat MFC not connected", CLR_ORANGE); return
+        try:
+            val = float(self._flow_entry.text())
+            if not 0 <= val <= 12000:
+                raise ValueError
+            self.alicat.set_flow(val)
+            self._set_status(f"Flow set to {val:.1f} sccm")
+            self._last_flow = val
+            self._last_flow_btn.setText(f"Set last: {val:.1f} sccm")
+            self._last_flow_btn.setEnabled(True)
+            self._save_camera_settings()
+        except ValueError:
+            self._set_status("Invalid flow value", CLR_ORANGE)
+            self._warn("Invalid Flow", "Please enter a flow rate between 0 and 12000 sccm.")
+
+    def _set_last_flow(self):
+        if self._last_flow is None: return
+        self._flow_entry.setText(f"{self._last_flow:.1f}")
+        self._set_flow()
+
+    def _flow_off(self):
+        if not self.alicat_connected or not self.alicat:
+            self._set_status("Alicat MFC not connected", CLR_ORANGE); return
+        self.alicat.flow_off()
+        self._set_status("Gas flow off")
+
     def _toggle_spin(self):
         if not self.rpm_connected or not self.rpm_arduino:
             self._set_status("RPM Arduino not connected", CLR_ORANGE); return
@@ -3324,12 +3778,7 @@ class AtomisationApp(QMainWindow):
                     line = self.arduino.ser.readline().decode('utf-8', errors='replace').strip()
                     if line:
                         log_serial(f"Received: {line}")
-                        if line.startswith("PRESSURE_READING:"):
-                            try:
-                                val = float(line.split(":")[1])
-                                QTimer.singleShot(0, self, lambda v=val: self._handle_pressure_reading(v))
-                            except: pass
-                        elif "MOVEMENT_COMPLETE" in line or "MOVEMENT_TIMEOUT" in line:
+                        if "MOVEMENT_COMPLETE" in line or "MOVEMENT_TIMEOUT" in line:
                             QTimer.singleShot(0, self, self._on_movement_complete)
                         elif line.startswith("JOG_POS:"):
                             try:
@@ -3363,41 +3812,45 @@ class AtomisationApp(QMainWindow):
     def _poll_serial(self):
         pass  # Serial reading handled by background thread above
 
-    def _handle_pressure_reading(self, val):
+    def _record_alicat_sample(self, pressure: float, flow: float):
+        """Feed one Alicat frame into the live graphs and the experiment log."""
         now = time.time()
 
         # ── EMA smoothing ─────────────────────────────────────────────────────
         # Initialise (or reinitialise after a gap) by seeding with the first value
-        if self._pressure_ema is None:
-            self._pressure_ema = val
-        else:
-            self._pressure_ema = self._EMA_ALPHA * val + (1.0 - self._EMA_ALPHA) * self._pressure_ema
-        display_val = self._pressure_ema if self._pressure_smooth_enabled else val
+        a = self._EMA_ALPHA
+        self._pressure_ema = pressure if self._pressure_ema is None else \
+            a * pressure + (1.0 - a) * self._pressure_ema
+        self._flow_ema = flow if self._flow_ema is None else \
+            a * flow + (1.0 - a) * self._flow_ema
+        disp_p = self._pressure_ema if self._smooth_enabled else pressure
+        disp_f = self._flow_ema     if self._smooth_enabled else flow
 
-        # ── Live buffer (graph) — stores display value ────────────────────────
+        # ── Live buffer (graphs) — stores display values ──────────────────────
         lb = self.pressure_data['live_buffer']
         lb['timestamps'].append(now - self.pressure_data['live_buffer_start_time'])
-        lb['pressures'].append(display_val)
+        lb['pressures'].append(disp_p)
+        lb['flows'].append(disp_f)
         # Keep 60s rolling window
         cutoff = lb['timestamps'][-1] - 60.0
         while lb['timestamps'] and lb['timestamps'][0] < cutoff:
-            lb['timestamps'].pop(0); lb['pressures'].pop(0)
+            lb['timestamps'].pop(0); lb['pressures'].pop(0); lb['flows'].pop(0)
 
         # ── Experiment log — always stores raw values for accurate export ─────
         if self.pressure_data['experiment_active']:
             ed = self.pressure_data['experiment_data']
             ed['timestamps'].append(now - self.pressure_data['experiment_start_time'])
-            ed['pressures'].append(val)
+            ed['pressures'].append(pressure)
+            ed['flows'].append(flow)
 
-        # Update labels on main thread via timer (already running in thread)
-        self._cur_pressure_lbl.setText(f"{display_val:.3f} BAR")
-        self._hdr_pressure_lbl.setText(f"{display_val:.3f} BAR")
+        self._hdr_pressure_lbl.setText(f"{disp_p:.3f} barA")
         self._hdr_pressure_dot.setStyleSheet(f"color:{CLR_ACCENT}; font-size:10px; background:transparent;")
 
     def _on_smooth_toggled(self, checked: bool):
-        self._pressure_smooth_enabled = checked
+        self._smooth_enabled = checked
         # Reset EMA state so switching modes doesn't leave a stale seed value
         self._pressure_ema = None
+        self._flow_ema     = None
 
     @Slot()
     def _on_homed(self):
@@ -3416,10 +3869,13 @@ class AtomisationApp(QMainWindow):
             self._cone_auto_timer.stop()
             self._cone_auto_status_lbl.setText("Auto-capture: inactive")
             self._cone_auto_status_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
-            self.arduino.send_pressure_off_command()
+            if self.alicat_connected and self.alicat:
+                try: self.alicat.flow_off()
+                except Exception: pass
             self._last_experiment_snapshot = {
                 'timestamps':     list(self.pressure_data['experiment_data']['timestamps']),
                 'pressures':      list(self.pressure_data['experiment_data']['pressures']),
+                'flows':          list(self.pressure_data['experiment_data']['flows']),
                 'camera_windows': list(self.pressure_data.get('camera_windows', [])),
             }
             self._experiment_saved = False
@@ -3476,13 +3932,12 @@ class AtomisationApp(QMainWindow):
         now = datetime.now()
         nozzle_raw = self._nozzle_entry.text().strip() if hasattr(self, "_nozzle_entry") else ""
         nozzle_label = (nozzle_raw or "NoNozzle").replace(" ", "_")
-        pressure_raw = self._pressure_entry.text().strip() if hasattr(self, "_pressure_entry") else ""
+        flow_raw = self._flow_entry.text().strip() if hasattr(self, "_flow_entry") else ""
         try:
-            pressure_val = float(pressure_raw)
-            pressure_str = f"{pressure_val:.1f}BAR"
+            flow_str = f"{float(flow_raw):.0f}sccm"
         except ValueError:
-            pressure_str = "?.?BAR"
-        run_id = f"{now.strftime('%H%M%S')}_N{nozzle_label}_{pressure_str}"
+            flow_str = "?sccm"
+        run_id = f"{now.strftime('%H%M%S')}_N{nozzle_label}_{flow_str}"
         lacie = find_lacie_drive()
         exp_base = os.path.join(lacie, "Experiments") if lacie else os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
@@ -3514,57 +3969,38 @@ class AtomisationApp(QMainWindow):
             f"color:{'#e5e5ea' if connected else CLR_TEXT_SEC}; font-size:12px;")
 
     def _on_experiment_timeout(self):
-        """Watchdog fired — serial reader likely died. Kill pressure and recover UI."""
+        """Watchdog fired — serial reader likely died. Kill the gas and recover UI."""
         if self.pressure_data['experiment_active']:
             self.pressure_data['experiment_active'] = False
             self._cone_auto_timer.stop()
-            self.arduino.send_pressure_off_command()
+            if self.alicat_connected and self.alicat:
+                try: self.alicat.flow_off()
+                except Exception: pass
             self._exp_progress.setVisible(False)
             self._exp_progress.setRange(0, 0)
             self._start_btn.setEnabled(True)
             self._stop_run_timer()
-            self._set_status("Experiment timed out — pressure turned off", CLR_RED)
+            self._set_status("Experiment timed out — gas flow turned off", CLR_RED)
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Logic — Pressure / Motor
+    # Logic — Motor
     # ─────────────────────────────────────────────────────────────────────────
-
-    def _set_pressure(self):
-        if not self._require_arduino(): return
-        try:
-            val = float(self._pressure_entry.text())
-            if not 0 <= val <= 26.4:
-                raise ValueError("out of range")
-            self.arduino.send_pressure_command(val)
-            self._set_status(f"Pressure set to {val:.1f} BAR")
-            self._last_pressure = val
-            self._last_pressure_btn.setText(f"Set last: {val:.2f} BAR")
-            self._last_pressure_btn.setEnabled(True)
-            self._save_camera_settings()
-        except ValueError:
-            self._set_status("Invalid pressure value", CLR_ORANGE)
-            self._warn("Invalid Pressure",
-                       "Please enter a pressure between 0.0 and 26.4 BAR.")
-
-    def _set_last_pressure(self):
-        if self._last_pressure is None:
-            return
-        self._pressure_entry.setText(f"{self._last_pressure:.2f}")
-        self._set_pressure()
-
-    def _pressure_off_only(self):
-        if not self._require_arduino(): return
-        self.arduino.send_pressure_off_command()
-        self._set_status("Pressure off")
 
     def _pressure_off(self):
-        if not self._require_arduino(): return
-        self.arduino.send_pressure_off_command()
-        try: self.arduino.send_stop()
-        except Exception: pass
+        """Emergency stop — halt the motor and zero the gas flow.
+
+        Acts on whatever is connected rather than requiring the Arduino, so it
+        still cuts the gas when only the MFC is up.
+        """
+        if self.arduino_connected and self.arduino:
+            try: self.arduino.send_stop()
+            except Exception: pass
         if self._ramp_running:
             self._stop_ramp_test()
-        self._set_status("Motor and pressure off")
+        if self.alicat_connected and self.alicat:
+            try: self.alicat.flow_off()
+            except Exception: pass
+        self._set_status("Motor and gas flow off")
 
     def _home_motor(self):
         if not self._require_arduino(): return
@@ -3717,16 +4153,49 @@ class AtomisationApp(QMainWindow):
     # Logic — Pressure graph
     # ─────────────────────────────────────────────────────────────────────────
 
+    # Smallest y-axis span per graph, in that graph's own units.  Without this a
+    # dead-flat trace would autoscale onto its own sensor quantisation — the
+    # Alicat's ±0.001 barA last digit would fill the plot as a square wave.
+    ALICAT_MIN_SPAN_FLOW     = 20.0    # sccm
+    ALICAT_MIN_SPAN_PRESSURE = 0.05    # barA
+
     @Slot()
-    def _update_pressure_graph(self):
+    def _update_graphs(self):
+        """Redraw the live mass flow and pressure traces from the Alicat buffer.
+
+        Both y-axes track the data currently on screen rather than sitting on a
+        fixed range, so small variations stay readable at low flows and at
+        near-atmospheric pressures.
+        """
         lb = self.pressure_data['live_buffer']
-        if not lb['timestamps']:
+        ts = lb['timestamps']
+        if not ts:
             return
-        ts = lb['timestamps']; ps = lb['pressures']
-        self._pressure_curve.setData(ts, ps)
         t_max = max(ts[-1], 10.0)
-        self._graph_widget.setXRange(max(0, t_max - 30), t_max, padding=0.02)
-        self._graph_widget.setYRange(0, max(max(ps) * 1.2, 5), padding=0.05)
+        x_lo, x_hi = max(0.0, t_max - 30), t_max
+
+        # Autoscale against the samples actually on screen, not the whole 60s
+        # buffer — otherwise an old spike keeps the axis stretched after it
+        # has scrolled out of view.
+        first = next((i for i, t in enumerate(ts) if t >= x_lo), 0)
+
+        for widget, curve, ys, min_span in (
+                (self._flow_graph_widget, self._flow_curve,     lb['flows'],
+                 self.ALICAT_MIN_SPAN_FLOW),
+                (self._graph_widget,      self._pressure_curve, lb['pressures'],
+                 self.ALICAT_MIN_SPAN_PRESSURE)):
+            curve.setData(ts, ys)
+            widget.setXRange(x_lo, x_hi, padding=0.02)
+
+            window = ys[first:] or ys
+            lo, hi = min(window), max(window)
+            centre = (lo + hi) / 2.0
+            span   = max(hi - lo, min_span) * 1.3      # 15% headroom above and below
+            y_lo, y_hi = centre - span / 2.0, centre + span / 2.0
+            if y_lo < 0:                                # neither quantity goes negative
+                y_lo = 0.0
+                y_hi = max(y_hi, min_span)
+            widget.setYRange(y_lo, y_hi, padding=0)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Logic — Camera
@@ -4923,14 +5392,14 @@ class AtomisationApp(QMainWindow):
                 return  # let user save first before continuing
 
         try:
-            pressure = float(self._pressure_entry.text())
+            flow     = float(self._flow_entry.text())
             speed    = int(self._speed_entry.text())
             distance = float(self._distance_entry.text())
         except ValueError:
-            self._set_status("Fill in pressure, speed, and distance first", CLR_ORANGE)
+            self._set_status("Fill in flow, speed, and distance first", CLR_ORANGE)
             self._warn("Missing Parameters",
                        "Please fill in all three fields before starting:\n"
-                       "  • Target Pressure (BAR)\n"
+                       "  • Target Flow (sccm)\n"
                        "  • Motor Speed (steps/s)\n"
                        "  • Motor Distance (mm)")
             return
@@ -4945,14 +5414,14 @@ class AtomisationApp(QMainWindow):
 
         self.pressure_data['experiment_active'] = True
         self.pressure_data['experiment_start_time'] = time.time()
-        self.pressure_data['experiment_data'] = {'timestamps':[], 'pressures':[]}
+        self.pressure_data['experiment_data'] = {'timestamps':[], 'pressures':[], 'flows':[]}
         self.pressure_data['camera_windows'] = []
         self._last_cone_path = None   # reset so we only capture this experiment's image
 
         # ── Create run folder eagerly ──────────────────────────────────────────
         _now = datetime.now()
         _nozzle_label = (self._nozzle_entry.text().strip() or "NoNozzle").replace(" ", "_")
-        _run_id = f"{_now.strftime('%H%M%S')}_N{_nozzle_label}_{pressure:.1f}BAR"
+        _run_id = f"{_now.strftime('%H%M%S')}_N{_nozzle_label}_{flow:.0f}sccm"
         _lacie = find_lacie_drive()
         _exp_base = os.path.join(_lacie, "Experiments") if _lacie else os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
@@ -4975,9 +5444,10 @@ class AtomisationApp(QMainWindow):
             self._cone_auto_status_lbl.setText("Cone capture: in 5 s")
             self._cone_auto_status_lbl.setStyleSheet(f"color:{CLR_GREEN}; font-size:12px;")
         # Reset live buffer and EMA so the graph X-axis starts from 0 at experiment start
-        self.pressure_data['live_buffer'] = {'timestamps': [], 'pressures': []}
+        self.pressure_data['live_buffer'] = {'timestamps': [], 'pressures': [], 'flows': []}
         self.pressure_data['live_buffer_start_time'] = time.time()
-        self._pressure_ema = None   # seed EMA fresh from the first reading of the run
+        self._pressure_ema = None   # seed EMAs fresh from the first reading of the run
+        self._flow_ema     = None
         self._last_tiff_dir = None  # reset so previous experiment's CSV doesn't bleed over
 
         self._start_btn.setEnabled(False)
@@ -4988,14 +5458,15 @@ class AtomisationApp(QMainWindow):
         self._run_start_time = time.time()
         self._run_elapsed_timer.start()
 
-        self.arduino.send_pressure_command(pressure)
+        if self.alicat_connected and self.alicat:
+            self.alicat.set_flow(flow)
         # Send motor command 500 ms later without blocking the UI
         QTimer.singleShot(500, lambda: self.arduino.send_motor_command(speed, distance))
         self._pre_move_cumulative   = self.cumulative_distance
         self._pending_move_distance = distance
         # cumulative_distance is finalised in _on_movement_complete so the travel bar fills live
 
-        # Start watchdog: if serial reader dies, pressure would stay on forever without this
+        # Start watchdog: if serial reader dies, the gas would stay on forever without this
         _steps_per_mm = 6800
         _move_time_ms = int((distance * _steps_per_mm / speed + 30) * 1000)
         self._experiment_watchdog.start(_move_time_ms)
@@ -5090,14 +5561,20 @@ class AtomisationApp(QMainWindow):
             snap = self._last_experiment_snapshot
             camera_windows = snap.get('camera_windows', [])
             pressures = snap['pressures']
+            flows     = snap.get('flows', [])
             if pressures:
                 p_min, p_max = min(pressures), max(pressures)
-                p_range_str  = f"{p_min:.1f}–{p_max:.1f} BAR"
-                p_range_file = f"{p_min:.1f}-{p_max:.1f}BAR"
+                p_range_str  = f"{p_min:.2f}–{p_max:.2f} barA"
             else:
-                raw = self._pressure_entry.text()
-                p_range_str  = f"{raw} BAR" if raw else "N/A"
-                p_range_file = None
+                p_range_str  = "N/A"
+            if flows:
+                f_min, f_max = min(flows), max(flows)
+                f_range_str  = f"{f_min:.0f}–{f_max:.0f} sccm"
+                f_range_file = f"{f_max:.0f}sccm"
+            else:
+                raw = self._flow_entry.text()
+                f_range_str  = f"{raw} sccm" if raw else "N/A"
+                f_range_file = None
 
             # ── Resolve run folder (created at Start Experiment, or now as fallback) ──
             if self._run_folder:
@@ -5107,7 +5584,7 @@ class AtomisationApp(QMainWindow):
                     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                     "experiment_logs", "Experiments")
                 _safe_nozzle = f"N{nozzle}".replace(" ", "_")
-                _run_id = f"{now.strftime('%H%M%S')}_{_safe_nozzle}_{p_range_file or 'unknownBAR'}"
+                _run_id = f"{now.strftime('%H%M%S')}_{_safe_nozzle}_{f_range_file or 'unknownsccm'}"
                 run_dir = os.path.join(_exp_base, now.strftime("%Y"), now.strftime("%m"),
                                        now.strftime("%d"), _run_id)
                 for _sub in [os.path.join("shadowgraph", "raw"),
@@ -5116,13 +5593,16 @@ class AtomisationApp(QMainWindow):
                 self._run_folder = run_dir
             ind_path = os.path.join(run_dir, "run_summary.xlsx")
 
-            # ── Build Pressure DataFrame with camera window annotations ──────────
+            # ── Build data frame with camera window annotations ──────────────────
             # cam_start_N / cam_end_N values appear only on the row whose timestamp
             # is closest to the camera window boundary; all other rows are blank.
             press_df = None
             if snap['timestamps']:
-                press_df = pd.DataFrame({'timestamps': snap['timestamps'],
-                                         'pressures':  snap['pressures']})
+                _cols = {'timestamps': snap['timestamps'],
+                         'pressures':  snap['pressures']}
+                if flows:
+                    _cols['flows_sccm'] = flows
+                press_df = pd.DataFrame(_cols)
                 if camera_windows:
                     _ts_arr = snap['timestamps']
                     for _i, (_cw_s, _cw_e) in enumerate(camera_windows, start=1):
@@ -5134,31 +5614,32 @@ class AtomisationApp(QMainWindow):
                         press_df.at[_idx_s, _col_s] = round(_cw_s, 3)
                         press_df.at[_idx_e, _col_e] = round(_cw_e, 3)
 
-            # ── Render pressure chart (shared between run_summary and master_log) ─
+            # ── Render charts (shared between run_summary and master_log) ────────
             # DPI = DISPLAY_H / fig_h → PNG always renders at exactly DISPLAY_H px tall.
             DISPLAY_H          = 165
             MIN_W_PX           = 347
             PX_PER_SEC         = MIN_W_PX / 10.0
             FIG_H_IN           = 2.0
             DPI                = DISPLAY_H / FIG_H_IN
-            pressure_buf       = None
-            pressure_img_width = MIN_W_PX
-            if pressures:
-                t0         = snap['timestamps'][0]
-                rel_ts     = [t - t0 for t in snap['timestamps']]
-                duration_s = rel_ts[-1] if rel_ts else 0.0
+
+            def _render_chart(series, ylabel, colour, range_str):
+                """Render one trace to PNG bytes; returns (bytes, display width px)."""
+                if not series:
+                    return None, MIN_W_PX
+                t0          = snap['timestamps'][0]
+                rel_ts      = [t - t0 for t in snap['timestamps']]
+                duration_s  = rel_ts[-1] if rel_ts else 0.0
                 target_w_px = max(MIN_W_PX, int(duration_s * PX_PER_SEC))
-                fig_w = target_w_px / DPI
-                fig, ax = plt.subplots(figsize=(fig_w, FIG_H_IN))
+                fig, ax = plt.subplots(figsize=(target_w_px / DPI, FIG_H_IN))
                 fig.patch.set_facecolor('white')
                 ax.set_facecolor('#f5f5f7')
-                ax.plot(rel_ts, pressures, color='#0a84ff', linewidth=2.5, solid_capstyle='round')
-                ax.fill_between(rel_ts, pressures, alpha=0.12, color='#0a84ff')
+                ax.plot(rel_ts, series, color=colour, linewidth=2.5, solid_capstyle='round')
+                ax.fill_between(rel_ts, series, alpha=0.12, color=colour)
                 for _cw_s, _cw_e in camera_windows:
                     ax.axvspan(_cw_s - t0, _cw_e - t0, alpha=0.2, color='red', zorder=0)
                 ax.set_xlabel('Time (s)', fontsize=8, color='#3a3a3c')
-                ax.set_ylabel('Pressure (BAR)', fontsize=8, color='#3a3a3c')
-                ax.set_title(f'N{nozzle}  {orifice}  {p_range_str}',
+                ax.set_ylabel(ylabel, fontsize=8, color='#3a3a3c')
+                ax.set_title(f'N{nozzle}  {orifice}  {range_str}',
                              fontsize=8, color='#1c1c1e', pad=4, loc='left')
                 ax.tick_params(colors='#6e6e73', labelsize=7)
                 ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
@@ -5166,37 +5647,50 @@ class AtomisationApp(QMainWindow):
                 ax.grid(True, alpha=0.4, color='#d1d1d6', linewidth=0.6)
                 ax.set_ylim(bottom=0)
                 fig.tight_layout(pad=0.6)
-                pressure_buf = io.BytesIO()
-                fig.savefig(pressure_buf, format='png', dpi=DPI,
-                            bbox_inches='tight', facecolor='white')
+                buf = io.BytesIO()
+                fig.savefig(buf, format='png', dpi=DPI, bbox_inches='tight', facecolor='white')
                 plt.close(fig)
                 import struct as _struct
-                pressure_buf.seek(16)
-                actual_w = _struct.unpack('>I', pressure_buf.read(4))[0]
-                actual_h = _struct.unpack('>I', pressure_buf.read(4))[0]
-                pressure_img_width = max(MIN_W_PX, int(actual_w * DISPLAY_H / actual_h))
-                pressure_buf.seek(0)
-            # Extract bytes now so PIL closing the BytesIO inside XLImage doesn't break
-            # the second use of the same buffer for the master log
-            pressure_bytes = pressure_buf.getvalue() if pressure_buf else None
+                buf.seek(16)
+                actual_w = _struct.unpack('>I', buf.read(4))[0]
+                actual_h = _struct.unpack('>I', buf.read(4))[0]
+                width_px = max(MIN_W_PX, int(actual_w * DISPLAY_H / actual_h))
+                # Return bytes, not the buffer: PIL closes the BytesIO inside XLImage,
+                # and the same image is reused for the master log.
+                return buf.getvalue(), width_px
+
+            pressure_bytes, pressure_img_width = _render_chart(
+                pressures, 'Pressure (barA)', '#0a84ff', p_range_str)
+            flow_bytes, flow_img_width = _render_chart(
+                flows, 'Mass Flow (sccm)', '#30d158', f_range_str)
 
             fps_val = float(self._cam_fps.text()) if self._cam_fps.text() else 1000.0
             meta = {
-                'Field': ['Timestamp', 'Nozzle', 'Orifice', 'Pressure Range',
-                          'Speed (steps/s)', 'Distance (mm)', 'FPS', 'Notes'],
-                'Value': [ts_str, nozzle, orifice, p_range_str,
+                'Field': ['Timestamp', 'Nozzle', 'Orifice', 'Flow Range (sccm)',
+                          'Pressure Range (barA)', 'Speed (steps/s)', 'Distance (mm)',
+                          'FPS', 'Notes'],
+                'Value': [ts_str, nozzle, orifice, f_range_str, p_range_str,
                           speed_str, distance_str, fps_val, notes],
             }
             with pd.ExcelWriter(ind_path, engine='openpyxl') as writer:
                 pd.DataFrame(meta).to_excel(writer, sheet_name='Metadata', index=False)
                 if press_df is not None:
                     press_df.to_excel(writer, sheet_name='Pressure', index=False)
+                    _anchor_row = len(press_df) + 3
+                    _ws = writer.sheets['Pressure']
                     if pressure_bytes:
                         _rs_img = XLImage(io.BytesIO(pressure_bytes))
                         _rs_img.width  = pressure_img_width
                         _rs_img.height = DISPLAY_H
-                        writer.sheets['Pressure'].add_image(
-                            _rs_img, f'A{len(press_df) + 3}')
+                        _ws.add_image(_rs_img, f'A{_anchor_row}')
+                    if flow_bytes:
+                        # Sit the flow chart immediately right of the pressure chart:
+                        # default column width is ~64 px, so step that many columns over.
+                        _col = (pressure_img_width // 64) + 2 if pressure_bytes else 1
+                        _fl_img = XLImage(io.BytesIO(flow_bytes))
+                        _fl_img.width  = flow_img_width
+                        _fl_img.height = DISPLAY_H
+                        _ws.add_image(_fl_img, f'{get_column_letter(_col)}{_anchor_row}')
 
             # ── Compute lamella thickness value for master_log ────────────────
             import csv as _csv_mod, re as _re
@@ -5257,6 +5751,34 @@ class AtomisationApp(QMainWindow):
                             if hasattr(_anc, 'to') and _anc.to and _anc.to.col >= 7:
                                 _anc.to.col += 1
 
+                # ── Migrate to the flow-first format ────────────────────────────
+                # Old layout: D = 'Pressure Range' (BAR, from the retired pressure
+                # controller).  New layout inserts 'Flow Range (sccm)' at D and pushes
+                # pressure to E, so every column from D rightwards shifts by one, and
+                # a 'Mass Flow Graph' column is appended at the end.
+                _hdr = [ws.cell(row=1, column=c).value for c in range(1, ws.max_column + 1)]
+                if len(_hdr) >= 4 and _hdr[3] == 'Pressure Range':
+                    ws.insert_cols(4)
+                    ws.cell(row=1, column=4).value = 'Flow Range (sccm)'
+                    ws.cell(row=1, column=5).value = 'Pressure Range (barA)'
+                    ws.column_dimensions['D'].width = 18
+                    ws.column_dimensions['E'].width = 18
+                    for _img in ws._images:
+                        _anc = _img.anchor
+                        if isinstance(_anc, str):
+                            _m = _re.match(r'^([A-Z]+)(\d+)$', _anc)
+                            if _m and column_index_from_string(_m.group(1)) >= 4:
+                                _new_col = get_column_letter(column_index_from_string(_m.group(1)) + 1)
+                                _img.anchor = f'{_new_col}{_m.group(2)}'
+                        elif hasattr(_anc, '_from'):
+                            if _anc._from.col >= 3:   # 0-indexed: 3 == Excel col D
+                                _anc._from.col += 1
+                            if hasattr(_anc, 'to') and _anc.to and _anc.to.col >= 3:
+                                _anc.to.col += 1
+                if ws.cell(row=1, column=13).value != 'Mass Flow Graph':
+                    ws.cell(row=1, column=13).value = 'Mass Flow Graph'
+                    ws.column_dimensions['M'].width = 56
+
                 # Shift row_dimensions down one row before inserting
                 old_dims = {r: ws.row_dimensions[r].height
                             for r in list(ws.row_dimensions.keys()) if r >= 2}
@@ -5279,25 +5801,27 @@ class AtomisationApp(QMainWindow):
                 wb = Workbook()
                 ws = wb.active
                 ws.title = 'Experiments'
-                ws.append(['Timestamp', 'Nozzle', 'Orifice', 'Pressure Range',
-                           'Speed (steps/s)', 'Distance (mm)', 'Avg Lamella Thickness',
-                           'Notes', 'Cone Image', 'Shadowgraph', 'Pressure Graph'])
-                for col, width in zip('ABCDEFGHIJK', [20, 8, 8, 18, 14, 12, 12, 35, 36.5, 36.5, 56]):
+                ws.append(['Timestamp', 'Nozzle', 'Orifice', 'Flow Range (sccm)',
+                           'Pressure Range (barA)', 'Speed (steps/s)', 'Distance (mm)',
+                           'Avg Lamella Thickness', 'Notes', 'Cone Image', 'Shadowgraph',
+                           'Pressure Graph', 'Mass Flow Graph'])
+                for col, width in zip('ABCDEFGHIJKLM',
+                                      [20, 8, 8, 18, 18, 14, 12, 12, 35, 36.5, 36.5, 56, 56]):
                     ws.column_dimensions[col].width = width
 
             ws.insert_rows(2)
             row_num = 2
             center_mid = Alignment(horizontal='center', vertical='center', wrap_text=True)
             top_left   = Alignment(horizontal='left',   vertical='top',    wrap_text=True)
-            for col, val in enumerate([ts_str, nozzle, orifice, p_range_str,
+            for col, val in enumerate([ts_str, nozzle, orifice, f_range_str, p_range_str,
                                        speed_str, distance_str, _lamella_cell_val,
-                                       notes, '', '', ''], start=1):
+                                       notes, '', '', '', ''], start=1):
                 cell = ws.cell(row=row_num, column=col)
                 cell.value = val
-                cell.alignment = top_left if col == 8 else center_mid
+                cell.alignment = top_left if col == 9 else center_mid
             # Orange highlight for "Input Self" lamella cell
             if _lamella_orange:
-                _lc = ws.cell(row=row_num, column=7)
+                _lc = ws.cell(row=row_num, column=8)
                 _lc.fill = PatternFill(start_color='FFA500', end_color='FFA500', fill_type='solid')
                 _lc.font = Font(color='000000', bold=True)
             ws.row_dimensions[row_num].height = 125
@@ -5312,28 +5836,32 @@ class AtomisationApp(QMainWindow):
                     _cone_disp_w = max(1, int(_cw * _cone_disp_h / _ch))
                     cimg = XLImage(_cone_img_path)
                     cimg.width = _cone_disp_w; cimg.height = _cone_disp_h
-                    ws.column_dimensions['I'].width = max(10, _cone_disp_w / 7.0)
-                    ws.add_image(cimg, f'I{row_num}')
+                    ws.column_dimensions['J'].width = max(10, _cone_disp_w / 7.0)
+                    ws.add_image(cimg, f'J{row_num}')
                 else:
-                    ws.cell(row=row_num, column=9).value = 'NO DATA AVAILABLE'
+                    ws.cell(row=row_num, column=10).value = 'NO DATA AVAILABLE'
             else:
-                ws.cell(row=row_num, column=9).value = 'NO DATA AVAILABLE'
+                ws.cell(row=row_num, column=10).value = 'NO DATA AVAILABLE'
 
             shadow_src = self._result_path_label.text()
             if shadow_src and os.path.exists(shadow_src):
                 simg = XLImage(shadow_src); simg.width = 300; simg.height = 165
-                ws.add_image(simg, f'J{row_num}')
-            else:
-                ws.cell(row=row_num, column=10).value = 'NO DATA AVAILABLE'
-
-            if pressure_bytes:
-                pimg = XLImage(io.BytesIO(pressure_bytes))
-                pimg.width = pressure_img_width; pimg.height = DISPLAY_H
-                # Widen column K to fit this image (56 chars ≈ 347 px baseline)
-                ws.column_dimensions['K'].width = max(56, pressure_img_width * 56 / 347)
-                ws.add_image(pimg, f'K{row_num}')
+                ws.add_image(simg, f'K{row_num}')
             else:
                 ws.cell(row=row_num, column=11).value = 'NO DATA AVAILABLE'
+
+            # Pressure graph in L, mass flow graph immediately right of it in M
+            for _col_letter, _col_idx, _img_bytes, _img_w in (
+                    ('L', 12, pressure_bytes, pressure_img_width),
+                    ('M', 13, flow_bytes,     flow_img_width)):
+                if _img_bytes:
+                    _gimg = XLImage(io.BytesIO(_img_bytes))
+                    _gimg.width = _img_w; _gimg.height = DISPLAY_H
+                    # Widen the column to fit the image (56 chars ≈ 347 px baseline)
+                    ws.column_dimensions[_col_letter].width = max(56, _img_w * 56 / 347)
+                    ws.add_image(_gimg, f'{_col_letter}{row_num}')
+                else:
+                    ws.cell(row=row_num, column=_col_idx).value = 'NO DATA AVAILABLE'
 
             wb.save(master_path)
 
@@ -5388,11 +5916,16 @@ class AtomisationApp(QMainWindow):
             self._cone_focus_spin.setValue(int(s.get("cone_focus", 0)))
             self._cone_focus_spin.setEnabled(not autofocus)
             self._cone_top_crop_spin.setValue(float(s.get("cone_top_crop", 0.05)))
-            last_p = s.get("last_pressure")
-            if last_p is not None:
-                self._last_pressure = float(last_p)
-                self._last_pressure_btn.setText(f"Set last: {self._last_pressure:.2f} BAR")
-                self._last_pressure_btn.setEnabled(True)
+            last_f = s.get("last_flow")
+            if last_f is not None:
+                self._last_flow = float(last_f)
+                self._last_flow_btn.setText(f"Set last: {self._last_flow:.1f} sccm")
+                self._last_flow_btn.setEnabled(True)
+            # Auto-connect itself is scheduled unconditionally in __init__; this
+            # only overrides which port it will try.
+            alicat_port = s.get("alicat_port", "")
+            if alicat_port:
+                self._alicat_saved_port = alicat_port
             # Lamella analysis settings
             self._lamella_crop_cfg   = s.get("lamella_crop",       {"x": 860, "y": 829, "w": 307, "h": 583})
             self._lamella_model_path = s.get("lamella_model_path", "")
@@ -5443,7 +5976,8 @@ class AtomisationApp(QMainWindow):
                 "cone_autofocus":    self._cone_autofocus_chk.isChecked(),
                 "cone_focus":        self._cone_focus_spin.value(),
                 "cone_top_crop":     self._cone_top_crop_spin.value(),
-                "last_pressure":     self._last_pressure,
+                "last_flow":         self._last_flow,
+                "alicat_port":       self._alicat_saved_port,
                 # Lamella analysis settings
                 "lamella_crop":       getattr(self, "_lamella_crop_cfg",   {"x": 860, "y": 829, "w": 307, "h": 583}),
                 "lamella_model_path": getattr(self, "_lamella_model_path", ""),
@@ -5477,7 +6011,7 @@ class AtomisationApp(QMainWindow):
         lacie = find_lacie_drive()
         if lacie:
             return os.path.join(lacie, "Experiments", "YYYY", "MM", "DD",
-                                "HHMMSS_Nnozzle_pressureBAR", "run_summary.xlsx")
+                                "HHMMSS_Nnozzle_flowsccm", "run_summary.xlsx")
         return "Saving to: experiment_logs/ (no LaCie drive found)"
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -5634,6 +6168,12 @@ class AtomisationApp(QMainWindow):
             try: self.rpm_arduino.send_stop()
             except Exception: pass
             self.rpm_arduino.disconnect()
+        if self.alicat:
+            # Stops the reader thread, which sets 0 sccm and closes the port.
+            self._alicat_serial_active = False
+            t = getattr(self, "_alicat_thread", None)
+            if t and t.is_alive():
+                t.join(timeout=1.0)
         if self.phantom:     self.phantom.disconnect()
         if self.afg:         self.afg.disconnect()
         plt.close('all')

@@ -3,17 +3,12 @@
 // Look into AccelStepper Library for where to put in stuff such as lead screw pitch
 // Work out how to reverse (Maybe just making the DIR pin LOW instead of HIGH?)
 
-// FOR PRESSURE CONTROLLER: 
-#define PRESSURE_PWM_PIN 13 // PWM Pin for pressure control (0-5V output via LLC)
-#define PRESSURE_ADC_PIN A0 // ADC Pin for pressure reading (0-5V input from AliCat via LLC)
-#define MAX_PRESSURE_BAR 26.4  // Maximum achievable pressure (corresponds to 68% duty cycle)
-#define MIN_DUTY_CYCLE_PERCENT 20.0  // Minimum duty cycle - controller threshold (0 BAR)
-#define MAX_DUTY_CYCLE_PERCENT 68.0  // Maximum duty cycle - actual system limit (26.4 BAR)
-#define PWM_RESOLUTION 12  // 12-bit PWM (0-4095)
-#define PWM_FREQUENCY 1000  // 1kHz PWM frequency
-// Voltage scaling for logic level converter
-#define PORTENTA_VOLTAGE_MAX 3.3  // Portenta max voltage
-#define ALICAT_VOLTAGE_MAX 5.0    // Alicat max voltage
+// PRESSURE CONTROLLER REMOVED
+// Pressure and mass flow are now read directly from the Alicat MFC over RS232 by
+// the GUI; this board only drives the stepper.  The PWM pin is still held at 0%
+// duty at boot so a still-wired pressure controller stays commanded off — if the
+// pressure hardware is physically gone, this define and its use in setup() can go.
+#define PRESSURE_PWM_PIN 13 // PWM Pin formerly used for pressure control
 
 #include <TMCStepper.h> //Include the TMCStepper library
 #include <AccelStepper.h> //Include the AccelStepper library  
@@ -53,17 +48,6 @@ bool jogMode = false;
 int jogDirection = 1;
 AccelStepper stepper = AccelStepper(stepper.DRIVER, STEP_PIN, DIR_PIN); //Creates a stepper object, with the driver, step pin and direction pin
 
-// Pressure controller variables
-float currentPressure = 0.0;  // Current pressure reading in BAR
-float targetPressure = 0.0;   // Target pressure in BAR
-bool pressureControlEnabled = false;
-
-// Pressure smoothing: rolling average over last 1 second
-const int PRESSURE_BUFFER_SIZE = 4;  // 4 readings at 0.25s intervals = 1 second
-float pressureBuffer[PRESSURE_BUFFER_SIZE] = {0};
-int pressureBufferIndex = 0;
-int pressureBufferCount = 0;  // Track how many readings we've collected
-
 // Stall detection variables
 long lastPosition = 0;
 unsigned long lastPositionChangeTime = 0;
@@ -71,100 +55,6 @@ unsigned long lastPositionChangeTime = 0;
 void debugLog(const String& message) {
   Serial.print("DEBUG: ");
   Serial.println(message);
-}
-
-// Pressure controller functions
-void setPressure(float pressureBar) {
-  if (pressureBar < 0 || pressureBar > MAX_PRESSURE_BAR) {
-    Serial.println("ERROR: Pressure out of range (0-26.4 BAR)");
-    return;
-  }
-  
-  targetPressure = pressureBar;
-  pressureControlEnabled = true;
-  
-  // Apply calibration compensation
-  // Empirical relationship: Actual = 1.16 × Input - 0.2
-  // To get desired pressure: Input = (Desired + 0.2) / 1.16
-  float compensatedPressure = (pressureBar + 0.2) / 1.16;
-  
-  // Clamp compensated pressure to valid range
-  compensatedPressure = constrain(compensatedPressure, 0, MAX_PRESSURE_BAR);
-  
-  // Convert compensated pressure to PWM duty cycle (20-68% range)
-  // 0 BAR = 20% duty cycle (controller minimum threshold)
-  // 26.4 BAR = 68% duty cycle (actual system maximum)
-  float dutyCycleRange = MAX_DUTY_CYCLE_PERCENT - MIN_DUTY_CYCLE_PERCENT;  // 68% - 20% = 48%
-  float dutyCyclePercent = MIN_DUTY_CYCLE_PERCENT + (compensatedPressure / MAX_PRESSURE_BAR) * dutyCycleRange;
-  
-  // Convert duty cycle percentage to PWM value (12-bit: 0-4095)
-  int pwmValue = (int)((dutyCyclePercent / 100.0) * (1 << PWM_RESOLUTION));
-  
-  // Clamp PWM value to valid range (20-68% of max)
-  int minPwmValue = (int)((MIN_DUTY_CYCLE_PERCENT / 100.0) * (1 << PWM_RESOLUTION));  // 20% of 4095 = 819
-  int maxPwmValue = (int)((MAX_DUTY_CYCLE_PERCENT / 100.0) * (1 << PWM_RESOLUTION));  // 68% of 4095 = 2785
-  pwmValue = constrain(pwmValue, minPwmValue, maxPwmValue);
-  
-  // Calculate actual voltage output (for debugging)
-  float actualVoltage = (pwmValue / (float)(1 << PWM_RESOLUTION)) * PORTENTA_VOLTAGE_MAX;
-  
-  analogWrite(PRESSURE_PWM_PIN, pwmValue);
-  
-  debugLog("Pressure request: " + String(pressureBar) + " BAR → compensated: " + String(compensatedPressure, 2) + " BAR (" + String(dutyCyclePercent, 1) + "% duty, " + String(actualVoltage, 2) + "V, PWM: " + String(pwmValue) + ")");
-  Serial.println("PRESSURE_SET:" + String(pressureBar));
-}
-
-float readPressure() {
-  // Read ADC value (0-4095 for 12-bit)
-  int adcValue = analogRead(PRESSURE_ADC_PIN);
-  
-  // Convert ADC to voltage (0-3.3V range)
-  float voltage = (adcValue / (float)(1 << 12)) * PORTENTA_VOLTAGE_MAX;
-  
-  // Voltage-to-pressure mapping based on actual measured values:
-  // 0.48V = 0 BAR (or Off)
-  // 2.4V = 50 BAR
-  // Linear interpolation: pressure = (voltage - 0.48) / (2.4 - 0.48) * 50
-  const float VOLTAGE_MIN = 0.48;  // Voltage at 0 BAR
-  const float VOLTAGE_MAX = 2.4;    // Voltage at 50 BAR
-  const float PRESSURE_FULL_SCALE = 50.0;  // Full scale pressure (BAR)
-  
-  float pressure;
-  if (voltage <= VOLTAGE_MIN) {
-    // Below minimum voltage = 0 BAR (off)
-    pressure = 0.0;
-  } else if (voltage >= VOLTAGE_MAX) {
-    // At or above maximum voltage = 50 BAR (but we'll clamp to MAX_PRESSURE_BAR for display)
-    pressure = PRESSURE_FULL_SCALE;
-  } else {
-    // Linear interpolation between 0.48V and 2.4V
-    pressure = ((voltage - VOLTAGE_MIN) / (VOLTAGE_MAX - VOLTAGE_MIN)) * PRESSURE_FULL_SCALE;
-  }
-  
-  // Apply linear correction based on calibration measurements:
-  // Measured: 0 BAR reads as 0.6 BAR, 5 BAR reads as 5.7 BAR, 10 BAR reads as 11 BAR, 25 BAR reads as 26.4 BAR
-  // Linear fit: Reading = 1.032 * Actual + 0.6
-  // Therefore: Actual = (Reading - 0.6) / 1.032
-  const float CORRECTION_OFFSET = 0.6;
-  const float CORRECTION_GAIN = 1.032;
-  pressure = (pressure - CORRECTION_OFFSET) / CORRECTION_GAIN;
-  
-  // Ensure pressure doesn't go negative after correction
-  if (pressure < 0.0) {
-    pressure = 0.0;
-  }
-  
-  // Clamp to maximum setpoint range (0-26.4 BAR) for display
-  currentPressure = constrain(pressure, 0.0, MAX_PRESSURE_BAR);
-  
-  return currentPressure;
-}
-
-void disablePressureControl() {
-  pressureControlEnabled = false;
-  analogWrite(PRESSURE_PWM_PIN, 0);  // Set to true 0% duty cycle (completely off for safety)
-  debugLog("Pressure control disabled (0% duty cycle)");
-  Serial.println("PRESSURE_DISABLED");
 }
 
 void resetMovementState() {
@@ -219,21 +109,11 @@ void setup() {
   stepper.setPinsInverted(false, false, true);    // Sets: StepInvert, DirectionInvert, EnableInvert. StepInvert true = forwards, false = backwards
   stepper.enableOutputs();                        // Enables Stepper output
   
-  // Initialize pressure controller - SAFETY FIRST!
+  // Hold the retired pressure control line at 0% duty so a still-wired
+  // controller is commanded off and never floats to an unknown setpoint.
   pinMode(PRESSURE_PWM_PIN, OUTPUT);
-  analogWriteResolution(PWM_RESOLUTION);  // Set 12-bit resolution BEFORE writing PWM
-  analogWrite(PRESSURE_PWM_PIN, 0);  // Immediately set to 0% duty cycle (0 BAR) for safety
-  pinMode(PRESSURE_ADC_PIN, INPUT);  // Set ADC pin for pressure reading
-  analogReadResolution(12);  // Set ADC resolution to 12-bit (0-4095)
-  
-  // Note: Using default PWM frequency (Portenta H7 default is typically 500-1000 Hz)
-  
-  debugLog("Pressure pin initialized to 0% duty cycle (0 BAR)");
-  
-  // Initialize pressure to 0 (redundant but safe)
-  setPressure(0.0);
-  
-  debugLog("Pressure controller initialized");
+  analogWrite(PRESSURE_PWM_PIN, 0);
+  debugLog("Pressure PWM line held at 0% duty (pressure control retired)");
 }
 
 void loop() {
@@ -257,32 +137,6 @@ void loop() {
     lastHandshake = millis();
   }
   
-  // Read pressure periodically (every 250ms) and apply rolling average
-  static unsigned long lastPressureRead = 0;
-  if (millis() - lastPressureRead > 250) {
-    // Read raw pressure
-    float rawPressure = readPressure();
-    
-    // Add to rolling buffer
-    pressureBuffer[pressureBufferIndex] = rawPressure;
-    pressureBufferIndex = (pressureBufferIndex + 1) % PRESSURE_BUFFER_SIZE;
-    if (pressureBufferCount < PRESSURE_BUFFER_SIZE) {
-      pressureBufferCount++;
-    }
-    
-    // Calculate average of buffer (last 1 second = 4 readings)
-    float sum = 0.0;
-    for (int i = 0; i < pressureBufferCount; i++) {
-      sum += pressureBuffer[i];
-    }
-    float averagedPressure = sum / pressureBufferCount;
-    
-    // Update current pressure and send averaged value
-    currentPressure = averagedPressure;
-    Serial.println("PRESSURE_READING:" + String(averagedPressure, 2));
-    lastPressureRead = millis();
-  }
-
   // Manual serial data checking (since serialEvent() doesn't work on Portenta)
   while (Serial.available()) {
     char inChar = (char)Serial.read();
@@ -330,11 +184,6 @@ void loop() {
       Serial1.print(camLine);
       Serial1.print('\n');
     }
-    // Check for PRESSURE_OFF command (HIGHEST PRIORITY - Safety first!)
-    else if (inputString.indexOf("PRESSURE_OFF") != -1) {
-      debugLog("PRESSURE_OFF command received - EMERGENCY SHUTDOWN");
-      disablePressureControl();
-    }
     // Check for RESET command
     else if (inputString.indexOf("RESET:") != -1) {
       debugLog("RESET command received - resetting Arduino state");
@@ -346,13 +195,6 @@ void loop() {
       debugLog("HOME command received - starting homing sequence");
       homing();       // Run homing sequence (always executes)
       debugLog("Homing sequence completed");
-    }
-    // Check for PRESSURE command
-    else if (inputString.indexOf("PRESSURE:") != -1) {
-      debugLog("PRESSURE command received");
-      int pressureIndex = inputString.indexOf("PRESSURE:");
-      float pressureValue = inputString.substring(pressureIndex + 9).toFloat();
-      setPressure(pressureValue);
     }
     // Check for movement command (SPEED:DIST format)
     else if (inputString.indexOf("SPEED:") != -1 && inputString.indexOf(";DIST:") != -1) {

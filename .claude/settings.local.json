@@ -78,7 +78,24 @@
       "Bash(git -C \"c:\\\\Users\\\\55154111\\\\Documents\\\\GitHub\\\\HPATR\" ls-tree -r 969770a --name-only)",
       "Bash(git -C \"c:\\\\Users\\\\55154111\\\\Documents\\\\GitHub\\\\HPATR\" show 969770a:\"Trials/RPM_Motor_Control/RAMP_RPM_Motor_Control/RAMP_RPM_Motor_Control.ino\")",
       "Bash(git -C \"c:\\\\Users\\\\55154111\\\\Documents\\\\GitHub\\\\HPATR\" show 969770a:\"Trials/RPM_Motor_Control/RPM_Motor_Control.ino\")",
-      "Bash(git -C \"c:\\\\Users\\\\55154111\\\\Documents\\\\GitHub\\\\HPATR\" show HEAD:\"Trials/RPM_Motor_Control/RAMP_RPM_Motor_Control/RAMP_RPM_Motor_Control.ino\")"
+      "Bash(git -C \"c:\\\\Users\\\\55154111\\\\Documents\\\\GitHub\\\\HPATR\" show HEAD:\"Trials/RPM_Motor_Control/RAMP_RPM_Motor_Control/RAMP_RPM_Motor_Control.ino\")",
+      "WebFetch(domain:documents.alicat.com)",
+      "WebFetch(domain:www.alicat.com)",
+      "PowerShell(Get-WMIObject Win32_SerialPort)",
+      "PowerShell(& \"C:\\\\Users\\\\55154111\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python311\\\\python.exe\" \"C:\\\\Users\\\\55154111\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-55154111-Documents-GitHub-HPATR\\\\be53fa9a-dcf8-4421-94f5-e715e68db9fb\\\\scratchpad\\\\alicat_diag.py\")",
+      "PowerShell(& \"C:\\\\Users\\\\55154111\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python311\\\\python.exe\" -m py_compile \"c:\\\\Users\\\\55154111\\\\Documents\\\\GitHub\\\\HPATR\\\\src\\\\gui\\\\GUI_Clean.py\")",
+      "PowerShell(& \"C:\\\\Users\\\\55154111\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python311\\\\python.exe\" \"C:\\\\Users\\\\55154111\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-55154111-Documents-GitHub-HPATR\\\\be53fa9a-dcf8-4421-94f5-e715e68db9fb\\\\scratchpad\\\\alicat_bisect.py\")",
+      "PowerShell(& \"C:\\\\Users\\\\55154111\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python311\\\\python.exe\" \"C:\\\\Users\\\\55154111\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-55154111-Documents-GitHub-HPATR\\\\be53fa9a-dcf8-4421-94f5-e715e68db9fb\\\\scratchpad\\\\alicat_cr.py\")",
+      "PowerShell(& \"C:\\\\Users\\\\55154111\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python311\\\\python.exe\" -m pyflakes \"c:\\\\Users\\\\55154111\\\\Documents\\\\GitHub\\\\HPATR\\\\src\\\\gui\\\\GUI_Clean.py\" 2>&1)",
+      "PowerShell(& \"C:\\\\Users\\\\55154111\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python311\\\\python.exe\" \"C:\\\\Users\\\\55154111\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-55154111-Documents-GitHub-HPATR\\\\be53fa9a-dcf8-4421-94f5-e715e68db9fb\\\\scratchpad\\\\smoke.py\" 2>&1)",
+      "PowerShell(& \"C:\\\\Users\\\\55154111\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python311\\\\python.exe\" \"C:\\\\Users\\\\55154111\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-55154111-Documents-GitHub-HPATR\\\\be53fa9a-dcf8-4421-94f5-e715e68db9fb\\\\scratchpad\\\\excel_test.py\" 2>&1)",
+      "PowerShell(& \"C:\\\\Users\\\\55154111\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python311\\\\python.exe\" \"C:\\\\Users\\\\55154111\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-55154111-Documents-GitHub-HPATR\\\\be53fa9a-dcf8-4421-94f5-e715e68db9fb\\\\scratchpad\\\\balance.py\")",
+      "PowerShell(& \"C:\\\\Users\\\\55154111\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python311\\\\python.exe\" \"C:\\\\Users\\\\55154111\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-55154111-Documents-GitHub-HPATR\\\\be53fa9a-dcf8-4421-94f5-e715e68db9fb\\\\scratchpad\\\\yscale_test.py\" 2>&1)",
+      "PowerShell(& \"C:\\\\Users\\\\55154111\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python311\\\\python.exe\" \"C:\\\\Users\\\\55154111\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-55154111-Documents-GitHub-HPATR\\\\be53fa9a-dcf8-4421-94f5-e715e68db9fb\\\\scratchpad\\\\statusbar_test.py\" 2>&1)",
+      "PowerShell(& \"C:\\\\Users\\\\55154111\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python311\\\\python.exe\" \"C:\\\\Users\\\\55154111\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-55154111-Documents-GitHub-HPATR\\\\be53fa9a-dcf8-4421-94f5-e715e68db9fb\\\\scratchpad\\\\hwtab_test.py\" 2>&1)",
+      "PowerShell(& \"C:\\\\Users\\\\55154111\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python311\\\\python.exe\" \"C:\\\\Users\\\\55154111\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-55154111-Documents-GitHub-HPATR\\\\be53fa9a-dcf8-4421-94f5-e715e68db9fb\\\\scratchpad\\\\cards_test.py\" 2>&1)",
+      "PowerShell(& \"C:\\\\Users\\\\55154111\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python311\\\\python.exe\" \"C:\\\\Users\\\\55154111\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-55154111-Documents-GitHub-HPATR\\\\be53fa9a-dcf8-4421-94f5-e715e68db9fb\\\\scratchpad\\\\icon_render.py\")",
+      "PowerShell(& \"C:\\\\Users\\\\55154111\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python311\\\\python.exe\" \"C:\\\\Users\\\\55154111\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-55154111-Documents-GitHub-HPATR\\\\be53fa9a-dcf8-4421-94f5-e715e68db9fb\\\\scratchpad\\\\btn_render.py\" 2>&1)"
     ]
   }
 }
