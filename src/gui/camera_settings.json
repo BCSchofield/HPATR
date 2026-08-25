@@ -13,7 +13,7 @@
   "cone_autofocus": true,
   "cone_focus": 50,
   "cone_top_crop": 0.24,
-  "last_flow": 300.0,
+  "last_flow": 4000.0,
   "alicat_port": "COM4",
   "lamella_crop": {
     "x": 860,
