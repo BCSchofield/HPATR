@@ -1276,6 +1276,11 @@ class AtomisationApp(QMainWindow):
     # this rig.  Used when camera_settings.json has no saved port yet.
     ALICAT_DEFAULT_PORT = "COM4"
 
+    # Must match STALL_SG_THRESHOLD in RAMP_RPM_Motor_Control.ino — the SG
+    # readout goes red at the exact point the firmware itself stops the motor.
+    # If that constant is retuned on the Arduino, update this to match.
+    RPM_STALL_SG_THRESHOLD = 20
+
     # Cross-thread signals for pipeline callbacks
     _pipeline_done = Signal(object)
     _pipeline_err  = Signal(str)
@@ -1301,6 +1306,8 @@ class AtomisationApp(QMainWindow):
         self.rpm_arduino: RpmController | None = None
         self.rpm_connected = False
         self.rpm_spinning = False
+        self._last_actual_rpm = 0.0
+        self._motor_stalled = False   # latched by a firmware stall; cleared on next Spin
         self._rpm_serial_active = False
 
         self.alicat: AlicatMFC | None = None
@@ -2044,7 +2051,8 @@ class AtomisationApp(QMainWindow):
 
         # ── Motor speed (Arduino Uno) ─────────────────────────────────────────
         # Split out of the Uno card: it needs more width than a third of the row.
-        cu_ctrl = card(w)
+        cu_ctrl = card(w, padding=20)
+        cu_ctrl.layout().setSpacing(14)
         cu_ctrl.layout().addWidget(section_label("MOTOR SPEED"))
         cu_ctrl.layout().addWidget(separator())
 
@@ -2071,6 +2079,58 @@ class AtomisationApp(QMainWindow):
         rcr.addWidget(rpm_lbl); rcr.addWidget(self._rpm_entry); rcr.addWidget(self._rpm_spin_btn)
         rcr.addWidget(self._rpm_actual_lbl)
         cu_ctrl.layout().addWidget(rpm_ctrl_row)
+
+        # ── Driver status row: SG · OTPW · OT · Current ───────────────────────
+        # Populated from the TMC5160's MOTOR_STATUS: line — see _on_motor_status.
+        # Green is the normal/healthy state for all four; SG additionally has an
+        # amber early-warning band above the firmware's own stall cutoff.
+        def _status_readout(label_text, tooltip):
+            rw = QWidget()
+            rw.setToolTip(tooltip)
+            rvl = QVBoxLayout(rw); rvl.setContentsMargins(0,0,0,0); rvl.setSpacing(2)
+            rl = QLabel(label_text)
+            rl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
+            rl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            rv = QLabel("–")
+            rv.setStyleSheet(f"color:{CLR_TEXT}; font-size:14px; font-weight:700;")
+            rv.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            rvl.addWidget(rl); rvl.addWidget(rv)
+            return rw, rv
+
+        status_row = QWidget()
+        srr = QHBoxLayout(status_row); srr.setContentsMargins(0,0,0,0)
+
+        _sgw, self._rpm_sg_lbl = _status_readout(
+            "SG",
+            "<b>StallGuard result</b><br>"
+            "TMC5160 back-EMF load estimate, 0–1023. Falls as load increases; "
+            "the Arduino stops the motor itself once this crosses its own "
+            "internal threshold — this box turns red at that same point, "
+            "amber as an earlier warning, and stays red until you press Spin "
+            "again. Shown grey while stopped or below the trusted-speed floor "
+            "— the reading is 0 by design at rest, not an indication of load.")
+        _otpww, self._rpm_otpw_lbl = _status_readout(
+            "OTPW",
+            "<b>Over-temperature pre-warning</b><br>"
+            "Driver die is running hot. Motor keeps running — treat this as "
+            "an early warning to check cooling or current before OT trips.")
+        _otw, self._rpm_ot_lbl = _status_readout(
+            "OT",
+            "<b>Over-temperature shutdown</b><br>"
+            "Driver has disabled its own output stage to protect itself. "
+            "Motor will not respond until it cools and this clears.")
+        _csw, self._rpm_current_lbl = _status_readout(
+            "Current",
+            "<b>Actual coil current</b><br>"
+            "Computed from the driver's live current-scale register — the real "
+            "figure, not just the programmed MOTOR_CURRENT. Reads about half of "
+            "MOTOR_CURRENT while idle (the driver's automatic hold-current "
+            "reduction) and the full value while running. That halving is "
+            "normal and unrelated to CoolStep, which isn't enabled here.")
+        for _sw in (_sgw, _otpww, _otw, _csw):
+            srr.addWidget(_sw, 1)          # equal stretch -> evenly spaced
+        cu_ctrl.layout().addWidget(status_row)
+
         vl.addWidget(cu_ctrl)
 
         # ── Mass Flow Control ─────────────────────────────────────────────────
@@ -3502,6 +3562,7 @@ class AtomisationApp(QMainWindow):
 
     def _trigger_rpm_disconnect(self):
         self._rpm_serial_active = False
+        self._motor_stalled = False
         if self.rpm_arduino:
             if self.rpm_spinning:
                 try: self.rpm_arduino.send_stop()
@@ -3519,6 +3580,9 @@ class AtomisationApp(QMainWindow):
         self._rpm_status_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
         self._rpm_actual_lbl.setText("● 0 RPM")
         self._rpm_actual_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px; min-width:80px;")
+        for _lbl in (self._rpm_sg_lbl, self._rpm_otpw_lbl, self._rpm_ot_lbl, self._rpm_current_lbl):
+            _lbl.setText("–")
+            _lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:14px; font-weight:700;")
         self._set_status("RPM Arduino disconnected")
 
     # ── Alicat MFC ────────────────────────────────────────────────────────────
@@ -3720,6 +3784,10 @@ class AtomisationApp(QMainWindow):
             self._rpm_spin_btn.setStyleSheet(accent_button("Spin", CLR_RED).styleSheet())
             self._rpm_actual_lbl.setText("● 0 RPM")
             self._rpm_actual_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px; min-width:80px;")
+            self._last_actual_rpm = 0.0
+            self._motor_stalled = False   # this was a deliberate stop, not a stall
+            self._rpm_sg_lbl.setText("–")
+            self._rpm_sg_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:14px; font-weight:700;")
             self._set_status("Motor stopped")
         else:
             try:
@@ -3729,6 +3797,7 @@ class AtomisationApp(QMainWindow):
             except Exception as e:
                 self._set_status(f"RPM send error: {e}", CLR_RED); return
             self.rpm_spinning = True
+            self._motor_stalled = False   # fresh start clears any previous stall indication
             self._rpm_spin_btn.setText("Stop")
             self._rpm_spin_btn.setStyleSheet(accent_button("Stop", CLR_GREEN).styleSheet())
             self._set_status(f"Motor spinning at {rpm:.0f} RPM", CLR_GREEN)
@@ -3750,6 +3819,15 @@ class AtomisationApp(QMainWindow):
                             QTimer.singleShot(0, self, lambda v=val: self._on_rpm_actual_reading(v))
                         except Exception:
                             pass
+                    elif line.startswith("MOTOR_STATUS:"):
+                        self._parse_motor_status(line)
+                    elif line.startswith("STALL_DETECTED"):
+                        stall_rpm = None
+                        try:
+                            stall_rpm = float(line.split("rpm=", 1)[1])
+                        except (IndexError, ValueError):
+                            pass
+                        QTimer.singleShot(0, self, lambda r=stall_rpm: self._on_stall_detected(r))
                 else:
                     time.sleep(0.02)
             except serial.SerialException:
@@ -3758,12 +3836,82 @@ class AtomisationApp(QMainWindow):
                 pass
 
     def _on_rpm_actual_reading(self, rpm: float):
+        self._last_actual_rpm = rpm
         if rpm > 0.5:
             self._rpm_actual_lbl.setText(f"▶ {rpm:.0f} RPM")
             self._rpm_actual_lbl.setStyleSheet(f"color:{CLR_GREEN}; font-size:12px; font-weight:600; min-width:80px;")
         else:
             self._rpm_actual_lbl.setText("● 0 RPM")
             self._rpm_actual_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px; min-width:80px;")
+
+    def _parse_motor_status(self, line: str):
+        # MOTOR_STATUS:sg=<0-1023>,otpw=<0/1>,ot=<0/1>,ma=<actual mA>
+        fields = {}
+        try:
+            for part in line.split(":", 1)[1].split(","):
+                k, v = part.split("=")
+                fields[k] = int(v)
+        except (ValueError, IndexError):
+            return
+        if not {"sg", "otpw", "ot", "ma"} <= fields.keys():
+            return
+        QTimer.singleShot(0, self, lambda f=fields: self._on_motor_status(
+            f["sg"], bool(f["otpw"]), bool(f["ot"]), f["ma"]))
+
+    # SG_RESULT below this is shown amber as an early-warning margin before
+    # STALL_SG_THRESHOLD on the Arduino actually trips the motor off.
+    SG_WARN_THRESHOLD = 150
+
+    # Must match MIN_STALL_CHECK_RPM in RAMP_RPM_Motor_Control.ino — below this
+    # speed SG_RESULT is not trustworthy (mirrors the firmware's own stall-check
+    # gate), so the GUI shouldn't paint it red/amber either. It also reads ~0 at
+    # a dead stop by design — that isn't a stall, it's "not measuring".
+    RPM_MIN_STALL_CHECK = 60
+
+    def _on_motor_status(self, sg: int, otpw: bool, ot: bool, ma: int):
+        # SG is only meaningful while genuinely spinning above the trusted-speed
+        # floor; otherwise show it neutral rather than a misleading red "0".
+        trustworthy = self.rpm_spinning and self._last_actual_rpm >= self.RPM_MIN_STALL_CHECK
+        if trustworthy:
+            stall_zone = sg < self.RPM_STALL_SG_THRESHOLD
+            warn_zone  = sg < self.SG_WARN_THRESHOLD
+            sg_colour  = CLR_RED if stall_zone else (CLR_ORANGE if warn_zone else CLR_GREEN)
+            self._rpm_sg_lbl.setText(str(sg))
+            self._rpm_sg_lbl.setStyleSheet(f"color:{sg_colour}; font-size:14px; font-weight:700;")
+        elif self._motor_stalled:
+            pass   # keep the red stall indication until the next Spin — see _toggle_spin
+        else:
+            self._rpm_sg_lbl.setText(str(sg) if self.rpm_spinning else "–")
+            self._rpm_sg_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:14px; font-weight:700;")
+
+        otpw_colour = CLR_ORANGE if otpw else CLR_GREEN
+        self._rpm_otpw_lbl.setText("TRIPPED" if otpw else "OK")
+        self._rpm_otpw_lbl.setStyleSheet(f"color:{otpw_colour}; font-size:14px; font-weight:700;")
+
+        ot_colour = CLR_RED if ot else CLR_GREEN
+        self._rpm_ot_lbl.setText("TRIPPED" if ot else "OK")
+        self._rpm_ot_lbl.setStyleSheet(f"color:{ot_colour}; font-size:14px; font-weight:700;")
+
+        # ~half MOTOR_CURRENT while idle (ihold) is expected, not a fault —
+        # see the tooltip.
+        self._rpm_current_lbl.setText(f"{ma} mA")
+        self._rpm_current_lbl.setStyleSheet(f"color:{CLR_GREEN}; font-size:14px; font-weight:700;")
+
+    def _on_stall_detected(self, stall_rpm: float | None):
+        """Firmware detected SG_RESULT below threshold and already stopped the
+        motor on its own; mirror that here rather than waiting on RPM_ACTUAL."""
+        self.rpm_spinning = False
+        self._last_actual_rpm = 0.0
+        self._motor_stalled = True
+        self._rpm_spin_btn.setText("Spin")
+        self._rpm_spin_btn.setStyleSheet(accent_button("Spin", CLR_RED).styleSheet())
+        self._rpm_actual_lbl.setText("● 0 RPM")
+        self._rpm_actual_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px; min-width:80px;")
+        # Stays red until the next Spin — this is the one case SG should alarm
+        # even though the motor is now stopped, since it's *why* it stopped.
+        self._rpm_sg_lbl.setStyleSheet(f"color:{CLR_RED}; font-size:14px; font-weight:700;")
+        rpm_note = f" — stalled at {stall_rpm:.0f} RPM" if stall_rpm is not None else ""
+        self._set_status(f"Motor stall detected{rpm_note} — stopped automatically", CLR_RED)
 
     def _start_serial_reader(self):
         if not self.arduino or not self.arduino.ser: return

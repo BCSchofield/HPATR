@@ -10,12 +10,37 @@
 //
 // Linear RPM ramp (constant angular acceleration), recalculated every 10 ms.
 //
+// Driver status (SG_RESULT / OTPW / OT / CS_ACTUAL) is polled every
+// STATUS_INTERVAL_MS and reported over serial.  If SG_RESULT — a TMC5160
+// back-EMF load estimate — drops below STALL_SG_THRESHOLD while the motor is
+// past MIN_STALL_CHECK_RPM, the motor is treated as stalled and stopped here
+// in firmware, not left to the GUI to notice and react to.
+//
+// SG_RESULT is unreliable at very low speed (little back-EMF to measure), and
+// its relationship to "actually stalled" depends on this motor and its load —
+// STALL_SG_THRESHOLD below is a starting guess, not a calibrated value.  Watch
+// the live SG readout in the GUI: if it never drops even when you stall the
+// shaft by hand, raise the threshold; if it trips during normal running, lower
+// it (or raise MIN_STALL_CHECK_RPM if the false trips only happen near
+// start-up, where SG_RESULT is still settling).
+//
 // Serial protocol (115200 baud):
 //   Receive:  RPM:xxx.x\n   — ramp to target RPM over RAMP_DURATION_US
 //             STOP\n        — stop, disable driver
 //   Send:     RPM_READY\n           — on boot
-//             RPM_ACTUAL:xxx.x\n   — current RPM every 200 ms
-//             STOPPED\n            — after STOP command
+//             RPM_ACTUAL:xxx.x\n    — current RPM every 200 ms
+//             MOTOR_STATUS:sg=<0-1023>,otpw=<0/1>,ot=<0/1>,ma=<actual mA>
+//                                    — driver status every STATUS_INTERVAL_MS.
+//                                     ma is computed from GLOBAL_SCALER + the
+//                                     driver's live current-scale register, so
+//                                     it reads ~half of MOTOR_CURRENT while
+//                                     idle (ihold) and the full value while
+//                                     running (irun) — expected, not a fault.
+//             STALL_DETECTED:rpm=xxx.x\n
+//                                    — SG_RESULT dropped below threshold while
+//                                     running at the given RPM; always
+//                                     immediately followed by:
+//             STOPPED\n             — after STOP command, or after a stall
 
 #include <TMCStepper.h>
 #include <SPI.h>
@@ -39,6 +64,18 @@
 #define RAMP_DURATION_US  10000000UL  // 10 second ramp
 #define RAMP_UPDATE_US      10000UL   // recalculate speed every 10 ms
 
+// ── Driver status / stall detection config ────────────────────────────────────
+#define STATUS_INTERVAL_MS   300      // how often to poll + report SG/OTPW/OT/current
+#define STALL_SG_THRESHOLD    20      // SG_RESULT below this while running = stall.
+                                       // Lowered from 50 — that was tripping during
+                                       // legitimate near-torque-limit running. TUNE
+                                       // against real readings — see note above.
+#define MIN_STALL_CHECK_RPM   60      // below this, SG_RESULT is too noisy to trust.
+                                       // Raised from an initial 20 — that was tripping
+                                       // during normal ramp-up. Provisional: watch the
+                                       // live SG number in the GUI through a low-RPM
+                                       // ramp and retune once you have real numbers.
+
 // ── Timer1 config ─────────────────────────────────────────────────────────────
 // Prescaler 8 gives a 2 MHz tick (0.5 us).  The pin toggles twice per step, so
 // with OCR1A as TOP:  OCR1A + 1 = TIMER_HZ / (2 * stepsPerSec).
@@ -58,7 +95,24 @@ bool          ramping            = false;
 unsigned long rampStartTime      = 0;
 unsigned long lastRampUpdate     = 0;
 unsigned long lastReportMs       = 0;
+unsigned long lastStatusMs       = 0;
 String        inputBuffer        = "";
+
+// Actual RMS current in mA for a given CS (0-31), reading the driver's live
+// GLOBAL_SCALER.  This is a direct port of TMC2160Stepper::cs2rms() — that
+// method only ever reads irun(), so it can't tell you the idle (ihold) figure;
+// calling it here with cs_actual() gives whichever one the driver is really
+// applying right now.
+uint16_t csToMilliamps(uint8_t cs) {
+  uint16_t scaler = driver.GLOBAL_SCALER();
+  if (scaler == 0) scaler = 256;
+  uint32_t numerator = (uint32_t)scaler * (cs + 1);
+  numerator *= 325;             // V_fs = 0.325 V, scaled by 1000
+  numerator >>= 13;             // /256 (GLOBAL_SCALER) and /32 (CS), combined
+  numerator *= 1000000UL;
+  uint32_t denominator = (uint32_t)(R_SENSE * 1000) * 1414UL;  // 1414 ~= 1000*sqrt(2)
+  return denominator ? (numerator / denominator) : 0;
+}
 
 // Timer ticks between pin toggles for a given speed, clamped to Timer1's range.
 uint16_t rpmToOcr(float rpm) {
@@ -191,5 +245,29 @@ void loop() {
   if (now - lastReportMs >= 200UL) {
     lastReportMs = now;
     Serial.print("RPM_ACTUAL:"); Serial.println(currentRPM, 1);
+  }
+
+  // ── Driver status + stall safety check ────────────────────────────────────
+  if (now - lastStatusMs >= STATUS_INTERVAL_MS) {
+    lastStatusMs = now;
+    uint16_t sg   = driver.sg_result();  // TMCStepper: lowercase on the 5160 family
+    bool     otpw = driver.otpw();
+    bool     ot   = driver.ot();
+    uint16_t ma   = csToMilliamps(driver.cs_actual());  // ~half MOTOR_CURRENT while
+                                                          // idle (ihold) — that's normal
+
+    Serial.print("MOTOR_STATUS:sg=");   Serial.print(sg);
+    Serial.print(",otpw=");             Serial.print(otpw ? 1 : 0);
+    Serial.print(",ot=");               Serial.print(ot ? 1 : 0);
+    Serial.print(",ma=");               Serial.println(ma);
+
+    // Only trust SG_RESULT once actually turning at a reasonable speed —
+    // see the header note on tuning STALL_SG_THRESHOLD / MIN_STALL_CHECK_RPM.
+    if (running && currentRPM >= MIN_STALL_CHECK_RPM && sg < STALL_SG_THRESHOLD) {
+      float stalledAtRpm = currentRPM;   // stopMotor() below zeroes currentRPM
+      stopMotor();
+      Serial.print("STALL_DETECTED:rpm="); Serial.println(stalledAtRpm, 1);
+      Serial.println("STOPPED");
+    }
   }
 }
