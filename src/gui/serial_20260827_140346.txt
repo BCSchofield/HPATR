@@ -1,0 +1,591 @@
+[2026-08-27 14:03:46] Received on connect: DEBUG: Optical switch triggered - reached home position
+[2026-08-27 14:03:46] Received on connect: DEBUG: Set current position to 0
+[2026-08-27 14:03:46] Received on connect: DEBUG: Moving away from switch at speed 200
+[2026-08-27 14:03:46] Received on connect: DEBUG: Moved away from switch
+[2026-08-27 14:03:46] Received on connect: Homing Complete!
+[2026-08-27 14:03:46] Received on connect: ARDUINO_READY
+[2026-08-27 14:03:46] Received: DEBUG: Homing sequence completed successfully
+[2026-08-27 14:03:46] Received: ARDUINO_READY
+[2026-08-27 14:03:46] Received: ARDUINO_READY
+[2026-08-27 14:03:46] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:03:49] Received: ARDUINO_READY
+[2026-08-27 14:03:49] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:03:52] Received: ARDUINO_READY
+[2026-08-27 14:03:52] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:03:55] Received: ARDUINO_READY
+[2026-08-27 14:03:55] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:03:58] Received: ARDUINO_READY
+[2026-08-27 14:03:58] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:04:01] Received: ARDUINO_READY
+[2026-08-27 14:04:01] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:04:04] Received: ARDUINO_READY
+[2026-08-27 14:04:04] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:04:07] Received: ARDUINO_READY
+[2026-08-27 14:04:07] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:04:10] Received: ARDUINO_READY
+[2026-08-27 14:04:10] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:04:13] Received: ARDUINO_READY
+[2026-08-27 14:04:13] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:04:16] Received: ARDUINO_READY
+[2026-08-27 14:04:16] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:04:19] Received: ARDUINO_READY
+[2026-08-27 14:04:19] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:04:22] Received: ARDUINO_READY
+[2026-08-27 14:04:22] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:04:26] Received: ARDUINO_READY
+[2026-08-27 14:04:26] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:04:29] Received: ARDUINO_READY
+[2026-08-27 14:04:29] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:04:32] Received: ARDUINO_READY
+[2026-08-27 14:04:32] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:04:35] Received: ARDUINO_READY
+[2026-08-27 14:04:35] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:04:38] Received: ARDUINO_READY
+[2026-08-27 14:04:38] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:04:41] Received: ARDUINO_READY
+[2026-08-27 14:04:41] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:04:44] Received: ARDUINO_READY
+[2026-08-27 14:04:44] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:04:47] Received: ARDUINO_READY
+[2026-08-27 14:04:47] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:04:50] Received: ARDUINO_READY
+[2026-08-27 14:04:50] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:04:53] Received: ARDUINO_READY
+[2026-08-27 14:04:53] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:04:56] Received: ARDUINO_READY
+[2026-08-27 14:04:56] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:04:59] Received: ARDUINO_READY
+[2026-08-27 14:04:59] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:05:02] Received: ARDUINO_READY
+[2026-08-27 14:05:02] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:05:05] Received: ARDUINO_READY
+[2026-08-27 14:05:05] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:05:08] Received: ARDUINO_READY
+[2026-08-27 14:05:08] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:05:11] Received: ARDUINO_READY
+[2026-08-27 14:05:11] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:05:14] Received: ARDUINO_READY
+[2026-08-27 14:05:14] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:05:18] Received: ARDUINO_READY
+[2026-08-27 14:05:18] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:05:21] Received: ARDUINO_READY
+[2026-08-27 14:05:21] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:05:24] Received: ARDUINO_READY
+[2026-08-27 14:05:24] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:05:27] Received: ARDUINO_READY
+[2026-08-27 14:05:27] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:05:30] Received: ARDUINO_READY
+[2026-08-27 14:05:30] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:05:33] Received: ARDUINO_READY
+[2026-08-27 14:05:33] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:05:36] Received: ARDUINO_READY
+[2026-08-27 14:05:36] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:05:39] Received: ARDUINO_READY
+[2026-08-27 14:05:39] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:05:39] Sent: SPEED:3000;DIST:20.0
+[2026-08-27 14:05:39] Received: DEBUG: Received char: S
+[2026-08-27 14:05:39] Received: DEBUG: Received char: P
+[2026-08-27 14:05:39] Received: DEBUG: Received char: E
+[2026-08-27 14:05:39] Received: DEBUG: Received char: E
+[2026-08-27 14:05:39] Received: DEBUG: Received char: D
+[2026-08-27 14:05:39] Received: DEBUG: Received char: :
+[2026-08-27 14:05:39] Received: DEBUG: Received char: 3
+[2026-08-27 14:05:39] Received: DEBUG: Received char: 0
+[2026-08-27 14:05:39] Received: DEBUG: Received char: 0
+[2026-08-27 14:05:39] Received: DEBUG: Received char: 0
+[2026-08-27 14:05:39] Received: DEBUG: Received char: ;
+[2026-08-27 14:05:39] Received: DEBUG: Received char: D
+[2026-08-27 14:05:39] Received: DEBUG: Received char: I
+[2026-08-27 14:05:39] Received: DEBUG: Received char: S
+[2026-08-27 14:05:39] Received: DEBUG: Received char: T
+[2026-08-27 14:05:39] Received: DEBUG: Received char: :
+[2026-08-27 14:05:39] Received: DEBUG: Received char: 2
+[2026-08-27 14:05:39] Received: DEBUG: Received char: 0
+[2026-08-27 14:05:39] Received: DEBUG: Received char: .
+[2026-08-27 14:05:39] Received: DEBUG: Received char: 0
+[2026-08-27 14:05:39] Received: DEBUG: Received char:
+[2026-08-27 14:05:39] Received: DEBUG: String complete flag set
+[2026-08-27 14:05:39] Received: DEBUG: Complete input string: 'SPEED:3000;DIST:20.0'
+[2026-08-27 14:05:39] Received: DEBUG: === COMMAND PROCESSING START ===
+[2026-08-27 14:05:39] Received: DEBUG: String complete, parsing command...
+[2026-08-27 14:05:39] Received: DEBUG: Input string: 'SPEED:3000;DIST:20.0'
+[2026-08-27 14:05:39] Received: DEBUG: Input string length: 20
+[2026-08-27 14:05:39] Received: DEBUG: Movement command received - parsing speed and distance
+[2026-08-27 14:05:39] Received: DEBUG: Speed index: 0, Distance index: 10
+[2026-08-27 14:05:39] Received: DEBUG: Parsed values - Speed: 3000, Distance: 20.00
+[2026-08-27 14:05:39] Received: Received speed: 3000
+[2026-08-27 14:05:39] Received: Received distance: 20.00
+[2026-08-27 14:05:39] Received: DEBUG: Calling executeMovement function
+[2026-08-27 14:05:39] Received: DEBUG: Executing movement - Speed: 3000, Distance: 20.00
+[2026-08-27 14:05:39] Received: MOVEMENT_START: Pos=0 Target=136000 Steps=136000
+[2026-08-27 14:05:39] Received: DEBUG: Movement timeout set to: 75333ms
+[2026-08-27 14:05:39] Received: DEBUG: Movement tracking started from position: 0
+[2026-08-27 14:05:39] Received: DEBUG: Command processing complete, waiting for next command
+[2026-08-27 14:05:39] Received: DEBUG: === COMMAND PROCESSING END ===
+[2026-08-27 14:05:39] Received: DEBUG: Movement progress: 0%
+[2026-08-27 14:05:40] Received: DEBUG: Movement progress: 1%
+[2026-08-27 14:05:40] Received: DEBUG: Movement progress: 2%
+[2026-08-27 14:05:41] Received: DEBUG: Movement progress: 3%
+[2026-08-27 14:05:41] Received: DEBUG: Movement progress: 4%
+[2026-08-27 14:05:41] Received: DEBUG: Movement progress: 5%
+[2026-08-27 14:05:42] Received: DEBUG: Movement progress: 6%
+[2026-08-27 14:05:42] Received: DEBUG: Periodic handshake skipped - movement in progress
+[2026-08-27 14:05:42] Received: DEBUG: Movement progress: 7%
+[2026-08-27 14:05:43] Received: DEBUG: Movement progress: 8%
+[2026-08-27 14:05:43] Received: DEBUG: Movement progress: 9%
+[2026-08-27 14:05:44] Received: DEBUG: Movement progress: 10%
+[2026-08-27 14:05:44] Sent: STOP
+[2026-08-27 14:05:44] Received: DEBUG: Received char: S
+[2026-08-27 14:05:44] Received: DEBUG: Received char: T
+[2026-08-27 14:05:44] Received: DEBUG: Received char: O
+[2026-08-27 14:05:44] Received: DEBUG: Received char: P
+[2026-08-27 14:05:44] Received: DEBUG: Received char:
+[2026-08-27 14:05:44] Received: DEBUG: String complete flag set
+[2026-08-27 14:05:44] Received: DEBUG: Complete input string: 'STOP'
+[2026-08-27 14:05:44] Received: DEBUG: === COMMAND PROCESSING START ===
+[2026-08-27 14:05:44] Received: DEBUG: String complete, parsing command...
+[2026-08-27 14:05:44] Received: DEBUG: Input string: 'STOP'
+[2026-08-27 14:05:44] Received: DEBUG: Input string length: 4
+[2026-08-27 14:05:44] Received: DEBUG: STOP command received - halting all movement
+[2026-08-27 14:05:44] Received: MOVEMENT_COMPLETE
+[2026-08-27 14:05:44] Received: ARDUINO_READY
+[2026-08-27 14:05:44] Received: DEBUG: Command processing complete, waiting for next command
+[2026-08-27 14:05:44] Received: DEBUG: === COMMAND PROCESSING END ===
+[2026-08-27 14:05:45] Received: ARDUINO_READY
+[2026-08-27 14:05:45] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:05:48] Sent: HOME:1
+[2026-08-27 14:05:48] Received: DEBUG: Received char: H
+[2026-08-27 14:05:48] Received: DEBUG: Received char: O
+[2026-08-27 14:05:48] Received: DEBUG: Received char: M
+[2026-08-27 14:05:48] Received: DEBUG: Received char: E
+[2026-08-27 14:05:48] Received: DEBUG: Received char: :
+[2026-08-27 14:05:48] Received: DEBUG: Received char: 1
+[2026-08-27 14:05:48] Received: DEBUG: Received char:
+[2026-08-27 14:05:48] Received: DEBUG: String complete flag set
+[2026-08-27 14:05:48] Received: DEBUG: Complete input string: 'HOME:1'
+[2026-08-27 14:05:48] Received: DEBUG: === COMMAND PROCESSING START ===
+[2026-08-27 14:05:48] Received: DEBUG: String complete, parsing command...
+[2026-08-27 14:05:48] Received: DEBUG: Input string: 'HOME:1'
+[2026-08-27 14:05:48] Received: DEBUG: Input string length: 6
+[2026-08-27 14:05:48] Received: DEBUG: HOME command received - starting homing sequence
+[2026-08-27 14:05:48] Received: Stepper is Homing...
+[2026-08-27 14:05:48] Received: DEBUG: Starting homing sequence
+[2026-08-27 14:05:48] Received: DEBUG: Current optical switch state: LOW
+[2026-08-27 14:05:48] Received: DEBUG: Set homing speed to -10000
+[2026-08-27 14:05:48] Received: DEBUG: Moving towards optical switch...
+[2026-08-27 14:05:49] Received: DEBUG: Optical switch triggered - reached home position
+[2026-08-27 14:05:49] Received: DEBUG: Set current position to 0
+[2026-08-27 14:05:49] Received: DEBUG: Moving away from switch at speed 200
+[2026-08-27 14:05:49] Received: DEBUG: Moved away from switch
+[2026-08-27 14:05:49] Received: Homing Complete!
+[2026-08-27 14:05:49] Received: ARDUINO_READY
+[2026-08-27 14:05:49] Received: DEBUG: Homing sequence completed successfully
+[2026-08-27 14:05:49] Received: DEBUG: Homing sequence completed
+[2026-08-27 14:05:49] Received: DEBUG: Command processing complete, waiting for next command
+[2026-08-27 14:05:49] Received: DEBUG: === COMMAND PROCESSING END ===
+[2026-08-27 14:05:49] Received: ARDUINO_READY
+[2026-08-27 14:05:49] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:05:51] Sent: SPEED:3000;DIST:20.0
+[2026-08-27 14:05:51] Received: DEBUG: Received char: S
+[2026-08-27 14:05:51] Received: DEBUG: Received char: P
+[2026-08-27 14:05:51] Received: DEBUG: Received char: E
+[2026-08-27 14:05:51] Received: DEBUG: Received char: E
+[2026-08-27 14:05:51] Received: DEBUG: Received char: D
+[2026-08-27 14:05:51] Received: DEBUG: Received char: :
+[2026-08-27 14:05:51] Received: DEBUG: Received char: 3
+[2026-08-27 14:05:51] Received: DEBUG: Received char: 0
+[2026-08-27 14:05:51] Received: DEBUG: Received char: 0
+[2026-08-27 14:05:51] Received: DEBUG: Received char: 0
+[2026-08-27 14:05:51] Received: DEBUG: Received char: ;
+[2026-08-27 14:05:51] Received: DEBUG: Received char: D
+[2026-08-27 14:05:51] Received: DEBUG: Received char: I
+[2026-08-27 14:05:51] Received: DEBUG: Received char: S
+[2026-08-27 14:05:51] Received: DEBUG: Received char: T
+[2026-08-27 14:05:51] Received: DEBUG: Received char: :
+[2026-08-27 14:05:51] Received: DEBUG: Received char: 2
+[2026-08-27 14:05:51] Received: DEBUG: Received char: 0
+[2026-08-27 14:05:51] Received: DEBUG: Received char: .
+[2026-08-27 14:05:51] Received: DEBUG: Received char: 0
+[2026-08-27 14:05:51] Received: DEBUG: Received char:
+[2026-08-27 14:05:51] Received: DEBUG: String complete flag set
+[2026-08-27 14:05:51] Received: DEBUG: Complete input string: 'SPEED:3000;DIST:20.0'
+[2026-08-27 14:05:51] Received: DEBUG: === COMMAND PROCESSING START ===
+[2026-08-27 14:05:51] Received: DEBUG: String complete, parsing command...
+[2026-08-27 14:05:51] Received: DEBUG: Input string: 'SPEED:3000;DIST:20.0'
+[2026-08-27 14:05:51] Received: DEBUG: Input string length: 20
+[2026-08-27 14:05:51] Received: DEBUG: Movement command received - parsing speed and distance
+[2026-08-27 14:05:51] Received: DEBUG: Speed index: 0, Distance index: 10
+[2026-08-27 14:05:51] Received: DEBUG: Parsed values - Speed: 3000, Distance: 20.00
+[2026-08-27 14:05:51] Received: Received speed: 3000
+[2026-08-27 14:05:51] Received: Received distance: 20.00
+[2026-08-27 14:05:51] Received: DEBUG: Calling executeMovement function
+[2026-08-27 14:05:51] Received: DEBUG: Executing movement - Speed: 3000, Distance: 20.00
+[2026-08-27 14:05:51] Received: MOVEMENT_START: Pos=0 Target=136000 Steps=136000
+[2026-08-27 14:05:51] Received: DEBUG: Movement timeout set to: 75333ms
+[2026-08-27 14:05:51] Received: DEBUG: Movement tracking started from position: 0
+[2026-08-27 14:05:51] Received: DEBUG: Command processing complete, waiting for next command
+[2026-08-27 14:05:51] Received: DEBUG: === COMMAND PROCESSING END ===
+[2026-08-27 14:05:52] Received: DEBUG: Movement progress: 0%
+[2026-08-27 14:05:52] Received: DEBUG: Movement progress: 1%
+[2026-08-27 14:05:52] Received: DEBUG: Movement progress: 2%
+[2026-08-27 14:05:52] Received: DEBUG: Periodic handshake skipped - movement in progress
+[2026-08-27 14:05:53] Received: DEBUG: Movement progress: 3%
+[2026-08-27 14:05:53] Received: DEBUG: Movement progress: 4%
+[2026-08-27 14:05:54] Received: DEBUG: Movement progress: 5%
+[2026-08-27 14:05:54] Received: DEBUG: Movement progress: 6%
+[2026-08-27 14:05:55] Received: DEBUG: Movement progress: 7%
+[2026-08-27 14:05:55] Received: DEBUG: Movement progress: 8%
+[2026-08-27 14:05:56] Received: DEBUG: Periodic handshake skipped - movement in progress
+[2026-08-27 14:05:56] Received: DEBUG: Movement progress: 9%
+[2026-08-27 14:05:56] Received: DEBUG: Movement progress: 10%
+[2026-08-27 14:05:56] Received: DEBUG: Movement progress: 11%
+[2026-08-27 14:05:57] Received: DEBUG: Movement progress: 12%
+[2026-08-27 14:05:57] Sent: STOP
+[2026-08-27 14:05:57] Received: DEBUG: Received char: S
+[2026-08-27 14:05:57] Received: DEBUG: Received char: T
+[2026-08-27 14:05:57] Received: DEBUG: Received char: O
+[2026-08-27 14:05:57] Received: DEBUG: Received char: P
+[2026-08-27 14:05:57] Received: DEBUG: Received char:
+[2026-08-27 14:05:57] Received: DEBUG: String complete flag set
+[2026-08-27 14:05:57] Received: DEBUG: Complete input string: 'STOP'
+[2026-08-27 14:05:57] Received: DEBUG: === COMMAND PROCESSING START ===
+[2026-08-27 14:05:57] Received: DEBUG: String complete, parsing command...
+[2026-08-27 14:05:57] Received: DEBUG: Input string: 'STOP'
+[2026-08-27 14:05:57] Received: DEBUG: Input string length: 4
+[2026-08-27 14:05:57] Received: DEBUG: STOP command received - halting all movement
+[2026-08-27 14:05:57] Received: MOVEMENT_COMPLETE
+[2026-08-27 14:05:57] Received: ARDUINO_READY
+[2026-08-27 14:05:57] Received: DEBUG: Command processing complete, waiting for next command
+[2026-08-27 14:05:57] Received: DEBUG: === COMMAND PROCESSING END ===
+[2026-08-27 14:05:59] Received: ARDUINO_READY
+[2026-08-27 14:05:59] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:06:01] Sent: HOME:1
+[2026-08-27 14:06:01] Received: DEBUG: Received char: H
+[2026-08-27 14:06:01] Received: DEBUG: Received char: O
+[2026-08-27 14:06:01] Received: DEBUG: Received char: M
+[2026-08-27 14:06:01] Received: DEBUG: Received char: E
+[2026-08-27 14:06:01] Received: DEBUG: Received char: :
+[2026-08-27 14:06:01] Received: DEBUG: Received char: 1
+[2026-08-27 14:06:01] Received: DEBUG: Received char:
+[2026-08-27 14:06:01] Received: DEBUG: String complete flag set
+[2026-08-27 14:06:01] Received: DEBUG: Complete input string: 'HOME:1'
+[2026-08-27 14:06:01] Received: DEBUG: === COMMAND PROCESSING START ===
+[2026-08-27 14:06:01] Received: DEBUG: String complete, parsing command...
+[2026-08-27 14:06:01] Received: DEBUG: Input string: 'HOME:1'
+[2026-08-27 14:06:01] Received: DEBUG: Input string length: 6
+[2026-08-27 14:06:01] Received: DEBUG: HOME command received - starting homing sequence
+[2026-08-27 14:06:01] Received: Stepper is Homing...
+[2026-08-27 14:06:01] Received: DEBUG: Starting homing sequence
+[2026-08-27 14:06:01] Received: DEBUG: Current optical switch state: LOW
+[2026-08-27 14:06:01] Received: DEBUG: Set homing speed to -10000
+[2026-08-27 14:06:01] Received: DEBUG: Moving towards optical switch...
+[2026-08-27 14:06:02] Received: DEBUG: Optical switch triggered - reached home position
+[2026-08-27 14:06:02] Received: DEBUG: Set current position to 0
+[2026-08-27 14:06:02] Received: DEBUG: Moving away from switch at speed 200
+[2026-08-27 14:06:02] Received: DEBUG: Moved away from switch
+[2026-08-27 14:06:02] Received: Homing Complete!
+[2026-08-27 14:06:02] Received: ARDUINO_READY
+[2026-08-27 14:06:02] Received: DEBUG: Homing sequence completed successfully
+[2026-08-27 14:06:02] Received: DEBUG: Homing sequence completed
+[2026-08-27 14:06:02] Received: DEBUG: Command processing complete, waiting for next command
+[2026-08-27 14:06:02] Received: DEBUG: === COMMAND PROCESSING END ===
+[2026-08-27 14:06:02] Received: ARDUINO_READY
+[2026-08-27 14:06:02] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:06:05] Received: ARDUINO_READY
+[2026-08-27 14:06:05] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:06:08] Received: ARDUINO_READY
+[2026-08-27 14:06:08] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:06:11] Received: ARDUINO_READY
+[2026-08-27 14:06:11] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:06:15] Received: ARDUINO_READY
+[2026-08-27 14:06:15] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:06:18] Received: ARDUINO_READY
+[2026-08-27 14:06:18] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:06:21] Received: ARDUINO_READY
+[2026-08-27 14:06:21] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:06:24] Received: ARDUINO_READY
+[2026-08-27 14:06:24] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:06:27] Received: ARDUINO_READY
+[2026-08-27 14:06:27] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:06:30] Received: ARDUINO_READY
+[2026-08-27 14:06:30] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:06:33] Received: ARDUINO_READY
+[2026-08-27 14:06:33] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:06:36] Received: ARDUINO_READY
+[2026-08-27 14:06:36] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:06:39] Received: ARDUINO_READY
+[2026-08-27 14:06:39] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:06:42] Received: ARDUINO_READY
+[2026-08-27 14:06:42] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:06:45] Received: ARDUINO_READY
+[2026-08-27 14:06:45] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:06:48] Received: ARDUINO_READY
+[2026-08-27 14:06:48] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:06:51] Received: ARDUINO_READY
+[2026-08-27 14:06:51] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:06:54] Received: ARDUINO_READY
+[2026-08-27 14:06:54] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:06:57] Received: ARDUINO_READY
+[2026-08-27 14:06:57] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:07:00] Received: ARDUINO_READY
+[2026-08-27 14:07:00] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:07:03] Received: ARDUINO_READY
+[2026-08-27 14:07:04] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:07:07] Received: ARDUINO_READY
+[2026-08-27 14:07:07] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:07:10] Received: ARDUINO_READY
+[2026-08-27 14:07:10] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:07:13] Received: ARDUINO_READY
+[2026-08-27 14:07:13] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:07:16] Received: ARDUINO_READY
+[2026-08-27 14:07:16] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:07:19] Received: ARDUINO_READY
+[2026-08-27 14:07:19] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:07:22] Received: ARDUINO_READY
+[2026-08-27 14:07:22] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:07:25] Received: ARDUINO_READY
+[2026-08-27 14:07:25] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:07:28] Received: ARDUINO_READY
+[2026-08-27 14:07:28] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:07:31] Received: ARDUINO_READY
+[2026-08-27 14:07:31] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:07:34] Received: ARDUINO_READY
+[2026-08-27 14:07:34] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:07:37] Received: ARDUINO_READY
+[2026-08-27 14:07:37] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:07:40] Received: ARDUINO_READY
+[2026-08-27 14:07:40] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:07:43] Received: ARDUINO_READY
+[2026-08-27 14:07:43] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:07:46] Received: ARDUINO_READY
+[2026-08-27 14:07:46] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:07:49] Received: ARDUINO_READY
+[2026-08-27 14:07:49] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:07:52] Received: ARDUINO_READY
+[2026-08-27 14:07:52] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:07:56] Received: ARDUINO_READY
+[2026-08-27 14:07:56] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:07:59] Received: ARDUINO_READY
+[2026-08-27 14:07:59] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:08:02] Received: ARDUINO_READY
+[2026-08-27 14:08:02] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:08:05] Received: ARDUINO_READY
+[2026-08-27 14:08:05] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:08:08] Received: ARDUINO_READY
+[2026-08-27 14:08:08] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:08:11] Received: ARDUINO_READY
+[2026-08-27 14:08:11] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:08:14] Received: ARDUINO_READY
+[2026-08-27 14:08:14] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:08:17] Received: ARDUINO_READY
+[2026-08-27 14:08:17] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:08:20] Received: ARDUINO_READY
+[2026-08-27 14:08:20] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:08:23] Received: ARDUINO_READY
+[2026-08-27 14:08:23] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:08:26] Received: ARDUINO_READY
+[2026-08-27 14:08:26] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:08:29] Received: ARDUINO_READY
+[2026-08-27 14:08:29] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:08:32] Received: ARDUINO_READY
+[2026-08-27 14:08:32] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:08:35] Received: ARDUINO_READY
+[2026-08-27 14:08:35] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:08:38] Received: ARDUINO_READY
+[2026-08-27 14:08:38] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:08:41] Received: ARDUINO_READY
+[2026-08-27 14:08:41] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:08:44] Received: ARDUINO_READY
+[2026-08-27 14:08:44] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:08:45] Sent: SPEED:3000;DIST:20.0
+[2026-08-27 14:08:45] Received: DEBUG: Received char: S
+[2026-08-27 14:08:45] Received: DEBUG: Received char: P
+[2026-08-27 14:08:45] Received: DEBUG: Received char: E
+[2026-08-27 14:08:45] Received: DEBUG: Received char: E
+[2026-08-27 14:08:45] Received: DEBUG: Received char: D
+[2026-08-27 14:08:45] Received: DEBUG: Received char: :
+[2026-08-27 14:08:45] Received: DEBUG: Received char: 3
+[2026-08-27 14:08:45] Received: DEBUG: Received char: 0
+[2026-08-27 14:08:45] Received: DEBUG: Received char: 0
+[2026-08-27 14:08:45] Received: DEBUG: Received char: 0
+[2026-08-27 14:08:45] Received: DEBUG: Received char: ;
+[2026-08-27 14:08:45] Received: DEBUG: Received char: D
+[2026-08-27 14:08:45] Received: DEBUG: Received char: I
+[2026-08-27 14:08:45] Received: DEBUG: Received char: S
+[2026-08-27 14:08:45] Received: DEBUG: Received char: T
+[2026-08-27 14:08:45] Received: DEBUG: Received char: :
+[2026-08-27 14:08:45] Received: DEBUG: Received char: 2
+[2026-08-27 14:08:45] Received: DEBUG: Received char: 0
+[2026-08-27 14:08:45] Received: DEBUG: Received char: .
+[2026-08-27 14:08:45] Received: DEBUG: Received char: 0
+[2026-08-27 14:08:45] Received: DEBUG: Received char:
+[2026-08-27 14:08:45] Received: DEBUG: String complete flag set
+[2026-08-27 14:08:45] Received: DEBUG: Complete input string: 'SPEED:3000;DIST:20.0'
+[2026-08-27 14:08:45] Received: DEBUG: === COMMAND PROCESSING START ===
+[2026-08-27 14:08:45] Received: DEBUG: String complete, parsing command...
+[2026-08-27 14:08:45] Received: DEBUG: Input string: 'SPEED:3000;DIST:20.0'
+[2026-08-27 14:08:45] Received: DEBUG: Input string length: 20
+[2026-08-27 14:08:45] Received: DEBUG: Movement command received - parsing speed and distance
+[2026-08-27 14:08:45] Received: DEBUG: Speed index: 0, Distance index: 10
+[2026-08-27 14:08:45] Received: DEBUG: Parsed values - Speed: 3000, Distance: 20.00
+[2026-08-27 14:08:45] Received: Received speed: 3000
+[2026-08-27 14:08:45] Received: Received distance: 20.00
+[2026-08-27 14:08:45] Received: DEBUG: Calling executeMovement function
+[2026-08-27 14:08:45] Received: DEBUG: Executing movement - Speed: 3000, Distance: 20.00
+[2026-08-27 14:08:45] Received: MOVEMENT_START: Pos=0 Target=136000 Steps=136000
+[2026-08-27 14:08:45] Received: DEBUG: Movement timeout set to: 75333ms
+[2026-08-27 14:08:45] Received: DEBUG: Movement tracking started from position: 0
+[2026-08-27 14:08:45] Received: DEBUG: Command processing complete, waiting for next command
+[2026-08-27 14:08:45] Received: DEBUG: === COMMAND PROCESSING END ===
+[2026-08-27 14:08:45] Received: DEBUG: Movement progress: 0%
+[2026-08-27 14:08:45] Received: DEBUG: Movement progress: 1%
+[2026-08-27 14:08:46] Received: DEBUG: Movement progress: 2%
+[2026-08-27 14:08:46] Received: DEBUG: Movement progress: 3%
+[2026-08-27 14:08:47] Received: DEBUG: Movement progress: 4%
+[2026-08-27 14:08:47] Received: DEBUG: Movement progress: 5%
+[2026-08-27 14:08:48] Received: DEBUG: Periodic handshake skipped - movement in progress
+[2026-08-27 14:08:48] Received: DEBUG: Movement progress: 6%
+[2026-08-27 14:08:48] Received: DEBUG: Movement progress: 7%
+[2026-08-27 14:08:49] Received: DEBUG: Movement progress: 8%
+[2026-08-27 14:08:49] Received: DEBUG: Movement progress: 9%
+[2026-08-27 14:08:49] Received: DEBUG: Movement progress: 10%
+[2026-08-27 14:08:50] Received: DEBUG: Movement progress: 11%
+[2026-08-27 14:08:50] Received: DEBUG: Movement progress: 12%
+[2026-08-27 14:08:51] Received: DEBUG: Periodic handshake skipped - movement in progress
+[2026-08-27 14:08:51] Received: DEBUG: Movement progress: 13%
+[2026-08-27 14:08:51] Received: DEBUG: Movement progress: 14%
+[2026-08-27 14:08:52] Received: DEBUG: Movement progress: 15%
+[2026-08-27 14:08:52] Received: DEBUG: Movement progress: 16%
+[2026-08-27 14:08:52] Sent: STOP
+[2026-08-27 14:08:52] Received: DEBUG: Received char: S
+[2026-08-27 14:08:52] Received: DEBUG: Received char: T
+[2026-08-27 14:08:52] Received: DEBUG: Received char: O
+[2026-08-27 14:08:52] Received: DEBUG: Received char: P
+[2026-08-27 14:08:52] Received: DEBUG: Received char:
+[2026-08-27 14:08:52] Received: DEBUG: String complete flag set
+[2026-08-27 14:08:52] Received: DEBUG: Complete input string: 'STOP'
+[2026-08-27 14:08:52] Received: DEBUG: === COMMAND PROCESSING START ===
+[2026-08-27 14:08:52] Received: DEBUG: String complete, parsing command...
+[2026-08-27 14:08:52] Received: DEBUG: Input string: 'STOP'
+[2026-08-27 14:08:52] Received: DEBUG: Input string length: 4
+[2026-08-27 14:08:52] Received: DEBUG: STOP command received - halting all movement
+[2026-08-27 14:08:52] Received: MOVEMENT_COMPLETE
+[2026-08-27 14:08:52] Received: ARDUINO_READY
+[2026-08-27 14:08:52] Received: DEBUG: Command processing complete, waiting for next command
+[2026-08-27 14:08:52] Received: DEBUG: === COMMAND PROCESSING END ===
+[2026-08-27 14:08:54] Received: ARDUINO_READY
+[2026-08-27 14:08:54] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:08:57] Received: ARDUINO_READY
+[2026-08-27 14:08:57] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:09:00] Received: ARDUINO_READY
+[2026-08-27 14:09:00] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:09:00] Sent: HOME:1
+[2026-08-27 14:09:00] Received: DEBUG: Received char: H
+[2026-08-27 14:09:00] Received: DEBUG: Received char: O
+[2026-08-27 14:09:00] Received: DEBUG: Received char: M
+[2026-08-27 14:09:00] Received: DEBUG: Received char: E
+[2026-08-27 14:09:00] Received: DEBUG: Received char: :
+[2026-08-27 14:09:00] Received: DEBUG: Received char: 1
+[2026-08-27 14:09:00] Received: DEBUG: Received char:
+[2026-08-27 14:09:00] Received: DEBUG: String complete flag set
+[2026-08-27 14:09:00] Received: DEBUG: Complete input string: 'HOME:1'
+[2026-08-27 14:09:00] Received: DEBUG: === COMMAND PROCESSING START ===
+[2026-08-27 14:09:00] Received: DEBUG: String complete, parsing command...
+[2026-08-27 14:09:00] Received: DEBUG: Input string: 'HOME:1'
+[2026-08-27 14:09:00] Received: DEBUG: Input string length: 6
+[2026-08-27 14:09:00] Received: DEBUG: HOME command received - starting homing sequence
+[2026-08-27 14:09:00] Received: Stepper is Homing...
+[2026-08-27 14:09:00] Received: DEBUG: Starting homing sequence
+[2026-08-27 14:09:00] Received: DEBUG: Current optical switch state: LOW
+[2026-08-27 14:09:00] Received: DEBUG: Set homing speed to -10000
+[2026-08-27 14:09:00] Received: DEBUG: Moving towards optical switch...
+[2026-08-27 14:09:02] Received: DEBUG: Optical switch triggered - reached home position
+[2026-08-27 14:09:02] Received: DEBUG: Set current position to 0
+[2026-08-27 14:09:02] Received: DEBUG: Moving away from switch at speed 200
+[2026-08-27 14:09:02] Received: DEBUG: Moved away from switch
+[2026-08-27 14:09:02] Received: Homing Complete!
+[2026-08-27 14:09:02] Received: ARDUINO_READY
+[2026-08-27 14:09:02] Received: DEBUG: Homing sequence completed successfully
+[2026-08-27 14:09:02] Received: DEBUG: Homing sequence completed
+[2026-08-27 14:09:02] Received: DEBUG: Command processing complete, waiting for next command
+[2026-08-27 14:09:02] Received: DEBUG: === COMMAND PROCESSING END ===
+[2026-08-27 14:09:03] Received: ARDUINO_READY
+[2026-08-27 14:09:03] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:09:06] Received: ARDUINO_READY
+[2026-08-27 14:09:06] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:09:09] Received: ARDUINO_READY
+[2026-08-27 14:09:09] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:09:12] Received: ARDUINO_READY
+[2026-08-27 14:09:12] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:09:15] Received: ARDUINO_READY
+[2026-08-27 14:09:15] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:09:18] Received: ARDUINO_READY
+[2026-08-27 14:09:18] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:09:21] Received: ARDUINO_READY
+[2026-08-27 14:09:21] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:09:24] Received: ARDUINO_READY
+[2026-08-27 14:09:24] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:09:27] Received: ARDUINO_READY
+[2026-08-27 14:09:27] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:09:30] Received: ARDUINO_READY
+[2026-08-27 14:09:30] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:09:33] Received: ARDUINO_READY
+[2026-08-27 14:09:33] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:09:36] Received: ARDUINO_READY
+[2026-08-27 14:09:36] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:09:40] Received: ARDUINO_READY
+[2026-08-27 14:09:40] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:09:43] Received: ARDUINO_READY
+[2026-08-27 14:09:43] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:09:46] Received: ARDUINO_READY
+[2026-08-27 14:09:46] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:09:49] Received: ARDUINO_READY
+[2026-08-27 14:09:49] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:09:52] Received: ARDUINO_READY
+[2026-08-27 14:09:52] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:09:55] Received: ARDUINO_READY
+[2026-08-27 14:09:55] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:09:58] Received: ARDUINO_READY
+[2026-08-27 14:09:58] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:10:01] Received: ARDUINO_READY
+[2026-08-27 14:10:01] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:10:04] Received: ARDUINO_READY
+[2026-08-27 14:10:04] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:10:07] Received: ARDUINO_READY
+[2026-08-27 14:10:07] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:10:10] Received: ARDUINO_READY
+[2026-08-27 14:10:10] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:10:13] Received: ARDUINO_READY
+[2026-08-27 14:10:13] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:10:16] Received: ARDUINO_READY
+[2026-08-27 14:10:16] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:10:19] Received: ARDUINO_READY
+[2026-08-27 14:10:19] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:10:22] Received: ARDUINO_READY
+[2026-08-27 14:10:22] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:10:25] Received: ARDUINO_READY
+[2026-08-27 14:10:25] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:10:29] Received: ARDUINO_READY
+[2026-08-27 14:10:29] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:10:32] Received: ARDUINO_READY
+[2026-08-27 14:10:32] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:10:35] Received: ARDUINO_READY
+[2026-08-27 14:10:35] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:10:38] Received: ARDUINO_READY
+[2026-08-27 14:10:38] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:10:41] Received: ARDUINO_READY
+[2026-08-27 14:10:41] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:10:44] Received: ARDUINO_READY
+[2026-08-27 14:10:44] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:10:47] Received: ARDUINO_READY
+[2026-08-27 14:10:47] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:10:50] Received: ARDUINO_READY
+[2026-08-27 14:10:50] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:10:53] Received: ARDUINO_READY
+[2026-08-27 14:10:53] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:10:56] Received: ARDUINO_READY
+[2026-08-27 14:10:56] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:10:59] Received: ARDUINO_READY
+[2026-08-27 14:10:59] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:11:02] Received: ARDUINO_READY
+[2026-08-27 14:11:02] Received: DEBUG: Periodic handshake sent - system ready for commands

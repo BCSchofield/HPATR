@@ -235,14 +235,30 @@ void loop() {
       jogMode  = true;
       lastMillis = millis();
     }
-    // Check for STOP command (ends jog)
+    // Check for STOP command — emergency stop for jogs AND SPEED:/DIST: moves
     else if (inputString.indexOf("STOP") != -1) {
+      debugLog("STOP command received - halting all movement");
       if (jogMode) {
         jogMode = false;
         stepper.setSpeed(0);
         long finalPos = stepper.currentPosition();
         stepper.setCurrentPosition(finalPos);
         Serial.println("JOG_POS:" + String(finalPos));
+      }
+      // Abort any move in progress.  STOP used to handle jogs only, so the
+      // GUI's emergency button could not halt a traverse move at all.
+      // Clearing the target as well as the flag makes the monitor block below
+      // fail both its conditions, halting on this loop iteration rather than
+      // decelerating over a distance.
+      if (moveFinished == 0) {
+        stepper.setSpeed(0);
+        stepper.moveTo(stepper.currentPosition());   // distanceToGo() -> 0
+        moveFinished = 1;
+        movementTimeout = 0;
+        // Releases the GUI's move state (travel bar, watchdog, Start button).
+        // NOTE: the GUI credits the full commanded distance on this message, so
+        // the travel counter will over-read after an abort — re-home afterwards.
+        Serial.println("MOVEMENT_COMPLETE");
       }
       Serial.println("ARDUINO_READY");
     }

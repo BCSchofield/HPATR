@@ -1317,9 +1317,6 @@ class AtomisationApp(QMainWindow):
         self._last_flow: float | None = None
         self._alicat_saved_port: str = self.ALICAT_DEFAULT_PORT
 
-        self._ramp_running = False
-        self._movement_done_event = threading.Event()
-
         self.phantom = PhantomController() if PHANTOM_SDK_AVAILABLE else None
         self.afg     = AFGController()     if PYVISA_AVAILABLE       else None
 
@@ -1430,6 +1427,14 @@ class AtomisationApp(QMainWindow):
         ports = self._get_serial_ports()
         if ports:
             self._trigger_arduino_connect()
+
+        # Auto-connect the RPM Arduino.  Gated on actually identifying an Uno
+        # rather than just taking the first port: with the Uno unplugged the
+        # top entry would be the Portenta, and connecting would seize the
+        # traverse controller's port as an RPM controller.  Staggered so the
+        # two connect workers don't start in the same instant.
+        if self._uno_port_present():
+            QTimer.singleShot(400, self, self._trigger_rpm_connect)
 
     # ─────────────────────────────────────────────────────────────────────────
     # UI construction
@@ -1725,12 +1730,16 @@ class AtomisationApp(QMainWindow):
         pressure_off_card.layout().setSpacing(6)
         pressure_off_card.layout().addWidget(title_label("Emergency", 13))
 
-        self._pressure_off_btn_left = accent_button("Motor and Gas Off", CLR_RED)
+        self._pressure_off_btn_left = accent_button("STOP EVERYTHING", CLR_RED)
         self._pressure_off_btn_left.setFixedHeight(40)
         self._pressure_off_btn_left.setToolTip(
-            "<b>Emergency off</b><br>"
-            "1. Sends an immediate stop command to the Arduino<br>"
-            "2. Zeroes the AliCat flow setpoint")
+            "<b>Emergency stop</b><br>"
+            "Stops every connected device, independently:<br>"
+            "1. Halts the traverse motor (Portenta)<br>"
+            "2. Stops the spin motor (Arduino Uno)<br>"
+            "3. Zeroes the AliCat flow setpoint<br>"
+            "<i>Re-home the traverse motor afterwards — the travel counter "
+            "credits the full commanded distance on an aborted move.</i>")
         self._pressure_off_btn_left.clicked.connect(self._pressure_off)
         pressure_off_card.layout().addWidget(self._pressure_off_btn_left)
 
@@ -1890,9 +1899,11 @@ class AtomisationApp(QMainWindow):
         self._tabs.addTab(self._build_afg_tab(),          "  AFG1062  ")
         self._tabs.addTab(self._build_calibration_tab(),  "  Calibration  ")
         self._tabs.addTab(self._build_cone_tab(),         "  Cone  ")
-        self._tabs.addTab(self._build_testers_tab(),      "  Testers  ")
         self._tabs.addTab(self._build_how_to_tab(),       "")
-        self._tabs.setTabVisible(6, False)   # content shown via corner button
+        # Hide the How To tab itself — its content is reached via the corner
+        # button below.  Indexed off the count so adding/removing a tab above
+        # can't leave this pointing at the wrong one.
+        self._tabs.setTabVisible(self._tabs.count() - 1, False)
 
         # "How To" corner button — styled as a tab, physically right-aligned
         _how_to_btn = QPushButton("  How To  ")
@@ -1944,7 +1955,7 @@ class AtomisationApp(QMainWindow):
         ICON_PX = 16      # refresh glyph, well inside the 56px square button
 
         def connection_card(title, on_refresh, on_connect, on_disconnect,
-                            refresh_tip, connect_tip, disconnect_tip):
+                            refresh_tip, connect_tip, disconnect_tip, prefer=None):
             cd = card(w, padding=20)
             cd.layout().setSpacing(12)
             cd.layout().addWidget(section_label(title))
@@ -1955,7 +1966,7 @@ class AtomisationApp(QMainWindow):
             prl = QHBoxLayout(prow); prl.setContentsMargins(0,0,0,0); prl.setSpacing(6)
             combo = QComboBox()
             combo.setEditable(True)
-            combo.addItems(self._get_serial_ports())
+            combo.addItems(self._get_serial_ports(prefer=prefer))
             combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             combo.setMinimumWidth(0)          # must be free to shrink at 1/3 width
             combo.setFixedHeight(COMBO_H)
@@ -2033,7 +2044,8 @@ class AtomisationApp(QMainWindow):
             "<b>Connect to Arduino Uno</b><br>"
             "Opens a serial connection on the selected port at 115200 baud",
             "<b>Disconnect Arduino Uno</b><br>"
-            "Stops the motor and closes the serial port")
+            "Stops the motor and closes the serial port",
+            prefer=self._is_uno_port)
 
         (ca, self._mfc_port_combo, self._mfc_connect_btn,
          self._mfc_disconnect_btn, self._mfc_status_lbl) = connection_card(
@@ -3118,69 +3130,6 @@ class AtomisationApp(QMainWindow):
         vl.addStretch()
         scroll.setWidget(w); return scroll
 
-    # ── Testers tab ───────────────────────────────────────────────────────────
-
-    def _build_testers_tab(self):
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("background: transparent; border: none;")
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-
-        w = QWidget()
-        w.setMinimumWidth(0)
-        vl = QVBoxLayout(w)
-        vl.setContentsMargins(20, 20, 20, 20)
-        vl.setSpacing(14)
-
-        # ── Ramp Speed Test ───────────────────────────────────────────────────
-        c = card(w)
-        c.layout().addWidget(section_label("RAMP SPEED TEST"))
-        c.layout().addWidget(separator())
-
-        desc = QLabel(
-            "Increases motor speed by a fixed increment at regular intervals until the "
-            "syringe limit (72.5 mm) is reached or STOP is pressed. "
-            "Output is printed to the Console panel on the right."
-        )
-        desc.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
-        desc.setWordWrap(True)
-        c.layout().addWidget(desc)
-
-        self._ramp_start_speed_entry = QLineEdit()
-        self._ramp_start_speed_entry.setPlaceholderText("e.g. 250")
-        self._ramp_start_speed_entry.setValidator(QIntValidator(1, 100000))
-        c.layout().addWidget(input_row("Start Speed (steps/s)", self._ramp_start_speed_entry))
-
-        self._ramp_step_time_entry = QLineEdit()
-        self._ramp_step_time_entry.setPlaceholderText("e.g. 5")
-        self._ramp_step_time_entry.setValidator(QDoubleValidator(0.1, 3600.0, 1))
-        c.layout().addWidget(input_row("Step Time (s)", self._ramp_step_time_entry))
-
-        self._ramp_increment_entry = QLineEdit()
-        self._ramp_increment_entry.setPlaceholderText("e.g. 25")
-        self._ramp_increment_entry.setValidator(QIntValidator(1, 100000))
-        c.layout().addWidget(input_row("Speed Increment (steps/s)", self._ramp_increment_entry))
-
-        ramp_btn_row = QWidget()
-        rbr = QHBoxLayout(ramp_btn_row); rbr.setContentsMargins(0, 0, 0, 0); rbr.setSpacing(8)
-        self._ramp_start_btn = accent_button("Start Ramp", CLR_ACCENT)
-        self._ramp_start_btn.setFixedHeight(36)
-        self._ramp_stop_btn  = accent_button("STOP", CLR_RED)
-        self._ramp_stop_btn.setFixedHeight(36)
-        self._ramp_stop_btn.setEnabled(False)
-        self._ramp_start_btn.clicked.connect(self._start_ramp_test)
-        self._ramp_stop_btn.clicked.connect(self._stop_ramp_test)
-        rbr.addWidget(self._ramp_start_btn)
-        rbr.addWidget(self._ramp_stop_btn)
-        rbr.addStretch()
-        c.layout().addWidget(ramp_btn_row)
-
-        vl.addWidget(c)
-        vl.addStretch()
-
-        scroll.setWidget(w)
-        return scroll
-
     # ── How To tab ────────────────────────────────────────────────────────────
 
     def _build_how_to_tab(self):
@@ -3438,11 +3387,17 @@ class AtomisationApp(QMainWindow):
         """Strip the description suffix from a combo entry like 'COM3 — Arduino Uno'."""
         return text.split(" — ")[0].strip()
 
-    def _get_serial_ports(self):
+    def _get_serial_ports(self, prefer=None):
+        """Return "COMx — description" labels for the available serial ports.
+
+        prefer: optional predicate taking a pyserial ListPortInfo.  Matching
+        ports are moved to the front of the list so the right device is the
+        dropdown's default selection.  The sort is stable, so everything else
+        keeps its original order.
+        """
         import re
-        ports = serial.tools.list_ports.comports()
-        result = []
-        for p in ports:
+        entries = []
+        for p in serial.tools.list_ports.comports():
             dev  = p.device
             desc = (p.description or "").strip()
             lower_desc = desc.lower()
@@ -3450,10 +3405,39 @@ class AtomisationApp(QMainWindow):
                 if desc and desc != dev:
                     # Windows appends "(COMx)" to the description — strip it since we show the port separately
                     desc_clean = re.sub(r'\s*\(COM\d+\)\s*$', '', desc, flags=re.IGNORECASE).strip()
-                    result.append(f"{dev} — {desc_clean}")
+                    entries.append((f"{dev} — {desc_clean}", p))
                 else:
-                    result.append(dev)
-        return result
+                    entries.append((dev, p))
+        if prefer is not None:
+            entries.sort(key=lambda e: not prefer(e[1]))
+        return [label for label, _ in entries]
+
+    # Arduino Uno USB identifiers, matched as exact VID:PID pairs.
+    # Vendor ID alone is NOT enough: the Portenta H7 is also an Arduino board
+    # and shares vendor 0x2341 (it enumerates as 2341:025b), so a VID-only test
+    # matches the traverse controller too.  Clones typically present a CH340
+    # bridge instead, hence the description fallback.  No FTDI entry here —
+    # the Alicat MFC is an FT232 and must never match.
+    UNO_IDS = (
+        (0x2341, 0x0043),   # Uno R3
+        (0x2341, 0x0001),   # Uno (original)
+        (0x2341, 0x0243),   # Uno R3 variant
+        (0x2A03, 0x0043),   # Arduino srl Uno
+        (0x1A86, 0x7523),   # CH340 clone
+        (0x1A86, 0x7522),   # CH340 clone
+    )
+    UNO_DESC_HINTS = ("arduino uno", "ch340", "ch341", "usb2.0-serial")
+
+    @classmethod
+    def _is_uno_port(cls, p) -> bool:
+        if (p.vid, p.pid) in cls.UNO_IDS:
+            return True
+        text = f"{p.description or ''} {p.manufacturer or ''}".lower()
+        return any(hint in text for hint in cls.UNO_DESC_HINTS)
+
+    def _uno_port_present(self) -> bool:
+        """True when a device matching the Arduino Uno's USB IDs is attached."""
+        return any(self._is_uno_port(p) for p in serial.tools.list_ports.comports())
 
     def _refresh_ports(self):
         ports = self._get_serial_ports()
@@ -3463,7 +3447,7 @@ class AtomisationApp(QMainWindow):
             self._set_status(f"Found {len(ports)} port(s)")
 
     def _refresh_rpm_ports(self):
-        ports = self._get_serial_ports()
+        ports = self._get_serial_ports(prefer=self._is_uno_port)
         self._rpm_port_combo.clear()
         self._rpm_port_combo.addItems(ports)
         if ports:
@@ -3771,6 +3755,23 @@ class AtomisationApp(QMainWindow):
         self.alicat.flow_off()
         self._set_status("Gas flow off")
 
+    def _reset_rpm_spin_ui(self, clear_sg: bool = True):
+        """Return the RPM controls to their stopped state.
+
+        Shared by the Spin toggle, the emergency stop and the stall handler.
+        The stall handler passes clear_sg=False so its red SG reading survives.
+        """
+        self.rpm_spinning = False
+        self._last_actual_rpm = 0.0
+        self._rpm_spin_btn.setText("Spin")
+        self._rpm_spin_btn.setStyleSheet(accent_button("Spin", CLR_RED).styleSheet())
+        self._rpm_actual_lbl.setText("● 0 RPM")
+        self._rpm_actual_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px; min-width:80px;")
+        if clear_sg:
+            self._motor_stalled = False
+            self._rpm_sg_lbl.setText("–")
+            self._rpm_sg_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:14px; font-weight:700;")
+
     def _toggle_spin(self):
         if not self.rpm_connected or not self.rpm_arduino:
             self._set_status("RPM Arduino not connected", CLR_ORANGE); return
@@ -3779,15 +3780,7 @@ class AtomisationApp(QMainWindow):
                 self.rpm_arduino.send_stop()
             except Exception as e:
                 self._set_status(f"RPM stop error: {e}", CLR_RED); return
-            self.rpm_spinning = False
-            self._rpm_spin_btn.setText("Spin")
-            self._rpm_spin_btn.setStyleSheet(accent_button("Spin", CLR_RED).styleSheet())
-            self._rpm_actual_lbl.setText("● 0 RPM")
-            self._rpm_actual_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px; min-width:80px;")
-            self._last_actual_rpm = 0.0
-            self._motor_stalled = False   # this was a deliberate stop, not a stall
-            self._rpm_sg_lbl.setText("–")
-            self._rpm_sg_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:14px; font-weight:700;")
+            self._reset_rpm_spin_ui()   # deliberate stop, not a stall
             self._set_status("Motor stopped")
         else:
             try:
@@ -3900,13 +3893,8 @@ class AtomisationApp(QMainWindow):
     def _on_stall_detected(self, stall_rpm: float | None):
         """Firmware detected SG_RESULT below threshold and already stopped the
         motor on its own; mirror that here rather than waiting on RPM_ACTUAL."""
-        self.rpm_spinning = False
-        self._last_actual_rpm = 0.0
+        self._reset_rpm_spin_ui(clear_sg=False)
         self._motor_stalled = True
-        self._rpm_spin_btn.setText("Spin")
-        self._rpm_spin_btn.setStyleSheet(accent_button("Spin", CLR_RED).styleSheet())
-        self._rpm_actual_lbl.setText("● 0 RPM")
-        self._rpm_actual_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px; min-width:80px;")
         # Stays red until the next Spin — this is the one case SG should alarm
         # even though the motor is now stopped, since it's *why* it stopped.
         self._rpm_sg_lbl.setStyleSheet(f"color:{CLR_RED}; font-size:14px; font-weight:700;")
@@ -4011,7 +3999,6 @@ class AtomisationApp(QMainWindow):
         self.cumulative_distance = self._pre_move_cumulative + self._pending_move_distance
         self._pending_move_distance = 0.0
         self._update_travel_bar()
-        self._movement_done_event.set()
         if self.pressure_data['experiment_active']:
             self.pressure_data['experiment_active'] = False
             self._cone_auto_timer.stop()
@@ -4135,20 +4122,39 @@ class AtomisationApp(QMainWindow):
     # ─────────────────────────────────────────────────────────────────────────
 
     def _pressure_off(self):
-        """Emergency stop — halt the motor and zero the gas flow.
+        """Emergency stop — halt everything that moves and cut the gas.
 
-        Acts on whatever is connected rather than requiring the Arduino, so it
-        still cuts the gas when only the MFC is up.
+        Each device is attempted independently so a failure on one (or one
+        simply not being connected) can't prevent the others from stopping.
         """
+        stopped = []
+
+        # Traverse motor (Portenta)
         if self.arduino_connected and self.arduino:
-            try: self.arduino.send_stop()
+            try:
+                self.arduino.send_stop()
+                stopped.append("traverse")
             except Exception: pass
-        if self._ramp_running:
-            self._stop_ramp_test()
+
+        # Spin motor (Arduino Uno) — separate board, needs its own STOP
+        if self.rpm_connected and self.rpm_arduino:
+            try:
+                self.rpm_arduino.send_stop()
+                self._reset_rpm_spin_ui()
+                stopped.append("spin motor")
+            except Exception: pass
+
+        # Gas (Alicat MFC)
         if self.alicat_connected and self.alicat:
-            try: self.alicat.flow_off()
+            try:
+                self.alicat.flow_off()
+                stopped.append("gas")
             except Exception: pass
-        self._set_status("Motor and gas flow off")
+
+        if stopped:
+            self._set_status(f"EMERGENCY STOP — {', '.join(stopped)} off", CLR_RED)
+        else:
+            self._set_status("Emergency stop — nothing connected to stop", CLR_ORANGE)
 
     def _home_motor(self):
         if not self._require_arduino(): return
@@ -6161,93 +6167,6 @@ class AtomisationApp(QMainWindow):
             return os.path.join(lacie, "Experiments", "YYYY", "MM", "DD",
                                 "HHMMSS_Nnozzle_flowsccm", "run_summary.xlsx")
         return "Saving to: experiment_logs/ (no LaCie drive found)"
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Logic — Testers
-    # ─────────────────────────────────────────────────────────────────────────
-
-    # steps/mm from the Portenta sketch: ((200 * 16) / 2) * 4.25
-    _STEPS_PER_MM = 6800
-
-    def _start_ramp_test(self):
-        if not self._require_arduino(): return
-        try:
-            start_speed = int(self._ramp_start_speed_entry.text())
-            step_time   = float(self._ramp_step_time_entry.text())
-            increment   = int(self._ramp_increment_entry.text())
-            if start_speed <= 0 or step_time <= 0 or increment <= 0:
-                raise ValueError
-        except ValueError:
-            self._set_status("Fill in all ramp test fields with valid values", CLR_ORANGE)
-            return
-
-        self._ramp_running = True
-        self._ramp_start_btn.setEnabled(False)
-        self._ramp_stop_btn.setEnabled(True)
-        self._log(f"Ramp test started — start: {start_speed} steps/s, "
-                  f"+{increment} steps/s every {step_time}s")
-
-        def _run():
-            speed = start_speed
-            try:
-                while self._ramp_running:
-                    remaining_mm = self.MAX_MOTOR_MM - self.cumulative_distance
-                    if remaining_mm <= 0.01:
-                        QTimer.singleShot(0, self,
-                            lambda: self._log("Syringe limit reached — ramp test complete"))
-                        break
-
-                    dist_mm = (speed * step_time) / self._STEPS_PER_MM
-                    dist_mm = min(dist_mm, remaining_mm)
-                    clipped  = dist_mm < (speed * step_time) / self._STEPS_PER_MM
-
-                    QTimer.singleShot(0, self,
-                        lambda s=speed, d=dist_mm: self._log(
-                            f"Speed: {s} steps/s  |  moving {d:.3f} mm"))
-
-                    self._movement_done_event.clear()
-                    self._pre_move_cumulative   = self.cumulative_distance
-                    self._pending_move_distance = dist_mm
-                    self.arduino.send_motor_command(speed, round(dist_mm, 3))
-
-                    if clipped:
-                        QTimer.singleShot(0, self,
-                            lambda: self._log("Syringe limit reached — ramp test complete"))
-                        self._movement_done_event.wait(timeout=step_time * 3)
-                        break
-
-                    # Wait for Portenta to confirm move complete before next command
-                    if not self._movement_done_event.wait(timeout=step_time * 3):
-                        QTimer.singleShot(0, self,
-                            lambda: self._log("Warning: move timed out — ramp stopped"))
-                        break
-
-                    if not self._ramp_running:
-                        break
-
-                    speed += increment
-
-            except Exception as e:
-                err = str(e)
-                QTimer.singleShot(0, self, lambda: self._log(f"Ramp error: {err}"))
-            finally:
-                QTimer.singleShot(0, self, self._on_ramp_finished)
-
-        threading.Thread(target=_run, daemon=True).start()
-
-    def _stop_ramp_test(self):
-        self._ramp_running = False
-        self._movement_done_event.set()  # unblock any waiting ramp step
-        if self.arduino and self.arduino.ser:
-            try: self.arduino.ser.write(b"STOP\n")
-            except Exception: pass
-        self._log("Ramp test stopped")
-
-    def _on_ramp_finished(self):
-        self._ramp_running = False
-        self._ramp_start_btn.setEnabled(True)
-        self._ramp_stop_btn.setEnabled(False)
-        self._set_status("Ramp test finished")
 
     def _warn(self, title, message):
         dlg = QMessageBox(self)

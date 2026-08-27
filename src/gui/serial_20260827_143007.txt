@@ -1,0 +1,26 @@
+[2026-08-27 14:30:07] Received on connect: ARDUINO_READY
+[2026-08-27 14:30:07] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:30:10] Received: ARDUINO_READY
+[2026-08-27 14:30:10] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:30:11] Sent: STOP
+[2026-08-27 14:30:11] Received: DEBUG: Received char: S
+[2026-08-27 14:30:11] Received: DEBUG: Received char: T
+[2026-08-27 14:30:11] Received: DEBUG: Received char: O
+[2026-08-27 14:30:11] Received: DEBUG: Received char: P
+[2026-08-27 14:30:11] Received: DEBUG: Received char:
+[2026-08-27 14:30:11] Received: DEBUG: String complete flag set
+[2026-08-27 14:30:11] Received: DEBUG: Complete input string: 'STOP'
+[2026-08-27 14:30:11] Received: DEBUG: === COMMAND PROCESSING START ===
+[2026-08-27 14:30:11] Received: DEBUG: String complete, parsing command...
+[2026-08-27 14:30:11] Received: DEBUG: Input string: 'STOP'
+[2026-08-27 14:30:11] Received: DEBUG: Input string length: 4
+[2026-08-27 14:30:11] Received: DEBUG: STOP command received - halting all movement
+[2026-08-27 14:30:11] Received: ARDUINO_READY
+[2026-08-27 14:30:11] Received: DEBUG: Command processing complete, waiting for next command
+[2026-08-27 14:30:11] Received: DEBUG: === COMMAND PROCESSING END ===
+[2026-08-27 14:30:13] Received: ARDUINO_READY
+[2026-08-27 14:30:13] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:30:16] Received: ARDUINO_READY
+[2026-08-27 14:30:16] Received: DEBUG: Periodic handshake sent - system ready for commands
+[2026-08-27 14:30:19] Received: ARDUINO_READY
+[2026-08-27 14:30:19] Received: DEBUG: Periodic handshake sent - system ready for commands

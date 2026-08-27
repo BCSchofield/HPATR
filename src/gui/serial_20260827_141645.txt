@@ -1,0 +1,2 @@
+[2026-08-27 14:16:45] Received on connect: ARDUINO_READY
+[2026-08-27 14:16:45] Received: DEBUG: Periodic handshake sent - system ready for commands
