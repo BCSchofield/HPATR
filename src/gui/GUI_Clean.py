@@ -1049,16 +1049,34 @@ class PhantomController:
     def trigger(self):
         self.cam.trigger(); self.recording_started = True; self.is_armed = False; return True
 
+    # A CINE save is abandoned only when progress genuinely stops, never on a
+    # fixed ceiling: a large capture can legitimately run far longer than any
+    # constant while still writing steadily.  The old 600 s limit failed
+    # mid-save on big buffers purely because they were big.
+    CINE_STALL_TIMEOUT_S = 120.0
+    CINE_ABSOLUTE_MAX_S  = 6 * 3600.0     # last-resort sanity stop
+
+    @staticmethod
+    def _eta_seconds(elapsed, done, total):
+        """Linear extrapolation of time remaining; None until it's meaningful."""
+        if done <= 0 or elapsed <= 0 or total <= 0 or done >= total:
+            return None
+        return max(0.0, elapsed * (total - done) / done)
+
     def save_recording(self, output_path, cine_index=1, file_format='cine', frame_range=None,
                        progress_cb=None):
         self.current_cine = self.cam.Cine(cine_index)
         fmt_map = {'cine': 0, 'tiff': -8, 'tif': -8, 'avi': -7}
         self.current_cine.save_type = utils.FileTypeEnum(fmt_map.get(file_format, 0))
+        r = self.current_cine.range
         if frame_range is None:
-            r = self.current_cine.range
             self.current_cine.save_range = utils.FrameRange(r.first_image, r.last_image)
         else:
-            self.current_cine.save_range = utils.FrameRange(frame_range[0], frame_range[1])
+            # Clamp to what the camera actually recorded — asking for frames
+            # outside the cine's range errors out.  Mirrors save_tiffs_from_ram.
+            self.current_cine.save_range = utils.FrameRange(
+                max(r.first_image, frame_range[0]),
+                min(r.last_image,  frame_range[1]))
         self.current_cine.save_name = output_path
         # The SDK's blocking save() has a known bug where it throws even on success.
         # Use save_non_blocking() and poll save_percentage until complete.
@@ -1066,24 +1084,33 @@ class PhantomController:
         # for 30 s as done (file is effectively complete at that point).
         self.current_cine._save_percentage = -1
         self.current_cine.save_non_blocking()
-        deadline = time.time() + 600.0  # 10-min hard ceiling
-        last_pct, last_change = -1, time.time()
-        while time.time() < deadline:
+        started = time.time()
+        hard_deadline = started + self.CINE_ABSOLUTE_MAX_S
+        last_pct, last_change = -1, started
+        while time.time() < hard_deadline:
             pct = self.current_cine.save_percentage
+            now = time.time()
             if pct >= 100:
-                if progress_cb: progress_cb(100)
+                if progress_cb: progress_cb(100, 0.0)
                 break
             if pct != last_pct:
-                last_change = time.time()
+                last_change = now
                 last_pct = pct
-                if progress_cb: progress_cb(max(0, pct))
-            elif pct >= 90 and time.time() - last_change > 30.0:
-                if progress_cb: progress_cb(100)
+                if progress_cb:
+                    progress_cb(max(0, pct),
+                                self._eta_seconds(now - started, pct, 100))
+            elif pct >= 90 and now - last_change > 30.0:
+                if progress_cb: progress_cb(100, 0.0)
                 break  # stalled near end — assume complete
+            elif now - last_change > self.CINE_STALL_TIMEOUT_S:
+                raise RuntimeError(
+                    f"CINE save stalled at {pct}% — no progress for "
+                    f"{self.CINE_STALL_TIMEOUT_S:.0f} s")
             time.sleep(0.25)
         else:
             raise RuntimeError(
-                f"CINE save timed out (progress: {self.current_cine.save_percentage}%)")
+                f"CINE save exceeded {self.CINE_ABSOLUTE_MAX_S / 3600:.0f} h "
+                f"(progress: {self.current_cine.save_percentage}%)")
         return True
 
     def save_tiffs_from_ram(self, output_dir, tiff_prefix='frame', cine_index=1, frame_range=None,
@@ -1097,10 +1124,20 @@ class PhantomController:
         else:
             f_start, f_end = r.first_image, r.last_image
         total = max(1, f_end - f_start + 1)
+        started = time.time()
+        last_pct = -1
         # get_imagessave uses range() which is exclusive at the end — pass f_end + 1
         for i, (_, img) in enumerate(c.get_imagessave(utils.FrameRange(f_start, f_end + 1))):
             cv2.imwrite(os.path.join(output_dir, f"{tiff_prefix}{i:06d}.tif"), img)
-            if progress_cb: progress_cb(int((i + 1) / total * 100))
+            if progress_cb:
+                done = i + 1
+                pct  = int(done / total * 100)
+                # Only emit when the percentage actually moves.  Firing per frame
+                # queued one Qt event per TIFF — tens of thousands of them on a
+                # long capture, which floods the GUI event loop.
+                if pct != last_pct:
+                    last_pct = pct
+                    progress_cb(pct, self._eta_seconds(time.time() - started, done, total))
         return True
 
     def abort(self):
@@ -1423,9 +1460,12 @@ class AtomisationApp(QMainWindow):
         self._log_poll_timer.timeout.connect(self._flush_log_queue)
         self._log_poll_timer.start(100)
 
-        # Auto-connect Arduino
-        ports = self._get_serial_ports()
-        if ports:
+        # Auto-connect the Portenta.  Gated on actually identifying one rather
+        # than taking the first port in the list: the enumeration order is not
+        # stable across reboots or COM-port reassignment, and the first entry
+        # is just as likely to be the Alicat's FTDI adapter — connecting to
+        # that would seize the MFC's port and leave the traverse unconnected.
+        if self._portenta_port_present():
             self._trigger_arduino_connect()
 
         # Auto-connect the RPM Arduino.  Gated on actually identifying an Uno
@@ -2033,7 +2073,8 @@ class AtomisationApp(QMainWindow):
             "3. Enables the motor controls",
             "<b>Disconnect Arduino</b><br>"
             "1. Sends a disconnect command to the Portenta<br>"
-            "2. Closes the serial port and releases it")
+            "2. Closes the serial port and releases it",
+            prefer=self._is_portenta_port)
 
         (cu, self._rpm_port_combo, self._rpm_connect_btn,
          self._rpm_disconnect_btn, self._rpm_status_lbl) = connection_card(
@@ -3428,6 +3469,18 @@ class AtomisationApp(QMainWindow):
     )
     UNO_DESC_HINTS = ("arduino uno", "ch340", "ch341", "usb2.0-serial")
 
+    # Portenta H7 (traverse controller), also matched as exact VID:PID pairs.
+    # It shares Arduino's vendor 0x2341 with the Uno, so only the product ID
+    # separates them.  Windows binds it to the generic CDC driver, so it shows
+    # up as "USB Serial Device" by "Microsoft" — the description carries no
+    # useful identity, which is why the ID table has to do the work.
+    PORTENTA_IDS = (
+        (0x2341, 0x025B),   # Portenta H7, running a sketch
+        (0x2341, 0x035B),   # Portenta H7, bootloader/DFU
+        (0x2341, 0x045B),   # Portenta H7 Lite
+        (0x2341, 0x805B),   # Portenta H7, alternate CDC descriptor
+    )
+
     @classmethod
     def _is_uno_port(cls, p) -> bool:
         if (p.vid, p.pid) in cls.UNO_IDS:
@@ -3435,12 +3488,23 @@ class AtomisationApp(QMainWindow):
         text = f"{p.description or ''} {p.manufacturer or ''}".lower()
         return any(hint in text for hint in cls.UNO_DESC_HINTS)
 
+    @classmethod
+    def _is_portenta_port(cls, p) -> bool:
+        if (p.vid, p.pid) in cls.PORTENTA_IDS:
+            return True
+        text = f"{p.description or ''} {p.manufacturer or ''}".lower()
+        return "portenta" in text
+
     def _uno_port_present(self) -> bool:
         """True when a device matching the Arduino Uno's USB IDs is attached."""
         return any(self._is_uno_port(p) for p in serial.tools.list_ports.comports())
 
+    def _portenta_port_present(self) -> bool:
+        """True when a device matching the Portenta H7's USB IDs is attached."""
+        return any(self._is_portenta_port(p) for p in serial.tools.list_ports.comports())
+
     def _refresh_ports(self):
-        ports = self._get_serial_ports()
+        ports = self._get_serial_ports(prefer=self._is_portenta_port)
         self._port_combo.clear()
         self._port_combo.addItems(ports)
         if ports:
@@ -3854,6 +3918,18 @@ class AtomisationApp(QMainWindow):
     # SG_RESULT below this is shown amber as an early-warning margin before
     # STALL_SG_THRESHOLD on the Arduino actually trips the motor off.
     SG_WARN_THRESHOLD = 150
+
+    # Canonical master_log.xlsx column widths, in order A..M:
+    #   Timestamp, Nozzle, Orifice, Flow Range, Pressure Range, Speed, Distance,
+    #   Avg Lamella, Notes, Cone Image, Shadowgraph, Pressure Graph, Mass Flow Graph
+    # Shadowgraph (K) is sized for the 300 px images placed there; the cone (J)
+    # and the two graph columns (L, M) are widened further from their actual
+    # rendered image sizes when those images exist.
+    MASTER_COL_WIDTHS = (20, 8, 8, 18, 18, 14, 12, 12, 35, 36.5, 43, 56, 56)
+
+    # Shadowgraph thumbnails are placed at a fixed width; the column above is
+    # derived from it (Excel column width ~= pixels / 7).
+    SHADOWGRAPH_W_PX = 300
 
     # Must match MIN_STALL_CHECK_RPM in RAMP_RPM_Motor_Control.ino — below this
     # speed SG_RESULT is not trustworthy (mirrors the firmware's own stall-check
@@ -4395,14 +4471,52 @@ class AtomisationApp(QMainWindow):
         ok = self.phantom.ping()
         self._cam_status_lbl.setText("Camera: connected ✓" if ok else "Camera: not responding")
 
+    @staticmethod
+    def _fmt_eta(seconds) -> str:
+        """Human-readable time remaining, e.g. '45s', '2m 05s', '1h 12m'."""
+        if seconds is None:
+            return "estimating…"
+        seconds = int(round(seconds))
+        if seconds < 60:
+            return f"{seconds}s"
+        if seconds < 3600:
+            return f"{seconds // 60}m {seconds % 60:02d}s"
+        return f"{seconds // 3600}h {(seconds % 3600) // 60:02d}m"
+
+    def _cam_frame_counts(self):
+        """Pre/post-trigger frame counts from the CURRENT camera fields.
+
+        Read live rather than from a cache.  These counts decide how much of the
+        ring buffer gets saved, and they used to be set only by Apply Config —
+        so a freshly launched GUI held 0, the save range came out as None, and
+        the whole buffer was written instead of the configured window.
+
+        Returns (0, 0) when the fields aren't usable, which callers treat as
+        "save everything" — the same as the old behaviour, and lossless.
+        """
+        try:
+            fps = float(self._cam_fps.text())
+        except (ValueError, AttributeError):
+            return 0, 0
+        if fps <= 0:
+            return 0, 0
+
+        def _frames(field):
+            try:
+                secs = float(field.text())
+            except (ValueError, AttributeError):
+                return 0
+            # At least one frame even for 0 s, so a valid config never
+            # collapses to "no range" and re-triggers the full-buffer save.
+            return max(1, int(secs * fps))
+
+        return _frames(self._cam_pre_s), _frames(self._cam_post_s)
+
     def _cam_configure(self):
         if not self.phantom: return
         try:
             fps       = float(self._cam_fps.text())
-            pre_s     = float(self._cam_pre_s.text())
-            post_s    = float(self._cam_post_s.text())
-            pre_frames  = max(1, int(pre_s  * fps))
-            post_frames = max(1, int(post_s * fps))
+            pre_frames, post_frames = self._cam_frame_counts()
             self._cam_pre_frames  = pre_frames
             self._cam_post_frames = post_frames
             self.phantom.configure(
@@ -4466,8 +4580,11 @@ class AtomisationApp(QMainWindow):
         if not self.phantom: return
         run_pipeline  = self._pipeline_check.isChecked()
         save_video    = self._cam_save_video_chk.isChecked()
-        pre_frames    = self._cam_pre_frames
-        post_frames   = self._cam_post_frames
+        # Derive from the live fields so the values on screen are the ones used,
+        # falling back to whatever Apply Config last pushed to the camera.
+        pre_frames, post_frames = self._cam_frame_counts()
+        if pre_frames  <= 0: pre_frames  = self._cam_pre_frames
+        if post_frames <= 0: post_frames = self._cam_post_frames
         run_folder    = self._run_folder
         ts = datetime.now().strftime("%H%M%S")
 
@@ -4551,8 +4668,17 @@ class AtomisationApp(QMainWindow):
                     lambda s=settle: self._cam_arm_status_lbl.setText(f"Settling {s:.1f} s…"))
                 time.sleep(settle)
 
-                def _update_progress(pct):
-                    QTimer.singleShot(0, self, lambda p=pct: self._cam_save_progress.setValue(p))
+                def _progress_reporter(label):
+                    """Progress callback that also shows a time-remaining estimate."""
+                    def _cb(pct, eta=None):
+                        txt = f"{label} {pct}%"
+                        if eta is not None:
+                            txt += f" — {self._fmt_eta(eta)} left"
+                        QTimer.singleShot(0, self, lambda p=pct, t=txt: (
+                            self._cam_save_progress.setValue(p),
+                            self._cam_arm_status_lbl.setText(t),
+                        ))
+                    return _cb
 
                 # 1 — save .cine (optional)
                 if save_video:
@@ -4563,7 +4689,7 @@ class AtomisationApp(QMainWindow):
                     ))
                     self.phantom.save_recording(cine_path, file_format='cine',
                                                 frame_range=frame_range,
-                                                progress_cb=_update_progress)
+                                                progress_cb=_progress_reporter("Saving .cine"))
                     QTimer.singleShot(0, self, lambda: self._cam_save_progress.setValue(0))
 
                 # 2 — read frames from camera RAM and write TIFFs ourselves.
@@ -4581,7 +4707,7 @@ class AtomisationApp(QMainWindow):
                     except OSError: pass
                 self.phantom.save_tiffs_from_ram(tiff_dir, tiff_prefix='frame',
                                                  frame_range=frame_range,
-                                                 progress_cb=_update_progress)
+                                                 progress_cb=_progress_reporter("Saving TIFFs"))
                 QTimer.singleShot(0, self, lambda: self._cam_save_progress.setVisible(False))
 
                 # 2b — auto-run lamella batch on saved TIFFs if analysis is enabled
@@ -5959,9 +6085,18 @@ class AtomisationApp(QMainWindow):
                            'Pressure Range (barA)', 'Speed (steps/s)', 'Distance (mm)',
                            'Avg Lamella Thickness', 'Notes', 'Cone Image', 'Shadowgraph',
                            'Pressure Graph', 'Mass Flow Graph'])
-                for col, width in zip('ABCDEFGHIJKLM',
-                                      [20, 8, 8, 18, 18, 14, 12, 12, 35, 36.5, 36.5, 56, 56]):
+                for col, width in zip('ABCDEFGHIJKLM', self.MASTER_COL_WIDTHS):
                     ws.column_dimensions[col].width = width
+
+            # Reapply the canonical widths on every save.  openpyxl's
+            # insert_cols() above moves cell values but NOT column_dimensions,
+            # so the format migration leaves every width from D rightwards
+            # attached to the wrong column — Shadowgraph inherits the old
+            # Pressure Graph width and renders enormous.  Reapplying here also
+            # repairs workbooks that were migrated before this was fixed.
+            # J/K/L/M are re-set from their actual images further down.
+            for col, width in zip('ABCDEFGHIJKLM', self.MASTER_COL_WIDTHS):
+                ws.column_dimensions[col].width = width
 
             ws.insert_rows(2)
             row_num = 2
@@ -5999,7 +6134,11 @@ class AtomisationApp(QMainWindow):
 
             shadow_src = self._result_path_label.text()
             if shadow_src and os.path.exists(shadow_src):
-                simg = XLImage(shadow_src); simg.width = 300; simg.height = 165
+                simg = XLImage(shadow_src)
+                simg.width = self.SHADOWGRAPH_W_PX; simg.height = DISPLAY_H
+                # Size the column to the image rather than leaving whatever
+                # width the migration left behind (Excel width ~= px / 7)
+                ws.column_dimensions['K'].width = self.SHADOWGRAPH_W_PX / 7.0
                 ws.add_image(simg, f'K{row_num}')
             else:
                 ws.cell(row=row_num, column=11).value = 'NO DATA AVAILABLE'
