@@ -126,7 +126,14 @@
       "Bash(\"C:/Users/55154111/AppData/Local/Programs/Python/Python311/python.exe\" -m py_compile src/gui/GUI_Clean.py)",
       "Bash(\"C:/Users/55154111/AppData/Local/Programs/Python/Python311/python.exe\" pretrigger_fix_test.py)",
       "Bash(\"C:/Users/55154111/AppData/Local/Programs/Python/Python311/python.exe\" eta_timeout_test.py)",
-      "Bash(QT_QPA_PLATFORM=offscreen C:/Users/55154111/AppData/Local/Programs/Python/Python311/python.exe -c ' *)"
+      "Bash(QT_QPA_PLATFORM=offscreen C:/Users/55154111/AppData/Local/Programs/Python/Python311/python.exe -c ' *)",
+      "Bash(\"C:/Users/55154111/AppData/Local/Programs/Python/Python311/python.exe\" homing_sim.py)",
+      "Bash(\"C:/Users/55154111/AppData/Local/Programs/Python/Python311/python.exe\" connect_sim.py)",
+      "Bash(awk 'NR<=1200 && /^class /{cls=$0} /version *\\\\\\(\\\\\\)/{print NR\": \"cls}' TMCStepper.h)",
+      "Bash(which arduino-cli *)",
+      "Read(//c/Program Files/Arduino IDE/resources/app/lib/backend/resources/**)",
+      "Bash('/c/Program Files/Arduino IDE/resources/app/lib/backend/resources/arduino-cli.exe' core list)",
+      "Bash('/c/Program Files/Arduino IDE/resources/app/lib/backend/resources/arduino-cli.exe' compile --fqbn arduino:mbed_portenta:envie_m7 Trials/Portenta_Hardware_Test)"
     ]
   }
 }

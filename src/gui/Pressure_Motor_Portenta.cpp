@@ -398,32 +398,92 @@ void loop() {
   }
 }
 
+// Homing limits are expressed in STEPS, not milliseconds.  The two phases run
+// at wildly different speeds (200 vs 10000 steps/s), so any single time limit
+// is either far too tight for the slow back-off or useless for the fast search.
+// At 6800 steps/mm the back-off covers only 0.029 mm/s, so a 30 s limit would
+// abort after 0.88 mm and blame a healthy switch.
+#define HOMING_BACKOFF_MAX_STEPS   68000L    // 10 mm — far more than clearing a slot
+#define HOMING_SEARCH_MAX_STEPS  1100000L    // beyond the 986000-step axis limit
+// Backstop only, for the case where the motor is not moving at all.
+#define HOMING_ABSOLUTE_MAX_MS    300000UL
+
+// Run the stepper at its current speed until `pin` reads `target`.
+// Returns false if it travels `maxSteps` without seeing it.
+//
+// Every homing wait MUST go through here.  The bare `while (digitalRead(...))`
+// loops this replaces had no bound and no output, so any switch that never
+// reached the expected state hung the board forever: silent, deaf to serial,
+// and driving the motor into a hard stop the whole time.  A dead or miswired
+// switch presented as "the GUI can't find the board on COMx", which is
+// impossible to diagnose from the outside.
+bool runUntilSwitch(int pin, int target, long maxSteps) {
+  long startPos = stepper.currentPosition();
+  unsigned long start = millis();
+  unsigned long lastBeat = start;
+  while (digitalRead(pin) != target) {
+    if (labs(stepper.currentPosition() - startPos) > maxSteps) return false;
+    if (millis() - start > HOMING_ABSOLUTE_MAX_MS) return false;
+    // Heartbeat so a connected host can see homing is alive and moving,
+    // rather than having to guess at silence.  Also reports travel, which
+    // distinguishes "switch never changed" from "motor never moved".
+    if (millis() - lastBeat > 1000) {
+      Serial.println("HOMING_PROGRESS:pos=" + String(stepper.currentPosition()) +
+                     ",moved=" + String(stepper.currentPosition() - startPos));
+      lastBeat = millis();
+    }
+    stepper.runSpeed();
+  }
+  return true;
+}
+
+// Abandon homing without hanging.  Stops the motor and reports why; loop()
+// then marks the board homed and sends ARDUINO_READY, so the GUI can still
+// connect and surface the fault instead of timing out on a dead port.
+// The axis is NOT homed after this — re-home with HOME: once it is fixed.
+void homingFailed(const String& why) {
+  stepper.setSpeed(0);
+  stepper.stop();
+  Serial.println("HOMING_FAILED: " + why);
+  debugLog("Homing aborted: " + why);
+}
+
 void homing() {
   Serial.println("Stepper is Homing...");
   debugLog("Starting homing sequence");
-  
+
   // Check current switch state
   int switchState = digitalRead(backOpticalSwitchPin);
   debugLog("Current optical switch state: " + String(switchState ? "HIGH" : "LOW"));
-  
-  stepper.setMaxSpeed(10000); // Set a reasonable max speed for homing
-  stepper.setSpeed(-10000);    // Negative for homing direction
-  debugLog("Set homing speed to -10000");
 
-  // If switch is already triggered, move away first
+  stepper.setMaxSpeed(10000); // Set a reasonable max speed for homing
+
+  // If switch is already triggered, move away first.
+  // NOTE: pin is INPUT_PULLUP, so a disconnected, unpowered or reversed-polarity
+  // switch also reads HIGH and lands here — hence the timeout below, which is
+  // what distinguishes "already at home" from "no working switch at all".
   if (switchState == HIGH) {
     debugLog("Switch already triggered - moving away first");
     stepper.setSpeed(200);
-    while (digitalRead(backOpticalSwitchPin)) {
-      stepper.runSpeed();
+    if (!runUntilSwitch(backOpticalSwitchPin, LOW, HOMING_BACKOFF_MAX_STEPS)) {
+      homingFailed("back switch stayed HIGH after backing off 10mm - check it is "
+                   "wired to pin 5, shares ground with the board, and is not "
+                   "inverted (pin 5 reads HIGH when disconnected)");
+      return;
     }
     debugLog("Moved away from switch");
   }
 
-  // Move until switch is triggered
-  debugLog("Moving towards optical switch...");
-  while (!digitalRead(backOpticalSwitchPin)) {
-    stepper.runSpeed(); // Constant speed, no acceleration
+  // Move until switch is triggered.
+  // Re-assert the search direction: the back-off phase above leaves the speed
+  // at +200 (away from home).  Without this the search crawled further away
+  // from the switch it was waiting for and could never finish.
+  stepper.setSpeed(-10000);
+  debugLog("Moving towards optical switch at speed -10000...");
+  if (!runUntilSwitch(backOpticalSwitchPin, HIGH, HOMING_SEARCH_MAX_STEPS)) {
+    homingFailed("back switch never triggered - carriage travelled the full axis "
+                 "without reaching home");
+    return;
   }
   debugLog("Optical switch triggered - reached home position");
 
@@ -433,8 +493,9 @@ void homing() {
   // Move off the switch slowly
   stepper.setSpeed(200); // Move away from switch
   debugLog("Moving away from switch at speed 200");
-  while (digitalRead(backOpticalSwitchPin)) {
-    stepper.runSpeed();
+  if (!runUntilSwitch(backOpticalSwitchPin, LOW, HOMING_BACKOFF_MAX_STEPS)) {
+    homingFailed("back switch stayed HIGH after backing off home");
+    return;
   }
   debugLog("Moved away from switch");
 

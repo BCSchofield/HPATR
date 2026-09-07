@@ -762,25 +762,47 @@ class ArduinoController:
         self.port = port
         self.baudrate = baudrate
         self.ser = None
+        self.homing_error = None   # set by connect() if the board reports HOMING_FAILED
+
+    # How long the board may stay COMPLETELY silent before we give up.
+    CONNECT_QUIET_TIMEOUT_S = 8.0
+    # Absolute ceiling once it IS talking.  Homing runs before the board's
+    # first heartbeat and a home from the far end of the axis is ~49 s
+    # (986,000 steps at the 10,000 steps/s search speed), so a fixed short
+    # wait rejected a perfectly healthy board that simply wasn't finished yet.
+    CONNECT_MAX_WAIT_S = 120.0
 
     def connect(self):
         try:
-            self.ser = serial.Serial(self.port, self.baudrate, timeout=5)
+            self.ser = serial.Serial(self.port, self.baudrate, timeout=1)
             time.sleep(2)
-            start_time = time.time()
             try: self.ser.reset_input_buffer()
             except Exception: pass
-            detected = False
-            while time.time() - start_time < 8 and not detected:
+            start_time = time.time()
+            last_traffic = start_time
+            self.homing_error = None
+            while True:
+                now = time.time()
+                # Silence is the real "nothing there" signal.  Anything at all
+                # from the board (homing progress, debug) proves it is alive and
+                # buys it more time, so we wait out a slow home instead of
+                # reporting a missing board.
+                if now - last_traffic > self.CONNECT_QUIET_TIMEOUT_S:
+                    raise RuntimeError("No Arduino detected on this port.")
+                if now - start_time > self.CONNECT_MAX_WAIT_S:
+                    raise RuntimeError(
+                        "Arduino is talking but never became ready "
+                        f"(waited {self.CONNECT_MAX_WAIT_S:.0f} s).")
                 line = self.ser.readline().decode('utf-8', errors='replace').strip()
                 if not line: continue
+                last_traffic = time.time()
                 log_serial(f"Received on connect: {line}")
+                if "HOMING_FAILED" in line:
+                    # Keep waiting — the board still sends ARDUINO_READY after a
+                    # failed home — but hold the reason so the GUI can show it.
+                    self.homing_error = line.split("HOMING_FAILED:", 1)[-1].strip()
                 if "ARDUINO_READY" in line:
-                    detected = True
                     break
-                time.sleep(0.05)
-            if not detected:
-                raise RuntimeError("No Arduino detected on this port.")
         except serial.SerialException as e:
             if "Resource busy" in str(e):
                 raise RuntimeError(f"Port {self.port} is busy.")
@@ -3549,7 +3571,12 @@ class AtomisationApp(QMainWindow):
         self._hdr_arduino_dot.setStyleSheet(f"color:{CLR_GREEN}; font-size:10px; background:transparent;")
         self._hdr_arduino_lbl.setStyleSheet(f"color:{CLR_TEXT}; font-size:12px;")
         self._homed_dot.setStyleSheet(f"color:{CLR_RED}; font-size:10px;")
-        self._set_status("Arduino connected", CLR_GREEN)
+        # A board that failed to home still connects, so say so plainly here —
+        # otherwise the only symptom is an axis that silently isn't homed.
+        if getattr(ctrl, "homing_error", None):
+            self._set_status(f"Connected — HOMING FAILED: {ctrl.homing_error}", CLR_ORANGE)
+        else:
+            self._set_status("Arduino connected", CLR_GREEN)
         self._start_serial_reader()
 
     def _on_arduino_error(self, msg):
