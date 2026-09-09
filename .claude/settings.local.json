@@ -133,7 +133,13 @@
       "Bash(which arduino-cli *)",
       "Read(//c/Program Files/Arduino IDE/resources/app/lib/backend/resources/**)",
       "Bash('/c/Program Files/Arduino IDE/resources/app/lib/backend/resources/arduino-cli.exe' core list)",
-      "Bash('/c/Program Files/Arduino IDE/resources/app/lib/backend/resources/arduino-cli.exe' compile --fqbn arduino:mbed_portenta:envie_m7 Trials/Portenta_Hardware_Test)"
+      "Bash('/c/Program Files/Arduino IDE/resources/app/lib/backend/resources/arduino-cli.exe' compile --fqbn arduino:mbed_portenta:envie_m7 Trials/Portenta_Hardware_Test)",
+      "Bash(cd \"/c/Users/55154111/Documents/Arduino/libraries/TMCStepper/src\" && grep -rn \"GLOBAL_SCALER\" source/*.cpp | head -8 && echo \"--- cs_actual ---\" && grep -rn \"cs_actual\" source/*.cpp | head -8)",
+      "Read(//c/Users/55154111/Documents/Arduino/libraries/TMCStepper/src/**)",
+      "Bash(cd \"/c/Users/55154111/Documents/Arduino/libraries/TMCStepper/src\" && grep -n \"GSTAT\\\\|uv_cp\\\\|reset\\(\\)\\\\|drv_err\" TMCStepper.h | head -12)",
+      "Bash(cd \"/c/Users/55154111/Documents/Arduino/libraries/TMCStepper/src\" && sed -n '233,240p;95,101p' TMCStepper.h && echo \"--- is CHOPCONF getter a real read? ---\" && grep -n \"TMC2130Stepper::CHOPCONF\\(\\)\\\\|TMC2130Stepper::IHOLD_IRUN\\\\|TMC5160Stepper::CHOPCONF\\(\\)\" source/*.cpp | head)",
+      "Bash(cd \"/c/Users/55154111/Documents/Arduino/libraries/TMCStepper/src\" && sed -n '1,20p' source/CHOPCONF.cpp && echo \"--- IHOLD_IRUN ---\" && grep -n \"IHOLD_IRUN\" source/*.cpp | head -5)",
+      "Bash('/c/Program Files/Arduino IDE/resources/app/lib/backend/resources/arduino-cli.exe' compile --fqbn arduino:avr:uno Trials/RPM_Driver_Test/RPM_Driver_Test)"
     ]
   }
 }
