@@ -1,11 +1,11 @@
 {
   "ip": "100.100.100.1",
   "fps": "500",
-  "exposure_us": "1900",
-  "width": "600",
+  "exposure_us": "10",
+  "width": "2560",
   "height": "1600",
   "pre_trigger_s": "0",
-  "post_trigger_s": "20",
+  "post_trigger_s": "5.5",
   "px_per_mm": 100.0,
   "cone_camera_index": 0,
   "save_video": true,
@@ -14,7 +14,7 @@
   "cone_autofocus": true,
   "cone_focus": 50,
   "cone_top_crop": 0.24,
-  "last_flow": 3000.0,
+  "last_flow": 4500.0,
   "alicat_port": "COM4",
   "lamella_crop": {
     "x": 860,
