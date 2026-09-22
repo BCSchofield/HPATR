@@ -15,3 +15,20 @@ tmp/
 # Python
 __pycache__/
 *.pyc
+
+# --- Real-data pipeline (docs/HANDOFF_real_data_pipeline.md) ---
+# Frames, object libraries, datasets and checkpoints live on the LaCie drive
+# at /Volumes/LaCie/Experiments/Real_Data — never in the repo.
+Trials/Camera_Tester/
+*.cine
+
+# Guard against accidental in-repo extraction output
+**/00_frames/
+**/01_candidates/
+**/02_library/
+**/03_backgrounds/
+**/04_contact_sheets/
+**/05_dataset/
+**/06_validation/
+**/07_models/
+**/08_inference/

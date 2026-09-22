@@ -9,6 +9,7 @@
   "px_per_mm": 100.0,
   "cone_camera_index": 0,
   "save_video": true,
+  "save_tiffs": false,
   "run_ai_analysis": false,
   "cone_autofocus": true,
   "cone_focus": 50,
@@ -18,7 +19,7 @@
   "lamella_crop": {
     "x": 860,
     "y": 829,
-    "w": 307,
+    "w": 369,
     "h": 583
   },
   "lamella_model_path": "",

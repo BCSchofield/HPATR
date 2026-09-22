@@ -1423,6 +1423,10 @@ class AtomisationApp(QMainWindow):
         self._pressure_ema = None   # reset when new readings arrive after a gap
         self._flow_ema     = None
 
+        # Guard flag — set while the save-format checkboxes are being corrected
+        # programmatically so the toggled handler doesn't recurse.
+        self._save_fmt_guard = False
+
         self._cone_cap  = None  # cv2.VideoCapture instance — must exist before _build_ui wires signals
         self._log_queue = queue.Queue()  # thread-safe sink for pipeline/cone stdout → GUI log panel
 
@@ -2509,7 +2513,28 @@ class AtomisationApp(QMainWindow):
         self._cam_save_video_chk = QCheckBox("Save video (.cine)")
         self._cam_save_video_chk.setChecked(True)
         self._cam_save_video_chk.setStyleSheet(f"color:{CLR_TEXT}; font-size:11px;")
+        self._cam_save_video_chk.setToolTip(
+            "<b>Save video (.cine)</b><br>"
+            "Writes the captured window as a single .cine file to shadowgraph/raw/CINE.<br>"
+            "At least one of .cine / TIFFs must stay ticked.")
         cap_vl.addWidget(self._cam_save_video_chk)
+
+        self._cam_save_tiffs_chk = QCheckBox("Save TIFFs")
+        self._cam_save_tiffs_chk.setChecked(True)
+        self._cam_save_tiffs_chk.setStyleSheet(f"color:{CLR_TEXT}; font-size:11px;")
+        self._cam_save_tiffs_chk.setToolTip(
+            "<b>Save TIFFs</b><br>"
+            "Writes the captured window as a numbered .tif sequence to shadowgraph/raw/TIFFs.<br>"
+            "Required by the brightest-frame step, the AI pipeline and lamella analysis — "
+            "with this off those are skipped.<br>"
+            "At least one of .cine / TIFFs must stay ticked.")
+        cap_vl.addWidget(self._cam_save_tiffs_chk)
+
+        # Mutual minimum: untick the last one and the other flips back on.
+        self._cam_save_video_chk.toggled.connect(
+            lambda _c: self._on_save_format_changed("cine"))
+        self._cam_save_tiffs_chk.toggled.connect(
+            lambda _c: self._on_save_format_changed("tiff"))
 
         body_row = QWidget()
         br = QHBoxLayout(body_row)
@@ -2594,8 +2619,9 @@ class AtomisationApp(QMainWindow):
         self._cam_trigger_btn.setToolTip(
             "<b>Trigger</b><br>"
             "1. Freezes the ring buffer at this moment<br>"
-            "2. Saves pre-trigger + post-trigger frames as CINE and TIFFs<br>"
-            "3. Identifies the brightest frame<br>"
+            "2. Saves pre-trigger + post-trigger frames in the formats ticked "
+            "under RAM CAPACITY (.cine and/or TIFFs)<br>"
+            "3. Identifies the brightest frame (needs TIFFs)<br>"
             "4. If 'Run AI analysis' is ticked, runs Dennis immediately<br>"
             "5. Camera re-arms automatically for the next trigger")
         self._cam_abort_btn.clicked.connect(self._cam_abort)
@@ -4602,11 +4628,30 @@ class AtomisationApp(QMainWindow):
         self._cam_trigger_btn.setEnabled(False)
         self._set_camera_armed_indicator("transparent")
 
+    def _on_save_format_changed(self, source: str):
+        """Keep at least one save format ticked, then persist the pair.
+
+        Both may be on.  Turning off whichever one was ticked last leaves the
+        capture with nothing to write, so the *other* box is flipped back on —
+        the one the user just clicked stays off, as they asked.
+        """
+        if self._save_fmt_guard:
+            return
+        if not (self._cam_save_video_chk.isChecked() or self._cam_save_tiffs_chk.isChecked()):
+            other = self._cam_save_tiffs_chk if source == "cine" else self._cam_save_video_chk
+            self._save_fmt_guard = True
+            try:
+                other.setChecked(True)
+            finally:
+                self._save_fmt_guard = False
+        self._save_camera_settings()
+
     def _cam_trigger(self):
         """Fire the trigger — freeze the ring buffer and save pre+post window."""
         if not self.phantom: return
         run_pipeline  = self._pipeline_check.isChecked()
         save_video    = self._cam_save_video_chk.isChecked()
+        save_tiffs    = self._cam_save_tiffs_chk.isChecked()
         # Derive from the live fields so the values on screen are the ones used,
         # falling back to whatever Apply Config last pushed to the camera.
         pre_frames, post_frames = self._cam_frame_counts()
@@ -4722,35 +4767,43 @@ class AtomisationApp(QMainWindow):
                 # 2 — read frames from camera RAM and write TIFFs ourselves.
                 # This bypasses the SDK's save() which has a known bug that throws
                 # an exception even when the save succeeds.
-                QTimer.singleShot(0, self, lambda: (
-                    self._cam_arm_status_lbl.setText("Saving TIFFs…"),
-                    self._cam_save_progress.setValue(0),
-                    self._cam_save_progress.setVisible(True),
-                ))
-                os.makedirs(tiff_dir, exist_ok=True)
-                for _old in (_glob.glob(os.path.join(tiff_dir, "*.tif")) +
-                             _glob.glob(os.path.join(tiff_dir, "*.tiff"))):
-                    try: os.remove(_old)
-                    except OSError: pass
-                self.phantom.save_tiffs_from_ram(tiff_dir, tiff_prefix='frame',
-                                                 frame_range=frame_range,
-                                                 progress_cb=_progress_reporter("Saving TIFFs"))
-                QTimer.singleShot(0, self, lambda: self._cam_save_progress.setVisible(False))
-
-                # 2b — auto-run lamella batch on saved TIFFs if analysis is enabled
-                if self._lamella_on:
-                    _captured_tiff_dir = tiff_dir
-                    self._last_tiff_dir = _captured_tiff_dir
-                    QTimer.singleShot(0, self,
-                        lambda d=_captured_tiff_dir: self._lamella_run_batch_auto(d))
-
-                # 3 — find brightest frame, copy to Brightest_Frame/
-                os.makedirs(bright_dir, exist_ok=True)
-                best = _brightest_frame(tiff_dir)
                 bright_path = None
-                if best:
-                    bright_path = os.path.join(bright_dir, os.path.basename(best))
-                    shutil.copy2(best, bright_path)
+                if save_tiffs:
+                    QTimer.singleShot(0, self, lambda: (
+                        self._cam_arm_status_lbl.setText("Saving TIFFs…"),
+                        self._cam_save_progress.setValue(0),
+                        self._cam_save_progress.setVisible(True),
+                    ))
+                    os.makedirs(tiff_dir, exist_ok=True)
+                    for _old in (_glob.glob(os.path.join(tiff_dir, "*.tif")) +
+                                 _glob.glob(os.path.join(tiff_dir, "*.tiff"))):
+                        try: os.remove(_old)
+                        except OSError: pass
+                    self.phantom.save_tiffs_from_ram(tiff_dir, tiff_prefix='frame',
+                                                     frame_range=frame_range,
+                                                     progress_cb=_progress_reporter("Saving TIFFs"))
+                    QTimer.singleShot(0, self, lambda: self._cam_save_progress.setVisible(False))
+
+                    # 2b — auto-run lamella batch on saved TIFFs if analysis is enabled
+                    if self._lamella_on:
+                        _captured_tiff_dir = tiff_dir
+                        self._last_tiff_dir = _captured_tiff_dir
+                        QTimer.singleShot(0, self,
+                            lambda d=_captured_tiff_dir: self._lamella_run_batch_auto(d))
+
+                    # 3 — find brightest frame, copy to Brightest_Frame/
+                    os.makedirs(bright_dir, exist_ok=True)
+                    best = _brightest_frame(tiff_dir)
+                    if best:
+                        bright_path = os.path.join(bright_dir, os.path.basename(best))
+                        shutil.copy2(best, bright_path)
+                else:
+                    # No TIFF sequence on disk — the brightest-frame, AI and lamella
+                    # steps all read from it, so they have nothing to work on.
+                    if run_pipeline or self._lamella_on:
+                        QTimer.singleShot(0, self, lambda: self._log(
+                            "  (Save TIFFs is off — brightest frame, AI pipeline and "
+                            "lamella analysis skipped for this capture)"))
 
                 QTimer.singleShot(0, self,
                     lambda: self._cam_status_lbl.setText("Trigger saved ✓"))
@@ -4759,7 +4812,7 @@ class AtomisationApp(QMainWindow):
                 if run_pipeline and bright_path:
                     QTimer.singleShot(0, self,
                         lambda: self._run_pipeline(bright_dir, analysis_dir))
-                elif run_pipeline:
+                elif run_pipeline and save_tiffs:
                     QTimer.singleShot(0, self,
                         lambda: self._set_status("No frames found for pipeline", CLR_ORANGE))
 
@@ -6220,7 +6273,18 @@ class AtomisationApp(QMainWindow):
             self._cam_height.setText(str(s.get("height", "480")))
             self._cam_pre_s.setText(str(s.get("pre_trigger_s", "0.5")))
             self._cam_post_s.setText(str(s.get("post_trigger_s", "0.5")))
-            self._cam_save_video_chk.setChecked(bool(s.get("save_video", True)))
+            # Restore both save-format boxes with signals blocked, then repair the
+            # pair in case the file somehow holds "neither".
+            _saved_cine  = bool(s.get("save_video", True))
+            _saved_tiffs = bool(s.get("save_tiffs", True))
+            if not (_saved_cine or _saved_tiffs):
+                _saved_tiffs = True
+            self._save_fmt_guard = True
+            try:
+                self._cam_save_video_chk.setChecked(_saved_cine)
+                self._cam_save_tiffs_chk.setChecked(_saved_tiffs)
+            finally:
+                self._save_fmt_guard = False
             self._pipeline_check.setChecked(bool(s.get("run_ai_analysis", False)))
             self._update_cam_capacity()
             px_per_mm = float(s.get("px_per_mm", 0.0))
@@ -6292,6 +6356,7 @@ class AtomisationApp(QMainWindow):
                 "px_per_mm":         px_per_mm,
                 "cone_camera_index": self._cone_idx_spin.value() if (self._cone_cap is not None and self._cone_cap.isOpened()) else existing.get("cone_camera_index", -1),
                 "save_video":        self._cam_save_video_chk.isChecked(),
+                "save_tiffs":        self._cam_save_tiffs_chk.isChecked(),
                 "run_ai_analysis":   self._pipeline_check.isChecked(),
                 "cone_autofocus":    self._cone_autofocus_chk.isChecked(),
                 "cone_focus":        self._cone_focus_spin.value(),
