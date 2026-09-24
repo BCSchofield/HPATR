@@ -68,6 +68,15 @@ def read_picks(path: Path) -> list:
         if not line:
             continue
         parts = line.split()
+        # Optional leading RUN NAME, so one picks file can span runs:
+        #     n199_o0042                       -> default run
+        #     125917_NNA_3000sccm  n199_o0042  -> that run
+        # Needed from 2026-09-24: candidate IDs are frame+object index, which
+        # restart every recording, so n199_o0641 exists in more than one run
+        # and means a different object in each.
+        run = None
+        if len(parts) > 1 and not parts[0].startswith("n"):
+            run, parts = parts[0], parts[1:]
         cid = parts[0]
         weight = 1.0
         if len(parts) > 1:
@@ -75,40 +84,71 @@ def read_picks(path: Path) -> list:
                 weight = min(float(parts[1]), MAX_WEIGHT)
             except ValueError:
                 pass
-        out.append((cid, weight))
+        out.append((run, cid, weight))
     return out
+
+
+def library_stem(run: str, cid: str) -> str:
+    """
+    Filename stem inside 02_library. MUST be run-qualified: two runs both
+    contain e.g. n199_o0641, and copying both as that name would silently
+    overwrite one with the other.
+    """
+    return f"{run.split('_')[0]}__{cid}"
 
 
 def main():
     ap = argparse.ArgumentParser(description="Copy reviewed picks into 02_library/")
-    ap.add_argument("--run-name", required=True)
+    ap.add_argument("--run-name", required=True,
+                    help="default run for picks lines that do not name one. "
+                         "Lines may be '<run> <candidate_id>' to span runs.")
     ap.add_argument("--dry-run", action="store_true",
                     help="report what would happen, copy nothing")
     ap.add_argument("--root", type=Path, default=None)
     args = ap.parse_args()
 
     root = args.root or real_data_root()
-    cand_dir = root / "01_candidates" / args.run_name
     lib_dir = root / "02_library"
 
-    with open(cand_dir / "candidates.csv", encoding="utf-8") as f:
-        rows = {r["candidate_id"]: r for r in csv.DictReader(f)}
+    # Candidate tables for every run referenced by the picks, loaded lazily.
+    _tables = {}
+    def table(run):
+        if run not in _tables:
+            cpath = root / "01_candidates" / run / "candidates.csv"
+            if not cpath.exists():
+                sys.exit(f"No candidates.csv for run '{run}' at {cpath}")
+            with open(cpath, encoding="utf-8") as f:
+                _tables[run] = {r["candidate_id"]: r for r in csv.DictReader(f)}
+        return _tables[run]
 
     picked, missing, dupes, reclassified = {}, [], [], []
     seen = set()
 
     for fname, cls in CLASSES.items():
-        for cid, weight in read_picks(lib_dir / f"{fname}.txt"):
+        for run, cid, weight in read_picks(lib_dir / f"{fname}.txt"):
+            run = run or args.run_name
+            rows = table(run)
+            key = (run, cid)
             if cid not in rows:
-                missing.append((cid, fname))
+                missing.append((f"{run} {cid}", fname))
                 continue
-            if cid in seen:
-                dupes.append(cid)
+            if key in seen:
+                dupes.append(f"{run} {cid}")
                 continue
-            seen.add(cid)
+            seen.add(key)
             if rows[cid]["class_guess"] != cls:
-                reclassified.append((cid, rows[cid]["class_guess"], cls))
-            picked.setdefault(cls, []).append({**rows[cid], "library_weight": weight})
+                reclassified.append((f"{run.split('_')[0]}/{cid}",
+                                     rows[cid]["class_guess"], cls))
+            picked.setdefault(cls, []).append({
+                **rows[cid],
+                "source_run": run,
+                "source_candidate_id": cid,
+                # composite.py resolves files by candidate_id, so the
+                # run-qualified stem goes in that column and the original is
+                # preserved above.
+                "candidate_id": library_stem(run, cid),
+                "library_weight": weight,
+            })
 
     if not picked:
         sys.exit(f"No picks found. Create {lib_dir}/droplets.txt (etc) with one "
@@ -148,11 +188,12 @@ def main():
         for sub in ("transmission", "masks", "view8"):
             (lib_dir / cls / sub).mkdir(parents=True, exist_ok=True)
         for r in items:
-            cid = r["candidate_id"]
+            src_cid = r["source_candidate_id"]
+            cand_dir = root / "01_candidates" / r["source_run"]
             for sub, ext in (("transmission", "tiff"), ("masks", "png"), ("view8", "png")):
-                src = cand_dir / sub / f"{cid}.{ext}"
+                src = cand_dir / sub / f"{src_cid}.{ext}"
                 if src.exists():
-                    shutil.copy2(src, lib_dir / cls / sub / f"{cid}.{ext}")
+                    shutil.copy2(src, lib_dir / cls / sub / f"{r['candidate_id']}.{ext}")
             out_rows.append({**r, "library_class": cls})  # library_weight already in r
 
     fields = list(out_rows[0].keys())

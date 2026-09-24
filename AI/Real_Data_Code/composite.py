@@ -352,8 +352,8 @@ def main():
     ap.add_argument("--run-name", required=True)
     ap.add_argument("--n", type=int, default=2000, help="images to generate")
     ap.add_argument("--size", type=int, default=800, help="output edge length (handoff decision 6)")
-    ap.add_argument("--min-objects", type=int, default=3)
-    ap.add_argument("--max-objects", type=int, default=60)
+    ap.add_argument("--min-objects", type=int, default=10)
+    ap.add_argument("--max-objects", type=int, default=200)
     ap.add_argument("--feather", type=int, default=5,
                     help="px over which an object's deviation fades to 1.0 outside its mask")
     ap.add_argument("--max-overlap", type=float, default=0.30,

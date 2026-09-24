@@ -134,7 +134,15 @@ def to_8bit(frame, lo, hi):
 
 def main():
     ap = argparse.ArgumentParser(description="Patch residual in-focus objects out of backgrounds")
-    ap.add_argument("--run-name", required=True)
+    ap.add_argument("--run-name", required=True,
+                    help="the run these backgrounds came from. Its temporal median "
+                         "and 8-bit window are used for patching, so backgrounds "
+                         "from different runs must be cleaned in separate passes.")
+    ap.add_argument("--only", nargs="+", default=None, metavar="STEM",
+                    help="clean only frames whose stem contains one of these. Needed "
+                         "once 03_backgrounds/ mixes runs: cleaning a frame against "
+                         "another run's median would patch it with the wrong "
+                         "illumination field.")
     ap.add_argument("--dilate", type=int, default=8,
                     help="grow each object's footprint before patching, to catch its "
                          "soft halo (default 8 px)")
@@ -157,6 +165,9 @@ def main():
     lo, hi = float(win["low"]), float(win["high"])
 
     paths = list_files(src, "*.tiff")
+    if args.only:
+        paths = [q for q in paths if any(o in q.stem for o in args.only)]
+        print(f"--only: {len(paths)} background(s) selected for this pass")
     if not paths:
         sys.exit(f"No backgrounds at {src}")
 

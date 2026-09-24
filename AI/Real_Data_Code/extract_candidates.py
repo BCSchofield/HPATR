@@ -94,12 +94,37 @@ DROPLET_CEILING_PX = 200.0 / UM_PER_PX   # 20 px equivalent diameter
 # 1.5 for the droplet. Solidity half-worked but promoted ragged-edged compact
 # objects, and patching it with an elongation floor re-broke the curved shapes
 # it existed to catch.
-FILAMENT_TRUE_ASPECT = 3.0
-# A filament must actually be long. Below this the shape metrics are measuring
-# noise, not shape: 67 candidates under 10px area were being called filaments
-# with a median major axis of 2.2 px. 20 px = 200 um, matching the droplet
-# ceiling -- shorter than that and it is a fragment, whatever shape it is.
-FILAMENT_MIN_LENGTH_PX = 20.0
+FILAMENT_TRUE_ASPECT = 1.5
+# A filament must actually be long enough for shape to mean anything. The floor
+# was 20 px, which turned out to be far stricter than how a human labels: on the
+# 15-frame benchmark, 33% of hand-labelled filaments are shorter than 20 px and
+# 53% have true_aspect below 3.0, so the old rule called only 47% of them
+# filaments. The model then learned that boundary and scored 28% recall on short
+# filaments -- not a learning failure, a definition conflict.
+#
+# Re-derived from the hand labels 2026-09-24 (n=2237 droplets, 165 filaments):
+#   droplet true_aspect  p50 0.84, p95 0.91
+#   filament true_aspect p5  1.48, p50 2.90
+# The classes separate cleanly at ~1.5: it catches 95% of hand-labelled
+# filaments while misclassifying 0.9% of droplets (21 of 2237).
+#
+# The length floor stays, lowered to 10 px (hand-labelled filaments start at
+# 11.1 px), because it guards a different failure: the extractor runs on
+# auto-detected candidates including 3-5 px noise, where shape metrics measure
+# nothing. Check the contact sheets for noise contamination after changing this.
+FILAMENT_MIN_LENGTH_PX = 10.0
+# A filament must also be THIN IN ABSOLUTE TERMS, not merely thin relative to
+# its length. Without this, dropping the aspect bar to 1.5 swept 35.7% of
+# hand-labelled BLOBS into the filament class -- a large elongated mass clears
+# aspect 1.5 easily -- and blob candidates fell from 19 to 9 on the original
+# run, starving the class that most needs new templates.
+#
+# Hand-label thread widths (2026-09-24): droplet p50 5.6 px, filament p50 10.0
+# p95 24.0, blob p50 25.0 p5 11.9. The classes overlap (a thick ligament and a
+# thin blob genuinely look alike), so this trades a little filament recall for
+# much less blob leakage: at 20 px, 84.8% of filaments are kept while blob
+# misclassification drops 35.7% -> 12.5%.
+FILAMENT_MAX_THREAD_PX = 20.0
 
 CSV_FIELDS = [
     "candidate_id", "run", "frame_number", "object_index",
@@ -112,17 +137,47 @@ CSV_FIELDS = [
 ]
 
 
-def load_excluded_frames(manifest_path: Path) -> set:
+def load_excluded_frames(manifest_path: Path, run_name: str) -> set:
     """
-    Frame numbers that must never be touched. These frames were also physically
-    moved out of 00_frames/, but this check is the authoritative safeguard --
-    a future run added to the pipeline may not be isolated the same way.
+    Frame numbers that must never be touched, FOR THE RUN THE VALIDATION SET
+    CAME FROM. These frames were also physically moved out of 00_frames/, but
+    this check is the authoritative safeguard -- a future run added to the
+    pipeline may not be isolated the same way.
+
+    Scoped by run as of 2026-09-24. The manifest identifies frames by number
+    only, which was unambiguous while one run existed. Frame numbering restarts
+    every recording, so run 101947's frame 619 is a completely different
+    physical frame from run 125917's frame 619 -- applying the exclusion across
+    runs aborts extraction on perfectly good training data (observed: 8 false
+    collisions on the first new run). The manifest's own `source_run` field
+    says which run it describes, so use it.
+
+    Returns an empty set for any other run, and says so loudly, because a
+    silent "no frames excluded" is exactly what this safeguard exists to
+    prevent going unnoticed.
     """
+    # A run may have its own manifest. Convention:
+    #   00_manifest/validation_split_<run_name>.json
+    # falling back to the original single-run file. Needed once more than one
+    # run supplies validation frames.
+    per_run = manifest_path.with_name(f"validation_split_{run_name}.json")
+    if per_run.exists():
+        manifest_path = per_run
     if not manifest_path.exists():
         sys.exit(f"Validation manifest not found: {manifest_path}\n"
                  f"Refusing to run without it -- see handoff Step 1.")
     with open(manifest_path, encoding="utf-8") as f:
         manifest = json.load(f)
+    source_run = manifest.get("source_run")
+    if source_run is None:
+        sys.exit("Manifest has no `source_run`. Refusing to guess which run its "
+                 "frame numbers refer to -- add the field before continuing.")
+    if run_name != source_run:
+        print(f"Validation manifest describes run '{source_run}', not "
+              f"'{run_name}'.\n  -> no frames excluded for this run. Its frame "
+              f"numbers are unrelated to the validation set.\n  -> if this run "
+              f"ever supplies validation frames, add a manifest for it.")
+        return set()
     return {int(entry["frame_number"]) for entry in manifest["frames"]}
 
 
@@ -218,7 +273,8 @@ def guess_class(m: dict) -> str:
     # Long enough for shape to mean anything, and thin relative to its own
     # width along its length. One rule, correct for any shape.
     if (m["major_px"] >= FILAMENT_MIN_LENGTH_PX
-            and m["true_aspect"] >= FILAMENT_TRUE_ASPECT):
+            and m["true_aspect"] >= FILAMENT_TRUE_ASPECT
+            and m["thread_width_px"] <= FILAMENT_MAX_THREAD_PX):
         return "filament"
     return "droplet" if m["equiv_diameter_px"] <= DROPLET_CEILING_PX else "blob"
 
@@ -230,7 +286,7 @@ def main():
                     help="loose net for finding candidate regions (default 0.95). "
                          "Only finds regions -- the mask edge is set per-object "
                          "at half-maximum, so this is not a size-defining value.")
-    ap.add_argument("--focus-max", type=float, default=0.70,
+    ap.add_argument("--focus-max", type=float, default=0.80,
                     help="reject an object whose darkest pixel is not below this "
                          "(default 0.70). A LOOSE BACKSTOP, NOT the real focus "
                          "test -- the fragmentation gate (--max-pieces) is that, "
@@ -280,8 +336,9 @@ def main():
     if args.manifest is None:
         args.manifest = root / "00_manifest" / "validation_split.json"
 
-    excluded = load_excluded_frames(args.manifest)
-    print(f"Validation manifest: {len(excluded)} frame numbers excluded")
+    excluded = load_excluded_frames(args.manifest, args.run_name)
+    if excluded:
+        print(f"Validation manifest: {len(excluded)} frame numbers excluded")
 
     dir_16 = args.frames_root / args.run_name / "16bit"
     dir_8 = args.frames_root / args.run_name / "8bit"
