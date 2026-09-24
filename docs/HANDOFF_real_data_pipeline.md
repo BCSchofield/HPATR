@@ -21,7 +21,174 @@ file is the operational summary of it.
 
 ---
 
-## NEXT ACTIONS — updated 2026-09-24 evening (Steps 0-7 DONE; Step 8 next, on the Mac)
+## NEXT ACTIONS — updated 2026-09-24 late (Step 8 DONE for v2; v3 dataset BUILT, ready to train)
+
+**Do this next, on Windows:** train v3 on `05_dataset_v3`. Three line changes to
+`train_detectron2.py`, everything else exactly as the v2 run had it:
+
+| line | from | to |
+|---|---|---|
+| `ANNOTATIONS_PATH` | `...05_dataset_6k\annotations\instances.json` | `<LaCie>\Experiments\Real_Data\05_dataset_v3\annotations\instances.json` |
+| `IMAGES_PATH` | `...05_dataset_6k\images` | `<LaCie>\Experiments\Real_Data\05_dataset_v3\images` |
+| `MAX_ITER` | 20000 | **30000** |
+
+`CHECKPOINT_INTERVAL` is already 5000. **Keep `RESUME_FROM_MODEL = None`** — start
+fresh from COCO weights, because v2 learned the OLD filament class boundary and
+v3 deliberately changes it; fine-tuning would fight that.
+
+**Run `QUICK_TEST_ITERATIONS = 500` first** (15 min). It catches path typos,
+confirms 3 classes register with the right names, and proves the much larger
+annotation file decodes — all cheap now, expensive three hours in.
+
+**Expect a slower run than v2.** Each image now carries ~43 instances instead of
+~12. `ROI_HEADS.BATCH_SIZE_PER_IMAGE` caps ROI-head cost at 128/image so it does
+not scale linearly, but RPN and mask head will. v2 ran 0.28 s/it for 1h34m;
+budget 3-4 h for 30k. The annotations file is **62 MB** (was ~8 MB) so startup
+before iteration 1 is slow — not a hang.
+
+**After training:** score v3 against BOTH benchmarks —
+`06_validation/instances.json` (15 frames, 3000 sccm, 2048x1152) and
+`06_validation_run2/` once hand-labelled (5 frames, 4500 sccm, 2560x1600).
+Use `tiled_inference.py` then `score_v2.py`. **Score each once.**
+
+---
+
+## What changed for v3 — 2026-09-24, after scoring v2
+
+Every change below is a response to a measured v2 failure, not a guess.
+
+### Data pipeline parameters
+
+| change | from | to | why |
+|---|---|---|---|
+| `FILAMENT_TRUE_ASPECT` | 3.0 | **1.5** | separates hand labels at 95% filament recall / 0.9% droplet false rate; the old rule matched only 47% of hand-labelled filaments |
+| `FILAMENT_MIN_LENGTH_PX` | 20 | **10** | hand-labelled filaments start at 11.1 px |
+| `FILAMENT_MAX_THREAD_PX` | (none) | **20** | NEW. Without it, aspect 1.5 swept 35.7% of hand-labelled BLOBS into filament and blob candidates fell 19 -> 9 |
+| `--focus-max` | 0.70 | **0.80** | 0.70 admitted only 48.8% of hand-labelled droplets; 0.80 admits 81.7% |
+| composite `--min/--max-objects` | 3-60 (median 12) | **10-200 (median 43)** | real frames hold a median of 46 per equivalent 800x800 area |
+
+### Assets rebuilt
+
+| asset | v2 | v3 |
+|---|---|---|
+| library | 213 objects (144/54/15) | **593** (345 droplet / 228 filament / 20 blob) |
+| library runs | 1 | **2** (273 from 3000 sccm, 320 from 4500) |
+| backgrounds | 25, one run, two time windows | **27**, two runs, two frame sizes |
+| dataset | 5,900 images / ~70k instances | **4,000 images / 248,151 instances** |
+| — filament instances | 10,614 | **68,438** |
+
+Of the 593 picks, **132 droplets were newly admitted** by the looser focus gate
+and **84 filaments** were shorter than the old 20 px floor — i.e. exactly the two
+populations v2 scored 65% and 28% recall on could not previously enter training
+at all.
+
+Density check after the change: instances/image p10 13, median 43, p90 144
+against real frames at 13 / 46 / 70. Median and p10 now match; the p90 overshoots
+because log-uniform sampling has a fatter tail than reality. **Left deliberately**
+— over-representing crowded scenes is the safer error, since v2 trained sparse
+and then met dense tiles.
+
+### Tooling changes (all needed before v3 could be built)
+
+- **`build_library.py` is run-aware.** Picks lines may be `<run> <candidate_id>`.
+  Library filenames get a run-qualified stem (`101947__n1099_o2001`) with
+  `source_run` / `source_candidate_id` preserved in `library.csv`; the qualified
+  stem goes in the `candidate_id` column so `composite.py` resolves paths
+  unchanged. **Necessary**: candidate IDs are frame+object index and frame
+  numbering restarts per recording, so `n199_o0641` exists in both runs and means
+  a different object in each. Without this the second copy silently overwrites
+  the first.
+- **`clean_backgrounds.py --only <stems>`.** Backgrounds are cleaned against
+  their own run's temporal median and 8-bit window, so a mixed folder must be
+  cleaned in separate per-run passes or frames get patched with the wrong
+  illumination field.
+- **`extract_candidates.py` validation exclusion is scoped by run.** See the
+  safety note below.
+- `02_library/` had three empty plural directories (`blobs/`, `droplets/`,
+  `filaments/`) colliding with the `*.txt` picks files. Removed.
+
+### SAFETY: the validation manifest is now scoped by run
+
+The manifest identified held-out frames **by number only**, which was
+unambiguous while one run existed. Frame numbering restarts every recording, so
+run 101947's frame 619 is a completely different physical frame from run
+125917's. Extraction on the new run aborted with 8 false collisions.
+
+`load_excluded_frames(manifest_path, run_name)` now uses the manifest's own
+`source_run` field, and looks for a per-run manifest by convention
+(`00_manifest/validation_split_<run>.json`) before falling back. It returns an
+empty set for other runs **and says so loudly** — a silent "nothing excluded" is
+exactly what this safeguard exists to prevent.
+
+Verified: 125917 excludes its 15, 101947 excludes its 5, neither leaks.
+
+### The previous library is archived, NOT merged
+
+`02_library_preV3/` holds the old 213 objects, picks and `library.csv`.
+`01_candidates/125917_NNA_3000sccm_preV3backup/` holds the pre-re-extraction
+candidates. **Do not merge the old library into v3**: its picks reference the old
+extraction, and because the looser focus gate shifted object indices, the same
+candidate ID now points at a different object.
+
+---
+
+## New recordings, 2026-09-22 — one usable, one not
+
+Two runs at `<LaCie>/Experiments/2026/09/22/`, both 4500 sccm (the original is
+3000 sccm), both **2560x1600** (the original is 2048x1152 — full sensor, not a
+different magnification: object sizes match at p50 4->5 px, p90 14->20 px, so
+templates are compatible). Both ~2,750 frames, extracted at stride 10 -> 276.
+
+**`101947_NNA_4500sccm` — GOOD.** Background 830 counts, comparable to the
+original's 807. Used for v3 templates, backgrounds and the second validation set.
+
+**`103608_NNA_4500sccm` — DO NOT USE.** Background **94 counts**, about 1/9th
+the light. Its auto-computed 8-bit window spans only 49 counts, so **everything
+darker than T≈0.72 clips to pure black** — a faint filament and a near-opaque
+ligament render identically, and for a model that eats 8-bit that information is
+gone. The 16-bit data survives but at 0.011 transmission per count, 9x coarser
+than the other runs.
+- **Something changed between 10:19 and 10:36** (lamp, aperture or exposure).
+  Check exposure at capture time in future; a run this dark is nearly useless and
+  was only caught weeks later.
+- Possibly salvageable by re-extracting with a forced full-range window. Not
+  attempted.
+
+**On the per-run 8-bit window generally:** `cine_extract.py` computes it from
+each run's own percentiles. Comparing the two *well-exposed* runs, the difference
+is only a ~4.5% contrast gain ([27,876] vs [66,901]) — small relative to the
+5.4-level background noise, and not worth re-extracting for. But run 103608 shows
+the percentile window failing outright when exposure drops, so pinning it is
+still worth doing as cheap insurance.
+
+---
+
+## Second validation set — `06_validation_run2/`
+
+5 frames held out of `101947_NNA_4500sccm`, physically moved out of the training
+pool and protected by `00_manifest/validation_split_101947_NNA_4500sccm.json`.
+Selected spanning the run's density range (53 / 84 / 132 / 185 / 262 detected
+objects, run range 15-445): **n559, n769, n859, n1649, n1719**.
+
+**Why a second set:** the original 15 frames are all 3000 sccm at 2048x1152, so
+they cannot detect condition-dependent or resolution-dependent bias — and if the
+model performs differently at 4500 than 3000, the Taguchi *ranking* inherits that
+as a confound. They had also been scored against twice by this point, so
+information about them had already leaked into design decisions.
+
+Not yet labelled. LabelMe command:
+
+    labelme <LaCie>/Experiments/Real_Data/06_validation_run2/frames/8bit \
+      --labels droplet,filament,blob --validate-label exact \
+      --output <LaCie>/Experiments/Real_Data/06_validation_run2/labels
+
+Same rules as the first set. Note these frames are bigger and denser — a
+partially labelled second benchmark is still worth far more than none, provided
+every frame that IS finished is complete.
+
+---
+
+## NEXT ACTIONS — superseded 2026-09-24 evening (kept below for the v2 record)
 
 **v2 is trained.** Run: `<LaCie>/Experiments/AI/training_2026_09_24_16_25_00/`
 (moved off the Windows B: drive, hash-verified). Use **`model_best.pth`**
@@ -791,7 +958,122 @@ longer run can always be resumed rather than restarted.
 
 ---
 
-## STEP 8 — evaluate against the real benchmark
+## STEP 8 — DONE for v2, 2026-09-24. The numbers, and what they mean
+
+Tooling built: **`tiled_inference.py`** (tiling + merge) and **`score_v2.py`**
+(COCO scoring with the measurable/detection split). Predictions at
+`06_validation/v2_predictions.json`, per-frame previews at
+`06_validation/review_images/<frame>_v2pred.png`.
+
+**Speed, measured:** model loads once in ~4 s, then **0.94 s/tile on Mac CPU**.
+15 frames = ~2.5 min. A full 195-frame bulk run is ~18 min. **Bulk processing
+does not need to stay on Windows** — that open question is closed.
+
+### The headline: a large sim-to-real gap
+
+| | composite validation | real benchmark |
+|---|---|---|
+| mask AP | **70.0** | **11.7** |
+| box AP | **78.7** | **16.7** |
+
+Per class (bbox/segm AP): droplet 11.4/10.8, filament 30.6/19.0, blob 7.9/5.3.
+
+**The model learned its training distribution well and that distribution is not
+reality.** This is exactly what the benchmark was built to detect, and it is why
+v3 changes the DATA rather than the training schedule. Training longer optimises
+composites it already scores 70 on.
+
+### A fairer view — operating point on measurable objects
+
+Greedy mask-IoU>=0.5 matching, measurable ground truth only:
+
+| score | TP | FP | FN | precision | recall | F1 |
+|---|---|---|---|---|---|---|
+| 0.05 | 998 | 856 | 263 | 0.538 | 0.791 | 0.641 |
+| **0.30** | 917 | 533 | 344 | **0.632** | **0.727** | **0.677** |
+| 0.70 | 808 | 366 | 453 | 0.688 | 0.641 | 0.664 |
+
+So at its best operating point v2 finds **73% of measurable objects at 63%
+precision**. Use **0.05 for AP scoring** (AP integrates over recall and needs the
+low-confidence tail) and a separate, higher operating point for MEASUREMENT.
+
+### Recall by physical size — the actionable diagnostic
+
+| band | class | n | recall |
+|---|---|---|---|
+| 0-50 um | droplet | 686 | **0.65** |
+| 50-100 um | droplet | 352 | 0.92 |
+| 100-200 um | droplet | 43 | 0.86 |
+| 50-100 um | filament | 25 | **0.28** |
+| 100-200 um | filament | 71 | **0.58** |
+| 200-500 um | filament | 43 | 0.84 |
+| >500 um | filament | 10 | 0.70 |
+
+**Two distinct failures.** Small droplets at 65% is the documented focus-gate
+bias. **Short filaments at 28% was NOT predicted** and turned out to be a
+definition conflict, not a learning failure — see below.
+
+### The measurement numbers
+
+| | droplets | D32 | atomised area fraction |
+|---|---|---|---|
+| ground truth | 1082 | **70.5 um** | **7.4%** |
+| v2 predicted | 1159 | **92.9 um** | **3.6%** |
+
+D32 **32% high** because a third of the small droplets are missed, so the
+surviving population skews large. Atomised fraction roughly **half**, compounded
+by blob over-prediction. **Neither is usable for the Taguchi study yet.**
+
+### Root cause found: the class definition conflicted with the labels
+
+The extractor required `major >= 20 AND true_aspect >= 3`. Against the hand
+labels: 33% of filaments fail the length test, 53% fail the aspect test, **55%
+fail one or both** — so the extractor would call only 47% of hand-labelled
+filaments "filament", and training contained essentially none of the short ones.
+The model was not blind to them; it was calling them droplets, exactly as taught.
+
+Re-derived from the labels (n=2237 droplets, 165 filaments): droplet true_aspect
+p50 0.84 / p95 0.91; filament p5 1.48 / p50 2.90. They separate cleanly at ~1.5.
+
+### Merge bugs found in the tiler and fixed
+
+Measured 88 duplicate pairs at score>=0.3 on the benchmark:
+
+1. **Class-aware NMS** (the COCO default) never compares a droplet against a
+   filament, so both survived on one object — **58 of the 88**. A physical object
+   has one class. Now cross-class.
+2. **Box IoU** is a bad proxy for elongated objects: a diagonal filament's box is
+   mostly empty space. Now **mask IoU**.
+3. **Containment**: a partial detection of a big object has LOW IoU with the whole
+   (upper half of a filament vs the filament ~0.4), so NMS keeps both. Now also
+   suppresses when one is >=50% contained in another AND >=20% of its size. The
+   size-ratio guard protects a small droplet genuinely lying on a filament — a
+   real configuration, and in the ground truth only 11 of 2458 annotations are
+   >=80% contained in another, all tiny-on-large.
+
+Result on one frame: 44 duplicate pairs -> **2**. Blob count fell 23 -> 15, so
+part of the "blob over-prediction" was duplicate labels on filaments.
+
+**What NMS cannot fix:** one filament emitted as several detections covering
+different *stretches*. Those are genuinely different regions, not duplicates.
+Measured overlap inflation: filament **20.5%**, blob 10.6%, droplet 0% (ground
+truth: ~0% for all).
+- **So total area per class must be computed as the UNION of masks, not the sum
+  of instances.** That alone moved the predicted atomised fraction 4.25% ->
+  4.93% against a truth of 7.34%. It costs only instance *counting*, which the
+  Taguchi metrics do not need.
+
+### Known limitation in `score_v2.py`
+
+Its section 2 ("measurable only" via COCOeval) is **invalid** — pycocotools
+overwrites the `ignore` flag one line after reading it
+(`gt['ignore'] = 'iscrowd' in gt and gt['iscrowd']`), so ignore markers are
+discarded and it prints numbers identical to section 1. The greedy matching in
+section 3 is correct and is what the measurable-only conclusions rest on.
+
+---
+
+## STEP 8 — the plan as originally written (kept for the tiler reasoning)
 
 ### Added 2026-09-24 — what the tiler must do (nothing is written yet)
 
