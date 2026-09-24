@@ -1310,6 +1310,9 @@ def main():
     setup_logger()
     train_dicts, val_dicts, num_train_images = setup_dataset()
     cfg = setup_config(str(OUTPUT_DIR), num_train_images, resume_from=RESUME_FROM_MODEL)
+    # Inference must rebuild the exact model (classes, anchor layout, input sizes)
+    with open(OUTPUT_DIR / "config.yaml", "w") as f:
+        f.write(cfg.dump())
 
     # Plot learning rate schedule (warmup + decay) at start of run
     plot_learning_rate_schedule(OUTPUT_DIR)
