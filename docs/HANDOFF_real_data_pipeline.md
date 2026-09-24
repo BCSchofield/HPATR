@@ -21,7 +21,61 @@ file is the operational summary of it.
 
 ---
 
-## NEXT ACTIONS — updated 2026-09-23 (Step 6 ground rules settled; Steps 0-5 done)
+## NEXT ACTIONS — updated 2026-09-24 evening (Steps 0-7 DONE; Step 8 next, on the Mac)
+
+**v2 is trained.** Run: `<LaCie>/Experiments/AI/training_2026_09_24_16_25_00/`
+(moved off the Windows B: drive, hash-verified). Use **`model_best.pth`**
+(iteration 18,000) with **`config.yaml`** from the same folder — the config
+rebuilds the exact model (3 classes, 10-anchor layout, 800 px native input);
+strict-load of all 307 tensors verified. Composite-val mask AP **70.0**, box AP
+**78.7** — composites only, NOT the real benchmark. Full record in "STEP 7 —
+DONE" below.
+
+**Do these next, in order:**
+
+1. **Check whether Detectron2 is installed on the Mac.** In the env you use:
+   ```
+   python -c "import detectron2, torch; print(detectron2.__version__, torch.__version__)"
+   ```
+   If it fails, install from source (needs Xcode command-line tools + PyTorch):
+   ```
+   pip install 'git+https://github.com/facebookresearch/detectron2.git'
+   ```
+   The Windows machine runs Detectron2 **0.6**; match it if you can. On the Mac
+   it runs **CPU only** — set `cfg.MODEL.DEVICE = "cpu"`. Do not try MPS:
+   Detectron2 does not reliably support it (ROIAlign and friends).
+2. **Smoke-test loading the model on the Mac** before writing anything:
+   ```python
+   from detectron2.config import get_cfg
+   from detectron2.engine import DefaultPredictor
+   cfg = get_cfg(); cfg.merge_from_file(".../config.yaml")
+   cfg.MODEL.WEIGHTS = ".../model_best.pth"; cfg.MODEL.DEVICE = "cpu"
+   p = DefaultPredictor(cfg)   # then run it on ONE 800x800 composite
+   ```
+   **Time that one call.** GPU is ~0.05 s/tile; CPU is guessed at 1-3 s/tile
+   but unmeasured. It decides whether bulk run-processing stays on Windows.
+3. **Build the tiler** (Step 8, see below). Not written yet — no tiling code
+   exists anywhere in the repo (`inference_detectron2.py` has none).
+4. **Score v2 against the 15-frame benchmark** (`06_validation/instances.json`)
+   with the filtering rules in Step 8. **Score it ONCE.** The checkpoint was
+   chosen on composites; do not now pick a different checkpoint or iteration
+   because it scores better on the real frames — with only 15 frames there is
+   no second test set, and doing so turns the benchmark into a tuning set.
+5. Then Step 8's `run_metrics.py` rewrite (shared frame-source abstraction,
+   stride 26 for measurement).
+
+**Also outstanding (not blocking):**
+- Nothing from 2026-09-24 is **committed** yet: `train_detectron2.py`,
+  `AI/Real_Data_Code/composite.py`, `AI/Real_Data_Code/_fsutil.py`, this doc.
+- `<LaCie>/Experiments/AI/training_2026_09_24_15_05_35` is the first, broken
+  quick test (LR never warmed up — see Step 7 record). 351 MB, safe to delete.
+- `<LaCie>/Experiments/AI/training_2026_09_24_15_14_35` is the working 500-iter
+  quick test on the old 2000-image set. Also deletable.
+- 2026-09-22 capture session outcome still not recorded here.
+
+---
+
+## Status record — as of 2026-09-23 (Step 6 ground rules settled; Steps 0-5 done)
 
 Steps 0, 1, 2, 3 and 4 are **done**. `02_library/` is built: **213 objects —
 144 droplets, 54 filaments, 15 blobs** — each with transmission map, mask
@@ -140,6 +194,35 @@ both are real — do not "fix" them):
 instances (droplet 21,393 / filament 10,614 / blob 1,449), median 12 instances
 per image, 0.80 GB. Regenerate any time with `composite.py --n N --seed S`;
 nothing downstream depends on these exact files.
+
+**SUPERSEDED 2026-09-24 by `05_dataset_6k/`** — what v2 was actually trained on.
+6000 images, 113,045 instances (droplet 78,409 / filament 30,298 / blob 4,338),
+`composite.py --run-name 125917_NNA_3000sccm --n 6000 --seed 1 --out-name 05_dataset_6k`.
+`05_dataset/` is kept, untouched, but has both defects below. Two fixes went in first:
+- **Near-validation exclusion (`--exclude-near-val`, default 10).** Exact
+  validation frames were already excluded, but frames are extracted every 10
+  (7.7 ms) while the scene refreshes every ~26 (20 ms) — so **23 of 213 library
+  objects came from the frame directly adjacent to a validation frame**, i.e.
+  very likely the same physical droplet that is hand-labelled in the benchmark.
+  `composite.py` now reads `00_manifest/validation_split.json` on every run,
+  drops any library object within N frames of a validation frame, exits if the
+  manifest is missing, and records the dropped ids in the COCO
+  `info.excluded_near_validation`. Ben chose 7.7 ms, not 20 ms: 21 more objects
+  sit 15 ms away and were **kept, knowingly** (dropping them too would have cost
+  3 of 15 blob templates). Available library: droplet 128 / filament 49 / blob 13.
+  Three backgrounds also sit within 20 ms of val frame 5019 — accepted: their
+  objects were patched out, only static dirt is shared, and every frame has that.
+- **The 12 smallest droplets could never be placed (bug, fixed).** The
+  `--min-visible-px 12` rule, meant to reject *clipped slivers*, also rejected
+  every object whose *entire* mask is under 12 px — all 12 of the 3x3 px droplet
+  templates, on every attempt, silently. Now `min(12, object's own area)`.
+  Result: 190/190 available objects used (was 178), 14,356 instances under 12 px
+  (was 0 from those templates). This affects `05_dataset/` too.
+- **Verified before training, not assumed**: 6000/6000 distinct pixel content,
+  0 duplicates; 100/5900 split rebuilt exactly as `train_detectron2.py` does it
+  (seed 42) shares 0 files and 0 pixel content; 0 overlap with `05_dataset/`;
+  0 excluded objects used; closest source frame to any validation frame = 20.
+- `composite.py` now writes through `_fsutil.write_image` (see "Windows machine").
 - **Known weakness going into training: blobs rest on only 15 unique
   templates** (droplets 144, filaments 54). Rotation and flips vary
   presentation, not shape, so expect weaker blob generalisation. Traces back
@@ -402,7 +485,108 @@ on navigate/close. This destroyed 33 shapes on `frame_0072_n719` on 2026-09-22.
 
 ---
 
-## STEP 7 — train v2 on Windows. Self-contained instructions.
+## STEP 7 — DONE, 2026-09-24. What was actually run
+
+**Run**: `<LaCie>/Experiments/AI/training_2026_09_24_16_25_00/` — trained on
+`05_dataset_6k/` (5900 train / 100 held-out composites), 20,000 iterations
+(~6.8 epochs), 1 h 34 min on the RTX 5060 Ti (0.28 s/it incl. validation).
+Contents: `config.yaml`, `model_best.pth` + `model_best.json`, `model_final.pth`,
+checkpoints every 5k, `validation_results.csv`, `metrics.json` (per-20-iter
+losses/LR), TensorBoard events, `plots/`, `validation_visualizations/`.
+
+**Final settings in `train_detectron2.py`** (all verified by a dry run, a
+quick test and a smoke test before the real run):
+
+| setting | value | why |
+|---|---|---|
+| dataset | `05_dataset_6k` | see Step 5 SUPERSEDED note |
+| classes | `CLASS_NAMES = ["droplet","filament","blob"]`, one constant feeding all 3 `thing_classes` + `NUM_CLASSES` | can't drift apart |
+| `ANCHOR_GENERATOR.SIZES` | `[[8,12],[20,32],[50,80],[125,200],[320,500]]` | **the plan's `[[8,12],[20],[50],[125],[320]]` crashes** — see corrections |
+| `ASPECT_RATIOS` | `[[0.25,0.5,1.0,2.0,4.0]]` | 10 anchors/location |
+| `TEST.DETECTIONS_PER_IMAGE` | 300 | |
+| `cfg.INPUT` | MIN/MAX train and test all 800 | resize is an identity on 800x800; mapper raises if anything is ever rescaled |
+| batch / LR / warmup / decay | 2 / 0.0025 / 1000 / cosine | unchanged from the sweep |
+| `MAX_ITER` | 20,000 | |
+| `VALIDATION_SIZE` / interval | 100 composites / every 1000 | 20 gave ~14 blobs — too noisy to read |
+| `CHECKPOINT_INTERVAL` | 5000 | |
+| save-best | `model_best.pth` by composite segm/AP | selected on composites ONLY |
+| `OUTPUT_BASE_DIR` | `B:\Experiments\AI` (local), moved to the LaCie afterwards | see "Windows machine" |
+| `config.yaml` | now dumped automatically at the start of every run | inference needs it |
+
+**Result — composite validation only (these flatter the model):**
+
+| iter | mask AP | box AP | droplet m/b | filament m/b | blob m/b |
+|---|---|---|---|---|---|
+| 1000 | 59.8 | 66.0 | 63.8 / 58.4 | 52.5 / 71.0 | 63.2 / 68.7 |
+| 3000 | 66.0 | 72.4 | 67.5 / — | 61.1 / 80.5 | 69.3 / — |
+| 9000 | 69.3 | 77.0 | 70.3 / — | 64.8 / 83.7 | 72.6 / — |
+| **18000 (best)** | **70.0** | **78.7** | | | |
+| 20000 | 69.8 | 78.5 | 70.9 / 67.3 | 65.4 / 86.6 | 73.1 / 81.4 |
+
+- **Plateaued by ~9k.** +6 AP in the first 3k, then <1 point, inside the
+  validation-to-validation scatter. Best (18k) and final (20k) differ by 0.2 —
+  noise. **A longer run is not worth it.** No sign of memorisation (no
+  sustained fall), which is what the 6k set + cosine were for.
+- **Filament box-vs-mask gap held at ~20 points the entire run** (18.5 at 1k,
+  21.2 at 20k): boxes kept improving, masks stalled at ~64-65. That is the 28x28
+  mask head's resolution limit, not under-training — direct evidence for
+  decision 7. **Filament extent must come from ridge detection, not these masks.**
+  Filament *detection* (box AP 86.6) is the strongest of the three classes.
+- Droplet box AP (67) sits below droplet mask AP (71): at 3-9 px a 1 px box
+  offset costs a large IoU fraction, so strict COCO IoU 0.5:0.95 punishes tiny
+  boxes. Mostly arithmetic, not mislocalisation.
+- Blob numbers rest on 78 held-out instances and 13 templates — noisy.
+
+**Bugs found and fixed in `train_detectron2.py` on the way (none would have crashed):**
+1. **The mapper never applied ANY augmentation.** It checked `self.tfm_gens`,
+   which Detectron2 0.6 renamed to `self.augmentations` — always False, so no
+   resize and no flip. Fixing the name alone would have been WORSE: the mapper
+   transformed masks but not boxes, so flipped images would have had boxes on
+   the unflipped positions. Now boxes and masks go through the same transforms
+   (verified: 0.00 px box-vs-mask disagreement over 60 images).
+2. **LR never warmed up when `WARMUP_ITERS >= MAX_ITER`.** Detectron2 warms up
+   toward the cosine value at the END of warmup; with warmup 1000 and a 500-iter
+   quick test that value is 0, so LR only ever fell (2.4e-6 → 5e-9) and AP was
+   0.000 everywhere. Warmup is now capped at 10% of `MAX_ITER`. (Did not affect
+   20k runs; did make every quick test meaningless.)
+3. **Validation ran twice per interval** (stock `EvalHook` + the custom one) and
+   the custom one never ran on the final iteration (0-based `iter % N`). Stock
+   hook removed; custom one uses `(iter+1) % N`.
+4. **Validation metrics were never recorded**: `COCOEvaluator` returns nested
+   `{'segm': {'AP': ..}}`, the script looked for flat `'segm/AP'`. Now flattened
+   — the CSV and AP plot work, and the CSV gained AP50/75, size bands and
+   **per-class AP** for masks and boxes.
+5. **Loss curve never plotted**: `DefaultTrainer.run_step()` returns None. Now
+   read from the event storage.
+
+**Known cosmetic lies in the console output — ignore them:**
+- "Validation Loss" / "Generalization Gap (Overfitting/Underfitting)" — that
+  "loss" is `(100 - AP)/100`, not a loss; comparing it to training loss is
+  meaningless. Read the AP curve instead.
+- The script's own ETA (inflated early) and "Speed: x iter/sec" (off by ~10x).
+  Detectron2's `eta:` line is right.
+- "Number of epochs: 1" and "Train/Val split: 90%/10%" — stale prints.
+- "Skip loading parameter ..." at startup — expected: the COCO output layers
+  (80 classes, 3 anchors) are re-initialised for 3 classes / 10 anchors.
+
+**Corrections to the original plan below:**
+- The LaCie is **`D:`** on the Windows machine, not `E:`. `find_lacie_drive()`
+  works there.
+- **`[[8, 12], [20], [50], [125], [320]]` does not build**: Detectron2's RPN
+  head asserts every FPN level has the same anchor count. Fixed by two sizes per
+  level. The coverage table below was computed for the non-building config, so
+  the actual config's coverage was never separately measured (it is a superset:
+  same P2 sizes, extra sizes elsewhere).
+- "Checkpoints ... a longer run can always be resumed rather than restarted" is
+  **wrong under cosine decay**: LR reaches ~0 at `MAX_ITER`, so a run that is too
+  short is redone with a larger `MAX_ITER`, not resumed. Likewise a mid-run
+  checkpoint (e.g. 10k of 20k) is not equivalent to a finished 10k run.
+- The line saying keep `ANCHOR_SIZES = [[8, 16, 32, 64]]` is stale; the
+  "CHANGE THE ANCHORS" section after it wins.
+
+---
+
+## STEP 7 — original plan (SUPERSEDED — kept for the anchor/aspect reasoning)
 
 **Status going in (2026-09-24): Step 6 is COMPLETE.** 15/15 frames labelled,
 dust stripped, droplets refined, `06_validation/instances.json` written with
@@ -608,6 +792,45 @@ longer run can always be resumed rather than restarted.
 ---
 
 ## STEP 8 — evaluate against the real benchmark
+
+### Added 2026-09-24 — what the tiler must do (nothing is written yet)
+
+- **Model**: `model_best.pth` + `config.yaml` from the v2 run (see NEXT ACTIONS).
+  Load with `cfg.merge_from_file(config.yaml)` — never rebuild the config by
+  hand, the anchor layout must match exactly.
+- **Never feed a whole frame.** `config.yaml` pins `MIN_SIZE_TEST = MAX_SIZE_TEST
+  = 800`, so a whole frame is shrunk to fit 800: a 2048x1152 frame by 0.39, a
+  2560x1600 frame by **0.31** (a 9 px droplet arrives as ~3 px). An 800x800 tile
+  passes at exactly 1.0.
+- **Tile layout**: 800x800, ~100 px overlap, last row/column shifted back to sit
+  flush with the frame edge (no padding, no rescale). 2048x1152 → 3x2 = 6 tiles;
+  2560x1600 → 4x3 = 12 tiles. Merge across tiles with NMS on the overlaps.
+  Frames smaller than 800 on a side: pad with background-matched border (decision 6).
+- **Intensity**: convert 16-bit frames to 8-bit with **exactly** the window the
+  composites used — `[27.0, 876.0]`, from `00_frames/<run>/extraction_metadata.json`
+  (`viewing_window_8bit`), also recorded in the dataset's COCO `info`. The
+  validation frames' 8-bit PNGs were extracted with this window already.
+- **Long filaments will be split at tile seams** — a 1000+ px thread cannot fit
+  one tile. Expected; filament extent is ridge detection's job (decision 7), and
+  the Step 7 result confirms the masks cannot carry it anyway.
+- **Speed**: GPU ~0.05 s/tile compute. Mac CPU unmeasured (guess 1-3 s/tile):
+  15 benchmark frames are fine either way; bulk run processing (~195 frames/run
+  at stride 26) may belong on Windows — decide after timing it.
+- **2560x1600 recordings**: pixel size is fine (full sensor, same 10 um pixels),
+  but the model's scale assumes **100 px/mm magnification** — confirm the lens /
+  working distance matched `recording_130057` before trusting any size. The
+  extra border is outside every training background (all 2048x1152), so expect
+  more false positives in the new edge region; check a few frames by eye.
+
+### Scoring rules (restated so nothing is missed)
+- Score the benchmark **once**, with `model_best.pth`. No checkpoint shopping.
+- Detection: all 2458 annotations. Size stats (D32, atomised fraction):
+  `measurable == true` only (1261). `measurable == false`: box IoU / detection
+  only, never strict mask IoU.
+- Report by **physical size band (um)**, not COCO's small/medium/large (COCO
+  "small" = under 32^2 px area, which is nearly every droplet).
+- Filament masks from Mask R-CNN are not a valid measure of filament area —
+  see the Step 7 box-vs-mask gap.
 
 **Tiled inference is required, not optional, and here is the arithmetic.**
 Training images are **800x800**; validation frames are **2048x1152**.
@@ -1176,11 +1399,31 @@ Never supplied in the earlier export, still wanted:
 
 ## Known issues to keep in mind
 
+- **Windows machine (BENS-PC, RTX 5060 Ti) — verified 2026-09-24.**
+  - LaCie is `D:`. Detectron2 env: `C:\Users\BenSc\anaconda3\envs\Detectron`
+    (Detectron2 0.6, CUDA OK). `conda` may not be on PATH in non-interactive
+    shells — call that env's `python.exe` directly.
+  - **Writing to the LaCie from Windows is very slow** (USB drive, write caching
+    off under Windows' default "quick removal" policy; macOS caches, so the Mac
+    never showed it). Measured: `cv2.imwrite` of one 800x800 PNG **6.8 s** on
+    the LaCie vs 0.01 s on local SSD (it writes in many small chunks, each
+    waiting on the device); encode-then-single-write 0.32 s. A 351 MB checkpoint
+    **38 s** on the LaCie vs 0.3 s on C: (NVMe) and ~2 s on B: (internal HDD).
+    Reads from the LaCie are fine (training data loading ~0.05 s/batch).
+  - Consequences: `_fsutil.write_image()` (encode + one write) replaces
+    `cv2.imwrite` in `composite.py`; the **other 7 Real_Data_Code scripts still
+    use `cv2.imwrite`** — fine on the Mac, slow if run on Windows against the
+    LaCie. Big generation jobs: write to local disk, then `robocopy /MT` to the
+    LaCie. Training writes to `B:\Experiments\AI` and runs are moved to the
+    LaCie afterwards (robocopy exit codes 0-7 mean success).
+
 - `requirements.txt` is stale — lists `customtkinter` but not PySide6, torch or
   detectron2.
 - Two near-duplicate copies each of `inference_detectron2.py` and
-  `train_detectron2.py` (repo root vs `AI/Training_Analysis/`). Confirm which is
-  live before editing.
+  `train_detectron2.py` (repo root vs `AI/Training_Analysis/`). **The repo-root
+  `train_detectron2.py` is the live one** — v2 was trained with it (2026-09-24);
+  the `AI/Training_Analysis/` copy is still the old 2-class version. Neither
+  `inference_detectron2.py` tiles — Step 8 needs new code.
 - **GUI acquisition — planned two-button shape** (Ben, 2026-09-20). Decided,
   not yet built:
   - **Save .cine** — the archival path. The `.cine` is always kept; it is the
