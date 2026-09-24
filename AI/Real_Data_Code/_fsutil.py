@@ -36,6 +36,24 @@ def list_files(directory: Path, pattern: str = "*") -> list:
     return sorted(p for p in directory.glob(pattern) if not is_hidden(p))
 
 
+def write_image(path, img) -> None:
+    """
+    cv2.imwrite replacement: encode in memory, then one write() call.
+
+    On Windows the LaCie is a USB drive with write caching off ("quick removal"),
+    so cv2.imwrite's many small writes each wait on the device: measured 6.8 s
+    per 800x800 PNG, versus 0.32 s for the same bytes written in one go (and
+    0.01 s either way on a local SSD). macOS caches the writes, which is why
+    this never showed up there.
+    """
+    import cv2  # local import: the rest of this module needs no OpenCV
+    path = Path(path)
+    ok, buf = cv2.imencode(path.suffix, img)
+    if not ok:
+        raise IOError(f"cv2.imencode failed for {path}")
+    path.write_bytes(buf.tobytes())
+
+
 def purge_sidecars(root: Path) -> int:
     """
     Delete AppleDouble sidecars and .DS_Store under `root`. Safe -- they hold

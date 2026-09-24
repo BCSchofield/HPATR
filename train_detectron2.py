@@ -21,10 +21,12 @@ from detectron2.data import MetadataCatalog, DatasetCatalog
 from detectron2.data.datasets import register_coco_instances
 from detectron2.data import DatasetMapper
 from detectron2.data import detection_utils as utils
-from detectron2.data.transforms import apply_transform_gens
-from detectron2.structures import BitMasks, Instances, Boxes
+from detectron2.data import transforms as T
+from detectron2.structures import BitMasks, Instances, Boxes, BoxMode
 from detectron2.utils.logger import setup_logger
 from detectron2.evaluation import COCOEvaluator, inference_on_dataset
+from detectron2.evaluation.testing import flatten_results_dict
+from detectron2.engine import hooks
 from detectron2.data import build_detection_test_loader, get_detection_dataset_dicts
 from detectron2.utils.visualizer import Visualizer
 from PIL import Image
@@ -112,30 +114,50 @@ def _savefig_with_retry(fig, path, **kwargs):
 # --- Final training options (from hyperparameter sweep) ---
 BATCH_SIZE = 2
 BASE_LEARNING_RATE = 0.0025
-ANCHOR_SIZES = [[8, 16, 32, 64]]  # FPN anchor sizes (one list per level; same for all here)
+# FPN anchor sizes, one list per level (P2..P6). Detectron2 requires the same number of
+# sizes on every level, so each gets two. Covers the measured 5-800 px object range of
+# Real_Data/05_dataset; see docs/HANDOFF_real_data_pipeline.md (Step 7).
+ANCHOR_SIZES = [[8, 12], [20, 32], [50, 80], [125, 200], [320, 500]]
+# h/w ratios; 4:1 both ways covers filaments to ~p95 (measured 3.40)
+ANCHOR_ASPECT_RATIOS = [[0.25, 0.5, 1.0, 2.0, 4.0]]
+# Validation frames hold a median of 168 objects, max 309 (Detectron2 default is 100)
+DETECTIONS_PER_IMAGE = 300
 WARMUP_ITERS = 1000
 # LR decay: "cosine" | "step" (drops at 60% and 80%) | "none" (constant after warmup)
 LR_DECAY_TYPE = "cosine"
 
 # --- Dataset paths ---
 DATASET_NAME = "spray_train"
-ANNOTATIONS_PATH = r"D:\Experiments\TrainingData\Detectron_Trial_2\blur_annotations.json"
-IMAGES_PATH = r"D:\Experiments\TrainingData\Detectron_Trial_2\images"
+# 6000 composites (composite.py --n 6000 --seed 1 --out-name 05_dataset_6k). More arrangements
+# per epoch than the original 2000 (05_dataset, seed 0); same 213 objects and 25 backgrounds.
+ANNOTATIONS_PATH = r"D:\Experiments\Real_Data\05_dataset_6k\annotations\instances.json"
+IMAGES_PATH = r"D:\Experiments\Real_Data\05_dataset_6k\images"
+# Must match the category ids (1, 2, 3) in both 05_dataset and 06_validation instances.json
+CLASS_NAMES = ["droplet", "filament", "blob"]
+# Training composites are 800x800 and tiles at inference are 800x800: objects must reach
+# the model at native scale (pixel size is the measurement). Pinned so ResizeShortestEdge
+# is an identity transform; the mapper asserts no rescale happened.
+INPUT_SIZE = 800
 
 # --- Training length and output ---
 NUM_EPOCHS = 1  # Used only when MAX_ITER is None: total iters = NUM_EPOCHS * (num_train // BATCH_SIZE)
 # Set MAX_ITER to fix total iterations (e.g. 20000 for your final run). None = use NUM_EPOCHS formula.
-MAX_ITER = 78000  # ~80k full run; None = derived from NUM_EPOCHS
-# Quick test: overrides everything. 500 for ~15 min test; None for real run.
+# ~6.8 epochs at 2950 iters/epoch (5900 train images / 2). Cosine decays the LR to 0 AT
+# MAX_ITER, so a run that is too short is redone with a larger value, not resumed.
+MAX_ITER = 20000
+# Quick test: overrides everything. 500 for ~3 min test; None for real run.
 QUICK_TEST_ITERATIONS = None  # 500 for quick test; None for real run
-OUTPUT_BASE_DIR = r"D:\Experiments\AI"
-CHECKPOINT_INTERVAL = 10000  # Save checkpoint every N iterations
+# Local disk, NOT the LaCie: a 351 MB checkpoint takes 38 s to write to the LaCie from
+# Windows vs ~2 s here (B: internal HDD). Copy finished runs to D:\Experiments\AI afterwards.
+OUTPUT_BASE_DIR = r"B:\Experiments\AI"
+CHECKPOINT_INTERVAL = 5000  # Save checkpoint every N iterations (351 MB each)
 
 # --- Validation ---
 VALIDATION_SPLIT = 0.1  # Used only when VALIDATION_SIZE is None: fraction for validation
-VALIDATION_INTERVAL = 500  # Evaluate every N iterations
+VALIDATION_INTERVAL = 1000  # Evaluate every N iterations (~50 s each at 100 images)
 # Total validation images. When set, exactly this many are held out for val (rest for train). None = use VALIDATION_SPLIT.
-VALIDATION_SIZE = 20
+# 100 composites ~ 1,700 objects / ~70 blobs: enough for per-class AP to be readable (20 gave ~14 blobs)
+VALIDATION_SIZE = 100
 # Fixed validation images to use for visualization at each validation (first N of the val set; e.g. 5 of the 20)
 NUM_VIZ_IMAGES = 5
 # Score threshold for drawings (drop low-confidence detections for clearer viz)
@@ -185,7 +207,7 @@ def setup_dataset():
     )
     
     # Set metadata for visualization
-    MetadataCatalog.get(DATASET_NAME).set(thing_classes=["droplet", "ligament"])
+    MetadataCatalog.get(DATASET_NAME).set(thing_classes=CLASS_NAMES)
     
     # Get dataset info
     dataset_dicts = DatasetCatalog.get(DATASET_NAME)
@@ -218,12 +240,12 @@ def setup_dataset():
     # Register TRAIN-only dataset (so the model never sees val images during training)
     TRAIN_DATASET_NAME = f"{DATASET_NAME}_train"
     DatasetCatalog.register(TRAIN_DATASET_NAME, lambda t=train_dicts: t)
-    MetadataCatalog.get(TRAIN_DATASET_NAME).set(thing_classes=["droplet", "ligament"])
+    MetadataCatalog.get(TRAIN_DATASET_NAME).set(thing_classes=CLASS_NAMES)
     
     # Register validation dataset (held out, never used for training)
     VAL_DATASET_NAME = f"{DATASET_NAME}_val"
     DatasetCatalog.register(VAL_DATASET_NAME, lambda v=val_dicts: v)
-    MetadataCatalog.get(VAL_DATASET_NAME).set(thing_classes=["droplet", "ligament"])
+    MetadataCatalog.get(VAL_DATASET_NAME).set(thing_classes=CLASS_NAMES)
     
     print(f"[OK] Training images: {len(train_dicts)} (held out from val, no overlap)")
     print(f"[OK] Validation images: {len(val_dicts)} ({len(val_dicts)/len(dataset_dicts)*100:.1f}%)")
@@ -256,7 +278,14 @@ def setup_config(output_dir, num_train_images, resume_from=None):
         print(f"[OK] MAX_ITER set explicitly: {MAX_ITER}")
     else:
         MAX_ITER = NUM_EPOCHS * iterations_per_epoch
-    
+
+    # Detectron2 warms up toward the cosine value at the END of warmup; if warmup >= MAX_ITER
+    # that value is 0 and the LR only ever falls (the model never trains). Cap it at 10%.
+    global WARMUP_ITERS
+    if WARMUP_ITERS > MAX_ITER // 10:
+        WARMUP_ITERS = MAX_ITER // 10
+        print(f"[OK] Warmup capped to {WARMUP_ITERS} iterations (10% of MAX_ITER)")
+
     # Decay steps for "step" LR schedule (60% and 80% of training)
     if LR_DECAY_TYPE == "step":
         decay_step_1 = int(MAX_ITER * 0.6)
@@ -267,7 +296,8 @@ def setup_config(output_dir, num_train_images, resume_from=None):
     print(f"[OK] Iterations per epoch: {iterations_per_epoch} ({num_train_images} images / {BATCH_SIZE})")
     print(f"[OK] Number of epochs: {NUM_EPOCHS}")
     print(f"[OK] Total iterations: {MAX_ITER} ({NUM_EPOCHS} epochs x {iterations_per_epoch} iterations)")
-    print(f"[OK] Anchors: {ANCHOR_SIZES}")
+    print(f"[OK] Anchors: {ANCHOR_SIZES}, aspect ratios: {ANCHOR_ASPECT_RATIOS}")
+    print(f"[OK] Classes: {CLASS_NAMES}")
     print(f"[OK] Warmup: {WARMUP_ITERS} iterations")
     if LR_DECAY_TYPE == "step":
         print(f"[OK] LR decay: step at {decay_step_1} and {decay_step_2} iterations")
@@ -333,9 +363,18 @@ def setup_config(output_dir, num_train_images, resume_from=None):
     
     # Anchors and ROI heads
     cfg.MODEL.ANCHOR_GENERATOR.SIZES = ANCHOR_SIZES
+    cfg.MODEL.ANCHOR_GENERATOR.ASPECT_RATIOS = ANCHOR_ASPECT_RATIOS
     cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = 128
-    cfg.MODEL.ROI_HEADS.NUM_CLASSES = 2  # droplet and ligament
-    
+    cfg.MODEL.ROI_HEADS.NUM_CLASSES = len(CLASS_NAMES)
+    cfg.TEST.DETECTIONS_PER_IMAGE = DETECTIONS_PER_IMAGE
+
+    # Native scale only: single shortest-edge size equal to the image size -> scale 1.0
+    cfg.INPUT.MIN_SIZE_TRAIN = (INPUT_SIZE,)
+    cfg.INPUT.MIN_SIZE_TRAIN_SAMPLING = "choice"
+    cfg.INPUT.MAX_SIZE_TRAIN = INPUT_SIZE
+    cfg.INPUT.MIN_SIZE_TEST = INPUT_SIZE
+    cfg.INPUT.MAX_SIZE_TEST = INPUT_SIZE
+
     # Output
     cfg.OUTPUT_DIR = output_dir
     os.makedirs(output_dir, exist_ok=True)
@@ -546,7 +585,7 @@ class ProgressTracker:
             self.best_val_bbox_ap = bbox_ap
             if segm_ap is None or bbox_ap >= segm_ap:
                 self.best_val_iter = iteration
-        self._append_validation_csv(iteration, training_loss, segm_ap, bbox_ap)
+        self._append_validation_csv(iteration, training_loss, segm_ap, bbox_ap, val_metrics)
         
         # Save plot and validation AP curve after validation
         self.save_plot()
@@ -581,20 +620,26 @@ class ProgressTracker:
                 print(f"  [ETA] ~{h} h {m} min remaining (training: {st}, validation: {sv})")
     
     @retry_file_io(max_retries=3, delay=0.5)
-    def _append_validation_csv(self, iteration, training_loss, segm_ap, bbox_ap):
-        """Append one row to validation_results.csv: iteration, training_loss, segm_AP, bbox_AP, timestamp."""
+    def _append_validation_csv(self, iteration, training_loss, segm_ap, bbox_ap, val_metrics=None):
+        """Append one row to validation_results.csv: iteration, training_loss, segm_AP, bbox_AP,
+        then AP50 / size-band / per-class AP for segm and bbox, then timestamp."""
         csv_path = self.output_dir / "validation_results.csv"
         file_existed = csv_path.exists()
+        extra_keys = [f"{t}/{k}" for t in ("segm", "bbox")
+                      for k in ["AP50", "AP75", "APs", "APm", "APl"] + [f"AP-{c}" for c in CLASS_NAMES]]
+        val_metrics = val_metrics or {}
         try:
             with open(csv_path, 'a', newline='') as f:
                 writer = csv.writer(f)
                 if not file_existed:
-                    writer.writerow(['iteration', 'training_loss', 'segm_AP', 'bbox_AP', 'timestamp'])
+                    writer.writerow(['iteration', 'training_loss', 'segm_AP', 'bbox_AP']
+                                    + extra_keys + ['timestamp'])
                 writer.writerow([
                     iteration,
                     training_loss if training_loss is not None else '',
                     segm_ap if segm_ap is not None else '',
                     bbox_ap if bbox_ap is not None else '',
+                ] + [val_metrics.get(k, '') for k in extra_keys] + [
                     datetime.now().isoformat()
                 ])
             print(f"  [OK] Validation results appended to: {csv_path}")
@@ -955,28 +1000,38 @@ class RLEDatasetMapper(DatasetMapper):
                 annos.append(anno)
             dataset_dict["annotations"] = annos
         
-        # Apply transforms to image
-        if hasattr(self, 'tfm_gens') and self.tfm_gens:
-            image, transforms = apply_transform_gens(self.tfm_gens, image)
-        else:
-            transforms = None
-        
+        # Apply the cfg augmentations (ResizeShortestEdge, plus RandomFlip when training).
+        # Detectron2 >= 0.3 stores these as self.augmentations; the old self.tfm_gens
+        # check was always False, so no transform (flip included) was ever applied.
+        in_shape = image.shape[:2]
+        aug_input = T.AugInput(image)
+        transforms = self.augmentations(aug_input)
+        image = aug_input.image
+        if image.shape[:2] != in_shape:
+            raise RuntimeError(
+                f"Image rescaled {in_shape} -> {image.shape[:2]} for {image_path}. "
+                f"Objects must reach the model at native scale; check cfg.INPUT sizes."
+            )
+
         dataset_dict["image"] = torch.as_tensor(image.transpose(2, 0, 1).astype("float32"))
-        
+
         if "annotations" in dataset_dict:
-            # Apply transforms to masks (numpy arrays)
+            # Transform boxes AND masks with the same transforms (masks are numpy arrays
+            # here, which utils.transform_instance_annotations does not accept)
+            h, w = image.shape[:2]
             annos = []
             for anno in dataset_dict["annotations"]:
+                if anno.get("iscrowd", 0) != 0:
+                    continue
+                box = BoxMode.convert(anno["bbox"], anno["bbox_mode"], BoxMode.XYXY_ABS)
+                box = transforms.apply_box(np.array([box]))[0].clip(min=0)
+                anno["bbox"] = np.minimum(box, [w, h, w, h])
+                anno["bbox_mode"] = BoxMode.XYXY_ABS
                 segm = anno.get("segmentation", None)
                 if isinstance(segm, np.ndarray):
-                    # Apply transforms to mask
-                    if transforms:
-                        mask_transformed = transforms.apply_segmentation(segm)
-                    else:
-                        mask_transformed = segm
-                    anno["segmentation"] = mask_transformed
+                    anno["segmentation"] = transforms.apply_segmentation(segm)
                 annos.append(anno)
-            
+
             # Create instances with bitmask format
             # annotations_to_instances will convert numpy arrays to BitMasks internally
             instances = utils.annotations_to_instances(
@@ -1032,19 +1087,40 @@ class ProgressTrainer(DefaultTrainer):
         # Return COCO evaluator for validation dataset
         return COCOEvaluator(dataset_name, output_dir=str(output_folder))
     
+    def build_hooks(self):
+        # Validation runs in after_step (with plots/CSV/viz); drop the stock EvalHook so the
+        # same 20 images are not evaluated twice every EVAL_PERIOD.
+        return [h for h in super().build_hooks() if not isinstance(h, hooks.EvalHook)]
+
     def __init__(self, cfg, progress_tracker=None):
         super().__init__(cfg)
         self.progress_tracker = progress_tracker
         self.last_val_iter = -1  # Track last iteration we ran validation on
-    
+        self.best_segm_ap = float("-inf")
+
+    def _save_if_best(self, val_results):
+        """Keep model_best.pth = the checkpoint with the highest composite-val segm/AP.
+        Selected on held-out COMPOSITES only -- never on the real 06_validation frames,
+        which must stay an untouched test set."""
+        segm_ap = val_results.get("segm/AP")
+        if segm_ap is None or not segm_ap > self.best_segm_ap:
+            return
+        self.best_segm_ap = segm_ap
+        self.checkpointer.save("model_best")
+        info = {"iteration": self.iter + 1, "segm_AP": segm_ap,
+                "bbox_AP": val_results.get("bbox/AP"), "saved": datetime.now().isoformat()}
+        with open(Path(self.cfg.OUTPUT_DIR) / "model_best.json", "w") as f:
+            json.dump(info, f, indent=2)
+        print(f"  [OK] New best segm/AP {segm_ap:.2f} at iter {self.iter + 1} -> model_best.pth")
+
     def run_step(self):
         """Override to track progress"""
-        loss_dict = super().run_step()
-        
-        if self.progress_tracker and loss_dict is not None and self.iter % 10 == 0:  # Log every 10 iterations
+        super().run_step()  # returns None; losses are written to the event storage
+
+        if self.progress_tracker and self.iter % 10 == 0:  # Log every 10 iterations
+            latest = self.storage.latest()  # {name: (value, iter)}
+            loss_dict = {k: v[0] for k, v in latest.items() if "loss" in k}
             self.progress_tracker.update(self.iter, loss_dict)
-        
-        return loss_dict
     
     def after_step(self):
         """Override to run validation evaluation"""
@@ -1054,12 +1130,11 @@ class ProgressTrainer(DefaultTrainer):
         
         # Only run validation if:
         # 1. We have a progress tracker
-        # 2. It's the right iteration (divisible by interval)
+        # 2. It's the right iteration (iter is 0-based, so iter+1 iterations are done;
+        #    this also makes the final iteration validate when MAX_ITER % interval == 0)
         # 3. We haven't already run validation for this iteration
-        # 4. We're past iteration 0
-        if (self.progress_tracker and 
-            self.iter % val_interval == 0 and 
-            self.iter > 0 and 
+        if (self.progress_tracker and
+            (self.iter + 1) % val_interval == 0 and
             self.iter != self.last_val_iter):
             
             # Mark that we're running validation for this iteration
@@ -1075,12 +1150,13 @@ class ProgressTrainer(DefaultTrainer):
                 training_iters_in_block = self.iter - self.progress_tracker.last_val_iteration_done
                 if val_results:
                     self.progress_tracker.update_validation(
-                        self.iter, val_results,
+                        self.iter + 1, val_results,
                         validation_duration=validation_duration,
                         training_block_time=training_block_time,
                         training_iters_in_block=training_iters_in_block,
                         val_interval=val_interval
                     )
+                    self._save_if_best(val_results)
             except Exception as e:
                 print(f"  [WARNING] Validation evaluation failed: {e}")
                 import traceback
@@ -1119,7 +1195,8 @@ class ProgressTrainer(DefaultTrainer):
         try:
             test_loader = self.build_test_loader(self.cfg, val_dataset_name)
             evaluator = COCOEvaluator(val_dataset_name, output_dir=str(eval_output_dir))
-            results = inference_on_dataset(self.model, test_loader, evaluator)
+            # evaluate() returns {'bbox': {'AP': ..}, 'segm': {..}}; flatten to 'segm/AP' etc.
+            results = flatten_results_dict(inference_on_dataset(self.model, test_loader, evaluator))
         except Exception as e:
             print(f"  [WARNING] COCO evaluation failed: {e}")
             import traceback
@@ -1142,7 +1219,7 @@ class ProgressTrainer(DefaultTrainer):
             results['total_loss'] = None
         
         # Save visualizations on the same fixed images at this validation
-        self._save_validation_visualizations(self.iter)
+        self._save_validation_visualizations(self.iter + 1)
 
         return results
 

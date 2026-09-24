@@ -81,7 +81,7 @@ except ImportError:
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from config_loader import find_lacie_drive  # noqa: E402
-from _fsutil import list_files  # noqa: E402
+from _fsutil import list_files, write_image  # noqa: E402
 
 # category_id -> name. Recorded in the COCO json, which is self-describing,
 # but keep this stable: Detectron2 maps these to contiguous 0-indexed classes
@@ -110,12 +110,41 @@ def real_data_root() -> Path:
     return Path(drive) / "Experiments" / "Real_Data"
 
 
-def load_library(lib_dir: Path):
-    """Objects grouped by class, each with its transmission map and mask."""
+def near_validation(root: Path, window: int):
+    """Predicate: True for a library row from a frame within `window` frames of a
+    validation frame of the same run.
+
+    Exact validation frames were already excluded at extraction (Step 1/2), but
+    frames are extracted every 10 frames (7.7 ms at 1300 fps) while the scene
+    only refreshes every ~26 (20 ms) -- so an object cut from a frame adjacent to
+    a validation frame is very likely the same physical droplet that is
+    hand-labelled in the benchmark. Measured 2026-09-24: 23 of 213 library
+    objects sit exactly 10 frames from a validation frame."""
+    manifest = root / "00_manifest" / "validation_split.json"
+    if not manifest.exists():
+        sys.exit(f"Validation manifest not found at {manifest} -- refusing to composite "
+                 "without it (it is the authoritative exclusion list).")
+    m = json.loads(manifest.read_text(encoding="utf-8"))
+    run = m["source_run"]
+    val_frames = [int(f["frame_number"]) for f in m["frames"]]
+
+    def excluded(row) -> bool:
+        return (row["run"] == run and
+                min(abs(int(row["frame_number"]) - v) for v in val_frames) <= window)
+    return excluded
+
+
+def load_library(lib_dir: Path, excluded=lambda row: False):
+    """Objects grouped by class, each with its transmission map and mask.
+    Rows for which `excluded(row)` is True are left out; their ids are returned."""
     with open(lib_dir / "library.csv", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
     by_class = defaultdict(list)
+    dropped = []
     for r in rows:
+        if excluded(r):
+            dropped.append(r["candidate_id"])
+            continue
         cls = r["library_class"]
         cid = r["candidate_id"]
         by_class[cls].append({
@@ -125,7 +154,7 @@ def load_library(lib_dir: Path):
             "t_path": lib_dir / cls / "transmission" / f"{cid}.tiff",
             "m_path": lib_dir / cls / "masks" / f"{cid}.png",
         })
-    return by_class
+    return by_class, dropped
 
 
 _OBJ_CACHE = {}
@@ -249,6 +278,10 @@ def build_image(bg_full, by_class, rng, args, next_ann_id, image_id):
             continue
         T_eff = feather(T_o, M_o, args.feather)
         oh, ow = T_eff.shape
+        # An object smaller than min_visible_px only has to be fully visible. Without
+        # this, the smallest droplets (3x3 px, <12 px area) could never be placed at all:
+        # the rule is for rejecting clipped slivers, not for rejecting small objects.
+        min_vis = min(args.min_visible_px, int(M_o.sum()))
 
         # Placement may hang off the canvas on purpose: tiled inference cuts
         # objects at every tile boundary, so the model must see truncated ones.
@@ -261,7 +294,7 @@ def build_image(bg_full, by_class, rng, args, next_ann_id, image_id):
                 continue
             sub_m = M_o[ys - y0:ye - y0, xs - x0:xe - x0]
             vis = int(sub_m.sum())
-            if vis < args.min_visible_px:
+            if vis < min_vis:
                 continue
             # Overlap is physically fine (it multiplies correctly); the limit is
             # about LABEL quality -- two heavily overlapped instances are an
@@ -339,11 +372,18 @@ def main():
     ap.add_argument("--preview", type=int, default=0,
                     help="write N annotated preview images instead of a dataset")
     ap.add_argument("--root", type=Path, default=None)
+    ap.add_argument("--exclude-near-val", type=int, default=10,
+                    help="drop library objects from frames within this many frames of a "
+                         "validation frame (10 = adjacent extracted frames, 7.7 ms; the same "
+                         "physical droplet is likely in both). -1 disables")
+    ap.add_argument("--out-name", default="05_dataset",
+                    help="output folder under the Real_Data root (use a new name to keep an "
+                         "existing dataset instead of overwriting it)")
     args = ap.parse_args()
 
     root = args.root or real_data_root()
     lib_dir = root / "02_library"
-    out_dir = root / "05_dataset"
+    out_dir = root / args.out_name
 
     # Prefer cleaned backgrounds. The raw ones each carry ~4.7 real in-focus
     # objects that would sit UNLABELLED in every composite built on them --
@@ -361,9 +401,12 @@ def main():
     win = json.loads(meta_path.read_text(encoding="utf-8"))["viewing_window_8bit"]
     args.window_lo, args.window_hi = float(win["low"]), float(win["high"])
 
-    by_class = load_library(lib_dir)
+    by_class, near_val_dropped = load_library(
+        lib_dir, near_validation(root, args.exclude_near_val))
     if not by_class:
         sys.exit(f"No library at {lib_dir}. Run build_library.py first.")
+    print(f"excluded {len(near_val_dropped)} library objects within "
+          f"{args.exclude_near_val} frames of a validation frame")
     bg_paths = list_files(bg_dir, "*.tiff")
     if not bg_paths:
         sys.exit(f"No backgrounds at {bg_dir}. Run build_backgrounds.py first.")
@@ -382,9 +425,8 @@ def main():
         for i in range(args.preview):
             bg = backgrounds[int(rng.integers(len(backgrounds)))]
             img8, anns, info = build_image(bg, by_class, rng, args, 1, i)
-            cv2.imwrite(str(prev_dir / f"preview_{i:02d}.png"), img8)
-            cv2.imwrite(str(prev_dir / f"preview_{i:02d}_annotated.png"),
-                        draw_preview(img8, anns))
+            write_image(prev_dir / f"preview_{i:02d}.png", img8)
+            write_image(prev_dir / f"preview_{i:02d}_annotated.png", draw_preview(img8, anns))
             print(f"  preview {i}: {info['regime']:13s} {info['k_placed']:3d} objects "
                   f"(of {info['k_requested']:3d} asked), coverage {info['coverage']*100:4.1f}%")
         print(f"\npreviews -> {prev_dir}")
@@ -402,7 +444,7 @@ def main():
         bg = backgrounds[int(rng.integers(len(backgrounds)))]
         img8, anns, info = build_image(bg, by_class, rng, args, ann_id, i + 1)
         fname = f"composite_{i:06d}.png"
-        cv2.imwrite(str(img_dir / fname), img8)
+        write_image(img_dir / fname, img8)
         images.append({"id": i + 1, "file_name": fname,
                        "width": args.size, "height": args.size})
         annotations.extend(anns)
@@ -424,6 +466,7 @@ def main():
                                               "on real frames must use the same window"},
             "um_per_px": 10.0,
             "scale_randomised": False,
+            "excluded_near_validation": sorted(near_val_dropped),
             "seed": args.seed,
             "params": {k: v for k, v in vars(args).items()
                        if k not in ("root", "preview")and not isinstance(v, Path)},
