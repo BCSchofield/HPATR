@@ -21,7 +21,7 @@ file is the operational summary of it.
 
 ---
 
-## NEXT ACTIONS — picked up 2026-09-21 (end of day)
+## NEXT ACTIONS — updated 2026-09-23 (Step 6 ground rules settled; Steps 0-5 done)
 
 Steps 0, 1, 2, 3 and 4 are **done**. `02_library/` is built: **213 objects —
 144 droplets, 54 filaments, 15 blobs** — each with transmission map, mask
@@ -147,15 +147,531 @@ nothing downstream depends on these exact files.
   improve without a second run. Watch it in the Step 7 evaluation rather than
   being surprised by it.
 
-**Next up: Step 6 — hand-mask the 15 validation frames** (Mac; LabelMe is in
-the `phantom` conda env). Write the labelling protocol first, and apply the
-same out-of-focus rule the extractor uses, or validation and training will
-disagree about what counts as an object. Then **Step 7 — train, on Windows**.
+**Step 6 in progress.** Protocol written (`docs/VALIDATION_LABELLING_PROTOCOL.md`),
+LabelMe workflow set up (AI-Box/AI-Points, SAM2 cached locally), a refinement
+tool built (`AI/Real_Data_Code/refine_labels.py`) that snaps each hand/SAM
+shape to the exact half-maximum edge used everywhere else in this pipeline,
+run frame-by-frame as each one is finished. **1 of 15 frames labelled**
+(`frame_0062_n619`: 144 shapes — 66 refined, 78 kept unrefined).
 
-**Before the Tuesday capture session**: confirm the new recordings use the
-same bubbler/spinner position as `recording_130057`, or they will be unusable
-for over-training and validation exactly as the other three 2026-09-09 runs
-were. See the note under "Only one run is usable right now".
+### Step 6 ground rules — settled 2026-09-22/23, do not relitigate
+
+**1. Validation labels are hand-made. Never auto-propose into `06_validation/labels/`.**
+`AI/Real_Data_Code/prelabel_frame.py` exists and works (it proposed 195 shapes
+on frame 2: 166 droplet / 23 filament / 6 blob), but Ben deliberately chose to
+hand-label all 15 frames instead. **Why**: it proposes shapes using
+`extract_candidates.py`'s own detector, which also built the training data.
+Scoring a model against those labels measures "does the model reproduce the
+extractor", not "does the model find real spray" — and would hide the
+small-object focus bias documented below *by construction*. Its output belongs
+in `06_validation/extractor_proposals/`, where `validation_to_coco.py` cannot
+see it (that directory holds the frame-2 proposal; comparing it against the
+eventual hand labels is a legitimate, useful measurement of extractor bias).
+
+**2. Out-of-focus objects are KEPT and TAGGED, never deleted.** An out-of-focus
+object is **real but unmeasurable**. Deleting it tells the benchmark it does not
+exist, so a model that correctly detects it scores as a false positive — i.e.
+you would be selecting for a model that ignores real spray. This is the same
+treatment `touches_border` already gets, for the same reason.
+- `validation_to_coco.py` now writes `min_transmission`, `in_focus` and
+  `measurable` on **every** annotation. Detection scoring uses all annotations;
+  **size statistics (D32, atomised fraction) must filter to `measurable=true`.**
+- `min_transmission` is stored as a raw number, so **the focus cutoff can be
+  moved or swept later without re-labelling anything.**
+- **Do not add a fourth class for blurry droplets.** Validation categories must
+  match training categories exactly or the class indices mean different things
+  in training and evaluation. Focus is an *attribute*, not a class.
+- Ben's only judgement while labelling is "is this a real object, and what
+  class". Darkness is never judged by eye — it is measured afterwards. The
+  labelling floor is **recognisability**: if you cannot tell what it is, do not
+  label it.
+
+**3. `refine_labels.py --drop-flagged` must NEVER be run on a hand-labelled
+frame.** It lets the extractor's focus cutoff overrule the human's judgement,
+which is exactly what rule 1 exists to prevent. It was used once on frame 1
+(removing 78 shapes) and has been fully reverted via `--from-original`.
+
+**4. Never delete a `<frame>.original.json`.** Every measurement (`t_min`, area,
+aspect) can be recomputed from the image at any time; **Ben's judgement about
+what is an object cannot.** Those backups are the only irreplaceable artifact in
+`06_validation/`. `refine_labels.py --from-original` rebuilds a working file
+from one — refinement is deterministic, so nothing is lost by re-running it.
+
+**5. Refine DROPLETS ONLY for now — `--classes droplet` is the default.**
+*(This reverses an earlier same-day decision to refine all three classes. The
+reversal is evidence-driven; the original reasoning and why it lost are both
+below, because the argument for refining everything is still sound in principle
+and should win again once the filament refiner is fixed.)*
+
+**The argument for refining everything**: the atomised fraction is a **ratio**,
+so refining the numerator (droplets) at half-max while leaving the denominator
+(filaments) at the hand-drawn fuzzy edge mixes two edge definitions inside one
+number. Hand-drawn shapes over-mask by a size-dependent amount — measured
+refined-area-as-fraction-of-drawn: **droplet 45%, filament 61%, blob 54%** on
+frame 2. So leaving filaments unrefined inflates filament area by roughly
+**1.6x relative to droplets**, biasing the atomised fraction **down**.
+
+**Why it lost anyway**: refining filaments does not merely tighten their edge,
+it **truncates them**. Measured over 51 refined filaments on frame 2:
+
+| | median kept | 10th pct | worst |
+|---|---|---|---|
+| width | 83% | 61% | 24% |
+| **length** | **83%** | **42%** | **12%** |
+
+**23 of 51 lost more than 20% of their LENGTH.** Width loss is legitimate halo
+removal. Length loss is the refiner eating faint sections at a filament's ends
+and middle — destroying *extent*, which is exactly the judgement the human is
+better at and the code is worse at. Ben spotted this by eye before it was
+measured.
+
+A **known, uniform, documentable** bias (1.6x on filament area, identical every
+frame, correctable afterwards) beats an **uncontrolled per-object** error
+affecting ~45% of filaments by wildly varying amounts. Nothing is lost by
+waiting: `.original.json` preserves every hand-drawn shape and refinement is
+deterministic, so filaments can be refined retroactively with no re-labelling.
+
+**The fix that would let rule 5 revert to "refine everything"**: a local or
+adaptive threshold along the filament instead of one global half-max derived
+from its single darkest pixel (which is also the root cause of the `fragmented`
+flag being unreliable for filaments — same bug, two symptoms). A cheap interim:
+a **length-preservation guard** that rejects any refinement changing an object's
+extent by more than ~20%, keeping the ~28 of 51 that refine cleanly and falling
+back to hand-drawn for the rest.
+
+**Known finding, 2026-09-21 — the small-object focus bias is real and shows up
+in hand-labelling too, not just the automated extractor.** Running the
+refiner on frame 1 flagged 74 of 125 hand-drawn droplets as never reaching the
+0.70 focus cutoff (an earlier figure of 82/126 predates the circle fix in
+`mask_to_points` and is superseded). Checked four across the full range at high zoom against
+real pixels: **all four are real droplets**, not noise. A 2-4 px object
+physically cannot reach the same peak darkness as a larger one regardless of
+focus quality (pixel-sampling/PSF limit) — this is the same size bias already
+documented for `extract_candidates.py`'s focus gate, now confirmed to affect
+hand-labelling by the same underlying physics, not a labelling error. **Do not
+delete or "fix" these** — the flagged-but-untouched shapes are correctly left
+as originally drawn; there is no better boundary available for something this
+small.
+
+**How much does this bias actually cost? Measured on frame 1, 2026-09-23:
+2 um.** Droplet D32 over all 125 annotations is **66 um**; over the 75
+`measurable=true` ones it is **68 um**. Excluding 40% of the droplets by count
+moves the reported number by ~3%. The reason is structural and will hold on
+every frame: **D32 is Σd³/Σd², so it is dominated by the largest objects**, and
+the focus-excluded population is almost entirely small. The area-weighted
+atomised fraction behaves the same way.
+- **Practical consequence for labelling effort**: be quick and generous on small
+  droplets, and spend the care on **filaments and blobs** — they are large, far
+  fewer, and they *are* the un-atomised side of the atomised-fraction ratio, so
+  each carries far more weight in the reported numbers than any droplet. This
+  runs opposite to where labelling attention naturally drifts.
+- At ~4 px diameter a single pixel of mask changes a droplet's area by ~8%.
+  Small droplets are quantisation-limited however carefully anyone draws them.
+  Do not chase precision the optics cannot deliver.
+
+**Depth-of-field bias — know this, state it in the write-up, do not try to
+remove it by relabelling.** Focus-gating samples a **size-dependent volume**: a
+small droplet leaves focus over a shorter axial distance than a large one, so
+small droplets are under-sampled and **D32 is biased upward**. Standard
+shadowgraphy/PDIA effect, not a pipeline defect. With fixed optics it largely
+cancels when *ranking* Taguchi runs against each other — the near-term goal — but
+it does **not** cancel in absolute terms. Recorded in the COCO `info` block as
+`known_bias`.
+
+**Consequence for Step 7/8, recorded now so it is not a surprise later:**
+`extract_candidates.py` uses this identical threshold to build the training
+set, so it almost certainly excludes real small droplets the same way. v2 may
+genuinely under-detect small droplets — not a model defect, a known gap in the
+training pipeline's focus rule at small sizes. The validation set, correctly
+including these objects, will measure that gap accurately. Consider reporting
+accuracy split by size band at evaluation time, since a single aggregate
+number will conflate "model is bad" with "training data never had these."
+**A future fix worth considering**: a size-adjusted focus threshold in
+`extract_candidates.py`, looser for small objects. Not done now — flagged for
+whoever tackles Step 8 evaluation or a v3 retrain.
+
+**Separate, algorithmic caveat**: `refine_labels.py`'s `fragmented` flag is
+unreliable specifically for filaments. It fits one global threshold from one
+darkest point, which can split a long, curved, genuinely-in-focus filament
+into disconnected pieces purely because brightness varies along its length —
+confirmed on the frame-1 figure-8 filament (independently verified correct
+earlier, `t_min=0.078`, nowhere near the cutoff) which still flagged
+`fragmented`. Treat this flag on a filament as "look at it," not "probably
+wrong" — unlike on compact objects, where it reliably indicates defocus.
+All 4 filaments flagged `fragmented` on frame 1 were confirmed by eye as
+genuine filaments and restored. Refinement itself is **not** broadly broken for
+filaments: it succeeded on 14 of 18, and the 4 failures were loud (flagged),
+not silent. **Worth fixing properly at some point** with a local/adaptive
+threshold along the filament rather than one global value from its single
+darkest pixel.
+
+**Bug found and fixed 2026-09-23 — `keep_component_at` measured neighbouring
+objects.** When a drawn shape sat on something too faint to survive the focus
+cutoff, the old code fell back to "keep the largest connected component in the
+search region". Since the search region is dilated by `DILATE_PX`, a
+**different object** only had to come within 5 px to be grabbed and written into
+this shape's annotation — silently, with the neighbour's `t_min` reported as if
+it were this object's. Caught on `frame_0072_n719` shape 263: 0 refined pixels
+inside the drawn circle, 15 outside it.
+- **Do not "simplify" this back to nearest/largest.** The first attempted fix
+  (reject unless the shape's centroid sits on a dark region) was worse: a
+  curved, hooked or looped filament encloses empty background, so its centroid
+  lands *off* the object — that change alone broke 23 of 58 filaments. The
+  correct rule, now implemented, is **the component overlapping the drawn shape
+  most**, which handles curved filaments and rejects non-overlapping neighbours.
+- Shapes with no overlapping in-focus region now flag
+  `nothing_in_focus_at_centre` and report darkness over the **drawn shape only**,
+  so the number describes what was actually drawn rather than a neighbour.
+
+**Sensor dust was labelled as droplets — 286 shapes removed, 2026-09-24.**
+There are **32 static specks** on the sensor (0.16% of frame, 10-35% darker than
+the field). Because they are static they sit *in* the temporal-median
+background, so they divide out of T entirely — visible in the 8-bit view Ben
+labels on, invisible in the transmission data. ~19 per frame were labelled as
+droplets across all 15 frames.
+- **Why they had to come out, despite looking exactly like droplets**: all 2000
+  training composites are built on real background frames carrying the same
+  specks, **unlabelled**. `clean_backgrounds.py` never removed them and could
+  not have — it detects objects in T, where dust does not exist. So the model is
+  trained that dust is background. Ground truth saying otherwise scores it wrong
+  for doing what it was taught: ~19 guaranteed false negatives per frame.
+- They never affected D32 — at T ~ 0.95 they were already `measurable=false`.
+  Detection scoring only.
+- Dust is also a **transient hardware defect Ben is fixing**, so encoding it in a
+  permanent benchmark would tie the measuring stick to a fault that will not
+  exist in future recordings, and a model tuned to find dust would throw false
+  positives on clean data.
+- Tooling: `_dust.py` (shared map, built from the background — never from a
+  single frame), `strip_dust.py` (removal, reversible via
+  `<frame>.dust_removed.json` and `<frame>.predust.json`, and it strips
+  `.original.json` too so `--from-original` cannot reintroduce them).
+  `check_missed.py` now refuses to propose dust and warns if any is still
+  labelled.
+- **Do not "fix" dust by patching it out of the training backgrounds.** Leaving
+  it present-and-unlabelled is what teaches the model to ignore it, which is the
+  behaviour wanted on this recording. Patching it would mean the model had never
+  seen a speck and might call one a droplet.
+
+**Second bug, fixed 2026-09-23 — `focus-max` was silently setting droplet
+SIZE, not just gating.** `refine_one` built its candidate pixel set as
+`T < FOCUS_MAX` and then applied the half-maximum edge *within that set*. Since
+`edge = (t_min + 1) / 2`, any object with `t_min > 0.40` has its edge above
+0.70, so 0.70 became the binding constraint and the object was cut at a **fixed
+contrast threshold** — precisely what the per-object half-maximum rule exists to
+avoid. Measured over frames 1-2: **104 refined droplets affected**, true area a
+median **1.5x larger** (worst 14x), diameters understated ~22% at the median.
+Fixed by thresholding within the dilated search region and keeping the component
+overlapping the candidate, so `FOCUS_MAX` only ever decides *which object*, never
+*how big it is*. **Effect on the reported number: droplet D32 (measurable only)
+went 74 -> 80 um.** Ben found this by asking whether 0.70 was altering sizes.
+
+**Step 8 evaluation caveat — do not score unrefined shapes on strict mask IoU.**
+Shapes that never reached the focus cutoff keep the **hand-drawn boundary**,
+which is roughly **2-3x too generous in area** (the half-max core averages ~30%
+of the visible blob's area on frame 1). That costs nothing in the measurements,
+since those objects are `measurable=false` and excluded from D32 and atomised
+fraction by definition. But their masks are loose, so a model producing a
+*correct, tight* mask could fail a mask-IoU threshold against them and be scored
+as a miss. **Score `measurable=false` objects on detection only** (box IoU, or a
+forgiving threshold); reserve strict mask IoU for `measurable=true` objects.
+
+**Also crude for filaments: the `in_focus` flag itself.** `min_transmission` is
+the single darkest pixel in the whole shape. Fair for a compact droplet; for a
+long filament whose brightness varies along its length, one dark section marks
+the entire object in-focus even when most of it is soft. Do not lean on the
+focus flag for filaments at analysis time. Cheap improvement when needed: also
+record mean transmission per annotation (`extract_candidates.py` already
+computes this for candidates).
+
+**Verified NOT a bug, 2026-09-23 — refined circle centres.** Refined droplet
+circles look visibly off-centre and too small at high zoom. Measured across all
+44 circles in frame 1: the written centre sits on the refined mask's centroid to
+within **0.17 px mean / 0.57 px max** — correctly centred on what it measures.
+The apparent offset is a median **2.0 px** difference from the *hand-drawn*
+centre, which at ~25-30x zoom on a ~4 px object renders as a large visible gap
+and is well within normal hand placement variation. The apparent shrink is
+intended: the circle covers the half-max core, not the defocus halo. Do not
+"fix" this.
+
+**LabelMe autosave will silently wipe a labels file.** Launched without
+`--output` pointed at `06_validation/labels`, LabelMe does not load the existing
+JSON, treats the frame as unannotated, and overwrites it with an empty shape list
+on navigate/close. This destroyed 33 shapes on `frame_0072_n719` on 2026-09-22.
+**The `--output` flag is not optional** — see the launch command in
+`docs/VALIDATION_LABELLING_PROTOCOL.md`.
+
+---
+
+## STEP 7 — train v2 on Windows. Self-contained instructions.
+
+**Status going in (2026-09-24): Step 6 is COMPLETE.** 15/15 frames labelled,
+dust stripped, droplets refined, `06_validation/instances.json` written with
+**2458 annotations** (droplet 2237 / filament 165 / blob 56). The training set
+(`05_dataset/`, 2000 composites, 33,456 instances) has been ready since
+2026-09-21 and has never seen any validation frame.
+
+### Before you touch anything
+
+1. **Find the LaCie drive letter.** Everything below assumes `E:`; substitute
+   whatever it actually is.
+   ```
+   python -c "import sys; sys.path.insert(0,'src'); from config_loader import find_lacie_drive; print(find_lacie_drive())"
+   ```
+   This is untested on Windows — if it returns None, pass paths explicitly.
+2. `conda activate Detectron`
+3. Confirm both COCO files load and agree on categories:
+   ```
+   python -c "import json; [print(p, [(c['id'],c['name']) for c in json.load(open(p))['categories']]) for p in [r'E:\Experiments\Real_Data\05_dataset\annotations\instances.json', r'E:\Experiments\Real_Data\06_validation\instances.json']]"
+   ```
+   Both must print `[(1,'droplet'), (2,'filament'), (3,'blob')]`. Verified
+   matching on 2026-09-24 — if they ever diverge, class indices mean different
+   things in training and evaluation and every number is garbage.
+
+### Edits required to `train_detectron2.py`
+
+It is currently configured for the OLD 2-class dataset. Four changes:
+
+| line (approx) | from | to |
+|---|---|---|
+| ~117 `ANNOTATIONS_PATH` | `...Detectron_Trial_2\blur_annotations.json` | `E:\Experiments\Real_Data\05_dataset\annotations\instances.json` |
+| ~118 `IMAGES_PATH` | `...Detectron_Trial_2\images` | `E:\Experiments\Real_Data\05_dataset\images` |
+| 188, 221, 226 `thing_classes` | `["droplet", "ligament"]` | `["droplet", "filament", "blob"]` |
+| 337 `cfg.MODEL.ROI_HEADS.NUM_CLASSES` | `2` | `3` |
+| 335 `ANCHOR_GENERATOR.SIZES` | `[[8, 16, 32, 64]]` | `[[8, 12], [20], [50], [125], [320]]` — see anchors below |
+| (add near 335) `ANCHOR_GENERATOR.ASPECT_RATIOS` | unset (default `[[0.5,1.0,2.0]]`) | `[[0.25, 0.5, 1.0, 2.0, 4.0]]` |
+| (add) `cfg.TEST.DETECTIONS_PER_IMAGE` | unset (default `100`) | `300` |
+| ~128 `MAX_ITER` | `78000` | `20000` to start — see below |
+
+**All three `thing_classes` lines must change** — they are set separately for
+the combined, train and val catalogs, and missing one gives mislabelled
+visualisations that look like a model failure.
+
+Keep the swept hyperparameters as they are for v2: `BASE_LR = 0.0025`,
+`ANCHOR_SIZES = [[8, 16, 32, 64]]`, `BATCH_SIZE = 2`, cosine decay. Those came
+from `LR_Anchor_Sweep_Final`.
+
+**But know that the anchors are inherited from a DIFFERENT dataset and are not
+verified for this one.** The sweep ran on `Detectron_Trial_2` (2 classes).
+Measured against the new training set (2026-09-24), bbox max-dimension in px:
+
+| class | n | p50 | p95 | max |
+|---|---|---|---|---|
+| droplet | 21,393 | 9 | 19 | 35 |
+| filament | 10,614 | 42 | 343 | 800 |
+| blob | 1,449 | 34 | 460 | 770 |
+
+**19.9% of training objects are smaller than the smallest anchor (8 px) and
+11.9% are larger than the biggest (64 px)** — about a third outside the range.
+Small ones mostly survive because Detectron2's matcher gives every ground-truth
+box its best anchor regardless of IoU, but regressing a 64 px anchor out to an
+800 px filament is a long stretch, and filaments are the half of the
+atomised-fraction ratio that matters most. Note `[[8,16,32,64]]` is a single
+list, so it applies at EVERY FPN level; stock Detectron2 uses one increasing
+size per level (32→512).
+
+**Aspect ratios are mismatched too**, and `train_detectron2.py` never sets them,
+so the Detectron2 default `[[0.5, 1.0, 2.0]]` applies. Measured bbox aspect
+(h/w) on the training set:
+
+| class | p5 | p50 | p95 | max | **outside 0.5-2.0** |
+|---|---|---|---|---|---|
+| droplet | 0.67 | 1.00 | 1.50 | 5.3 | 1.4% |
+| filament | 0.30 | 1.00 | 3.40 | **24.0** | **35.7%** |
+| blob | 0.47 | 1.00 | 1.94 | 9.0 | 10.1% |
+
+So filaments are handicapped twice — on size AND on shape — and they are the
+class the atomised fraction depends on most.
+
+**CHANGE THE ANCHORS BEFORE THE REAL RUN.** An earlier draft of this handoff
+said to keep them and "change one variable at a time". That was wrong: holding
+a variable fixed only buys attribution when there is a BASELINE to attribute
+against, and there is none — v2 is the first 3-class model on this data. Keeping
+known-mismatched anchors just spends a full training run confirming a problem
+already measured. A defensible starting point derived from the table above:
+
+```python
+# roughly geometric across the five FPN levels, covering the measured 5-800 px.
+# Two sizes on P2 because droplets cluster there (median 9 px) -- see below.
+cfg.MODEL.ANCHOR_GENERATOR.SIZES = [[8, 12], [20], [50], [125], [320]]
+# 4:1 both ways covers filaments to ~p95 (3.40)
+cfg.MODEL.ANCHOR_GENERATOR.ASPECT_RATIOS = [[0.25, 0.5, 1.0, 2.0, 4.0]]
+```
+
+**Do NOT add anchors smaller than 8 px — measured, it achieves nothing.** P2 has
+stride 4, so an object sits up to 2 px from the nearest anchor centre. Median
+droplet IoU allowing for that realistic offset:
+
+| P2 sizes | anchors | droplet IoU |
+|---|---|---|
+| `[8]` | 25 | 0.406 |
+| **`[8, 12]`** | 30 | **0.444** |
+| `[5, 8, 12]` | 35 | 0.444 — the 5 contributes nothing |
+| `[2, 4, 8]` | 35 | 0.406 — nothing |
+| `[6, 9, 14]` | 35 | 0.412 — worse |
+
+Sub-8px droplets score **0.333 under every configuration tried**, including one
+with a 2 px anchor. Shrinking an anchor makes it MORE sensitive to grid
+misalignment, which cancels the size benefit exactly. **The binding constraint
+on tiny droplets is feature-map resolution, not anchor size** — if small-droplet
+recall is the bottleneck at Step 8, the levers are upsampling the input or
+adding a finer FPN level, both of which need training data at matching scale.
+Adding the 12 px anchor is worth it (+9% droplet coverage for 5 anchor shapes);
+anything below 8 px is pure cost.
+
+Note the existing `[[8, 16, 32, 64]]` is a SINGLE list, so it is broadcast to
+every FPN level; stock Detectron2 uses one increasing size per level, which is
+what the replacement above does.
+
+**This does NOT cost small-droplet detection — verified, not assumed.** Best
+achievable IoU between every training object and its nearest anchor shape:
+
+| class | n | OLD median | NEW median | OLD poorly covered (<0.3) | NEW poorly covered |
+|---|---|---|---|---|---|
+| droplet | 21,393 | 0.656 | **0.656** | 4.9% | **4.9%** |
+| filament | 10,614 | 0.635 | 0.602 | 9.8% | **0.7%** |
+| blob | 1,449 | 0.647 | 0.607 | 15.9% | **0.2%** |
+
+Droplets under 8 px (n=6,593) score **0.562 under both** configurations —
+identical. The 8 px anchor survives at the finest FPN level (P2, stride 4),
+which is the only level where small objects are detected anyway; the old
+config's 8 px anchors on P4/P5/P6 were smaller than a single feature cell and
+were wasted compute, not coverage. Median IoU for filament/blob dips slightly
+(one size per level instead of four at every level) but the TAIL improves
+enormously, and a 0.60 match trains fine where a 0.10 match does not.
+
+Cost: 25 anchor shapes per location instead of 12, so roughly double the RPN
+anchors and somewhat slower training.
+
+**Also unset and wrong for this data: `TEST.DETECTIONS_PER_IMAGE`** defaults to
+**100**, while validation frames hold a median of **168** objects and a max of
+**309**. On a whole frame the model cannot report more than 100 no matter how
+good it is. Tiling largely rescues this (~50 objects per 800x800 tile) but set
+it explicitly anyway:
+
+```python
+cfg.TEST.DETECTIONS_PER_IMAGE = 300
+```
+
+**What does NOT need changing**: `BASE_LR = 0.0025` is not a dataset-specific
+discovery — it is the standard linear scaling of Detectron2's COCO recipe
+(0.02 at batch 16) down to batch 2. Learning rate follows batch size and
+optimiser, not image content, which is exactly why it carries over when anchors
+do not.
+
+**`MAX_ITER` is currently 78000**, sized for the old dataset. The new one is
+2000 images at batch 2 = 1000 iters/epoch, so 78000 is ~78 epochs. Start with
+`QUICK_TEST_ITERATIONS = 500` to prove the pipeline end to end (~15 min), then
+set it back to `None` and run the real thing.
+
+### Do not confuse the two "validations"
+
+- `VALIDATION_SIZE = 20` holds out 20 **composites** from the training set. That
+  is in-training monitoring only — same generator, same biases. It tells you
+  whether the model is learning, nothing about whether it measures real spray.
+- The **real benchmark** is `06_validation/instances.json`, the 15 hand-labelled
+  frames. It is NOT used during training at all. It is Step 8.
+
+### Run the quick test FIRST — do not skip this
+
+Set `QUICK_TEST_ITERATIONS = 500` and run:
+
+```
+python train_detectron2.py
+```
+
+~15 minutes. It is not about model quality at 500 iterations (there is none);
+it exists to prove the whole path before committing a multi-hour run. **Check
+all of these before going further:**
+
+| check | what right looks like |
+|---|---|
+| dataset registers | `2000` images found, no path error |
+| class count | 3 classes, and visualisations say **droplet / filament / blob** — if any say "ligament", a `thing_classes` line was missed |
+| annotations load | 33,456 instances, no pycocotools RLE decode errors |
+| masks align | the sample visualisations show masks sitting on dark objects, not offset or empty |
+| loss falls | total loss drops from ~2-3 toward ~1; flat or NaN means the LR or anchors are wrong |
+| checkpoints write | a `.pth` appears in `D:\Experiments\AI\<run>\` — catches full disks and permission problems |
+| GPU is used | if it is running on CPU the iteration rate will be ~50x slower; check before assuming the model is slow |
+
+If loss goes NaN immediately, the usual cause is the anchor change above having
+a typo (e.g. a bare list instead of a list of lists).
+
+### Then the real run
+
+Set `QUICK_TEST_ITERATIONS = None` and run again. 2000 images at batch 2 is
+1000 iterations per epoch, so the current `MAX_ITER = 78000` is ~78 epochs —
+inherited from the old dataset and probably longer than needed. **Start at
+`MAX_ITER = 20000` (20 epochs)** and read the validation curve before spending
+more; checkpoints land in `D:\Experiments\AI\` every 10000 iterations, so a
+longer run can always be resumed rather than restarted.
+
+---
+
+## STEP 8 — evaluate against the real benchmark
+
+**Tiled inference is required, not optional, and here is the arithmetic.**
+Training images are **800x800**; validation frames are **2048x1152**.
+`train_detectron2.py` sets no `cfg.INPUT` values, so Detectron2 defaults apply:
+`MIN_SIZE_TEST = 800`, `MAX_SIZE_TEST = 1333`. Feeding a whole frame therefore
+scales it by `min(800/1152, 1333/2048) = 0.65` — a 7 px median validation
+droplet arrives as **4.5 px**. That alone would make v2 look broken.
+
+Tile into 800x800 windows with overlap: each tile needs no resizing (scale
+1.0), so objects reach the model at exactly the scale it trained on. Merge
+detections across tiles with NMS at the seams.
+
+**Expect small-object recall to be the weak point regardless**, because the
+size distributions genuinely differ — measured 2026-09-24:
+
+| | median droplet | fraction < 8 px |
+|---|---|---|
+| training composites | 9 px | **19.9%** |
+| validation frames | 7 px | **72.1%** |
+
+That is the small-object focus bias with a number on it: the extractor's 0.70
+cutoff kept faint small objects out of training, while they were deliberately
+labelled in the benchmark. The gap is the measurement working, not a defect.
+
+**Filter correctly when computing numbers** — this is what the per-annotation
+flags are for:
+
+- **Detection scoring**: use ALL 2458 annotations. Every one is a real object.
+- **Size statistics (D32, atomised fraction)**: use only `measurable == true`
+  (1261 of 2458). The rest are out of focus or cut by the frame edge, so their
+  sizes are not trustworthy.
+- **Do NOT use strict mask IoU on `measurable == false` objects.** Their masks
+  are the hand-drawn outer boundary (2-3x too generous), so a model producing a
+  correct tight mask would fail the IoU threshold and score as a miss. Score
+  those on detection alone.
+- Report accuracy **split by size band**. A single aggregate number conflates
+  "model is bad" with "training data never contained these".
+
+### What the benchmark already tells you to expect
+
+- **Small droplets may be under-detected.** `extract_candidates.py` built the
+  training set with the same 0.70 focus cutoff, so faint small objects are
+  largely absent from training while present in the benchmark. A known gap, not
+  a model defect.
+- **Blobs will generalise weakly.** All 1449 blob instances derive from just
+  **15 unique templates**; rotation and flips vary presentation, not shape.
+  Validation has only 56 blobs, so that number will be noisy either way.
+- **Filament masks are hand-drawn, not refined**, so their areas are ~1.6x
+  inflated relative to refined droplets. This biases the atomised fraction down
+  in absolute terms but preserves run-to-run ranking (see rule 5 above).
+- **The focus cutoff discards LARGE objects too**, not just small ones. On the
+  full 15-frame set droplet D32 is 83 um over all annotations but 70 um over
+  measurable only — the excluded population skews *large*. The flat 0.70 cutoff
+  is wrong at both ends; a size-dependent threshold is the fix, and because
+  `min_transmission` is stored per annotation it can be applied at analysis time
+  with **no re-labelling and no retraining**.
+
+**Capture session was scheduled for Tuesday 2026-09-22 — OUTCOME NOT RECORDED
+HERE.** Before relying on any new recording: confirm it uses the same
+bubbler/spinner position as `recording_130057`, or it will be unusable for
+over-training and validation exactly as the other three 2026-09-09 runs were.
+See the note under "Only one run is usable right now". If new runs did land,
+they do not affect the Step 6 work in progress — the validation set is built
+from `125917_NNA_3000sccm` and stays that way.
 
 **macOS sidecar files on the exFAT drive — know about this one.** The LaCie is
 exFAT (so Windows can read it), which has no native extended attributes, so
@@ -175,6 +691,78 @@ error out. Every listing in `AI/Real_Data_Code/` therefore goes through
 **If working on the Windows machine**: verify drive detection picks the right
 letter — `python -c "import sys; sys.path.insert(0,'src'); from config_loader
 import find_lacie_drive; print(find_lacie_drive())"`. Untested there.
+
+---
+
+## Transmission, t_min and the half-maximum edge — the units everything is in
+
+Every threshold, gate and edge in this pipeline is expressed in **T**. If T is
+not clear, none of the rest is.
+
+**T = transmission = the fraction of light that reached the sensor**, relative
+to what that same pixel reads with nothing in the way:
+
+    T = raw_frame / background_median
+
+- `T = 1.0` — nothing there. All light through.
+- `T = 0.29` — 71% of the light blocked.
+- `T = 0.05` — nearly opaque (the big ligaments).
+
+A real slice through a small droplet in `frame_0201_n2009`, showing why this
+is a physical quantity and not a display setting:
+
+| x | raw | background | T |
+|---|---|---|---|
+| 959 | 831 | 811 | 1.03 (empty) |
+| 961 | 572 | 811 | 0.705 (edge) |
+| 965 | 238 | 814 | 0.292 (core) |
+| 973 | 548 | 817 | 0.671 (edge) |
+| 975 | 834 | 821 | 1.016 (empty) |
+
+**Why divide rather than subtract.** Two reasons:
+1. Absorption is multiplicative (Beer-Lambert), so division matches the physics
+   and overlapping objects multiply — which is also why `composite.py` multiplies
+   transmissions instead of alpha-blending.
+2. It cancels the illumination field. The background varies pixel to pixel
+   (811, 817, 830, 824 above) from lamp non-uniformity, the right-hand vignette
+   and the top-edge smudge. Dividing compares every pixel to **its own** empty
+   value, so T means the same thing everywhere in the frame.
+
+The background is the temporal median of 40 frames: spray is transient so it
+medians away, anything static survives. It is "the empty scene as this camera
+sees it".
+
+**t_min = the darkest single pixel in one object.** It does two jobs:
+1. **Focus proxy.** An in-focus object has a sharp dense core, so t_min goes
+   low. Defocus spreads the same absorbed light over more pixels, so no single
+   pixel gets very dark and t_min stays high. That is all `--focus-max 0.70`
+   asks: *did this object ever get properly dark?*
+2. **Sets the edge**, below.
+
+**The half-maximum edge = (t_min + 1) / 2.** Midway between the object's
+darkest point and clear background. Everything darker than that is inside.
+
+**Why half-maximum specifically, and not any other level.** When defocus blurs
+a sharp edge, the intensity ramps instead of stepping — but the **50% crossing
+stays exactly where the true edge was**, for any symmetric blur, because blur
+moves light equally both ways about the edge so the midpoint cannot shift. At
+20% or 80% the contour creeps outward or inward as focus changes. **Half-max is
+the only threshold invariant to defocus**, which is why the whole pipeline is
+built on it. It is a physical argument, not a convention — though the *choice*
+to define an object's boundary this way is still yours to defend.
+
+**And this explains the small-object bias exactly.** That invariance assumes
+the object is large enough for its core to reach full opacity. A 3-4 px droplet
+is comparable in size to the blur itself, so its light spreads before it can
+ever get properly dark: t_min reads too high, the half-max edge derived from it
+sits too tight, and the droplet measures smaller than it is — or fails the
+focus gate entirely. Same physics, applied to something too small to hold it.
+
+**Sensor dust is invisible in T, and that is not a bug.** Specks on the sensor
+are static, so they are *in* the background median: dark ÷ equally dark = 1.0.
+They are plainly visible in the 8-bit view a human labels on and absent from T.
+Both readings are correct — they are different quantities. See the dust section
+under Step 6.
 
 ---
 

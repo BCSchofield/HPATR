@@ -209,13 +209,40 @@
       "Bash(python3 _fsutil.py /Volumes/LaCie/Experiments/Real_Data)",
       "Bash(python3 AI/Real_Data_Code/validation_to_coco.py --run-name 125917_NNA_3000sccm)",
       "Bash(python3 AI/Real_Data_Code/composite.py --run-name 125917_NNA_3000sccm --preview 1)",
-      "Bash(python3 -m py_compile src/gui/GUI_Clean.py)"
+      "Bash(python3 -m py_compile src/gui/GUI_Clean.py)",
+      "Bash(diskutil info *)",
+      "Read(//Volumes/**)",
+      "Bash(python3 AI/Real_Data_Code/refine_labels.py --frame frame_0062_n619)",
+      "Bash(cp /Volumes/LaCie/Experiments/Real_Data/06_validation/labels/frame_0062_n619.original.json /Volumes/LaCie/Experiments/Real_Data/06_validation/labels/frame_0062_n619.json)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('AI/Real_Data_Code/refine_labels.py'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
+      "Bash(mkdir -p /Volumes/LaCie/Experiments/Real_Data/06_validation/review_images)",
+      "Bash(cp /private/tmp/claude-501/-Users-benschofield-Documents-GitHub-HPATR/4136ff21-6120-418e-8b56-766cf366ee62/scratchpad/flagged_marked.png /Volumes/LaCie/Experiments/Real_Data/06_validation/review_images/frame_0062_n619_flagged.png)",
+      "Bash(cp /private/tmp/claude-501/-Users-benschofield-Documents-GitHub-HPATR/4136ff21-6120-418e-8b56-766cf366ee62/scratchpad/circles_only.png /Volumes/LaCie/Experiments/Real_Data/06_validation/review_images/frame_0062_n619_circles.png)",
+      "Bash(python refine_labels.py --frame frame_0062_n619 --drop-flagged)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(len\\(d['frames']\\), 'frames'\\); [print\\(f['frame_number']\\) for f in d['frames']]\")",
+      "Bash(python3 prelabel_frame.py --frame frame_0072_n719)",
+      "Bash(rm /Volumes/LaCie/Experiments/Real_Data/06_validation/labels/frame_0072_n719.prelabel_backup.json && echo \"removed \\(it was a backup of my own first-run proposal, not your work\\)\" && ls /Volumes/LaCie/Experiments/Real_Data/06_validation/labels/)",
+      "Bash(mkdir -p extractor_proposals)",
+      "Bash(mv labels/frame_0072_n719.json extractor_proposals/frame_0072_n719_proposal.json)",
+      "Bash(python3 refine_labels.py --frame frame_0062_n619 --from-original)",
+      "Bash(python3 validation_to_coco.py --run-name 125917_NNA_3000sccm)",
+      "Read(//Users/benschofield/.claude/projects/-Users-benschofield-Documents-GitHub-HPATR/memory/**)",
+      "Bash(python3 check_missed.py --frame frame_0072_n719)",
+      "Bash(python3 refine_labels.py --frame frame_0072_n719)",
+      "Bash(python3 refine_labels.py --frame frame_0072_n719 --from-original)",
+      "Bash(python3 check_missed.py --frame frame_0201_n2009)",
+      "Bash(python3 refine_labels.py --frame frame_0201_n2009)",
+      "Bash(python3 refine_labels.py --frame frame_0201_n2009 --from-original)",
+      "Bash(python3 -m py_compile refine_labels.py check_missed.py)",
+      "Bash(python3 strip_dust.py --dry-run)",
+      "Bash(python3 strip_dust.py)"
     ],
     "additionalDirectories": [
       "/Volumes/LaCie/Experiments/Real_Data/00_frames/_dryrun",
       "/Volumes/LaCie/Experiments/Real_Data/00_frames",
       "/Volumes/LaCie/Experiments/Real_Data/04_contact_sheets/125917_NNA_3000sccm",
-      "/Volumes/LaCie/Experiments/Real_Data/01_candidates/125917_NNA_3000sccm"
+      "/Volumes/LaCie/Experiments/Real_Data/01_candidates/125917_NNA_3000sccm",
+      "/Volumes/LaCie/Experiments/Real_Data/06_validation/labels"
     ]
   }
 }

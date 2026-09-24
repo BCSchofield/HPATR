@@ -232,10 +232,17 @@ def main():
                          "at half-maximum, so this is not a size-defining value.")
     ap.add_argument("--focus-max", type=float, default=0.70,
                     help="reject an object whose darkest pixel is not below this "
-                         "(default 0.80). THIS IS THE OUT-OF-FOCUS CUTOFF: a soft "
-                         "blob never reaches it. Handoff Step 6 -- hand-masking "
-                         "must apply the same rule or validation and training "
-                         "disagree about what counts as an object.")
+                         "(default 0.70). A LOOSE BACKSTOP, NOT the real focus "
+                         "test -- the fragmentation gate (--max-pieces) is that, "
+                         "because it is size-independent. 0.70 sits just above "
+                         "the calibration example Ben judged CLEARLY out of focus "
+                         "(t_min 0.672), and far above his stated limit of "
+                         "acceptable at ~1400 px (0.134); it is deliberately loose "
+                         "so it does not annihilate small objects, which cannot "
+                         "reach low t_min at all. Treating it as the focus "
+                         "criterion is too permissive for large objects and too "
+                         "strict for small ones -- see the size-adjusted threshold "
+                         "noted in the handoff.")
     ap.add_argument("--blur-sigma", type=float, default=0.5,
                     help="gaussian sigma on T before finding regions, 0 to disable "
                          "(default 0.5). Only affects region finding; saved crops "
