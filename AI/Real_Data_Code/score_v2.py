@@ -45,6 +45,11 @@ from config_loader import find_lacie_drive  # noqa: E402
 UM_PER_PX = 10.0
 CLASS_NAMES = {1: "droplet", 2: "filament", 3: "blob"}
 SIZE_BANDS_UM = [(0, 50), (50, 100), (100, 200), (200, 500), (500, 1e9)]
+# COCOeval keeps only the top maxDets[-1] detections PER IMAGE PER CLASS (default 100).
+# 16 of the 20 benchmark frames hold >100 droplets (max 276): at 100, 42% of droplet GT
+# could never count, and 384 of v2's detections were discarded unscored. Measured
+# 2026-09-25. Must exceed both GT and predictions per frame+class; main() checks.
+MAX_DETS = 1000
 
 
 def real_data_root() -> Path:
@@ -63,6 +68,7 @@ def run_eval(coco_gt, preds, iou_type, quiet=True):
         return None
     coco_dt = coco_gt.loadRes(copy.deepcopy(preds))
     e = COCOeval(coco_gt, coco_dt, iou_type)
+    e.params.maxDets = [1, 10, MAX_DETS]  # summarize() reads AP/AR at maxDets[2]
     e.evaluate(); e.accumulate()
     if quiet:
         import io, contextlib
@@ -71,6 +77,17 @@ def run_eval(coco_gt, preds, iou_type, quiet=True):
     else:
         e.summarize()
     return e
+
+
+def ap_at_max(e):
+    """AP @[IoU .50:.95, area all] at maxDets = MAX_DETS, straight from the
+    precision table. Needed because pycocotools' summarize() hard-codes
+    maxDets=100 for stats[0] -- with 100 absent from params.maxDets it returns
+    -1, and with 100 present it reports the capped value we are avoiding.
+    (stats[1]/[2] AP50/AP75 and stats[8] AR already use maxDets[2].)"""
+    p = e.eval["precision"][:, :, :, 0, -1]  # [IoU, recall, class, area=all, maxDets=last]
+    p = p[p > -1]
+    return float(p.mean()) * 100 if p.size else float("nan")
 
 
 def ap_per_class(coco_gt, preds, iou_type):
@@ -84,7 +101,7 @@ def ap_per_class(coco_gt, preds, iou_type):
         import io, contextlib
         with contextlib.redirect_stdout(io.StringIO()):
             e.summarize()
-        out[name] = e.stats[0] * 100
+        out[name] = ap_at_max(e)
     return out
 
 
@@ -153,6 +170,13 @@ def main():
     if len(unmatched) > len(gt_ids) // 2:
         print(f"  WARNING: {len(unmatched)} of {len(gt_ids)} frames have no "
               f"detections at all. Stale predictions?\n")
+    per = defaultdict(int)
+    for x in gt_raw["annotations"] + preds:
+        per[(x["image_id"], x["category_id"])] += 1
+    worst = max(per.values())
+    if worst > MAX_DETS:
+        sys.exit(f"A frame+class has {worst} GT or predictions, above MAX_DETS={MAX_DETS}: "
+                 f"COCOeval would silently drop the excess. Raise MAX_DETS.")
 
     coco_gt = COCO(gt_path) if False else None  # avoid COCO's stdout noise
     import io, contextlib
@@ -166,8 +190,8 @@ def main():
     print("=" * 72)
     for iou_type in ("bbox", "segm"):
         e = run_eval(coco_gt, preds, iou_type)
-        print(f"  {iou_type:5s}  AP {e.stats[0]*100:5.1f}   AP50 {e.stats[1]*100:5.1f}   "
-              f"AP75 {e.stats[2]*100:5.1f}   AR100 {e.stats[8]*100:5.1f}")
+        print(f"  {iou_type:5s}  AP {ap_at_max(e):5.1f}   AP50 {e.stats[1]*100:5.1f}   "
+              f"AP75 {e.stats[2]*100:5.1f}   AR{MAX_DETS} {e.stats[8]*100:5.1f}")
     print("\n  per class (bbox AP / segm AP):")
     ab, as_ = ap_per_class(coco_gt, preds, "bbox"), ap_per_class(coco_gt, preds, "segm")
     for name in ("droplet", "filament", "blob"):
@@ -204,8 +228,8 @@ def main():
           f"(out of focus or border-touching)")
     for iou_type in ("bbox", "segm"):
         e = run_eval(coco_m, preds, iou_type)
-        print(f"  {iou_type:5s}  AP {e.stats[0]*100:5.1f}   AP50 {e.stats[1]*100:5.1f}   "
-              f"AR100 {e.stats[8]*100:5.1f}")
+        print(f"  {iou_type:5s}  AP {ap_at_max(e):5.1f}   AP50 {e.stats[1]*100:5.1f}   "
+              f"AR{MAX_DETS} {e.stats[8]*100:5.1f}")
     tmp.unlink()
 
     # ---------- 3. operating point ----------

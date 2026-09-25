@@ -128,10 +128,10 @@ LR_DECAY_TYPE = "cosine"
 
 # --- Dataset paths ---
 DATASET_NAME = "spray_train"
-# 6000 composites (composite.py --n 6000 --seed 1 --out-name 05_dataset_6k). More arrangements
-# per epoch than the original 2000 (05_dataset, seed 0); same 213 objects and 25 backgrounds.
-ANNOTATIONS_PATH = r"D:\Experiments\Real_Data\05_dataset_6k\annotations\instances.json"
-IMAGES_PATH = r"D:\Experiments\Real_Data\05_dataset_6k\images"
+# v3: 4000 composites, 249,183 instances (~43/image) from the 750-object two-run library
+# (composite.py --n 4000 --seed 3 --out-name 05_dataset_v3). v2 used 05_dataset_6k.
+ANNOTATIONS_PATH = r"D:\Experiments\Real_Data\05_dataset_v3\annotations\instances.json"
+IMAGES_PATH = r"D:\Experiments\Real_Data\05_dataset_v3\images"
 # Must match the category ids (1, 2, 3) in both 05_dataset and 06_validation instances.json
 CLASS_NAMES = ["droplet", "filament", "blob"]
 # Training composites are 800x800 and tiles at inference are 800x800: objects must reach
@@ -142,10 +142,12 @@ INPUT_SIZE = 800
 # --- Training length and output ---
 NUM_EPOCHS = 1  # Used only when MAX_ITER is None: total iters = NUM_EPOCHS * (num_train // BATCH_SIZE)
 # Set MAX_ITER to fix total iterations (e.g. 20000 for your final run). None = use NUM_EPOCHS formula.
-# ~6.8 epochs at 2950 iters/epoch (5900 train images / 2). Cosine decays the LR to 0 AT
-# MAX_ITER, so a run that is too short is redone with a larger value, not resumed.
+# v3: ~10.3 epochs at 1950 iters/epoch (3900 train images / 2); v2 was 20000 (~6.8 epochs,
+# plateaued by ~3). 30000 was planned but measured at ~5.3 h (0.58 s/it); 20000 ~3.6 h.
+# Cosine decays the LR to 0 AT MAX_ITER, so a run that is too short is redone with a
+# larger value, not resumed.
 MAX_ITER = 20000
-# Quick test: overrides everything. 500 for ~3 min test; None for real run.
+# Quick test: overrides everything. 500 for ~8 min test; None for real run.
 QUICK_TEST_ITERATIONS = None  # 500 for quick test; None for real run
 # Local disk, NOT the LaCie: a 351 MB checkpoint takes 38 s to write to the LaCie from
 # Windows vs ~2 s here (B: internal HDD). Copy finished runs to D:\Experiments\AI afterwards.
@@ -318,7 +320,9 @@ def setup_config(output_dir, num_train_images, resume_from=None):
     cfg.DATASETS.TEST = (f"{DATASET_NAME}_val",)
     
     # Data loading
-    cfg.DATALOADER.NUM_WORKERS = 2
+    # v3 images carry ~43 masks each (RLE decode + flip on CPU): at 2 workers data loading took
+    # ~0.5 s of a 0.86 s iteration. 8-core i7-9700K: 6 workers leaves the main process a core.
+    cfg.DATALOADER.NUM_WORKERS = 6
     
     # IMPORTANT: Configure for RLE format (not polygon)
     # Detectron2 will automatically handle RLE when loading COCO annotations
@@ -973,7 +977,14 @@ class RLEDatasetMapper(DatasetMapper):
             return dataset_dict
         
         utils.check_image_size(dataset_dict, image)
-        
+
+        if not self.is_train:
+            # Inference/eval needs no GT in the batch: COCOEvaluator reads GT from the json.
+            # Decoding it anyway put every mask in the batch as a full 800x800 array, twice
+            # (~250 MB for a 200-object v3 composite), which ran the validation loader out
+            # of memory on 2026-09-25 (MemoryError at iter 1000). Same as Detectron2's own mapper.
+            dataset_dict.pop("annotations", None)
+
         if "annotations" in dataset_dict:
             # Convert RLE format to numpy arrays (not BitMasks yet)
             annos = []
@@ -1038,7 +1049,10 @@ class RLEDatasetMapper(DatasetMapper):
                 annos, image.shape[:2], mask_format="bitmask"
             )
             dataset_dict["instances"] = utils.filter_empty_instances(instances)
-        
+            # The model reads `instances` only; keeping the decoded annotations would ship
+            # every mask to the main process a second time.
+            dataset_dict.pop("annotations")
+
         return dataset_dict
 
 # ============================================================================
@@ -1072,7 +1086,9 @@ class ProgressTrainer(DefaultTrainer):
         # Create custom mapper (no augmentation for validation)
         mapper = RLEDatasetMapper(cfg, is_train=False)
         
-        return build_detection_test_loader(cfg, dataset_name, mapper=mapper)
+        # 2 workers, not cfg's 6: the 6 training workers stay alive during validation, and
+        # 12 worker processes took free RAM down to 4 GB of 32. Eval images carry no GT now.
+        return build_detection_test_loader(cfg, dataset_name, mapper=mapper, num_workers=2)
     
     @classmethod
     def build_evaluator(cls, cfg, dataset_name, output_folder=None):
@@ -1085,7 +1101,8 @@ class ProgressTrainer(DefaultTrainer):
             output_folder.mkdir(parents=True, exist_ok=True)
         
         # Return COCO evaluator for validation dataset
-        return COCOEvaluator(dataset_name, output_dir=str(output_folder))
+        return COCOEvaluator(dataset_name, output_dir=str(output_folder),
+                             max_dets_per_image=DETECTIONS_PER_IMAGE)
     
     def build_hooks(self):
         # Validation runs in after_step (with plots/CSV/viz); drop the stock EvalHook so the
@@ -1162,7 +1179,12 @@ class ProgressTrainer(DefaultTrainer):
                 import traceback
                 print(f"  [WARNING] Traceback: {traceback.format_exc()}")
                 # Don't let validation failure stop training
-        
+            finally:
+                # Detectron2's inference_context sets eval() and only restores train() on a
+                # clean exit, so a failed validation left the model in eval mode and the next
+                # step asserted -- killing the run over one lost validation (2026-09-25).
+                self.model.train()
+
         # Call parent after_step (saves checkpoints, etc.)
         # Wrap in try-except to handle potential file I/O errors
         # This is a known Windows issue with Detectron2's event writer
@@ -1194,7 +1216,10 @@ class ProgressTrainer(DefaultTrainer):
         # This is the standard way to evaluate in Detectron2
         try:
             test_loader = self.build_test_loader(self.cfg, val_dataset_name)
-            evaluator = COCOEvaluator(val_dataset_name, output_dir=str(eval_output_dir))
+            # COCO's default AP cap is 100 dets per image per class; v3 composites carry up to
+            # 200 objects, so droplets beyond 100 could never count. Match the model's cap.
+            evaluator = COCOEvaluator(val_dataset_name, output_dir=str(eval_output_dir),
+                                      max_dets_per_image=DETECTIONS_PER_IMAGE)
             # evaluate() returns {'bbox': {'AP': ..}, 'segm': {..}}; flatten to 'segm/AP' etc.
             results = flatten_results_dict(inference_on_dataset(self.model, test_loader, evaluator))
         except Exception as e:

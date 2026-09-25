@@ -21,7 +21,64 @@ file is the operational summary of it.
 
 ---
 
-## NEXT ACTIONS — updated 2026-09-25 (benchmark merged to 20 frames; v3 ready to train)
+## NEXT ACTIONS — updated 2026-09-25 evening (v3 TRAINED; score it on the Mac)
+
+**v3 is trained.** Run: `<LaCie>/Experiments/AI/training_2026_09_25_15_20_37/`
+(copied from `B:\Experiments\AI\`, all 122 files hash-verified). 20,000
+iterations, finished 17:28. Use **`model_best.pth` (iteration 19,000)** with
+**`config.yaml`** from the same folder. Composite-val (held-out composites only,
+not the benchmark): best segm AP **66.8**, bbox AP **71.5**; final (20k) 66.7 /
+71.5. Per-iteration history in `validation_results.csv`. Not yet analysed.
+
+**Do these next, on the Mac, in order:**
+
+1. **Pull the repo first.** `score_v2.py` changed on Windows today (the
+   detection-cap fix below) — scoring with the old copy would re-impose the
+   100-per-class cap and make v3 incomparable with the corrected v2 baseline.
+2. **Tiled inference with v3** — same command pattern as v2, pointed at the v3
+   run's `config.yaml` + `model_best.pth`:
+
+       python tiled_inference.py --all --preview --preview-thresh 0.3 \
+         --model-dir <LaCie>/Experiments/AI/training_2026_09_25_15_20_37 \
+         --out <LaCie>/Experiments/Real_Data/06_validation/v3_predictions.json
+
+   **`--model-dir` is mandatory here.** `tiled_inference.py` defaults to the
+   **v2** run (`training_2026_09_24_16_25_00`, line ~92); without the flag it
+   silently re-runs v2 and writes it to `v3_predictions.json`. It loads
+   `config.yaml` + `model_best.pth` from that folder.
+3. **Score v3 ONCE:**
+
+       python score_v2.py --pred <LaCie>/Experiments/Real_Data/06_validation/v3_predictions.json
+
+4. **Compare against the CORRECTED v2 baseline** in the "v2 BASELINE" section
+   below (bbox AP 15.9 / segm 10.8 all; 20.3 / 14.4 measurable; droplet
+   13.1 / 12.2) — not the bracketed capped numbers. Sections 3-5 (P/R/F1,
+   recall by size, D32, atomised fraction) compare directly.
+   The two rows v3 exists to fix: **0-50 um droplet recall (v2 0.61)** and
+   **50-100 um / 100-200 um filament recall (v2 0.07 / 0.42)**.
+5. Record the result here, then decide direction per "What 'better' should look
+   like" below: clear gain → data changes work, next lever is more real variety
+   and a small dev set; no gain → the gap is image realism, work on the compositor.
+
+**Housekeeping (not blocking):**
+- `B:\Experiments\AI\` on Windows still holds: `training_2026_09_25_15_20_37`
+  (original of the v3 run — delete once the LaCie copy is confirmed readable on
+  the Mac), `training_2026_09_25_14_59_38` (crashed first attempt — delete),
+  `training_2026_09_25_14_44_59` (quick test — delete).
+- Latent bug, not fixed (Ben's call, 2026-09-25): `composite.py`
+  `near_validation()` reads only `validation_split.json` (run 125917), so
+  neighbouring-frame objects of run 101947's 5 validation frames are not
+  excluded. v3 is unaffected — measured 0 such objects within 10 frames — but a
+  re-picked library could leak. Fix before the next dataset build: read every
+  `validation_split*.json` and match on the row's run.
+- No hyperparameter sweep planned: tuning on composites optimises the wrong
+  target, tuning on the 20 frames breaks score-once. Revisit only once a
+  separate real dev set exists (then inference-time params first: score
+  threshold, NMS, tile overlap).
+
+---
+
+## NEXT ACTIONS — superseded 2026-09-25 evening (v3 setup record; benchmark merged to 20 frames)
 
 **Status:** v3 dataset built (4,000 images / 249,183 instances from a 750-object
 library). Benchmark consolidated into ONE 20-frame set, all refined. Nothing
@@ -60,14 +117,30 @@ Three defects, all of which would corrupt the v2-vs-v3 comparison:
 Not to the older 15-frame numbers. `v2_predictions.json` in `06_validation/`
 has been regenerated against the 20-frame ground truth.
 
+**AP re-scored 2026-09-25 (Windows) with the COCO 100-detection cap removed —
+compare v3 to THESE, not the capped numbers in brackets.** COCOeval keeps only
+the top 100 detections per image *per class*; 16 of 20 frames hold >100
+droplets (max 276), so 42% of droplet GT (1,309 / 3,097) could never count and
+384 v2 detections were discarded unscored. `score_v2.py` now uses
+`MAX_DETS = 1000` (exits if any frame+class exceeds it) and reads AP from the
+precision table (`ap_at_max`), because `summarize()` hard-codes 100 for the
+headline AP. Verified: at 100 it reproduces every bracketed number exactly.
+Sections 3-5 (operating point, recall by size, D32, atomised fraction) do not
+use COCOeval and are unchanged.
+
 | | all annotations | measurable only |
 |---|---|---|
-| bbox AP | 15.5 | **19.8** |
-| segm AP | 10.4 | **13.8** |
-| bbox AP50 | 32.9 | 41.1 |
-| segm AP50 | 31.7 | 41.8 |
+| bbox AP | **15.9** (15.5) | **20.3** (19.8) |
+| segm AP | **10.8** (10.4) | **14.4** (13.8) |
+| bbox AP50 | 33.8 (32.9) | 42.7 (41.1) |
+| segm AP50 | 33.4 (31.7) | 44.1 (41.8) |
 
-Per class (bbox/segm AP): droplet 12.1/11.0, filament 25.8/15.0, blob 8.8/5.2.
+Per class (bbox/segm AP): droplet **13.1/12.2** (12.1/11.0), filament 25.8/15.0,
+blob 8.8/5.2 — filament and blob never reach 100 per frame, so they are unchanged.
+
+The training script's composite validation had the same cap (5.3% of held-out
+v3 droplets affected); `COCOEvaluator(..., max_dets_per_image=300)` fixes it
+from the v3 run on.
 
 Operating point, best F1 at score >= 0.30: **precision 0.653, recall 0.692,
 F1 0.672** (TP 1256 / FP 667 / FN 559).
@@ -146,7 +219,31 @@ run had it:
 |---|---|---|
 | `ANNOTATIONS_PATH` | `...05_dataset_6k\annotations\instances.json` | `<LaCie>\Experiments\Real_Data\05_dataset_v3\annotations\instances.json` |
 | `IMAGES_PATH` | `...05_dataset_6k\images` | `<LaCie>\Experiments\Real_Data\05_dataset_v3\images` |
-| `MAX_ITER` | 20000 | **30000** |
+| `MAX_ITER` | 20000 | ~~30000~~ **20000** — see "as run" below |
+
+**As actually set up, 2026-09-25 (Windows):** `MAX_ITER = 20000` (~10.3 epochs
+at 1950 it/epoch). The 500-iter quick test measured **0.86 s/it, ~0.5 s of it
+data loading** (~43 masks/image decoded on CPU with 2 workers) → 30k would
+have been ~7 h. `NUM_WORKERS` 2 → **6** (8-core i7-9700K) gave **0.58 s/it**;
+30k would still be ~5.3 h, so Ben chose 20k (~3.6 h incl. ~60 s validations).
+Composite AP 49.7 (segm) at 500 iters vs v2's 60.8 — v3 composites are ~3.5x
+denser, so the two composite numbers are not comparable. Loader could be made
+leaner (the mapper expands every mask to a full 800x800 array before flipping)
+if run time ever matters; not done.
+
+**First real v3 attempt crashed at iter 1000 (2026-09-25, run
+`training_2026_09_25_14_59_38`, discard it).** Validation loader hit
+`MemoryError`: the custom mapper decoded every GT mask to a full 800x800 array
+and kept it twice (`annotations` + `instances`) — ~250 MB for a 200-object
+composite — even for eval, which never uses GT from the loader. Detectron2's
+`inference_context` only restores `train()` on a clean exit, so the caught error
+left the model in eval mode and the next step asserted. Fixed in
+`train_detectron2.py`: eval mapper drops annotations; train mapper drops the
+decoded `annotations` once `instances` exist; validation loader uses 2 workers;
+`self.model.train()` in a `finally` after every validation. Side effect: data
+loading 0.2 → 0.03 s/it, **training 0.58 → 0.35 s/it (20k ≈ 2 h 15 min incl.
+~40 s validations)**. Verified: two validations on the 100 composites, no
+error, min free RAM 6.2 GB of 32.
 
 `CHECKPOINT_INTERVAL` is already 5000. **Keep `RESUME_FROM_MODEL = None`** — start
 fresh from COCO weights, because v2 learned the OLD filament class boundary and
