@@ -86,12 +86,28 @@ def real_data_root() -> Path:
     return Path(drive) / "Experiments" / "Real_Data"
 
 
-def find_background(root: Path) -> Path:
-    for run_dir in sorted((root / "01_candidates").iterdir()):
-        cand = run_dir / "background_median.tiff"
-        if cand.exists():
-            return cand
-    sys.exit("No cached background_median.tiff found under 01_candidates/*/")
+def find_background(root: Path, run: str = None) -> Path:
+    """
+    The run's cached temporal median.
+
+    `run` is REQUIRED once more than one run exists. The old behaviour -- take
+    the first 01_candidates/* directory that has one -- silently picked by
+    alphabetical order, so adding run 101947 would have had it used against
+    run 125917's frames, making every transmission value wrong. Refuses to
+    guess rather than pick the wrong illumination field.
+    """
+    if run:
+        cand = root / "01_candidates" / run / "background_median.tiff"
+        if not cand.exists():
+            sys.exit(f"No cached background_median.tiff for run '{run}' at {cand}")
+        return cand
+    runs = sorted(d.name for d in (root / "01_candidates").iterdir()
+                  if (d / "background_median.tiff").exists() and not d.name.endswith("backup"))
+    if len(runs) == 1:
+        return root / "01_candidates" / runs[0] / "background_median.tiff"
+    sys.exit(f"More than one run has a cached background "
+             f"({', '.join(runs)}). Pass --run explicitly -- using the wrong "
+             f"run's median makes every transmission value wrong.")
 
 
 def main():

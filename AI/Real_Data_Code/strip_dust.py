@@ -57,12 +57,28 @@ def real_data_root() -> Path:
     return Path(drive) / "Experiments" / "Real_Data"
 
 
-def find_background(root: Path) -> Path:
-    for run_dir in sorted((root / "01_candidates").iterdir()):
-        cand = run_dir / "background_median.tiff"
-        if cand.exists():
-            return cand
-    sys.exit("No cached background_median.tiff found under 01_candidates/*/")
+def find_background(root: Path, run: str = None) -> Path:
+    """
+    The run's cached temporal median.
+
+    `run` is REQUIRED once more than one run exists. The old behaviour -- take
+    the first 01_candidates/* directory that has one -- silently picked by
+    alphabetical order, so adding run 101947 would have had it used against
+    run 125917's frames, making every transmission value wrong. Refuses to
+    guess rather than pick the wrong illumination field.
+    """
+    if run:
+        cand = root / "01_candidates" / run / "background_median.tiff"
+        if not cand.exists():
+            sys.exit(f"No cached background_median.tiff for run '{run}' at {cand}")
+        return cand
+    runs = sorted(d.name for d in (root / "01_candidates").iterdir()
+                  if (d / "background_median.tiff").exists() and not d.name.endswith("backup"))
+    if len(runs) == 1:
+        return root / "01_candidates" / runs[0] / "background_median.tiff"
+    sys.exit(f"More than one run has a cached background "
+             f"({', '.join(runs)}). Pass --run explicitly -- using the wrong "
+             f"run's median makes every transmission value wrong.")
 
 
 def strip_file(path: Path, T, dust, h, w):
@@ -79,14 +95,21 @@ def main():
     ap = argparse.ArgumentParser(description="Remove sensor-dust specks from validation labels")
     ap.add_argument("--frame", help="one frame stem; default is every labelled frame")
     ap.add_argument("--dry-run", action="store_true", help="report only, change nothing")
+    ap.add_argument("--val-dir", default="06_validation",
+                    help="which validation set, e.g. 06_validation_run2")
+    ap.add_argument("--run", default="125917_NNA_3000sccm",
+                    help="the run these frames came from -- selects the temporal "
+                         "median the dust map is derived from. Dust is a property "
+                         "of the CAMERA so the specks are the same, but the median "
+                         "must match the run or T is wrong everywhere.")
     ap.add_argument("--root", type=Path, default=None)
     args = ap.parse_args()
 
     root = args.root or real_data_root()
-    val = root / "06_validation"
+    val = root / args.val_dir
     lab_dir = val / "labels"
 
-    bg = cv2.imread(str(find_background(root)), cv2.IMREAD_UNCHANGED).astype(np.float32)
+    bg = cv2.imread(str(find_background(root, args.run)), cv2.IMREAD_UNCHANGED).astype(np.float32)
     dust = dust_mask(bg)
     print(f"dust map from the temporal median: {describe(bg)}\n")
 

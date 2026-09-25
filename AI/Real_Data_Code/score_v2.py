@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-score_v2.py -- Step 8: score tiled predictions against the 15-frame benchmark.
+score_v2.py -- Step 8: score tiled predictions against the hand-labelled benchmark.
 
 SCORE ONCE. The checkpoint was selected on composite validation; picking a
 different checkpoint or threshold because it scores better here would turn the
-benchmark into a tuning set, and with 15 frames there is no second test set.
+benchmark into a tuning set, and there is no third set held in reserve.
 
 FILTERING RULES (from the Step 6 ground rules -- both sides must use the same
 convention or the comparison is meaningless):
@@ -26,6 +26,7 @@ import argparse
 import copy
 import json
 import sys
+from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
@@ -135,6 +136,24 @@ def main():
           f"{len(gt_raw['images'])} frames")
     print(f"predictions:  {len(preds)} detections\n")
 
+    # Predictions carry image_ids assigned when they were generated. Those ids
+    # come from the GT file's image order, so ADDING A FRAME to the benchmark
+    # renumbers everything and silently invalidates an older predictions file.
+    # It happened on 2026-09-25 (15 -> 20 frames) and surfaced as AP 0.0, which
+    # was luck: had the count stayed the same and only the order changed, the
+    # score would have been quietly wrong instead. Fail loudly.
+    gt_ids = {im["id"] for im in gt_raw["images"]}
+    pred_ids = {d["image_id"] for d in preds}
+    stray = pred_ids - gt_ids
+    if stray:
+        sys.exit(f"{len(stray)} prediction image_id(s) are not in the ground truth "
+                 f"({sorted(stray)[:6]}...). The predictions were generated against "
+                 f"a different version of the benchmark -- regenerate them.")
+    unmatched = gt_ids - pred_ids
+    if len(unmatched) > len(gt_ids) // 2:
+        print(f"  WARNING: {len(unmatched)} of {len(gt_ids)} frames have no "
+              f"detections at all. Stale predictions?\n")
+
     coco_gt = COCO(gt_path) if False else None  # avoid COCO's stdout noise
     import io, contextlib
     with contextlib.redirect_stdout(io.StringIO()):
@@ -142,7 +161,8 @@ def main():
 
     # ---------- 1. detection, ALL annotations ----------
     print("=" * 72)
-    print("1. DETECTION -- all 2458 annotations (every one is a real object)")
+    print(f"1. DETECTION -- all {len(gt_raw['annotations'])} annotations "
+          f"(every one is a real object)")
     print("=" * 72)
     for iou_type in ("bbox", "segm"):
         e = run_eval(coco_gt, preds, iou_type)
@@ -158,11 +178,23 @@ def main():
     print("=" * 72)
     print("2. MEASURABLE ONLY -- unmeasurable GT set to IGNORE, not deleted")
     print("=" * 72)
+    # pycocotools DISCARDS a plain `ignore` flag: COCOeval._prepare sets
+    #     gt['ignore'] = gt['ignore'] if 'ignore' in gt else 0
+    #     gt['ignore'] = 'iscrowd' in gt and gt['iscrowd']      <-- overwrites it
+    # so the second line wins and `ignore` never takes effect. The earlier
+    # version of this section set `ignore` and therefore printed numbers
+    # IDENTICAL to section 1, which is how the bug was spotted.
+    #
+    # `iscrowd=1` is the flag that actually reaches the matcher, and its
+    # semantics are what we want here: a detection landing on a crowd region is
+    # neither a true positive nor a false positive. Unmeasurable objects are
+    # real, so a model that finds one must not be punished -- it simply must not
+    # be scored on that object's size.
     gt_m = copy.deepcopy(gt_raw)
     n_ign = 0
     for a in gt_m["annotations"]:
         if not a.get("measurable", True):
-            a["ignore"] = 1
+            a["iscrowd"] = 1
             n_ign += 1
     tmp = val / "_gt_measurable_tmp.json"
     tmp.write_text(json.dumps(gt_m), encoding="utf-8")
@@ -226,15 +258,38 @@ def main():
         d = equiv_um(areas)
         return float((d ** 3).sum() / (d ** 2).sum())
 
-    for label, anns, cat_key in (("ground truth", gt_meas, "category_id"),
-                                 ("predicted", dets, "category_id")):
-        dro = [a["area"] for a in anns if a[cat_key] == 1]
-        fil = [a["area"] for a in anns if a[cat_key] == 2]
-        blo = [a["area"] for a in anns if a[cat_key] == 3]
-        tot = sum(dro) + sum(fil) + sum(blo)
-        frac = sum(dro) / tot * 100 if tot else float("nan")
+    def class_area_union(anns):
+        """
+        Total area per class as the UNION of masks, not the sum of instances.
+
+        The model emits one long filament as several detections covering
+        different stretches of it -- a 28x28 mask head cannot represent a long
+        thread, so the RPN proposes sub-segments. Those are NOT duplicates and
+        no NMS rule removes them, but summing their areas double-counts the
+        overlap. Measured on v2: filament +20.5%, blob +10.6%, droplet 0%.
+        Hand labels overlap by ~0%, so this is a prediction-side error only, and
+        it biases the atomised fraction DOWN by inflating the denominator.
+        Union counts each pixel once; it costs only instance counting, which no
+        Taguchi metric uses.
+        """
+        by = defaultdict(lambda: defaultdict(list))
+        for a in anns:
+            by[a["image_id"]][a["category_id"]].append(a["segmentation"])
+        tot = defaultdict(float)
+        for img, cls in by.items():
+            for c, rles in cls.items():
+                tot[c] += float(mask_util.area(mask_util.merge(rles)))
+        return tot
+
+    for label, anns in (("ground truth", gt_meas), ("predicted", dets)):
+        dro = [a["area"] for a in anns if a["category_id"] == 1]
+        u = class_area_union(anns)
+        tot_u = sum(u.values())
+        frac_u = u[1] / tot_u * 100 if tot_u else float("nan")
+        s_all = [sum(a["area"] for a in anns if a["category_id"] == c) for c in (1, 2, 3)]
+        frac_s = s_all[0] / sum(s_all) * 100 if sum(s_all) else float("nan")
         print(f"  {label:13s} droplets {len(dro):5d}  D32 {d32(dro):6.1f} um   "
-              f"atomised area fraction {frac:5.1f}%")
+              f"atomised fraction: UNION {frac_u:5.2f}%   (sum-of-instances {frac_s:5.2f}%)")
     print("\n  NOTE: predicted filament AREA is not trustworthy (28x28 mask head,"
           "\n  ~20 pt box-vs-mask gap). The atomised fraction above inherits that.")
 

@@ -295,26 +295,32 @@ def main():
                          "leaving them in place untouched. Safe either way -- the "
                          ".original.json backup keeps every shape, including dropped "
                          "ones, so nothing is lost if the cutoff turns out too harsh.")
+    ap.add_argument("--val-dir", default="06_validation",
+                    help="which validation set, e.g. 06_validation_run2")
+    ap.add_argument("--run", default="125917_NNA_3000sccm",
+                    help="the run these frames came from -- selects the temporal "
+                         "median. MUST match the frames or T is wrong everywhere.")
     ap.add_argument("--root", type=Path, default=None)
     args = ap.parse_args()
 
     root = args.root or real_data_root()
-    val_dir = root / "06_validation"
+    val_dir = root / args.val_dir
     json_path = val_dir / "labels" / f"{args.frame}.json"
     tiff_path = val_dir / "frames" / "16bit" / f"{args.frame}.tiff"
-    bg_path = None
-    for run_dir in (root / "01_candidates").iterdir():
-        cand = run_dir / "background_median.tiff"
-        if cand.exists():
-            bg_path = cand
-            break
+
+    # The background MUST come from the run this frame belongs to. Picking the
+    # first 01_candidates/* with a median (the old behaviour) selects by
+    # alphabetical order, which since run 101947 exists would divide run 125917
+    # frames by the wrong illumination field -- every transmission value wrong,
+    # silently.
+    bg_path = root / "01_candidates" / args.run / "background_median.tiff"
 
     if not json_path.exists():
         sys.exit(f"No labels file: {json_path}")
     if not tiff_path.exists():
         sys.exit(f"No 16-bit frame: {tiff_path}")
-    if bg_path is None:
-        sys.exit("No cached background_median.tiff found under 01_candidates/*/")
+    if not bg_path.exists():
+        sys.exit(f"No cached background_median.tiff for run '{args.run}' at {bg_path}")
 
     backup = json_path.with_suffix(".original.json")
     if not backup.exists():

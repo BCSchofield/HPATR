@@ -21,10 +21,126 @@ file is the operational summary of it.
 
 ---
 
-## NEXT ACTIONS — updated 2026-09-24 late (Step 8 DONE for v2; v3 dataset BUILT, ready to train)
+## NEXT ACTIONS — updated 2026-09-25 (benchmark merged to 20 frames; v3 ready to train)
 
-**Do this next, on Windows:** train v3 on `05_dataset_v3`. Three line changes to
-`train_detectron2.py`, everything else exactly as the v2 run had it:
+**Status:** v3 dataset built (4,000 images / 249,183 instances from a 750-object
+library). Benchmark consolidated into ONE 20-frame set, all refined. Nothing
+blocks training.
+
+### Step 1 — Windows: train v3
+
+Edits table below. Quick test at 500 iterations first. 3-4 h for the real run.
+
+### Step 2 — Mac, in parallel: fix the scoring path BEFORE scoring v3
+
+Three defects, all of which would corrupt the v2-vs-v3 comparison:
+
+1. **`score_v2.py` section 2 is INVALID.** pycocotools overwrites the `ignore`
+   flag one line after reading it, so the "measurable only" COCOeval numbers are
+   meaningless duplicates of section 1. Set `iscrowd` instead, or delete the
+   section. The greedy matching in section 3 is correct and unaffected.
+2. **Class area must be the UNION of masks, not the sum of instances.** Measured
+   on v2: predicted filament masks overlap by **20.5%**, blob 10.6%, droplet 0%
+   (hand labels: ~0% for all, so this is a prediction-side error only). Summing
+   inflates filament area and drags the atomised fraction down — union moved it
+   4.25% -> 4.93% against a truth of 7.34%. Costs only instance *counting*,
+   which the Taguchi metrics do not use.
+3. **`tiled_inference.py` has never run on a 2560x1600 frame.** Five of the
+   twenty are now that size (12 tiles instead of 6). The layout maths handles it
+   in principle; smoke-test one frame before committing to a full run.
+
+### Step 3 — score v3 once, on all 20
+
+    python tiled_inference.py --all --preview --preview-thresh 0.3 \
+      --out <LaCie>/Experiments/Real_Data/06_validation/v3_predictions.json
+    python score_v2.py --pred <LaCie>/.../06_validation/v3_predictions.json
+
+### v2 BASELINE on the same 20 frames — measured 2026-09-25, compare v3 to THIS
+
+Not to the older 15-frame numbers. `v2_predictions.json` in `06_validation/`
+has been regenerated against the 20-frame ground truth.
+
+| | all annotations | measurable only |
+|---|---|---|
+| bbox AP | 15.5 | **19.8** |
+| segm AP | 10.4 | **13.8** |
+| bbox AP50 | 32.9 | 41.1 |
+| segm AP50 | 31.7 | 41.8 |
+
+Per class (bbox/segm AP): droplet 12.1/11.0, filament 25.8/15.0, blob 8.8/5.2.
+
+Operating point, best F1 at score >= 0.30: **precision 0.653, recall 0.692,
+F1 0.672** (TP 1256 / FP 667 / FN 559).
+
+Measurement:
+
+| | droplets | D32 | atomised fraction (union) |
+|---|---|---|---|
+| ground truth | 1571 | **73.3 um** | **8.33%** |
+| v2 predicted | 1627 | **89.3 um** | **5.18%** |
+
+**Recall by size — these two rows are what v3 exists to fix:**
+
+| band | class | n | recall |
+|---|---|---|---|
+| 0-50 um | droplet | 975 | **0.61** |
+| 50-100 um | droplet | 532 | 0.92 |
+| 100-200 um | droplet | 61 | 0.90 |
+| **50-100 um** | **filament** | **30** | **0.07** |
+| **100-200 um** | **filament** | **94** | **0.42** |
+| 200-500 um | filament | 61 | 0.74 |
+| >500 um | filament | 17 | 0.65 |
+| 200-500 um | blob | 27 | 0.52 |
+
+**What "better" should look like, and what would be a surprise.** Short filaments
+are the confident prediction: training contained essentially none under 20 px, so
+7% recall is the model never having seen the thing, not failing to learn it.
+Small droplets should lift too. **Precision may NOT improve and could dip** --
+the focus gate was deliberately loosened, so the model now trains on fainter
+objects nearer the noise floor. Blobs will stay weak (31 templates).
+
+If v3 does NOT improve, that is informative rather than a failure: it would say
+the composite-to-real gap (AP 70 vs 10.4) is dominated by something other than
+class definition, density and template variety -- i.e. image realism itself --
+which redirects effort from the library toward the compositor.
+
+### Scoring-path fixes, done 2026-09-25 (all three verified working)
+
+1. **`score_v2.py` section 2 now uses `iscrowd`, not `ignore`.** pycocotools
+   discards `ignore`; `iscrowd` is the flag that reaches the matcher, and its
+   semantics are right -- a detection on a crowd region is neither TP nor FP.
+   The section now shows a real difference (19.8 vs 15.5 bbox AP) instead of
+   duplicating section 1.
+2. **Class area is now the UNION of masks.** Ground truth barely moves (8.33 vs
+   8.35) because hand labels do not overlap; the prediction moves 4.79% ->
+   5.18%, i.e. closer to truth. Both are printed.
+3. **`tiled_inference.py` verified on 2560x1600** -- 12 base tiles plus rescue
+   passes (up to 26 on the densest frame), no errors.
+
+**New guard:** `score_v2.py` refuses to run if prediction `image_id`s are absent
+from the ground truth, and warns if most frames have no detections. Adding the
+5 frames renumbered every image and silently invalidated the old predictions;
+it surfaced as AP 0.0, which was luck -- had the count stayed equal and only the
+order changed, the score would have been quietly wrong.
+
+### Step 4 — RE-SCORE v2 on the same 20 frames
+
+**Do not skip this.** v2's published numbers (AP 11.7, droplet D32 92.9 um) come
+from the **15-frame** benchmark. Comparing v3-on-20 against v2-on-15 conflates
+model improvement with benchmark change. Re-running v2 inference is ~3 minutes
+and gives a genuine like-for-like baseline.
+
+This is not checkpoint-shopping: same model, same weights, scored on a superset.
+The score-once rule forbids *picking* a checkpoint because it flatters you on the
+test set; it does not forbid establishing a baseline on the benchmark you will
+actually report.
+
+---
+
+### The edits for Windows
+
+Three line changes to `train_detectron2.py`, everything else exactly as the v2
+run had it:
 
 | line | from | to |
 |---|---|---|
@@ -163,7 +279,60 @@ still worth doing as cheap insurance.
 
 ---
 
-## Second validation set — `06_validation_run2/`
+## THE BENCHMARK IS NOW ONE 20-FRAME SET — consolidated 2026-09-25
+
+`06_validation_run2/` was **merged into `06_validation/`**. Everything lives
+there now: 20 frames, 20 label files, one `instances.json`. The run2 folder is
+empty and can be deleted.
+
+**3,409 annotations** (was 2,458): droplet 3,097 / filament 241 / blob 71.
+Measurable: 1,571 / 204 / 40. Droplet D32 **73 um** measurable-only (83 um over
+all annotations). Objects per frame: min 12, median 169, max 309.
+
+Decision: **score the combined set, do not report the two runs separately** —
+Ben does not need the 3000-vs-4500 difference. But every image carries
+`source_run`, so the split can be recovered at any time without re-running.
+
+**`06_validation/frame_runs.json` is new and load-bearing.** It maps each frame
+stem to its source run. Frame numbering restarts per recording and each run has
+its own temporal median, so **anything computing transmission must look the
+frame up here** rather than assume one run.
+
+One LabelMe command now covers all 20:
+
+    labelme <LaCie>/Experiments/Real_Data/06_validation/frames/8bit \
+      --labels droplet,filament,blob --validate-label exact \
+      --output <LaCie>/Experiments/Real_Data/06_validation/labels
+
+### Run-scoping bugs found and fixed while merging (same class as the manifest bug)
+
+Frame numbers stopped being unique identifiers the moment a second run existed.
+Three tools were silently picking the wrong run's data:
+
+- **`find_background()` in `check_missed.py`, `strip_dust.py`,
+  `prelabel_frame.py`, `refine_labels.py`, `validation_to_coco.py`** took the
+  FIRST `01_candidates/*` directory with a cached median — i.e. alphabetical
+  order, which since run 101947 exists meant run 125917's frames would be
+  divided by the wrong illumination field. Every transmission value, focus flag
+  and `measurable` decision wrong, with no error raised. All now require an
+  explicit run and **refuse to guess** when more than one exists.
+- **`validation_to_coco.py` loaded one background for every frame.** Now reads
+  `frame_runs.json` and uses the matching median per frame.
+- **Its held-out check compared frame numbers alone**, which is ambiguous across
+  runs. Now matches on `(run, frame_number)` and reads every
+  `00_manifest/validation_split*.json`.
+
+`check_missed.py`, `strip_dust.py` and `refine_labels.py` also gained
+`--val-dir` and `--run`.
+
+### Dust, second set
+
+176 specks removed across the 5 new frames (30-42 each) before refinement.
+The dust map built from run 101947's median found **100 specks** versus 32 on
+the original frames — same camera, but the full 2560x1600 sensor exposes more
+area than the old 2048x1152 crop did.
+
+### Superseded description of the second set (kept for the reasoning)
 
 5 frames held out of `101947_NNA_4500sccm`, physically moved out of the training
 pool and protected by `00_manifest/validation_split_101947_NNA_4500sccm.json`.

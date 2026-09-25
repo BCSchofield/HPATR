@@ -56,12 +56,28 @@ def real_data_root() -> Path:
     return Path(drive) / "Experiments" / "Real_Data"
 
 
-def find_background(root: Path) -> Path:
-    for run_dir in sorted((root / "01_candidates").iterdir()):
-        cand = run_dir / "background_median.tiff"
-        if cand.exists():
-            return cand
-    sys.exit("No cached background_median.tiff found under 01_candidates/*/")
+def find_background(root: Path, run: str = None) -> Path:
+    """
+    The run's cached temporal median.
+
+    `run` is REQUIRED once more than one run exists. The old behaviour -- take
+    the first 01_candidates/* directory that has one -- silently picked by
+    alphabetical order, so adding run 101947 would have had it used against
+    run 125917's frames, making every transmission value wrong. Refuses to
+    guess rather than pick the wrong illumination field.
+    """
+    if run:
+        cand = root / "01_candidates" / run / "background_median.tiff"
+        if not cand.exists():
+            sys.exit(f"No cached background_median.tiff for run '{run}' at {cand}")
+        return cand
+    runs = sorted(d.name for d in (root / "01_candidates").iterdir()
+                  if (d / "background_median.tiff").exists() and not d.name.endswith("backup"))
+    if len(runs) == 1:
+        return root / "01_candidates" / runs[0] / "background_median.tiff"
+    sys.exit(f"More than one run has a cached background "
+             f"({', '.join(runs)}). Pass --run explicitly -- using the wrong "
+             f"run's median makes every transmission value wrong.")
 
 
 def main():
@@ -78,11 +94,16 @@ def main():
                     help="also draw borderline and haze regions and your existing "
                          "labels. Off by default: the image is an action list, and "
                          "drawing 500 noise specks buries the few that matter.")
+    ap.add_argument("--val-dir", default="06_validation",
+                    help="which validation set, e.g. 06_validation_run2")
+    ap.add_argument("--run", default="125917_NNA_3000sccm",
+                    help="the run these frames came from -- selects the temporal "
+                         "median. MUST match, or every transmission value is wrong.")
     ap.add_argument("--root", type=Path, default=None)
     args = ap.parse_args()
 
     root = args.root or real_data_root()
-    val = root / "06_validation"
+    val = root / args.val_dir
     json_path = val / "labels" / f"{args.frame}.json"
     if not json_path.exists():
         sys.exit(f"No labels file: {json_path}")
@@ -92,7 +113,7 @@ def main():
 
     img = cv2.imread(str(val / "frames" / "16bit" / f"{args.frame}.tiff"),
                      cv2.IMREAD_UNCHANGED).astype(np.float32)
-    bg = cv2.imread(str(find_background(root)), cv2.IMREAD_UNCHANGED).astype(np.float32)
+    bg = cv2.imread(str(find_background(root, args.run)), cv2.IMREAD_UNCHANGED).astype(np.float32)
     T = img / np.maximum(bg, 1.0)
 
     # Everything the human already covered. Dilated slightly so a region that

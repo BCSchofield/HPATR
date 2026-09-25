@@ -70,12 +70,16 @@ def real_data_root() -> Path:
     return Path(drive) / "Experiments" / "Real_Data"
 
 
-def find_background(root: Path) -> Path:
-    for run_dir in sorted((root / "01_candidates").iterdir()):
-        cand = run_dir / "background_median.tiff"
-        if cand.exists():
-            return cand
-    sys.exit("No cached background_median.tiff found under 01_candidates/*/")
+def find_background(root: Path, run: str) -> Path:
+    """
+    The given run's cached temporal median. Explicit by requirement: taking the
+    first 01_candidates/* with one picks by alphabetical order, which once a
+    second run exists silently divides frames by the wrong illumination field.
+    """
+    cand = root / "01_candidates" / run / "background_median.tiff"
+    if not cand.exists():
+        sys.exit(f"No cached background_median.tiff for run '{run}' at {cand}")
+    return cand
 
 
 def sauter_mean_diameter(areas_px) -> float:
@@ -138,9 +142,12 @@ def main():
         sys.exit(f"No .json files in {lab_dir} -- nothing labelled yet.")
 
     # Frames excluded from training must be exactly the frames validated here.
-    manifest = json.loads((root / "00_manifest" / "validation_split.json")
-                          .read_text(encoding="utf-8"))
-    expected = {int(e["frame_number"]) for e in manifest["frames"]}
+    # One manifest per run: numbering restarts, so a frame number alone is
+    # ambiguous once more than one run contributes.
+    expected = set()
+    for mp in sorted((root / "00_manifest").glob("validation_split*.json")):
+        man = json.loads(mp.read_text(encoding="utf-8"))
+        expected |= {(man["source_run"], int(e["frame_number"])) for e in man["frames"]}
 
     images, annotations = [], []
     ann_id = 1
@@ -152,12 +159,34 @@ def main():
     n_out_of_focus = 0
     unknown_labels = Counter()
 
-    bg = cv2.imread(str(find_background(root)), cv2.IMREAD_UNCHANGED).astype(np.float32)
+    # Per-frame run identity. Frame numbering restarts per recording and each
+    # run has its own temporal median, so one shared background would divide
+    # some frames by the wrong illumination field -- every transmission value
+    # wrong, with no error raised.
+    runs_path = val_dir / "frame_runs.json"
+    if runs_path.exists():
+        frame_runs = json.loads(runs_path.read_text(encoding="utf-8"))["frames"]
+    else:
+        frame_runs = {}
+    _bgs = {}
+    def background_for(stem):
+        run = frame_runs.get(stem)
+        if run is None:
+            if len(set(frame_runs.values())) > 1:
+                sys.exit(f"{stem} is not listed in frame_runs.json and this set "
+                         f"spans multiple runs -- refusing to guess its background.")
+            run = next(iter(frame_runs.values()), None)
+        if run not in _bgs:
+            _bgs[run] = cv2.imread(str(find_background(root, run)),
+                                   cv2.IMREAD_UNCHANGED).astype(np.float32)
+        return run, _bgs[run]
 
     for i, fp in enumerate(frames, start=1):
         img = cv2.imread(str(fp), cv2.IMREAD_UNCHANGED)
         h, w = img.shape[:2]
-        images.append({"id": i, "file_name": fp.name, "width": w, "height": h})
+        run, bg = background_for(fp.stem)
+        images.append({"id": i, "file_name": fp.name, "width": w, "height": h,
+                       "source_run": run})
 
         jp = jsons.get(fp.stem)
         if jp is None:
@@ -288,7 +317,7 @@ def main():
     for stem, n in per_frame.items():
         if n and "_n" in stem:
             try:
-                labelled_nums.add(int(stem.split("_n")[-1]))
+                labelled_nums.add((frame_runs.get(stem, ""), int(stem.split("_n")[-1])))
             except ValueError:
                 pass
     missing = expected - labelled_nums

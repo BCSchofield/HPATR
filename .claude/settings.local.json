@@ -323,7 +323,19 @@
       "Read(//Users/benschofield/hpatr_gen/05_dataset_v3/annotations/**)",
       "Bash(awk '{print \"annotations json:\", int\\($5/1e6\\), \"MB\"}')",
       "Bash(time rsync -a --info=progress2 ~/hpatr_gen/05_dataset_v3/ /Volumes/LaCie/Experiments/Real_Data/05_dataset_v3/)",
-      "Read(//Volumes/LaCie/Experiments/Real_Data/05_dataset_v3/**)"
+      "Read(//Volumes/LaCie/Experiments/Real_Data/05_dataset_v3/**)",
+      "Bash(rm -rf ~/hpatr_gen/05_dataset_v3)",
+      "Bash(echo \"regeneration started \\(pid $!\\) against 750 templates\")",
+      "Bash(grep -viE \"^\\\\s*$\" /tmp/claude-501/-Users-benschofield-Documents-GitHub-HPATR/4136ff21-6120-418e-8b56-766cf366ee62/scratchpad/composite_v3b.log)",
+      "Bash(rm -rf /Volumes/LaCie/Experiments/Real_Data/05_dataset_v3)",
+      "Bash(time rsync -a ~/hpatr_gen/05_dataset_v3/ /Volumes/LaCie/Experiments/Real_Data/05_dataset_v3/)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('check_missed.py'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
+      "Bash(python3 check_missed.py --frame frame_0056_n559 --val-dir 06_validation_run2 --run 101947_NNA_4500sccm)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('strip_dust.py'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
+      "Bash(python3 strip_dust.py --val-dir 06_validation_run2 --run 101947_NNA_4500sccm --dry-run)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('validation_to_coco.py'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('score_v2.py'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
+      "Bash(echo \"started \\(pid $!\\)\")"
     ],
     "additionalDirectories": [
       "/Volumes/LaCie/Experiments/Real_Data/00_frames/_dryrun",
