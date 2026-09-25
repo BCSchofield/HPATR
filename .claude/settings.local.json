@@ -335,7 +335,13 @@
       "Bash(python3 strip_dust.py --val-dir 06_validation_run2 --run 101947_NNA_4500sccm --dry-run)",
       "Bash(python3 -c \"import ast; ast.parse\\(open\\('validation_to_coco.py'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
       "Bash(python3 -c \"import ast; ast.parse\\(open\\('score_v2.py'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
-      "Bash(echo \"started \\(pid $!\\)\")"
+      "Bash(echo \"started \\(pid $!\\)\")",
+      "Bash(python3 -c \"import openpyxl; print\\(openpyxl.__version__\\)\")",
+      "Bash(python3 test_migration.py)",
+      "Bash(QT_QPA_PLATFORM=offscreen timeout 90 python3 -c ' *)",
+      "Bash(QT_QPA_PLATFORM=offscreen python3 -c ' *)",
+      "Bash(git checkout *)",
+      "Bash(python3 -c \"import json;d=json.load\\(open\\('src/gui/camera_settings.json'\\)\\);print\\('restored keys:',sorted\\(d\\)\\)\")"
     ],
     "additionalDirectories": [
       "/Volumes/LaCie/Experiments/Real_Data/00_frames/_dryrun",
