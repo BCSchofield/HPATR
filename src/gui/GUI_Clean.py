@@ -1834,14 +1834,9 @@ class AtomisationApp(QMainWindow):
         nozzle_card.layout().addWidget(section_label("NOZZLE"))
         nozzle_card.layout().addWidget(separator())
 
-        self._nozzle_entry = QLineEdit()
-        self._nozzle_entry.setPlaceholderText("e.g. 1")
-        self._nozzle_entry.setValidator(QRegularExpressionValidator(QRegularExpression(r'[A-Za-z0-9]*')))
-        self._nozzle_entry.textChanged.connect(self._update_next_save_preview)
-        nozzle_card.layout().addWidget(input_row("Nozzle No.", self._nozzle_entry, label_width=90))
-
         self._orifice_combo = QComboBox()
         self._orifice_combo.addItems(["0.2mm","0.3mm","0.5mm","0.8mm","1mm","1.2mm","1.4mm","1.6mm","1.8mm","2mm"])
+        self._orifice_combo.currentTextChanged.connect(self._save_camera_settings)
         nozzle_card.layout().addWidget(input_row("Orifice", self._orifice_combo, label_width=90))
 
         vl.addWidget(nozzle_card)
@@ -3297,9 +3292,9 @@ class AtomisationApp(QMainWindow):
             ]),
             ("SAVING RESULTS", [
                 ("Excel log",
-                 "Fill in Nozzle No. and Orifice in the right panel, add any notes (fluid composition, "
+                 "Pick the Orifice in the right panel, add any notes (fluid composition, "
                  "temperature, observations), then click Save to Excel. Results are written to a per-run "
-                 "folder on the LaCie drive: Experiments/YYYY/MM/DD/HHMMSS_Nnozzle_flowsccm/run_summary.xlsx."),
+                 "folder on the LaCie drive: Experiments/YYYY/MM/DD/HHMMSS_flowsccm/run_summary.xlsx."),
                 ("Shadowgraph result",
                  "The Latest Result panel (left) shows the most recent FINAL_OPTIMIZED_RESULT.png found "
                  "in the current run's shadowgraph/analysis/ folder. Click ↻ Refresh to scan for a newer result after analysis."),
@@ -3972,13 +3967,15 @@ class AtomisationApp(QMainWindow):
     # STALL_SG_THRESHOLD on the Arduino actually trips the motor off.
     SG_WARN_THRESHOLD = 150
 
-    # Canonical master_log.xlsx column widths, in order A..M:
-    #   Timestamp, Nozzle, Orifice, Flow Range, Pressure Range, Speed, Distance,
+    # Canonical master_log.xlsx column widths, in order A..L:
+    #   Timestamp, Orifice, Flow Range, Pressure Range, Speed, Distance,
     #   Avg Lamella, Notes, Cone Image, Shadowgraph, Pressure Graph, Mass Flow Graph
-    # Shadowgraph (K) is sized for the 300 px images placed there; the cone (J)
-    # and the two graph columns (L, M) are widened further from their actual
+    # Shadowgraph (J) is sized for the 300 px images placed there; the cone (I)
+    # and the two graph columns (K, L) are widened further from their actual
     # rendered image sizes when those images exist.
-    MASTER_COL_WIDTHS = (20, 8, 8, 18, 18, 14, 12, 12, 35, 36.5, 43, 56, 56)
+    MASTER_COL_COUNT  = 12
+    MASTER_COL_LETTERS = 'ABCDEFGHIJKL'
+    MASTER_COL_WIDTHS = (20, 8, 18, 18, 14, 12, 12, 35, 36.5, 43, 56, 56)
 
     # Shadowgraph thumbnails are placed at a fixed width; the column above is
     # derived from it (Excel column width ~= pixels / 7).
@@ -4194,14 +4191,12 @@ class AtomisationApp(QMainWindow):
 
     def _update_next_save_preview(self):
         now = datetime.now()
-        nozzle_raw = self._nozzle_entry.text().strip() if hasattr(self, "_nozzle_entry") else ""
-        nozzle_label = (nozzle_raw or "NoNozzle").replace(" ", "_")
         flow_raw = self._flow_entry.text().strip() if hasattr(self, "_flow_entry") else ""
         try:
             flow_str = f"{float(flow_raw):.0f}sccm"
         except ValueError:
             flow_str = "?sccm"
-        run_id = f"{now.strftime('%H%M%S')}_N{nozzle_label}_{flow_str}"
+        run_id = f"{now.strftime('%H%M%S')}_{flow_str}"
         lacie = find_lacie_drive()
         exp_base = os.path.join(lacie, "Experiments") if lacie else os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
@@ -5780,8 +5775,7 @@ class AtomisationApp(QMainWindow):
 
         # ── Create run folder eagerly ──────────────────────────────────────────
         _now = datetime.now()
-        _nozzle_label = (self._nozzle_entry.text().strip() or "NoNozzle").replace(" ", "_")
-        _run_id = f"{_now.strftime('%H%M%S')}_N{_nozzle_label}_{flow:.0f}sccm"
+        _run_id = f"{_now.strftime('%H%M%S')}_{flow:.0f}sccm"
         _lacie = find_lacie_drive()
         _exp_base = os.path.join(_lacie, "Experiments") if _lacie else os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
@@ -5897,10 +5891,6 @@ class AtomisationApp(QMainWindow):
     # ─────────────────────────────────────────────────────────────────────────
 
     def _save_to_excel(self):
-        if not self._nozzle_entry.text().strip():
-            self._warn("Missing Nozzle Number",
-                       "Please enter a Nozzle No. in the right-hand panel before saving.")
-            return
         try:
             from openpyxl import load_workbook, Workbook
             from openpyxl.drawing.image import Image as XLImage
@@ -5911,7 +5901,6 @@ class AtomisationApp(QMainWindow):
             now          = datetime.now()
             ts_str       = now.strftime("%Y-%m-%d %H:%M:%S")
 
-            nozzle       = self._nozzle_entry.text().strip()
             orifice      = self._orifice_combo.currentText()
             notes        = self._notes_text.toPlainText()
             speed_str    = self._speed_entry.text()
@@ -5943,8 +5932,7 @@ class AtomisationApp(QMainWindow):
                 _exp_base = os.path.join(lacie, "Experiments") if lacie else os.path.join(
                     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                     "experiment_logs", "Experiments")
-                _safe_nozzle = f"N{nozzle}".replace(" ", "_")
-                _run_id = f"{now.strftime('%H%M%S')}_{_safe_nozzle}_{f_range_file or 'unknownsccm'}"
+                _run_id = f"{now.strftime('%H%M%S')}_{f_range_file or 'unknownsccm'}"
                 run_dir = os.path.join(_exp_base, now.strftime("%Y"), now.strftime("%m"),
                                        now.strftime("%d"), _run_id)
                 for _sub in [os.path.join("shadowgraph", "raw"),
@@ -5999,7 +5987,7 @@ class AtomisationApp(QMainWindow):
                     ax.axvspan(_cw_s - t0, _cw_e - t0, alpha=0.2, color='red', zorder=0)
                 ax.set_xlabel('Time (s)', fontsize=8, color='#3a3a3c')
                 ax.set_ylabel(ylabel, fontsize=8, color='#3a3a3c')
-                ax.set_title(f'N{nozzle}  {orifice}  {range_str}',
+                ax.set_title(f'{orifice}  {range_str}',
                              fontsize=8, color='#1c1c1e', pad=4, loc='left')
                 ax.tick_params(colors='#6e6e73', labelsize=7)
                 ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
@@ -6026,10 +6014,10 @@ class AtomisationApp(QMainWindow):
 
             fps_val = float(self._cam_fps.text()) if self._cam_fps.text() else 1000.0
             meta = {
-                'Field': ['Timestamp', 'Nozzle', 'Orifice', 'Flow Range (sccm)',
+                'Field': ['Timestamp', 'Orifice', 'Flow Range (sccm)',
                           'Pressure Range (barA)', 'Speed (steps/s)', 'Distance (mm)',
                           'FPS', 'Notes'],
-                'Value': [ts_str, nozzle, orifice, f_range_str, p_range_str,
+                'Value': [ts_str, orifice, f_range_str, p_range_str,
                           speed_str, distance_str, fps_val, notes],
             }
             with pd.ExcelWriter(ind_path, engine='openpyxl') as writer:
@@ -6135,9 +6123,31 @@ class AtomisationApp(QMainWindow):
                                 _anc._from.col += 1
                             if hasattr(_anc, 'to') and _anc.to and _anc.to.col >= 3:
                                 _anc.to.col += 1
-                if ws.cell(row=1, column=13).value != 'Mass Flow Graph':
-                    ws.cell(row=1, column=13).value = 'Mass Flow Graph'
-                    ws.column_dimensions['M'].width = 56
+                # ── Migrate away from the Nozzle column ─────────────────────────
+                # Runs after the migrations above have brought an older file up to
+                # the 13-column with-Nozzle layout.  Nozzle was column B, so every
+                # column from C rightwards shifts one to the left.
+                if ws.cell(row=1, column=2).value == 'Nozzle':
+                    if ws.cell(row=1, column=13).value != 'Mass Flow Graph':
+                        ws.cell(row=1, column=13).value = 'Mass Flow Graph'
+                    ws.delete_cols(2)
+                    for _img in ws._images:
+                        _anc = _img.anchor
+                        if isinstance(_anc, str):
+                            _m = _re.match(r'^([A-Z]+)(\d+)$', _anc)
+                            if _m and column_index_from_string(_m.group(1)) >= 3:
+                                _new_col = get_column_letter(column_index_from_string(_m.group(1)) - 1)
+                                _img.anchor = f'{_new_col}{_m.group(2)}'
+                        elif hasattr(_anc, '_from'):
+                            if _anc._from.col >= 2:   # 0-indexed: 2 == Excel col C
+                                _anc._from.col -= 1
+                            if hasattr(_anc, 'to') and _anc.to and _anc.to.col >= 2:
+                                _anc.to.col -= 1
+
+                _mf_col = self.MASTER_COL_COUNT
+                if ws.cell(row=1, column=_mf_col).value != 'Mass Flow Graph':
+                    ws.cell(row=1, column=_mf_col).value = 'Mass Flow Graph'
+                    ws.column_dimensions[get_column_letter(_mf_col)].width = 56
 
                 # Shift row_dimensions down one row before inserting
                 old_dims = {r: ws.row_dimensions[r].height
@@ -6161,36 +6171,36 @@ class AtomisationApp(QMainWindow):
                 wb = Workbook()
                 ws = wb.active
                 ws.title = 'Experiments'
-                ws.append(['Timestamp', 'Nozzle', 'Orifice', 'Flow Range (sccm)',
+                ws.append(['Timestamp', 'Orifice', 'Flow Range (sccm)',
                            'Pressure Range (barA)', 'Speed (steps/s)', 'Distance (mm)',
                            'Avg Lamella Thickness', 'Notes', 'Cone Image', 'Shadowgraph',
                            'Pressure Graph', 'Mass Flow Graph'])
-                for col, width in zip('ABCDEFGHIJKLM', self.MASTER_COL_WIDTHS):
+                for col, width in zip(self.MASTER_COL_LETTERS, self.MASTER_COL_WIDTHS):
                     ws.column_dimensions[col].width = width
 
             # Reapply the canonical widths on every save.  openpyxl's
-            # insert_cols() above moves cell values but NOT column_dimensions,
-            # so the format migration leaves every width from D rightwards
-            # attached to the wrong column — Shadowgraph inherits the old
-            # Pressure Graph width and renders enormous.  Reapplying here also
-            # repairs workbooks that were migrated before this was fixed.
-            # J/K/L/M are re-set from their actual images further down.
-            for col, width in zip('ABCDEFGHIJKLM', self.MASTER_COL_WIDTHS):
+            # insert_cols()/delete_cols() above move cell values but NOT
+            # column_dimensions, so a format migration leaves widths attached to
+            # the wrong column — Shadowgraph inherits the old Pressure Graph width
+            # and renders enormous.  Reapplying here also repairs workbooks that
+            # were migrated before this was fixed.
+            # I/J/K/L are re-set from their actual images further down.
+            for col, width in zip(self.MASTER_COL_LETTERS, self.MASTER_COL_WIDTHS):
                 ws.column_dimensions[col].width = width
 
             ws.insert_rows(2)
             row_num = 2
             center_mid = Alignment(horizontal='center', vertical='center', wrap_text=True)
             top_left   = Alignment(horizontal='left',   vertical='top',    wrap_text=True)
-            for col, val in enumerate([ts_str, nozzle, orifice, f_range_str, p_range_str,
+            for col, val in enumerate([ts_str, orifice, f_range_str, p_range_str,
                                        speed_str, distance_str, _lamella_cell_val,
                                        notes, '', '', '', ''], start=1):
                 cell = ws.cell(row=row_num, column=col)
                 cell.value = val
-                cell.alignment = top_left if col == 9 else center_mid
+                cell.alignment = top_left if col == 8 else center_mid
             # Orange highlight for "Input Self" lamella cell
             if _lamella_orange:
-                _lc = ws.cell(row=row_num, column=8)
+                _lc = ws.cell(row=row_num, column=7)
                 _lc.fill = PatternFill(start_color='FFA500', end_color='FFA500', fill_type='solid')
                 _lc.font = Font(color='000000', bold=True)
             ws.row_dimensions[row_num].height = 125
@@ -6205,12 +6215,12 @@ class AtomisationApp(QMainWindow):
                     _cone_disp_w = max(1, int(_cw * _cone_disp_h / _ch))
                     cimg = XLImage(_cone_img_path)
                     cimg.width = _cone_disp_w; cimg.height = _cone_disp_h
-                    ws.column_dimensions['J'].width = max(10, _cone_disp_w / 7.0)
-                    ws.add_image(cimg, f'J{row_num}')
+                    ws.column_dimensions['I'].width = max(10, _cone_disp_w / 7.0)
+                    ws.add_image(cimg, f'I{row_num}')
                 else:
-                    ws.cell(row=row_num, column=10).value = 'NO DATA AVAILABLE'
+                    ws.cell(row=row_num, column=9).value = 'NO DATA AVAILABLE'
             else:
-                ws.cell(row=row_num, column=10).value = 'NO DATA AVAILABLE'
+                ws.cell(row=row_num, column=9).value = 'NO DATA AVAILABLE'
 
             shadow_src = self._result_path_label.text()
             if shadow_src and os.path.exists(shadow_src):
@@ -6218,15 +6228,15 @@ class AtomisationApp(QMainWindow):
                 simg.width = self.SHADOWGRAPH_W_PX; simg.height = DISPLAY_H
                 # Size the column to the image rather than leaving whatever
                 # width the migration left behind (Excel width ~= px / 7)
-                ws.column_dimensions['K'].width = self.SHADOWGRAPH_W_PX / 7.0
-                ws.add_image(simg, f'K{row_num}')
+                ws.column_dimensions['J'].width = self.SHADOWGRAPH_W_PX / 7.0
+                ws.add_image(simg, f'J{row_num}')
             else:
-                ws.cell(row=row_num, column=11).value = 'NO DATA AVAILABLE'
+                ws.cell(row=row_num, column=10).value = 'NO DATA AVAILABLE'
 
-            # Pressure graph in L, mass flow graph immediately right of it in M
+            # Pressure graph in K, mass flow graph immediately right of it in L
             for _col_letter, _col_idx, _img_bytes, _img_w in (
-                    ('L', 12, pressure_bytes, pressure_img_width),
-                    ('M', 13, flow_bytes,     flow_img_width)):
+                    ('K', 11, pressure_bytes, pressure_img_width),
+                    ('L', 12, flow_bytes,     flow_img_width)):
                 if _img_bytes:
                     _gimg = XLImage(io.BytesIO(_img_bytes))
                     _gimg.width = _img_w; _gimg.height = DISPLAY_H
@@ -6286,6 +6296,13 @@ class AtomisationApp(QMainWindow):
             finally:
                 self._save_fmt_guard = False
             self._pipeline_check.setChecked(bool(s.get("run_ai_analysis", False)))
+            # Orifice — only restore a value the combo actually offers, so an old
+            # or hand-edited settings file can't leave it blank.
+            _orifice = s.get("orifice", "")
+            if _orifice and self._orifice_combo.findText(_orifice) >= 0:
+                self._orifice_combo.blockSignals(True)
+                self._orifice_combo.setCurrentText(_orifice)
+                self._orifice_combo.blockSignals(False)
             self._update_cam_capacity()
             px_per_mm = float(s.get("px_per_mm", 0.0))
             if px_per_mm > 0:
@@ -6357,6 +6374,7 @@ class AtomisationApp(QMainWindow):
                 "cone_camera_index": self._cone_idx_spin.value() if (self._cone_cap is not None and self._cone_cap.isOpened()) else existing.get("cone_camera_index", -1),
                 "save_video":        self._cam_save_video_chk.isChecked(),
                 "save_tiffs":        self._cam_save_tiffs_chk.isChecked(),
+                "orifice":           self._orifice_combo.currentText(),
                 "run_ai_analysis":   self._pipeline_check.isChecked(),
                 "cone_autofocus":    self._cone_autofocus_chk.isChecked(),
                 "cone_focus":        self._cone_focus_spin.value(),
@@ -6396,7 +6414,7 @@ class AtomisationApp(QMainWindow):
         lacie = find_lacie_drive()
         if lacie:
             return os.path.join(lacie, "Experiments", "YYYY", "MM", "DD",
-                                "HHMMSS_Nnozzle_flowsccm", "run_summary.xlsx")
+                                "HHMMSS_flowsccm", "run_summary.xlsx")
         return "Saving to: experiment_logs/ (no LaCie drive found)"
 
     def _warn(self, title, message):
