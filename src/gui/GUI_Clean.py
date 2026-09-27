@@ -2569,11 +2569,12 @@ class AtomisationApp(QMainWindow):
         self._pipeline_check = QCheckBox("Run AI analysis after capture")
         self._pipeline_check.setStyleSheet(f"color:{CLR_TEXT}; font-size:13px;")
         self._pipeline_check.stateChanged.connect(self._save_camera_settings)
+        self._pipeline_check.setToolTip(
+            "<b>Run AI analysis after capture</b><br>"
+            "Runs the full chain on the saved .cine: frame extraction → "
+            "background → tiled inference → D32 and atomised fraction.<br>"
+            "Unticked, the capture is saved and nothing else happens.")
         c3.layout().addWidget(self._pipeline_check)
-        _pipeline_desc = QLabel("When enabled, Dennis (Mask R-CNN) runs automatically after each capture — detecting droplets and ligaments and saving ai_result.png + metrics to the run folder.")
-        _pipeline_desc.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
-        _pipeline_desc.setWordWrap(True)
-        c3.layout().addWidget(_pipeline_desc)
 
         self._cam_arm_status_lbl = QLabel("Not armed")
         self._cam_arm_status_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
@@ -2639,9 +2640,8 @@ class AtomisationApp(QMainWindow):
         c_test.layout().addWidget(section_label("TEST PIPELINE"))
         c_test.layout().addWidget(separator())
         _test_desc = QLabel(
-            "Runs Dennis on existing frames from {LaCie}/Phantom/frames/ "
-            "and writes results to {LaCie}/Experiments/Trials/. "
-            "Uses current calibration px/mm (falls back to 52.3)."
+            "Pick a .cine and run the full AI chain on it, exactly as a real "
+            "capture would. Builds a Trial_n run folder under today's date."
         )
         _test_desc.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
         _test_desc.setWordWrap(True)
@@ -2650,10 +2650,10 @@ class AtomisationApp(QMainWindow):
         self._test_pipeline_btn.setFixedHeight(36)
         self._test_pipeline_btn.setToolTip(
             "<b>Test pipeline</b><br>"
-            "1. Loads existing frames from {LaCie}/Phantom/frames/<br>"
-            "2. Runs Dennis (Mask R-CNN) to detect droplets and ligaments<br>"
-            "3. Saves results to {LaCie}/Experiments/Trials/<br>"
-            "Uses current calibration px/mm (falls back to 52.3)")
+            "1. Asks for a .cine file<br>"
+            "2. Creates Experiments/YYYY/MM/DD/Trial_n/<br>"
+            "3. Extracts frames → background → inference → D32 + atomised<br>"
+            "Same code path as a real capture, so what works here works there.")
         self._test_pipeline_btn.clicked.connect(self._run_test_pipeline)
         c_test.layout().addWidget(self._test_pipeline_btn, alignment=Qt.AlignmentFlag.AlignRight)
         vl.addWidget(c_test)
@@ -4803,13 +4803,27 @@ class AtomisationApp(QMainWindow):
                 QTimer.singleShot(0, self,
                     lambda: self._cam_status_lbl.setText("Trigger saved ✓"))
 
-                # 4 — kick off AI in its own thread as soon as brightest frame is known
-                if run_pipeline and bright_path:
-                    QTimer.singleShot(0, self,
-                        lambda: self._run_pipeline(bright_dir, analysis_dir))
-                elif run_pipeline and save_tiffs:
-                    QTimer.singleShot(0, self,
-                        lambda: self._set_status("No frames found for pipeline", CLR_ORANGE))
+                # 4 — AI chain, ONLY if "Run AI analysis after capture" is ticked.
+                #
+                # Runs on the saved .cine, not on the brightest frame: the whole
+                # measurement is a per-run statistic over many frames, so a
+                # single frame cannot produce it. Same entry point the Test
+                # Pipeline button uses, so a dry run there proves this path.
+                if run_pipeline:
+                    if save_video and os.path.exists(cine_path):
+                        _run_folder_for_ai = os.path.dirname(os.path.dirname(
+                            os.path.dirname(cine_path)))   # .../shadowgraph/raw/CINE -> run root
+                        QTimer.singleShot(0, self, lambda c=cine_path, r=_run_folder_for_ai: (
+                            self._log("── AI analysis enabled — starting on the saved .cine ──"),
+                            self._run_ai_chain(c, run_dir=r),
+                        ))
+                    else:
+                        QTimer.singleShot(0, self, lambda: (
+                            self._set_status(
+                                "AI analysis needs the .cine — tick Save video (.cine)",
+                                CLR_ORANGE),
+                            self._log("  (AI analysis skipped: no .cine was saved)"),
+                        ))
 
                 # 5 — re-arm automatically so the camera is ready for the next trigger
                 QTimer.singleShot(0, self, self._cam_arm)
@@ -4861,56 +4875,141 @@ class AtomisationApp(QMainWindow):
         threading.Thread(target=_worker, daemon=True).start()
 
     def _on_pipeline_complete(self, results: dict):
+        """
+        Display a finished measure_run summary.
+
+        Shows the LOWEST-D32 frame rather than the brightest one -- the old CV
+        path picked by image brightness, which says nothing about the spray.
+        Lowest D32 is the finest-atomised frame in the run, which is the one
+        worth looking at.
+        """
         self._pipeline_status.setText("Pipeline: complete ✓")
-        self._log("── AI pipeline complete ✓ ──")
+        self._log("── AI chain complete ✓ ──")
         self._flash_log_border(CLR_GREEN)
-        conf = results.get("mean_confidence")
-        diam = results.get("avg_droplet_um")
-        dl   = results.get("dl_ratio", "–")
-        self._ai_confidence_lbl.setText(f"Confidence: {conf:.1f}%" if conf is not None else "Confidence: –")
-        self._ai_diameter_lbl.setText(f"Avg droplet: {diam:.1f} µm" if diam is not None else "Avg droplet: –")
-        self._ai_dl_lbl.setText(f"D/L: {dl}")
-        # Re-enable test button if this was a test run
-        if getattr(self, '_is_test_pipeline', False):
-            self._test_pipeline_btn.setEnabled(True)
-            self._test_pipeline_btn.setText("Test Pipeline")
-            self._is_test_pipeline = False
-        # Use the result image path directly from results
-        result_image = results.get("result_image")
-        if result_image:
-            path = str(result_image)
-            img = QImage(path)
-            if not img.isNull():
-                pix = QPixmap.fromImage(img).scaled(
-                    390, 265,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation
-                )
-                self._shadow_label.setPixmap(pix)
-                self._shadow_label.setText("")
-                self._result_path_label.setText(path)
-                return
+
+        self._test_pipeline_btn.setEnabled(True)
+        self._test_pipeline_btn.setText("Test Pipeline")
+        self._is_test_pipeline = False
+
+        d32 = results.get("d32_in_focus_um")
+        ci = results.get("d32_ci95") or [None, None]
+        atom = results.get("atomised_pct")
+        aci = results.get("atomised_ci95") or [None, None]
+        n_focus = results.get("droplets_in_focus")
+
+        if d32 is not None:
+            half = (ci[1] - ci[0]) / 2 if None not in ci else None
+            pct = f" ±{100 * half / d32:.1f}%" if half else ""
+            self._ai_diameter_lbl.setText(f"D32: {d32:.1f} µm{pct}")
+        else:
+            self._ai_diameter_lbl.setText("D32: –")
+
+        if atom is not None:
+            ahalf = (aci[1] - aci[0]) / 2 if None not in aci else None
+            apct = f" ±{100 * ahalf / atom:.0f}%" if ahalf else ""
+            self._ai_dl_lbl.setText(f"Atomised: {atom:.2f} %{apct}")
+        else:
+            self._ai_dl_lbl.setText("Atomised: –")
+
+        self._ai_confidence_lbl.setText(
+            f"{results.get('frames', '?')} frames, {n_focus} in-focus droplets"
+            if n_focus is not None else "Confidence: –")
+
+        self._log(f"  D32 {d32} µm   95% CI {ci}")
+        self._log(f"  atomised {atom} %   95% CI {aci}")
+
+        # Show the lowest-D32 frame's marked-up image.
+        ext = (results.get("d32_extreme_frames") or {}).get("lowest") or {}
+        stem = ext.get("frame")
+        mdir = results.get("_measurement_dir")
+        if stem and mdir:
+            path = os.path.join(mdir, f"{stem}.png")
+            self._log(f"  lowest-D32 frame: {stem} ({ext.get('d32_um')} µm)")
+            if os.path.exists(path):
+                img = QImage(path)
+                if not img.isNull():
+                    pix = QPixmap.fromImage(img).scaled(
+                        390, 265,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation)
+                    self._shadow_label.setPixmap(pix)
+                    self._shadow_label.setText("")
+                    self._result_path_label.setText(path)
+                    return
         self._refresh_shadowgraph()
 
     def _on_pipeline_error(self, err: str):
         self._pipeline_status.setText(f"Pipeline error: {err}")
-        self._log(f"── AI pipeline error: {err} ──")
+        self._log(f"── AI chain error: {err} ──")
         self._flash_log_border("#ff3b30")
-        if getattr(self, '_is_test_pipeline', False):
-            self._test_pipeline_btn.setEnabled(True)
-            self._test_pipeline_btn.setText("Test Pipeline")
-            self._is_test_pipeline = False
+        self._test_pipeline_btn.setEnabled(True)
+        self._test_pipeline_btn.setText("Test Pipeline")
+        self._is_test_pipeline = False
 
     def _run_test_pipeline(self):
-        """Test button: run Dennis on test paths, preferring LaCie drive."""
-        _base = find_lacie_drive() or "/Volumes/Backup_PhD"
-        frames_folder = os.path.join(_base, "Phantom", "frames")
-        output_folder = os.path.join(_base, "Experiments", "Trials")
-        px_per_mm = self._get_px_per_mm() or 52.3
+        """
+        Pick a .cine and run the full AI chain on it into a Trial_n folder.
+
+        Deliberately the SAME entry point a real capture uses
+        (process_capture.process_capture), so a dry run here proves the live
+        path rather than exercising a parallel one that could drift from it.
+        """
+        start_dir = find_lacie_drive() or os.path.expanduser("~")
+        cine_path, _ = QFileDialog.getOpenFileName(
+            self, "Pick a .cine to run the AI pipeline on",
+            start_dir, "Phantom cine (*.cine);;All files (*)")
+        if not cine_path:
+            return
+
+        lacie = find_lacie_drive()
+        if not lacie:
+            self._warn("No LaCie drive",
+                       "The trial run folder is created on the LaCie drive, "
+                       "which isn't mounted.")
+            return
+
+        self._run_ai_chain(cine_path, run_dir=None, tag="Trial")
+
+    def _run_ai_chain(self, cine_path, run_dir=None, tag="Trial"):
+        """
+        Run process_capture in a worker thread, streaming its log to the panel.
+
+        run_dir=None creates the next Trial_n under today's date; a real
+        capture passes its own already-created run folder instead.
+        """
+        import threading
+
+        sys.path.insert(0, os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "..", "AI", "Real_Data_Code"))
+
         self._test_pipeline_btn.setEnabled(False)
         self._test_pipeline_btn.setText("Running…")
-        self._is_test_pipeline = True  # flag so _on_pipeline_complete re-enables btn
-        self._run_pipeline(frames_folder, output_folder, px_per_mm)
+        self._pipeline_status.setText("Pipeline: running…")
+        self._log(f"── AI chain started on {os.path.basename(cine_path)} ──")
+
+        def _worker():
+            try:
+                from pathlib import Path as _P
+                from process_capture import process_capture, next_trial_dir
+                target = run_dir
+                if target is None:
+                    target = next_trial_dir(
+                        _P(find_lacie_drive()) / "Experiments")
+                self._log_queue.put(f"run folder: {target}\n")
+
+                summary = process_capture(
+                    cine_path, target,
+                    stride=10,
+                    score_thresh=0.30,
+                    images=True,
+                    log=lambda s: self._log_queue.put(s + "\n"),
+                )
+                self._pipeline_done.emit(summary)
+            except Exception as e:
+                self._pipeline_err.emit(str(e))
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     # ─────────────────────────────────────────────────────────────────────────
     # Logic — Calibration

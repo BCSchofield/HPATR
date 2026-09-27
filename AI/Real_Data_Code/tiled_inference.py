@@ -120,6 +120,26 @@ def tile_offsets(size: int, tile: int = TILE, min_overlap: int = MIN_OVERLAP):
     return [int(round(i * step)) for i in range(n)]
 
 
+def auto_device() -> str:
+    """
+    cuda when a usable CUDA GPU is actually present, else cpu.
+
+    Deliberately tests for the GPU rather than branching on the operating
+    system: "Windows" is not the same claim as "a working CUDA install", and
+    the failure mode of guessing wrong is a crash three hours into a run or,
+    worse, a silent fall back to CPU nobody notices until the timing looks odd.
+    MPS is not selected automatically -- detectron2's support for it is patchy
+    and a wrong answer is worse than a slow one. Pass --device mps to try it.
+    """
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return "cuda"
+    except ImportError:
+        pass
+    return "cpu"
+
+
 def build_predictor(model_dir: Path, score_thresh: float, device: str):
     from detectron2.config import get_cfg
     from detectron2.engine import DefaultPredictor
@@ -389,7 +409,11 @@ def main():
                     help="skip the second pass over seam-truncated detections")
     ap.add_argument("--preview", action="store_true")
     ap.add_argument("--out", type=Path, default=None, help="write COCO predictions JSON")
-    ap.add_argument("--device", default="cpu")
+    ap.add_argument("--device", default=None,
+                    help="cuda / cpu / mps. Default: auto -- cuda when a working "
+                         "CUDA GPU is present (the Windows training machine), cpu "
+                         "otherwise (the Mac). Pass it explicitly to force one, e.g. "
+                         "--device cpu on Windows to benchmark against CPU.")
     ap.add_argument("--root", type=Path, default=None)
     ap.add_argument("--val-dir", default="06_validation",
                     help="which set to run on, relative to the Real_Data root, e.g. "
@@ -404,6 +428,10 @@ def main():
     root = args.root or real_data_root()
     val = root / args.val_dir
     model_dir = args.model_dir or default_model_dir()
+    device = args.device or auto_device()
+    if args.device is None:
+        print(f"device: {device}  (auto-detected"
+              f"{'; no CUDA GPU found' if device == 'cpu' else ''})")
 
     # Preview filenames used to be hardcoded to "_v2pred.png", so scoring any
     # other model overwrote v2's previews with someone else's detections under
@@ -440,8 +468,8 @@ def main():
     print(f"model:  {model_dir.name}{iter_note}")
     print(f"preview tag: {tag}")
     t0 = time.time()
-    predictor = build_predictor(model_dir, args.score_thresh, args.device)
-    print(f"loaded in {time.time() - t0:.1f}s on {args.device}  "
+    predictor = build_predictor(model_dir, args.score_thresh, device)
+    print(f"loaded in {time.time() - t0:.1f}s on {device}  "
           f"(once, reused for every tile)\n")
 
     all_preds = []

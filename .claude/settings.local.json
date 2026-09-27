@@ -404,7 +404,14 @@
       "Bash(python3 -c \"import ast; ast.parse\\(open\\('run_stats.py'\\).read\\(\\)\\); print\\('SYNTAX OK'\\)\")",
       "Bash(python3 -u run_stats.py --pred /Volumes/LaCie/Experiments/Real_Data/09_experiments/20_new_frames/v3_predictions.json --val-dir 09_experiments/20_new_frames --score-thresh 0.30)",
       "Bash(python3 -u preview_predictions.py --pred /Volumes/LaCie/Experiments/Real_Data/09_experiments/20_new_frames/v3_predictions.json --val-dir 09_experiments/20_new_frames --thresholds 0.05 0.20 0.30 0.50 0.70 0.90 --only-sheets --panel-width 0 --droplet-ring 10 --sheet-dir sheets_fullres)",
-      "Bash(python3 -c 'import ast,sys *)"
+      "Bash(python3 -c 'import ast,sys *)",
+      "Read(//Volumes/LaCie/Experiments/Real_Data/05_dataset_v3/images/**)",
+      "Bash(xargs '-I{}' python3 -c ' *)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('cine_extract.py'\\).read\\(\\)\\); print\\('SYNTAX OK'\\)\")",
+      "Bash(python3 -c \"from pyphantom import Phantom; print\\('pyphantom OK'\\)\")",
+      "Read(//Volumes/LaCie/Experiments/2026/09/22/101947_NNA_4500sccm/shadowgraph/raw/CINE/**)",
+      "Bash(python3 -u cine_extract.py /Volumes/LaCie/Experiments/2026/09/22/101947_NNA_4500sccm/shadowgraph/raw/CINE/recording_102003.cine --run-name CINE --output-root /private/tmp/claude-501/-Users-benschofield-Documents-GitHub-HPATR/441b34a7-fcb4-4b72-82e6-24f1b328ad88/scratchpad/ce_test/raw --stride 200 --limit 4)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('tiled_inference.py'\\).read\\(\\)\\); print\\('SYNTAX OK'\\)\")"
     ],
     "additionalDirectories": [
       "/Volumes/LaCie/Experiments/Real_Data/00_frames/_dryrun",
