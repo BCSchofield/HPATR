@@ -123,10 +123,13 @@ def main():
     ap = argparse.ArgumentParser(description="Score v2 against the hand-labelled benchmark")
     ap.add_argument("--pred", type=Path, default=None)
     ap.add_argument("--root", type=Path, default=None)
+    ap.add_argument("--val-dir", default="06_validation",
+                    help="which set the ground truth lives in, relative to the "
+                         "Real_Data root, e.g. 09_experiments/02_Chosen_Frame.")
     args = ap.parse_args()
 
     root = args.root or real_data_root()
-    val = root / "06_validation"
+    val = root / args.val_dir
     gt_path = val / "instances.json"
     pred_path = args.pred or (val / "v2_predictions.json")
 

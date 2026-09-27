@@ -49,6 +49,25 @@ CATEGORIES = [
     {"id": 3, "name": "blob"},
 ]
 CLASS_TO_ID = {c["name"]: c["id"] for c in CATEGORIES}
+
+# Trial label names (the measurability trial, 2026-09-26). Both are droplets as
+# far as the model and every metric are concerned -- the split records the
+# HUMAN's verdict on whether the size is trustworthy, so it can be compared
+# against the measured `t_min <= FOCUS_MAX` verdict on the same objects.
+#
+# They are a hierarchy, not two kinds of object: every droplet_measure is also
+# visible by eye. Never report them as separate populations.
+HUMAN_MEASURABLE_LABELS = {
+    "droplet_seen": False,      # real droplet, human says do NOT size it
+    "droplet_measure": True,    # human says this one's size is trustworthy
+}
+for _name in HUMAN_MEASURABLE_LABELS:
+    CLASS_TO_ID[_name] = CLASS_TO_ID["droplet"]
+
+# Canonical name per id, so summaries tally under "droplet" regardless of which
+# alias was drawn.
+ID_TO_NAME = {c["id"]: c["name"] for c in CATEGORIES}
+
 UM_PER_PX = 10.0
 
 # An out-of-focus object is REAL but UNMEASURABLE: defocus spreads its edge, so
@@ -126,10 +145,23 @@ def main():
     ap = argparse.ArgumentParser(description="Convert LabelMe validation masks to COCO")
     ap.add_argument("--run-name", required=True)
     ap.add_argument("--root", type=Path, default=None)
+    ap.add_argument("--val-dir", default="06_validation",
+                    help="which set to convert, relative to the Real_Data root. "
+                         "e.g. 06_validation_run2, or "
+                         "09_experiments/02_Chosen_Frame for the measurability trial.")
+    ap.add_argument("--out", type=Path, default=None,
+                    help="output path (default: <val-dir>/instances.json)")
+    ap.add_argument("--human-verdict-from", default=None, metavar="JSON",
+                    help="a parallel, index-aligned LabelMe file (e.g. "
+                         "<frame>.original.json) whose droplet_seen/droplet_measure "
+                         "labels are recorded as human_measurable_blind. Use when the "
+                         "working labels have been revised using code output and you "
+                         "still want the independent first-pass verdict on record. "
+                         "Relative paths resolve against the labels directory.")
     args = ap.parse_args()
 
     root = args.root or real_data_root()
-    val_dir = root / "06_validation"
+    val_dir = root / args.val_dir
     lab_dir = val_dir / "labels"
     frame_dir = val_dir / "frames" / "8bit"
 
@@ -144,10 +176,15 @@ def main():
     # Frames excluded from training must be exactly the frames validated here.
     # One manifest per run: numbering restarts, so a frame number alone is
     # ambiguous once more than one run contributes.
+    # Only meaningful for the canonical benchmark. A trial set under
+    # 09_experiments/ has no manifest entry, and cross-checking it would print
+    # every benchmark frame as "not yet labelled" -- noise that reads like an error.
+    is_benchmark = args.val_dir.startswith("06_validation")
     expected = set()
-    for mp in sorted((root / "00_manifest").glob("validation_split*.json")):
-        man = json.loads(mp.read_text(encoding="utf-8"))
-        expected |= {(man["source_run"], int(e["frame_number"])) for e in man["frames"]}
+    if is_benchmark:
+        for mp in sorted((root / "00_manifest").glob("validation_split*.json")):
+            man = json.loads(mp.read_text(encoding="utf-8"))
+            expected |= {(man["source_run"], int(e["frame_number"])) for e in man["frames"]}
 
     images, annotations = [], []
     ann_id = 1
@@ -157,6 +194,10 @@ def main():
     measurable_by_class = defaultdict(list)
     n_border = 0
     n_out_of_focus = 0
+    n_human_labelled = 0
+    human_vs_measured_disagree = 0
+    n_blind = 0
+    blind_vs_measured_disagree = 0
     unknown_labels = Counter()
 
     # Per-frame run identity. Frame numbering restarts per recording and each
@@ -202,8 +243,28 @@ def main():
             sys.exit(f"No 16-bit frame for {fp.stem} -- cannot measure focus.")
         T = raw.astype(np.float32) / np.maximum(bg, 1.0)
 
+        # Blind verdict: the human's FIRST-PASS measure/seen call, before any
+        # code touched it. Kept separate because the working labels were later
+        # revised using refinement's outcome, and refinement's main rejection
+        # test (t_min > FOCUS_MAX) is the same test as `measurable` -- so
+        # comparing the revised labels against `measurable` compares the cutoff
+        # against itself. Only the blind pass is independent evidence about
+        # whether FOCUS_MAX is set correctly.
+        blind_labels = None
+        if args.human_verdict_from:
+            bpath = Path(args.human_verdict_from)
+            if not bpath.is_absolute():
+                bpath = lab_dir / bpath
+            bshapes = json.loads(bpath.read_text(encoding="utf-8"))["shapes"]
+            if len(bshapes) != len(data.get("shapes", [])):
+                sys.exit(f"--human-verdict-from has {len(bshapes)} shapes but "
+                         f"{fp.stem} has {len(data.get('shapes', []))}. They must be "
+                         f"index-aligned -- pass the backup written from the SAME "
+                         f"shape list (e.g. <frame>.original.json).")
+            blind_labels = [s.get("label", "").strip() for s in bshapes]
+
         count = 0
-        for sh in data.get("shapes", []):
+        for shape_idx, sh in enumerate(data.get("shapes", [])):
             label = sh.get("label", "").strip()
             if label not in CLASS_TO_ID:
                 unknown_labels[label] += 1
@@ -227,7 +288,7 @@ def main():
 
             rle = mask_util.encode(np.asfortranarray(m.astype(np.uint8)))
             rle["counts"] = rle["counts"].decode("ascii")
-            annotations.append({
+            ann = {
                 "id": ann_id, "image_id": i,
                 "category_id": CLASS_TO_ID[label],
                 "segmentation": rle, "area": float(area),
@@ -236,12 +297,36 @@ def main():
                 "min_transmission": round(t_min, 4),
                 "in_focus": in_focus,
                 "measurable": measurable,
-            })
+            }
+            # Measurability trial: record the human verdict ALONGSIDE the measured
+            # one, never instead of it. `measurable` keeps its usual meaning so
+            # every existing metric is unchanged; `human_measurable` is the new
+            # column to compare it against.
+            if label in HUMAN_MEASURABLE_LABELS:
+                ann["human_measurable"] = HUMAN_MEASURABLE_LABELS[label]
+                ann["human_label"] = label
+                n_human_labelled += 1
+                if HUMAN_MEASURABLE_LABELS[label] != measurable:
+                    human_vs_measured_disagree += 1
+            if blind_labels is not None:
+                blabel = blind_labels[shape_idx]
+                if blabel in HUMAN_MEASURABLE_LABELS:
+                    ann["human_measurable_blind"] = HUMAN_MEASURABLE_LABELS[blabel]
+                    ann["human_label_blind"] = blabel
+                    n_blind += 1
+                    if HUMAN_MEASURABLE_LABELS[blabel] != measurable:
+                        blind_vs_measured_disagree += 1
+            annotations.append(ann)
             ann_id += 1
-            per_class[label] += 1
-            areas_by_class[label].append(area)
+            # Tally under the CANONICAL class name, not the label as drawn --
+            # droplet_seen/droplet_measure are both droplets, and keying the
+            # summary on the raw label reports "droplet 0" while the real
+            # droplets hide under two names that no downstream reader expects.
+            cls = ID_TO_NAME[CLASS_TO_ID[label]]
+            per_class[cls] += 1
+            areas_by_class[cls].append(area)
             if measurable:
-                measurable_by_class[label].append(area)
+                measurable_by_class[cls].append(area)
             count += 1
         per_frame[fp.stem] = count
 
@@ -268,7 +353,7 @@ def main():
         },
         "images": images, "annotations": annotations, "categories": CATEGORIES,
     }
-    out = val_dir / "instances.json"
+    out = args.out or (val_dir / "instances.json")
     out.write_text(json.dumps(coco), encoding="utf-8")
 
     # ---- checks ----
@@ -287,6 +372,55 @@ def main():
 
     print(f"\nexcluded from size stats (still counted for detection):")
     print(f"  out of focus (t_min > {FOCUS_MAX}): {n_out_of_focus}")
+
+    if n_human_labelled:
+        # Seen vs measurable is a HIERARCHY, not two kinds of object: every
+        # measurable droplet was also seen. LabelMe can only carry one label per
+        # shape, so the two names are exclusive in the file -- but they must be
+        # reported as nested, or the counts read as separate populations.
+        n_drop = sum(1 for a in annotations if a["category_id"] == 1)
+        n_code = sum(1 for a in annotations
+                     if a["category_id"] == 1 and a.get("measurable"))
+        n_final = sum(1 for a in annotations if a.get("human_measurable"))
+        n_blind_meas = sum(1 for a in annotations if a.get("human_measurable_blind"))
+        print(f"\n  DROPLET COUNTS -- nested, not exclusive")
+        print(f"    seen (every droplet labelled)     : {n_drop}")
+        print(f"      of which measurable, code       : {n_code}"
+              f"   ({100 * n_code / n_drop:.0f}%)")
+        print(f"      of which measurable, human final: {n_final}"
+              f"   ({100 * n_final / n_drop:.0f}%)")
+        if n_blind:
+            print(f"      of which measurable, human blind: {n_blind_meas}"
+                  f"   ({100 * n_blind_meas / n_drop:.0f}%)")
+        print(f"    NOT measurable by the code rule    : {n_drop - n_code}"
+              f"   (kept for detection scoring, excluded from size stats)")
+
+        agree = n_human_labelled - human_vs_measured_disagree
+        print(f"\n  MEASURABILITY TRIAL -- human verdict vs measured "
+              f"(t_min <= {FOCUS_MAX} and not border-touching)")
+        print(f"    droplets carrying a human verdict : {n_human_labelled}")
+        print(f"    agree                             : {agree} "
+              f"({100 * agree / n_human_labelled:.1f}%)")
+        print(f"    disagree                          : {human_vs_measured_disagree} "
+              f"({100 * human_vs_measured_disagree / n_human_labelled:.1f}%)")
+        print("    Scatter near t_min ~ 0.70 is expected and uninformative -- the eye")
+        print("    cannot resolve 0.70 from 0.78. Look for SYSTEMATIC disagreement:")
+        print("    sort the disagreeing annotations by min_transmission and see whether")
+        print("    they sit consistently on one side of the cutoff.")
+
+    if n_blind:
+        agree_b = n_blind - blind_vs_measured_disagree
+        print(f"\n  BLIND first-pass verdict vs measured -- the INDEPENDENT comparison")
+        print(f"    droplets with a blind verdict     : {n_blind}")
+        print(f"    agree                             : {agree_b} "
+              f"({100 * agree_b / n_blind:.1f}%)")
+        print(f"    disagree                          : {blind_vs_measured_disagree} "
+              f"({100 * blind_vs_measured_disagree / n_blind:.1f}%)")
+        if n_human_labelled:
+            print("    NOTE: if the working labels were revised using refinement's")
+            print("    outcome, the comparison above this one is partly circular --")
+            print("    refinement rejects on t_min > FOCUS_MAX, which is the same test")
+            print("    as `measurable`. This blind row is the one to quote.")
     print(f"  border-touching:                {n_border}")
 
     # What the focus gate actually costs the number being reported.

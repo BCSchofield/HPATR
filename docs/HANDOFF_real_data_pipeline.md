@@ -21,7 +21,880 @@ file is the operational summary of it.
 
 ---
 
-## NEXT ACTIONS — updated 2026-09-25 (benchmark merged to 20 frames; v3 ready to train)
+## OPERATING CONFIGURATION — settled 2026-09-27. Use this tomorrow.
+
+v3 is good enough to pipe into the GUI **for D32 only**, as a RELATIVE
+instrument. Configuration:
+
+| setting | value |
+|---|---|
+| model | `training_2026_09_25_15_20_37`, `model_best.pth` (iter 19000) |
+| inference score floor | **0.05** (`tiled_inference.py` default — keep it; the JSON stores everything and the measurement threshold is applied afterwards) |
+| **measurement threshold** | **0.30** |
+| **response to report** | **D32** |
+| **frames per run** | **>= 75**, ideally 150 |
+| do NOT rank on | the atomised fraction — see below |
+
+**Why 0.30.** D32 is flat between 0.20 and 0.30 on both the 20-frame benchmark
+(79.7 vs 80.6 um) and the trial frame (78.5 vs 79.4), so the higher value costs
+no accuracy while giving better precision and far fewer spurious detections to
+explain. It is a round number sitting in a flat region, so small future model
+changes will not make it suddenly wrong. The atomised-fraction penalty from
+0.20 -> 0.30 is small (-22.6% -> -26.1%).
+
+**Honest caveat:** 0.30 was chosen by looking at the benchmark, which is also
+the test set. Acceptable for lab use; NOT acceptable for the thesis without
+re-deriving it on composite validation first. See Step 2 below.
+
+**What you are signing up for.** D32 carries roughly **+10% bias** (benchmark)
+to **+25%** (trial frame). That cancels when comparing two runs measured
+identically, which is why it is fine for ranking and not fine for quoting an
+absolute droplet size. Never report the number without the bias.
+
+---
+
+## THE MEASUREMENT PIPELINE — built 2026-09-27
+
+Two new tools. Neither needs ground truth; both are the intended GUI entry
+points.
+
+### `measure_run.py` — measure one run
+
+    python measure_run.py --pred <...>/v3_predictions.json \
+      --val-dir 09_experiments/20_new_frames \
+      --background <...>/01_candidates/<run>/background_median.tiff \
+      --sixteen-bit-dir <...>/00_frames/<run>/16bit \
+      --score-thresh 0.30 --images
+
+Splits every predicted droplet by its OWN `t_min`, using the same focus test
+the hand labels use:
+
+| | |
+|---|---|
+| **D32** | **IN-FOCUS droplets only** (green). A size statistic must only see objects whose size means something. |
+| **atomised fraction** | **ALL droplets** (green + magenta) against all liquid. An out-of-focus droplet is still atomised liquid; dropping it would understate the numerator while its filaments stayed in the denominator. |
+
+Different populations on purpose. Outputs `per_frame.csv`, `summary.json` (with
+full provenance — model, threshold, focus cutoff, um/px, timestamp) and
+optionally one marked-up full-res PNG per frame carrying **only** D32 and the
+atomised fraction top-left.
+
+**Measured on the 20-frame set at 0.30:** D32 (in-focus) **90.5 um**, 95% CI
+[82.8, 98.0], +/-8.4%. Atomised **10.08%**, CI [6.89, 15.06], +/-40.5%.
+2,264 in focus / 2,496 out (52.4%). 30-39 s for 20 frames.
+
+**Why in-focus-only D32, even though it scores WORSE against the benchmark**
+(+23% vs +10% for all droplets): the all-droplets number is only closer because
+noise-floor detections happen to offset the small droplets the model misses —
+two errors cancelling, and there is no guarantee the cancellation is stable
+across operating conditions, which is exactly what would scramble a ranking.
+In-focus-only is a cleanly defined population with ONE knowable bias mechanism
+(small-droplet recall ~75%). For a ranking instrument that is the better
+property. **It measures "D32 of confidently-sized droplets", not the spray's
+true D32** — never quote it as an absolute size.
+
+### `compare_runs.py` — compare N runs
+
+    python compare_runs.py A/summary.json B/summary.json C/summary.json
+    python compare_runs.py --label 3000sccm A/... --label 4500sccm B/...
+
+Ranks them and does every pairwise test, calling a difference REAL only when
+the 95% CIs do not overlap. Deliberately conservative: it fails to split runs
+rather than inventing an order.
+
+**It refuses to compare runs measured with different `--score-thresh`,
+`--focus-max` or `um_per_px`**, because the D32 bias only cancels between runs
+measured identically — otherwise the ranking is meaningless and nothing would
+have flagged it.
+
+This exists as a tool rather than a glance at two numbers because D32 measures
+to ~+/-8% at 20 frames: two runs reading 88 and 93 um look different and are
+not. Eyeballing point estimates is the easiest way to build a Taguchi table out
+of noise, and it is very hard to detect afterwards.
+
+### Scale: it handles any number of frames
+
+Nothing caps the frame count. The run-level bootstrap was rewritten to resample
+per-frame `(Sum d^3, Sum d^2)` pairs rather than pooled droplet lists —
+mathematically identical (D32 is the ratio of the summed pairs), but it turns
+each resample from "concatenate 240,000 areas" into "add up N pairs". At 1,000
+frames the naive version would have done ~500M operations per run; it now does
+~2M. Verified to give bit-identical CIs on the 20-frame set.
+
+### Still needed before a real campaign
+
+1. **Block bootstrap — PARTIALLY ADDRESSED 2026-09-27 via `--ci-stride`.**
+   `measure_run.py` now takes `--ci-stride N`: the POINT ESTIMATE always pools
+   every frame (more data only helps it); the CONFIDENCE INTERVAL bootstraps
+   only every Nth frame, so it sees genuinely independent samples instead of
+   ~3x-too-narrow correlated ones. Demonstrated: duplicating 20 frames 10x
+   (zero new information) narrowed a test interval 3.2x -- that is the failure
+   this avoids. Cheap and honest, but throws away real precision that a proper
+   block bootstrap (resampling CONTIGUOUS chunks, not single frames) would
+   keep. Do the block bootstrap when there is time; `--ci-stride` is the
+   correct stopgap for tomorrow.
+   - **`--ci-stride` is not yet automatic from FPS.** See "FPS -> ci-stride,
+     needed" below.
+2. **Streaming for very large runs** — fine at 20, holds all droplet areas in
+   memory at 10,000. (The bootstrap itself was already rewritten to work on
+   per-frame `(Sum d^3, Sum d^2)` pairs rather than pooled droplet lists, so it
+   scales; this item is about the raw per-droplet storage, not the bootstrap.)
+3. **Sanity guards** — flag frames with zero filaments (the atomised fraction is
+   trivially 100% there) and frames with too few droplets for a meaningful
+   per-frame number.
+4. **The video -> frames pipeline** — cine to 8-bit + 16-bit frames with the
+   correct fixed intensity window, feeding this. Not started.
+5. **FPS -> `--ci-stride`, needed.** Decorrelation time is fixed physically
+   (~20.5 ms, liquid crossing the 20.5 mm FOV at ~1 m/s), so the correct stride
+   in FRAMES depends on fps: `round(0.0205 * fps)` -- 10 at 500 fps, 26 at
+   1300 fps (matches the figure already used elsewhere in this document).
+   `frame_rate_fps` is ALREADY recorded per run in
+   `00_frames/<run>/extraction_metadata.json`, so `measure_run.py` should read
+   it and compute the default stride itself rather than requiring `--fps` or
+   `--ci-stride` by hand. Currently manual. Small task, do it before relying on
+   CIs for a real campaign.
+6. **Per-run min/max D32 frame, needed in `measure_run.py`.** The older
+   `run_stats.py` reports the highest- and lowest-D32 frame (with a
+   sparse-frame guard, restricting to frames with >= half the median droplet
+   count so a near-empty frame cannot masquerade as "finest spray"). The newer
+   production tool, `measure_run.py`, does not yet report this. **Workaround
+   with no code changes**: `measurement_<thresh>/per_frame.csv` already has a
+   `d32_in_focus_um` column per frame -- sort it in Excel for the extremes
+   today. Port the guarded logic from `run_stats.py` into `measure_run.py`
+   before relying on the extremes for anything written up.
+
+---
+
+## MEASUREMENT PRECISION — 20 unlabelled frames, 2026-09-27
+
+**The verdict is split: D32 is usable, the atomised fraction is not.**
+
+`09_experiments/20_new_frames/` — 20 frames from `101947_NNA_4500sccm`, same
+selection rule as the trial frame (40-50 frames clear of every
+library-contributing frame; benchmark frames and the trial frame excluded).
+No hand labels, so this measures PRECISION, not accuracy. New tool:
+`run_stats.py`, the production counterpart to `score_v2.py`.
+
+Pooled over 4,760 droplets at score >= 0.30:
+
+| | value | 95% CI | precision | min. detectable difference |
+|---|---|---|---|---|
+| **D32** | **79.7 um** | [74.0, 85.7] | **+/-7.3%** | **~8.2 um** |
+| atomised fraction | 10.08 % | [7.57, 14.09] | **+/-32.4%** | ~4.6 pp |
+
+CIs are bootstrap over FRAMES, not droplets — droplets within a frame share an
+illumination field, a focal plane and a moment of the spray, so resampling
+droplets would treat correlated samples as independent and give a falsely
+tight interval.
+
+### The primary/secondary responses are the wrong way round
+
+This document has said since Step 6 that the PRIMARY Taguchi response is the
+area-weighted atomised fraction and D32 is secondary. **On this evidence that
+is backwards, and it should be changed before any array is run.**
+
+Per-frame atomised fraction across the 20 frames ranged from **1.99% to
+100.00%**. The 100% is `frame_0184_n1839`: 56 droplets, **zero filaments**, so
+the ratio is trivially 1. Atomisation is intermittent (already an established
+fact in this document) and a ratio with an intermittent denominator is
+unstable by construction. Two runs would need to differ by ~4.6 percentage
+points on a ~10% value — a 45% relative change — before the difference could
+be called.
+
+D32's area weighting is what saves it: the same property that makes it
+insensitive to the 2x false-positive over-count also makes it insensitive to
+frame-to-frame filament intermittency.
+
+### Frames needed, from the measured CI (noise ~ 1/sqrt(n))
+
+| target precision | D32 | atomised |
+|---|---|---|
+| +/-5% | 42 frames | 850 frames |
+| +/-3.8% | 75 frames | — |
+| +/-2.5% | 168 frames | — |
+| +/-10% | — | 213 frames |
+
+**75-150 frames per run** puts D32 at +/-3-4%. The atomised fraction needs 200+
+for anything respectable and is not worth the compute until the filament-area
+work lands.
+
+**Do not trust a 20-frame number.** Pooled D32 was still drifting at frame 20
+(87.9 um after 2 frames -> 79.7 after 20), exactly consistent with the +/-7.3%
+interval.
+
+### Timing, and why the GPU test matters
+
+**745 s for 20 frames = ~35 s/frame** on Mac CPU, all 2560x1600, 13-32 tiles
+each (12-92 s depending on density). So 75-150 frames per run is **45-90
+minutes per condition** on CPU. At the estimated GPU speed that is 2-4 minutes.
+That is the entire argument for Step 4 in one line.
+
+---
+
+## NEXT ACTIONS — updated 2026-09-27
+
+**Status:** v3 trained, scored on the 20-frame benchmark, validated on an unseen
+labelled frame, and characterised for precision on 20 unlabelled frames.
+**Cleared for lab use on D32 only** — see OPERATING CONFIGURATION above.
+
+Answered since this list was written:
+
+- **Step 1 (are the FPs real?)** — YES, mostly. Only ~18% of FPs land on
+  real-but-unmeasurable objects; 102 of 124 at score 0.30 are genuinely
+  spurious. v4 still needs the small-droplet FP work. See the trial results.
+- **Step 3 (measurability trial)** — DONE. 83.5% blind human/code agreement,
+  and the definition turns out to move D32 by only ~3%.
+
+Still open, in priority order:
+
+1. **Step 4 below — GPU benchmark.** Now the single biggest lever: 75-150
+   frames per run is 45-90 min on CPU and an estimated 2-4 min on GPU.
+2. **Swap the primary and secondary Taguchi responses.** The atomised fraction
+   measures at +/-32% and cannot rank runs; D32 measures at +/-7.3% and can.
+   This document has it the wrong way round throughout — fix before any array.
+3. **Step 2 below — re-derive the 0.30 threshold on composite validation**, so
+   the thesis does not rest on a value chosen by looking at the test set.
+4. **Bias stability across 3000 vs 4500 sccm** — still the decisive test for
+   whether D32 can rank runs across conditions, not just within one.
+5. The cross-class union bug (OPEN BUGS), then bootstrap CIs on the benchmark.
+
+### Step 1 — decide whether the FP rate is worth a v4  [ANSWERED: yes, mostly real]
+
+v3's extra false positives are **1,284 of 1,442 droplets, median 33.9 um, 71%
+under 50 um**: the loosened focus gate firing near the noise floor. That is a
+targeted fix, not a redesign. Options, cheapest first:
+
+1. **Size-dependent score threshold** — require a higher score below ~40 um.
+   No retraining. Try it on the composite validation set, NOT the benchmark.
+2. **Tighten the focus gate partway** for v4 and rebuild the library. Risks
+   giving back the small-droplet recall gain (0.61 -> 0.75), so measure both.
+3. Accept it and run measurement at a higher threshold — costs filament recall,
+   which is the thing v3 just fixed. Least attractive.
+
+### Step 2 — pick the measurement operating point WITHOUT using the benchmark
+
+`score_v2.py` calls its best-F1 threshold a "candidate MEASUREMENT operating
+point". **For v3 that label is wrong**: best F1 lands at 0.90, which is v3's
+*worst* atomised-fraction error (-51.8%), while 0.30 gives -26.1%. F1 optimises
+detection; the Taguchi responses are area-weighted. These are different
+objectives and they disagree.
+
+Choosing 0.30 because it scores best on the benchmark would turn the benchmark
+into a tuning set. **Derive the threshold on composite validation**, then apply
+it to the benchmark once.
+
+### Step 3 — the measurability trial  [DONE 2026-09-27 — see RESULTS]
+
+One new, carefully labelled frame splitting droplets into "visible" and
+"should be measured", to test the human judgement against the `t_min < 0.70`
+criterion and against the model. Full design in the PLANNED section below. It
+needs no model change — measurability is an attribute, not a class.
+
+Do this alongside Step 1: it answers the same false-positive question from the
+other direction, and if it shows the FPs are mostly real-but-unmeasurable
+objects, the v4 priorities change.
+
+### Step 4 — BENCHMARK GPU INFERENCE AT WORK (do this early, it gates everything)
+
+**Everything measured so far is Mac CPU. Nothing has ever been timed on the
+GPU.** This is not a convenience question — it decides whether the Taguchi
+workflow is viable at all.
+
+Measured Mac CPU: **~1.4 s/tile** average (50 s for a 24-tile 2560x1600 frame;
+5.5 min for all 20 benchmark frames).
+
+Estimated GPU, anchored on THIS project's own training throughput rather than a
+generic figure: v3 trained at **0.31 s/iter at IMS_PER_BATCH=2** = 0.155 s per
+800x800 image forward+backward. Inference is forward-only, roughly a third of
+that, so **~50 ms/tile**.
+
+| | per tile | 20-frame benchmark | 1,000-frame run |
+|---|---|---|---|
+| Mac CPU (measured) | ~1.4 s | 5.5 min | **~4.7 h** |
+| GPU (estimated ~30x) | ~50 ms | ~15 s | **~10 min** |
+
+4.7 hours per condition is not a workflow. 10 minutes is. **Verify this before
+planning any Taguchi campaign around CPU inference.**
+
+    python tiled_inference.py --all --device cuda \
+      --model-dir <LaCie>/Experiments/AI/training_2026_09_25_15_20_37 \
+      --out <scratch>/v3_gpu_timing.json
+
+Compare per-frame times against the CPU log. Caveats: the one-third
+forward-only ratio is a rule of thumb, data loading will not shrink, and the
+4.9 s model load becomes proportionally larger. If it comes in far below 30x,
+the next lever is batching tiles — `DefaultPredictor` runs one image per
+forward pass and tiles are independent.
+
+### Step 5 — MAX_ITER never got changed
+
+The v3 run used **MAX_ITER = 20000**, not the 30000 the edit table specified.
+The dataset and anchor edits did land. Cost looks small: AP gained +0.23 segm
+over the last 4k iterations and the curve is flat from ~12k, so 30k was probably
+worth under half a point. **Do not re-run v3 to find out** — spend the GPU time
+on v4.
+
+---
+
+## v3 RESULTS — scored 2026-09-25. Compare future models to THIS
+
+Run: `training_2026_09_25_15_20_37`. Best checkpoint iter 19000 (selected on
+composite validation, not on the benchmark). Scored once, at score >= 0.05,
+`model_best.pth`, same tiler and same thresholds as the v2 baseline.
+
+### READ THIS BEFORE READING ANY score_v2.py OUTPUT
+
+**Sections 4 and 5 evaluate at each model's OWN best-F1 threshold.** v2's is
+0.30, v3's is 0.90. So the size-band and measurement tables it prints for two
+models are **not comparable** — they are at different operating points. Taken at
+face value the printout says v3 made the atomised fraction worse (-51.8% vs
+v2's -37.8%). Recomputed at matched thresholds, v3 is **better at every
+threshold from 0.05 to 0.70**. Always match the threshold before comparing.
+
+### Detection — both models on the same 20 frames
+
+| | v2 | v3 | |
+|---|---|---|---|
+| bbox AP (all) | 15.5 | **17.3** | +12% |
+| segm AP (all) | 10.4 | **13.7** | +32% |
+| bbox AP (measurable) | 19.8 | **22.6** | +14% |
+| segm AP (measurable) | 13.8 | **17.6** | +28% |
+| segm AP50 (all) | 31.7 | **39.0** | +23% |
+
+Per class (bbox/segm AP): droplet 12.1/11.0 -> 11.6/11.5 (flat), filament
+25.8/15.0 -> **36.2/25.6**, blob 8.8/5.2 -> 4.1/3.9 (worse).
+
+### The two rows v3 existed to fix — both fixed
+
+Recall at a **matched** 0.30 threshold:
+
+| band | class | n | v2 | v3 | delta |
+|---|---|---|---|---|---|
+| 50-100 um | **filament** | 30 | 0.067 | **0.500** | +0.43 |
+| 100-200 um | **filament** | 94 | 0.415 | **0.883** | +0.47 |
+| 200-500 um | filament | 61 | 0.738 | **0.885** | +0.15 |
+| 0-50 um | droplet | 975 | 0.608 | **0.746** | +0.14 |
+| 50-100 um | droplet | 532 | 0.923 | 0.906 | -0.02 |
+| 100-200 um | droplet | 61 | 0.902 | 0.885 | -0.02 |
+| >500 um | filament | 17 | 0.647 | 0.529 | -0.12 |
+| 200-500 um | blob | 27 | 0.519 | 0.333 | -0.19 |
+| >500 um | blob | 5 | 0.800 | 0.200 | -0.60 |
+
+Short filaments 0.07 -> 0.50 confirms the class-definition diagnosis and closes
+it. Blob rows are n=5 and n=27 — do not over-read them.
+
+### The cost — precision
+
+| threshold | model | precision | recall | F1 |
+|---|---|---|---|---|
+| 0.30 | v2 | **0.653** | 0.692 | **0.672** |
+| 0.30 | v3 | 0.420 | **0.791** | 0.549 |
+| 0.90 | v2 | **0.736** | 0.561 | 0.637 |
+| 0.90 | v3 | 0.642 | **0.606** | 0.624 |
+
+**v2 still has the better best-F1** (0.672 vs 0.624). The precision dip was
+predicted; this is larger than "a dip".
+
+**Part of it is a scoring artifact, and it was measured.** Section 3 matches
+against measurable GT only, so a correct detection of a real-but-unmeasurable
+object scores as a false positive — and v3 was trained through a looser focus
+gate to see exactly those. Matching against ALL GT instead:
+
+| model | vs measurable GT | vs all GT |
+|---|---|---|
+| v2 | P 0.653 / R 0.692 | P 0.729 / R 0.411 |
+| v3 | P 0.420 / R 0.791 | P 0.578 / R 0.579 |
+
+**540 of v3's 1,982 "false positives" (27%) are real objects** that merely are
+not measurable, against 146 for v2. Real, but it does not explain the gap away:
+1,442 genuine FPs remain vs v2's 521.
+
+### Measurement — at matched thresholds. This is the Taguchi-relevant table
+
+Ground truth: 1,571 droplets, D32 **73.3 um**, atomised fraction **8.33%**.
+
+| thr | model | droplets | D32 | D32 err | atomised | atom err |
+|---|---|---|---|---|---|---|
+| 0.05 | v2 | 1948 | 87.7 | +19.6% | 5.63% | -32.4% |
+| 0.05 | v3 | 4053 | 104.4 | +42.3% | **7.54%** | **-9.4%** |
+| 0.30 | v2 | 1627 | 89.3 | +21.7% | 5.18% | -37.8% |
+| 0.30 | **v3** | 3053 | **80.6** | **+9.9%** | **6.15%** | **-26.1%** |
+| 0.50 | v2 | 1504 | 90.2 | +23.0% | 5.03% | -39.6% |
+| 0.50 | v3 | 2609 | 82.4 | +12.3% | 5.69% | -31.6% |
+| 0.90 | v2 | 1175 | 92.6 | +26.2% | 4.73% | -43.2% |
+| 0.90 | v3 | 1448 | 81.6 | +11.3% | 4.02% | -51.8% |
+
+**D32 error less than halved** at 0.30 (+21.7% -> +9.9%). Atomised fraction
+improved at every threshold up to 0.70.
+
+**Two cautions on that.** v3 predicts **3,053 droplets against a truth of
+1,571** at 0.30 — nearly 2x over-detection, so any **count-based metric is
+unusable**. D32 and area fraction are area-weighted and the spurious detections
+are small (median 33.9 um), so they survive it — but that is a property of the
+metric, not evidence the detections are right.
+
+### What this closes and what it opens
+
+The library changes worked. The composite-to-real gap narrowed (segm AP 10.4 ->
+13.7 against composite-val 66.8) — so **image realism is NOT the binding
+constraint** and the "redirect effort to the compositor" contingency written
+before the run is not triggered. The next lever is the small-droplet false
+positive rate.
+
+### Training run health
+
+20,000 iterations, 15:20-17:28, no divergence. Loss 0.73 late (v2: 0.45) and
+0.31 s/it (v2: 0.22) — both exactly what 62 instances/image predicts. AP
+plateaus from ~12k. Dataset verified: 4,000 images, 249,183 instances,
+69% droplet / 27% filament / 3.8% blob.
+
+**The composite-validation AP is not a v2-vs-v3 comparison** — v3 scores 66.8
+segm against v2's 70.0, but each is scored on its own split and v3's is
+deliberately harder. Lower here means harder exam, not worse model. Only the
+benchmark above compares them.
+
+---
+
+## MEASURABILITY TRIAL — RESULTS, 2026-09-27
+
+Run on `frame_0015_n149` (4500 sccm, provably unseen). 394 shapes after dust
+removal: 102 droplet_measure, 267 droplet_seen, 21 filament, 4 blob.
+Ground truth at `09_experiments/02_Chosen_Frame/instances.json`.
+
+### 1. The measurability definition barely matters for D32
+
+| definition | n | D32 |
+|---|---|---|
+| code `measurable` (t_min <= 0.70, no border) | 126 | 63.7 um |
+| human, revised after refinement | 102 | 62.7 um |
+| human, blind first pass | 155 | 64.9 um |
+
+**A 2.2 um spread (~3%) across definitions differing by 50% in how many
+droplets they admit.** The objects the three definitions disagree about are all
+small and faint, and small droplets contribute almost nothing to Sum(d^3)/Sum(d^2).
+So the 0.70-cutoff argument, while still live for the atomised fraction, is
+**not a threat to D32**. One less thing gating the Taguchi work.
+
+### 2. Human vs code: 83.5% agreement, and the trap in measuring it
+
+| | code: measurable | code: not |
+|---|---|---|
+| **human: measure** | 110 | **45** |
+| **human: seen** | 16 | 198 |
+
+83.5% agreement, 16.5% disagreement, lopsided ~3:1 toward over-calling
+measurability. Not boundary scatter — the disagreeing group sits at t_min
+median 0.754, well clear of 0.70.
+
+**The trap:** the working labels were later revised using refinement's outcome,
+and refinement's main rejection test IS `t_min > FOCUS_MAX` — the same test as
+`measurable`. Measured on the revised labels the "agreement" reads 93.5% with
+**zero** disagreements in the critical cell, which measures nothing but our own
+circular definition. Only the BLIND first pass is independent evidence.
+`validation_to_coco.py --human-verdict-from` records both; quote the blind row.
+
+### 3. Dust is over-called as measurable, ~3:1
+
+Of the 38 dust specks removed, **26 had been labelled `droplet_measure`** vs 12
+`droplet_seen` — 14.4% of measure labels were dust against 5.3% of seen labels.
+Sensor dust is a crisp, sharp, dark speck, which is the exact appearance
+signature of a well-focused droplet. The by-eye measurability call keys on
+"sharp and dark", and anything sharp and dark passes.
+
+### 4. Refinement succeeds or fails on CONTRAST, not size
+
+Of 155 blind `droplet_measure`: 103 refined, 52 did not.
+
+| | refined | unrefined |
+|---|---|---|
+| t_min | 0.489 | 0.754 |
+| edge sharpness | 1.253 | 0.696 |
+| equiv. diameter | 60.8 um | 40.7 um |
+| radial position | 0.458 | 0.481 |
+
+Refined fraction is a **cliff, not a slope**: 93-97% below t_min 0.65, 80% at
+0.65-0.70, **0% above 0.70**. 100% of the refined group reaches the cutoff; 87%
+of the unrefined never does. Size correlates but is a proxy — small and faint
+co-occur, and a 3-5 px object physically cannot reach a deep t_min. Radial
+position has no effect, which rules out vignetting.
+
+### 5. v3 on this frame: better than benchmark, and the FP question answered
+
+| | trial frame | 20-frame benchmark |
+|---|---|---|
+| bbox AP | **22.0** | 17.3 |
+| segm AP | **17.5** | 13.7 |
+| filament bbox/segm | **52.2 / 37.6** | 36.2 / 25.6 |
+| droplet bbox/segm | 13.7 / 15.0 | 11.6 / 11.5 |
+
+Better on a frame it has never seen. Recall reaches 0.88.
+
+**Where the false positives land** (the open question from the v3 review):
+
+| thr | TP | FP | FP on a REAL object | truly spurious | adjusted precision | raw |
+|---|---|---|---|---|---|---|
+| 0.05 | 127 | 197 | 29 | 168 | 0.481 | 0.392 |
+| **0.30** | 125 | 124 | **22** | **102** | **0.590** | 0.502 |
+| 0.70 | 117 | 68 | 15 | 53 | 0.714 | 0.632 |
+
+**The labelling-convention artifact is real but small — ~18% of FPs.** The other
+102 are genuinely spurious: 92 droplets, median 44 um, 56% under 50 um — the
+same noise-floor signature as the benchmark.
+
+**So the precision problem is mostly REAL, not a scoring artifact.** v4 should
+target the small-droplet false-positive rate; the three options in Step 1 all
+stand. (Of the 22 FPs that did hit real objects, 13 were ones the human blindly
+called `droplet_measure` — the population where human, model and code all
+disagree.)
+
+---
+
+## PLANNED — the measurability trial (design, 2026-09-26)
+
+One new frame, labelled more carefully than the benchmark 20, to test whether
+the **human** judgement of "this droplet's size is trustworthy" agrees with the
+**code** criterion currently making that call, and with what the model detects.
+
+### This needs NO model change
+
+The model predicts three classes and never needs to know about this. What is
+wanted already exists as an **attribute**, not a class: every annotation carries
+`measurable`, and `score_v2.py` already uses it — detection is scored against all
+annotations, size statistics against measurable ones only. The protocol's
+division of labour has always been: human decides existence and class, code
+decides measurability, `refine_labels.py` decides the edge.
+
+The trial moves the measurability call into the human column **for one frame**
+and records both, so they can be compared.
+
+### Label schema
+
+Label with two droplet names, everything else unchanged:
+
+    labelme <frame dir> \
+      --labels droplet_seen,droplet_measure,filament,blob \
+      --validate-label exact \
+      --output <labels dir>
+
+At import, map **both** to `category_id = 1` and set a new per-annotation field
+`human_measurable` from which name was used. The model sees no difference.
+
+**They are a hierarchy, not two kinds of object.** Every `droplet_measure` is
+also visible by eye; total droplets = seen + measure. Do not report them as
+separate populations.
+
+### What `refine_labels.py` does -- and why it does NOT invalidate this
+
+A recurring misreading, so state it plainly: **refinement only moves edges. It
+never decides measurability and never touches a label.**
+
+Per shape it rasterises what you drew as a *search region*, takes the connected
+component containing your centroid, finds that component's darkest pixel `t_min`
+in the 16-bit transmission data, and thresholds at the **half-maximum,
+`(t_min + 1) / 2`**.
+
+Half-maximum is **per-object and relative**. A droplet at `t_min = 0.95` is
+thresholded at 0.975 and keeps a sensible boundary. This is a different thing
+from the `t_min < 0.70` measurability cutoff, which is computed separately and
+afterwards. The trial survives refinement intact.
+
+**The one real caveat:** refinement is least reliable on exactly the faint
+objects this trial is about. It flags rather than edits when it finds nothing
+near the focus cutoff, and half-maximum on an object barely darker than
+background gives an unstable edge. Expect a higher flag rate than usual, and
+treat the *areas* of `droplet_seen` objects as soft — they do not enter D32 by
+definition, so this costs nothing as long as nobody later computes statistics
+from them.
+
+`<name>.original.json` is written on first touch, so pre-refinement shapes are
+always recoverable and the two can be compared directly.
+
+### Candidate frames — SELECTED 2026-09-26
+
+`09_experiments/01_Unseen_Frames/` holds 20 candidates from
+`101947_NNA_4500sccm` (the 4500 sccm run), plus `manifest.json` recording the
+provenance check. **Pick one.**
+
+Contamination was checked route by route, not assumed:
+
+| route | finding |
+|---|---|
+| Library objects | Only **28 frames** of this run fed the library (320 of the 750 objects), at n99, n199 … n2699 — **every 100 cine frames**, not every 10. Those are the only frames whose *content* reached the model. |
+| Compositing backgrounds | **None from this run.** All 25 came from `125917_NNA_3000sccm`. Route clear. |
+| Benchmark | 5 frames (n559, n769, n859, n1649, n1719) excluded. |
+
+**The offset-5 idea was the right instinct but the wrong number.** This run is
+**500 fps**, so the stride-10 extraction grid is 20 ms apart — exactly one
+decorrelation time. An offset-5 frame sits 10 ms from its neighbours, i.e. *half*
+a decorrelation time, and would share physical droplets with them.
+
+It is also unnecessary: because the library sampled every 100 frames rather than
+every 10, most extracted frames never contributed anything. Selecting for
+maximum distance from the 28 that did gives **40-50 frames (80-100 ms, 4-5
+decorrelation times)** of separation — far cleaner than offset-5 would have been,
+and the frames already exist as extracted PNGs, so nothing needs re-extracting
+from the cine.
+
+Choose on content. `dark_pixel_pct` in the manifest spans 0.019% (essentially
+empty — nothing to label) to 3.96% (very dense — punishing to label carefully).
+Something in the **0.3-1.7%** band is the sensible working range.
+
+16-bit source for refinement stays at `00_frames/101947_NNA_4500sccm/16bit/` —
+deliberately not duplicated into the experiment folder.
+
+### CHOSEN: `frame_0015_n149` (2026-09-26)
+
+Staged at `09_experiments/02_Chosen_Frame/`, laid out to mirror `06_validation`
+exactly so the existing tools work on it with `--val-dir` and nothing else:
+
+    02_Chosen_Frame/
+      frames/8bit/frame_0015_n149.png
+      frames/16bit/frame_0015_n149.tiff
+      labels/                            <- labelme --output target
+      frame_runs.json                    <- maps it to 101947_NNA_4500sccm
+
+Every tool must be told `--run 101947_NNA_4500sccm`. The temporal-median
+background is per-run and the default is the 3000 sccm run, so omitting it
+divides by the wrong illumination field and silently corrupts every
+transmission value.
+
+**This trial deliberately inverts Rule 1 of the labelling protocol.** That rule
+says *never judge focus by eye — label everything, the code decides
+measurability*. Here the human judgement IS the experimental variable, so it is
+made deliberately, for this one frame only. The benchmark 20 stay under the
+original rule; do not re-label them this way.
+
+Effort guidance inverts too. The protocol says spend effort on filaments and
+blobs rather than droplets. For this frame droplets are the entire point — take
+the time on them, and on the seen/measure call in particular.
+
+**Expect scatter near the cutoff and do not read anything into it.** The
+protocol's own warning is that an eye cannot separate T=0.70 from T=0.78, which
+is exactly the boundary in question. Disagreement *at* the boundary is expected
+and uninformative. The informative outcome is **systematic** disagreement — the
+human consistently calling objects measurable that sit at T~0.85, or
+consistently rejecting ones the code accepts at T~0.65.
+
+### Two hard requirements before labelling
+
+1. **Verify the frame's provenance.** Done for the 20 candidates above — see
+   `manifest.json`. If a frame is chosen from anywhere else, repeat all three
+   route checks. A leaked frame turns the trial into a memorisation test.
+2. **Do NOT append it to `06_validation/instances.json`.** Adding a frame
+   renumbers every `image_id` and silently invalidates existing prediction
+   files. That already happened at 15 -> 20 frames and surfaced as AP 0.0 only
+   by luck. Keep the trial frame as its own benchmark file so the 20-frame set
+   and `v3_predictions.json` stay comparable.
+
+Softer, but real: **label blind.** Do not look at model predictions for that
+frame until the labels are finished, or the judgement anchors to them.
+
+### Post-labelling order of operations — do not improvise this
+
+1. **Label** existence + class by hand (`droplet_seen` / `droplet_measure` /
+   `filament` / `blob`).
+2. **`strip_dust.py`** — remove sensor-dust specks. **Required, and easy to
+   forget.** Dust is static, so it divides out of the transmission image but is
+   plainly visible in the 8-bit view being labelled on — ~19 specks per frame
+   were caught this way on the benchmark. Every training composite is built on
+   real backgrounds carrying the same unlabelled specks, so the model is taught
+   dust is background; ground truth saying otherwise scores it wrong for doing
+   what it was taught. Affects detection scoring only — dust sits at T ~ 0.95 so
+   it is already `measurable=false` and never touches D32. Run `--dry-run` first.
+3. **`refine_labels.py`** — snap edges to half-maximum. Expect a higher flag rate
+   than usual on the faint `droplet_seen` objects (see above).
+4. **Compute** `measurable` in code as usual, so the `t_min < 0.70` verdict and
+   the human `human_measurable` verdict sit side by side on every annotation.
+   The whole point of the trial is comparing those two columns.
+
+Both dust-stripping and refinement are reversible — `.predust.json`,
+`.dust_removed.json` and `.original.json` are written before anything changes.
+
+### What the trial answers
+
+1. **Human judgement vs the `t_min < 0.70` criterion.** Substantial disagreement
+   would put a question mark over every number computed so far, since that
+   criterion defines the measurable subset behind the D32 and atomised-fraction
+   biases.
+2. **Model false positives vs `droplet_seen`.** If v3's extra detections land
+   mostly on real-but-unmeasurable objects, the precision "problem" is largely a
+   labelling-convention artifact and v4 should be aimed elsewhere entirely.
+3. **Model detections vs `droplet_measure`.** Which score threshold best
+   reproduces the droplets a human thinks should count — a more defensible basis
+   for the operating point than fitting to aggregate benchmark numbers.
+
+**Limits.** One frame is a methodology check, not a recalibration; do not
+re-derive thresholds from it. And the human-labelled set is a ceiling: a
+genuinely real object nobody labelled scores as a false positive no matter what
+(`check_missed.py` makes this point).
+
+### When a 4th model class becomes worth it
+
+If the trial shows human measurability is predictable from appearance, training
+the model to separate sharp from faint droplets becomes attractive — the
+compositor knows each template's focus level, so those labels are free. The
+model could then emit "droplet I can size" vs "droplet I can only see". That is
+a dataset rebuild plus a retrain, so establish that the distinction is learnable
+first. This trial is that test.
+
+---
+
+## WRITING THIS UP — notes for the paper
+
+Collected 2026-09-26. Not a draft; the things that are easy to lose and
+expensive to reconstruct later.
+
+### Settle the terminology first
+
+The code says **`filament`**; the classes are `droplet` / `filament` / `blob`.
+Older models (Dennis, Claudia) and parts of this document say **`ligament`**,
+and the feature-size table still has a row called "thick ligament". Pick one for
+the paper and sweep the doc. Atomisation literature generally uses *ligament*
+for the elongated liquid structures preceding breakup, so that is probably the
+term a reviewer expects — but the code and every stored annotation say
+`filament`, so a mapping sentence in the methods is needed either way.
+
+### Methods — parameters in one place
+
+**Imaging**
+- Phantom VEO E-340L, **10 µm/px** (100 px/mm), fixed across all resolutions
+  (sensor windowing, not binning — confirmed from the datasheet 2026-09-20).
+- Benchmark recordings: 2048×1152 and 2560×1600, 12-bit stored as uint16.
+- Reference run: 1300 fps, **10 µs exposure**, FOV 20.5 × 11.5 mm.
+- Liquid velocity ~1 m/s → ~1 px motion blur at 10 µs.
+- Decorrelation time ~20 ms.
+
+**Training data (v3)**
+- Real objects cut from real frames, composited onto real empty frames —
+  **not** synthetic rendering. Appearance is real by construction; masks are free.
+- Compositing is **multiplicative in transmission** (`I_new = I_bg × T`), never
+  alpha blending, so overlaps multiply correctly.
+- Library: 750 objects. Dataset: **4,000 images, 249,183 instances**
+  (69.0% droplet, 27.2% filament, 3.8% blob), 62.3 instances/image.
+- Fixed 800×800 training crops.
+
+**Model and training**
+- Mask R-CNN, ResNet-50 FPN 3x, COCO-initialised (not fine-tuned from v2 —
+  v3 deliberately changed the filament class boundary).
+- 3 classes. LR 0.0025, 20,000 iterations, IMS_PER_BATCH 2,
+  ROI_HEADS.BATCH_SIZE_PER_IMAGE 128, warmup 1,000, no LR decay steps.
+- Anchors `[[8,12],[20,32],[50,80],[125,200],[320,500]]`, aspect ratios
+  `[0.25, 0.5, 1.0, 2.0, 4.0]`.
+- INPUT min/max 800 both train and test.
+- Run `training_2026_09_25_15_20_37`, 2h08m, best checkpoint iteration 19,000
+  selected on composite validation.
+
+**Inference**
+- Tiled at 800 px with overlap, merged with cross-class mask-IoU NMS plus a
+  containment rule; truncated detections re-tiled. **Never rescaled** — droplet
+  pixel size must mean the same thing at train and test time.
+- Score threshold 0.05 at inference; measurement threshold applied afterwards.
+
+**Benchmark**
+- 20 hand-labelled frames, 3,409 annotations, never trained on.
+- Two conditions: 15 frames `125917_NNA_3000sccm`, 5 frames
+  `101947_NNA_4500sccm` (see `frame_runs.json`).
+
+### Metric definitions — write these out explicitly
+
+- **Equivalent diameter** of a mask: `d = 2·√(area/π) × 10 µm/px`. The mask's
+  pixel count becomes "the circle with the same area", and its diameter is `d`.
+  Shape is discarded at this step; only area survives.
+- **D32 (Sauter mean)**: `Σd³ / Σd²`. Since sphere volume ∝ d³ and surface area
+  ∝ d², this is (total volume)/(total surface area) — the diameter of the ONE
+  droplet whose volume-to-surface ratio matches the whole spray. It never
+  computes a per-droplet volume; it is a single ratio of two sums.
+  Smaller-the-better.
+  - **Pooled, never averaged.** Because it is a ratio of sums, every droplet in
+    the run goes into one Σd³/Σd². Computing D32 per frame and averaging those
+    values is WRONG and gives a plausible-looking wrong answer — it weights a
+    3-droplet frame the same as a 300-droplet one.
+  - **Sphericity assumption — declare this.** A 2D projected area is called a
+    circle, then that circle is implicitly treated as a SPHERE by the d³/d²
+    weighting. This project's own observations say the small fragments are
+    "crescents/commas, not spheres" (high-viscosity silicone relaxes slowly),
+    so the assumption is doing real work and is weakest exactly where most of
+    the droplets are. Standard practice and defensible, but state it rather
+    than let a reviewer find it.
+- **Atomised area fraction**: droplet area ÷ total detected liquid area, where
+  each class area is the **UNION of masks within a frame**, summed across
+  frames — never the sum of instances. The model emits one long filament as
+  several overlapping sub-segments (measured overlap: filament 20.5%, blob
+  10.6%, droplet 0%; hand labels ~0% for all), so summing double-counts.
+  Larger-the-better.
+- **Do not confuse area fraction with volume fraction.** The "~2% by volume"
+  figure elsewhere in this document is a different quantity from the 8.33%
+  area fraction and they must not be quoted interchangeably.
+- Size bands are **physical (µm)**, not COCO small/medium/large — COCO "small"
+  is under 32² px, which is nearly every droplet here.
+
+### Statistical treatment
+
+- Liquid crosses the field of view in ~20 ms, so **frames closer than that are
+  not independent samples**. Extraction uses stride 10 (duplicates harmless);
+  **measurement must use stride 26** at 1300 fps, or the equivalent at whatever
+  frame rate was used. Measuring adjacent frames inflates apparent sample size,
+  shrinks error bars and overstates confidence when ranking two runs.
+- The process is **intermittent** — per-frame statistics are meaningless.
+  Average over a run.
+- **There is currently no uncertainty estimate on any reported number.** A
+  bootstrap over frames would give confidence intervals on D32 and the atomised
+  fraction cheaply, and any ranking claim is weak without them. Do this before
+  writing.
+
+### Threats to validity — the honest list
+
+A reviewer will find these. Better to state them first.
+
+1. **Operating thresholds were selected on the benchmark**, which is also the
+   test set. Mitigation argument: the threshold applies identically to every
+   experimental run, so it biases reported *accuracy*, not the *ranking*. State
+   it; do not hide it. Deriving the threshold on composite validation instead
+   would remove the objection entirely.
+2. **The benchmark is 20 frames from two conditions of one nozzle.** It cannot
+   support a claim of general accuracy.
+3. **Training data is composited, not real scenes.** The sim-to-real gap is
+   large and measured: segm AP 66.8 on composites vs 13.7 on real frames.
+4. **Recall is size-dependent** (0.75 at 0-50 µm, 0.91 at 50-100 µm), so the
+   measurement bias varies with the droplet size distribution — which is the
+   thing the experiment varies. This is the most serious threat to using the
+   metric for ranking, and the 3000 vs 4500 sccm split is the available test.
+5. **Predicted filament area is structurally untrustworthy** — a 28×28 mask
+   head cannot represent a 100:1 aspect ratio thread. The atomised fraction has
+   filament area in its denominator and inherits this.
+6. **Human labels are the ceiling.** A real object nobody labelled scores as a
+   false positive; the measured accuracy is accuracy *relative to one
+   annotator's judgement*, not to ground truth.
+7. **Count-based metrics are unusable.** v3 predicts ~2× the true droplet count
+   at score 0.30. Only area-weighted quantities survive this.
+8. **No inter- or intra-observer agreement has been measured.** One person
+   labelled everything, once. Re-labelling two or three frames blind, some weeks
+   apart, would give a repeatability figure and costs almost nothing.
+
+### Questions to have an answer ready for
+
+- Why composite training data rather than hand-labelling real frames?
+  (Labelling cost; masks free by construction; appearance real.)
+- Why Mask R-CNN rather than a classical threshold method? (State what the
+  classical baseline scores — **this comparison has not been run and should
+  be**; the CV pipeline exists in the repo.)
+- How do you know the model is not memorising? (Benchmark frames verified
+  absent from the training pool and from compositing backgrounds.)
+- Why is the atomised fraction biased low by ~25%? (Answer not yet established —
+  the numerator/denominator decomposition is outstanding.)
+- What is the measurement uncertainty? (Not yet estimated — see above.)
+
+### Before any claim stronger than "ranks runs"
+
+Absolute numbers are not yet defensible: D32 is +9-10% biased and the atomised
+fraction −23 to −26% at the recommended operating point. To claim a
+*measurement* rather than a *ranking*, at minimum: the bias-stability check
+across conditions, bootstrap confidence intervals, the filament-area fix, and
+ideally a comparison against an independent sizing method on the same spray.
+
+---
+
+## NEXT ACTIONS — superseded 2026-09-25 evening (kept for the pre-training record)
 
 **Status:** v3 dataset built (4,000 images / 249,183 instances from a 750-object
 library). Benchmark consolidated into ONE 20-frame set, all refined. Nothing
@@ -1234,7 +2107,13 @@ truth: ~0% for all).
 
 ### Known limitation in `score_v2.py`
 
-Its section 2 ("measurable only" via COCOeval) is **invalid** — pycocotools
+**Superseded 2026-09-25** — section 2 was fixed to use `iscrowd`. A *different*
+limitation was found on 2026-09-25 evening and is NOT fixed: sections 4 and 5
+report at each model's own best-F1 threshold, so two models' tables are not
+comparable. See "READ THIS BEFORE READING ANY score_v2.py OUTPUT" above.
+
+The original note follows. Its section 2 ("measurable only" via COCOeval) was
+**invalid** — pycocotools
 overwrites the `ignore` flag one line after reading it
 (`gt['ignore'] = 'iscrowd' in gt and gt['iscrowd']`), so ignore markers are
 discarded and it prints numbers identical to section 1. The greedy matching in
@@ -1530,6 +2409,32 @@ under Step 6.
    classical ridge-detection/skeletonisation for filaments. The 28×28 mask head
    cannot represent a 100:1 aspect ratio thread — architectural, not fixable by
    retraining.
+   - **STILL OUTSTANDING as of 2026-09-27, and it caps the atomised fraction.**
+     Predicted filament area is in the denominator, so the atomised fraction
+     inherits the mask head's error. More frames improve its PRECISION and can
+     never fix its ACCURACY. Do this before quoting an atomised fraction.
+   - **Proposed shape (Ben, 2026-09-27), and it works:** run the tiled model for
+     droplets, discard its filament detections, then skeletonise filaments
+     separately. The two halves genuinely want different things:
+     - **Droplets need TILES at native scale** — see the tiling note below;
+       a whole frame gets shrunk 0.31x and a 9 px droplet arrives as 3 px.
+     - **Filaments need the WHOLE FRAME** — they reach 1000+ px and would be
+       cut at every tile boundary. Skeletonising per-tile would measure
+       fragments, not threads.
+     So: two passes over the same frame, each at the scale its objects need.
+   - **Two things to get right when building it:**
+     1. **Segment before skeletonising.** The machinery already exists —
+        `extract_candidates.py` detects liquid at T < 0.95 then sets each
+        object's edge at its own half-maximum. Reuse that, do not invent a
+        second thresholding rule.
+     2. **Do not double-count.** A pixel could be claimed by both a model
+        droplet mask and the classical liquid mask. Subtract the droplet masks
+        from the liquid mask first and treat the remainder as filament, or the
+        atomised fraction's denominator counts the same liquid twice.
+   - **Area from the skeleton** = integral of local width along the skeleton,
+     with width from the distance transform (the same `thread_width` measure
+     `extract_candidates.py` already computes). That is what replaces the
+     untrustworthy 28×28 mask area.
 8. **Train v2 from scratch** from COCO weights. Do NOT fine-tune the old model
    ("Dennis") — class count and anchor layout both changed. Archive Dennis
    untouched as the Paper 2 synthetic-only baseline.
@@ -1848,7 +2753,96 @@ Never supplied in the earlier export, still wanted:
 
 ---
 
+## FUTURE WORK — v5+ ideas, not scoped, do not build yet
+
+### Droplet/filament tracking across frames (PTV) — discussed 2026-09-27
+
+Ben's question: could consecutive frames be linked so a droplet or filament
+persisting across several frames is counted ONCE instead of once per frame?
+That is particle TRACKING velocimetry (PTV — tracks individual objects), not
+PIV (a statistical velocity FIELD from window cross-correlation) — closer to
+what is wanted, but still a real project, for reasons specific to this data:
+
+- **Motion is large relative to the objects.** At 1 m/s and 10 um/px, frame-to-
+  frame displacement at 500 fps is `1 m/s * 0.002 s = 2 mm = 200 px` — against
+  droplets 3-100 px. A naive nearest-neighbour match would often grab the
+  wrong object in a dense frame (300+ detections).
+- **Birth and death.** A filament fragmenting mid-sequence creates new
+  droplets that did not exist a frame ago — not "the same object moved",
+  a genuinely new track.
+- **Merge and split.** A filament splitting into two droplets, or two objects
+  merging, is the hardest case — track identity through it is ambiguous even
+  by eye, and it is exactly the event most worth counting correctly.
+- **Depth ambiguity.** Shadowgraph is a 2D projection of a 3D spray cone. Two
+  unrelated droplets at different depths can overlap in projection, appear to
+  merge, then split — indistinguishable from a real merge/split with one
+  camera. A known limitation of single-camera shadowgraphy generally, not
+  specific to this rig.
+
+**Verdict: feasible in principle, moderate-to-large scope, not needed for the
+near-term goal.** Standard atomisation-research practice is exactly what this
+pipeline already does — treat each frame as one independent snapshot of an
+ensemble, and rely on enough samples rather than on tracked identity, for a
+valid size distribution. Tracking would enable velocity statistics and breakup
+trajectories, which are a different (interesting) research question from
+ranking Taguchi conditions. A tracker with real errors at merge/split events
+could easily introduce MORE counting error than the decorrelation-stride
+approach (see `--ci-stride` above) it would replace. Log as v5+; do not build
+until the core measurement (filament-area fix, small-droplet recall) is solid.
+
+---
+
 ## Known issues to keep in mind
+
+### OPEN BUGS — not fixed, found 2026-09-26/27
+
+**1. The atomised fraction double-counts cross-class mask overlap.**
+`class_area_union()` in `score_v2.py` takes the union of masks **within each
+class**, then sums the three class totals:
+
+    by[image_id][category_id].append(segmentation)   # union is per (frame, class)
+    tot_u = sum(u.values())                          # then simply added
+
+So overlapping *filament* sub-segments are correctly counted once — that was
+the bug this function was written to fix (filament overlap 20.5%, blob 10.6%).
+But a **droplet mask overlapping a filament mask** still contributes those same
+pixels to both unions, and therefore twice to the denominator. The atomised
+fraction is biased DOWN whenever classes overlap.
+
+Cross-class NMS (added during the Step 8 merge fixes) makes it rarer, but
+nothing removes it, and it is the same family of problem as the filament-merge
+bug found in `refine_labels.py` on 2026-09-27: a droplet touching a filament is
+the case every one of these tools handles badly. Hand labels overlap ~0% across
+classes, so this is prediction-side only — it biases the PREDICTED fraction
+against the ground truth, i.e. in the direction of the -23 to -26% gap already
+being investigated. **Quantify it before attributing that gap to the model.**
+
+Fix: union across ALL classes for the denominator, keep per-class union for the
+numerator. Cheap to implement, and it should be measured (not just fixed) so the
+size of the effect is on record.
+
+**2. `score_v2.py` is misleadingly named.** It is the scorer, and it is
+model-agnostic — it has already been run against `v3_predictions.json`. The
+"v2" is a fossil from Step 8 when it was written for the v2 model. There is no
+`score_v3.py` and there should not be: one scorer, many models. Rename to
+`score_predictions.py` when convenient, since the current name will keep
+prompting "why are we using v2 for v3?"
+
+### Tiler issues found and FIXED 2026-09-25 evening
+
+Both were live during the v2 and v3 scoring runs; neither affected any number.
+
+1. **Preview filenames were hardcoded `_v2pred.png`** regardless of model, so
+   scoring any other model overwrote v2's previews with someone else's
+   detections under v2's name. It happened during the v3 run. Now
+   `--tag`, defaulting to the `--out` stem (`v3_predictions.json` -> `v3`), so
+   files say which model drew them. Both sets were regenerated afterwards.
+2. **`default_model_dir()` was hardcoded to `training_2026_09_24_16_25_00`**
+   (v2), so an unqualified run scored the old model silently. Now resolves to
+   the newest `training_*` with a `model_best.pth`. Because a 500-iteration
+   quick test is also "newest", the run now prints the resolved directory **and
+   its best-checkpoint iteration and composite AP** before inference — check
+   that line before trusting any output.
 
 - **Windows machine (BENS-PC, RTX 5060 Ti) — verified 2026-09-24.**
   - LaCie is `D:`. Detectron2 env: `C:\Users\BenSc\anaconda3\envs\Detectron`

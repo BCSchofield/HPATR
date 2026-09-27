@@ -40,6 +40,29 @@ WHAT IT NEVER DOES
   clearly separate dark blob, the shape is flagged, not auto-merged or
   auto-split.
 
+A GAP THIS DOES NOT COVER, FOUND 2026-09-27
+--------------------------------------------
+Step 2's "one connected component" rule assumes the object drawn is separate
+from its neighbours. When a hand-drawn droplet actually TOUCHES a filament --
+not merely nearby, physically connected at the chosen threshold -- there is
+only ONE component to find, and the droplet's own centroid sits inside it. The
+overlap-with-drawn-shape safeguard (see `keep_component_at`) does not catch
+this either: the drawn circle mostly overlaps the droplet part of the merged
+blob, so it gets full credit. Refinement returns a real, valid, non-fragmented
+polygon -- one that happens to be a droplet fused to a slice of filament.
+
+Found on frame_0015_n149: a shape at (1135, 267), refined to true_aspect 1.65
+-- a diagonal sliver, not a droplet, but "successfully" refined and invisible
+to every existing flag (not fragmented, not too small, reaches the focus
+cutoff easily at t_min 0.20).
+
+FIX: every refined droplet-class shape is now checked with the SAME
+true_aspect metric extract_candidates.py already validated for exactly this
+separation (major axis / inscribed-circle width; droplets p95 0.91, filaments
+p5 1.48, clean break at 1.5). A rejected proximity/angle heuristic is recorded
+in the comment above FILAMENT_TRUE_ASPECT below -- read it before reaching for
+"exclude anything near a filament", which sounds right and is not.
+
 SAFETY
 ------
 The original JSON is copied to <name>.original.json the FIRST time this
@@ -77,6 +100,56 @@ CIRCLE_FILL_RATIO = 0.65  # mask_area / its min-enclosing-circle area, above
                           # which a droplet is "round enough" to store as a
                           # circle rather than a polygon
 CIRCLE_ASPECT_MAX = 1.6   # bbox w/h (or h/w) must stay under this too
+
+# Catches a refined droplet mask that actually merged with a touching filament
+# (see "A GAP THIS DOES NOT COVER" above). Deliberately the SAME metric and
+# threshold as extract_candidates.py's FILAMENT_TRUE_ASPECT, not a fresh guess
+# -- droplets there measure p50 0.84 / p95 0.91, filaments p5 1.48 / p50 2.90,
+# a clean break at 1.5.
+#
+# What was tried and rejected instead: excluding any droplet within some
+# distance of a labelled filament. Wrong on two counts. First, it targets
+# PROXIMITY, but the actual failure needs the two objects to be CONNECTED at
+# the refinement threshold -- a droplet can sit right next to a filament
+# without touching it and refine perfectly correctly, and a proximity rule
+# would flag it anyway. Second, and worse: droplets pinching off a ligament
+# are physically expected to be near filaments -- that is what breakup looks
+# like -- so a proximity exclusion would systematically remove real recently-
+# detached droplets from the measurable population, biasing D32 in a new,
+# harder-to-notice way. A "diagonal skew" (bounding-box angle/elongation) test
+# was also considered and is the same idea extract_candidates.py already
+# tried and rejected: a curved or hooked shape has a near-square bounding box
+# (measured elongation 1.36-1.49 for curved filaments vs 1.39 for a genuine
+# droplet -- indistinguishable), which is exactly why true_aspect exists.
+FILAMENT_TRUE_ASPECT = 1.5   # must match extract_candidates.py
+DROPLET_LABELS = {"droplet", "droplet_seen", "droplet_measure"}
+
+
+def true_aspect_of(mask: np.ndarray) -> float:
+    """
+    major axis / own width, same formula as extract_candidates.measure_region.
+
+    Not imported from there: that module is a CLI extraction tool, this is a
+    label-editing tool, and the two constants (this one and FOCUS_MAX above)
+    are kept in sync by comment rather than coupling the files' import graphs.
+    Cropped to the mask's own bounding box first -- distanceTransform on a
+    mostly-empty full-frame array, hundreds of times per frame, is needless
+    work for an identical result.
+    """
+    ys, xs = np.where(mask)
+    if len(ys) == 0:
+        return 0.0
+    x0, y0, x1, y1 = xs.min(), ys.min(), xs.max(), ys.max()
+    crop = mask[y0:y1 + 1, x0:x1 + 1].astype(np.uint8)
+    cnts, _ = cv2.findContours(crop, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not cnts:
+        return 0.0
+    largest = max(cnts, key=cv2.contourArea)
+    (_, _), (w, h), _ = cv2.minAreaRect(largest)
+    major = max(w, h)
+    dist = cv2.distanceTransform(crop, cv2.DIST_L2, 5)
+    thread_width = float(dist.max()) * 2.0
+    return (major / thread_width) if thread_width > 0 else 1.0
 
 
 def real_data_root() -> Path:
@@ -262,6 +335,14 @@ def refine_one(shape, T, h, w):
     if refined.sum() < 4:
         return None, None, "too_small_after_refine", t_min_final
 
+    # A droplet that turned out to be touching a filament: the connected
+    # component is real and non-fragmented, but its shape is not a droplet's.
+    # See "A GAP THIS DOES NOT COVER" above the file docstring.
+    if label in DROPLET_LABELS:
+        ta = true_aspect_of(refined)
+        if ta >= FILAMENT_TRUE_ASPECT:
+            return None, None, f"filament_like_after_refine(true_aspect={ta:.2f})", t_min_final
+
     points, shape_type, status = mask_to_points(refined, label)
     if points is None:
         return None, None, status, t_min_final
@@ -291,10 +372,11 @@ def main():
                          "once a local/adaptive threshold exists.")
     ap.add_argument("--drop-flagged", action="store_true",
                     help="remove flagged (never-reaches-focus-cutoff / too-small-after-"
-                         "refine / fragmented) shapes from the saved JSON instead of "
-                         "leaving them in place untouched. Safe either way -- the "
-                         ".original.json backup keeps every shape, including dropped "
-                         "ones, so nothing is lost if the cutoff turns out too harsh.")
+                         "refine / fragmented / filament-like-after-refine) shapes from "
+                         "the saved JSON instead of leaving them in place untouched. "
+                         "Safe either way -- the .original.json backup keeps every "
+                         "shape, including dropped ones, so nothing is lost if the "
+                         "cutoff turns out too harsh.")
     ap.add_argument("--val-dir", default="06_validation",
                     help="which validation set, e.g. 06_validation_run2")
     ap.add_argument("--run", default="125917_NNA_3000sccm",

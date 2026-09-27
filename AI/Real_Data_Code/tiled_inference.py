@@ -88,8 +88,24 @@ def real_data_root() -> Path:
 
 
 def default_model_dir() -> Path:
+    """
+    Most recent training run that actually has weights to load.
+
+    This used to be hardcoded to one run directory, which silently scored the
+    wrong model the moment a newer one existed. Picking the newest is
+    self-maintaining, but a 500-iteration quick test is also "newest" -- so the
+    resolved run and its checkpoint iteration are printed before inference, and
+    --model-dir remains the way to be explicit.
+    """
     drive = find_lacie_drive()
-    return Path(drive) / "Experiments" / "AI" / "training_2026_09_24_16_25_00"
+    if drive is None:
+        sys.exit("LaCie drive not found. Pass --model-dir explicitly.")
+    ai = Path(drive) / "Experiments" / "AI"
+    runs = [d for d in ai.glob("training_*") if (d / "model_best.pth").exists()]
+    if not runs:
+        sys.exit(f"no training_* run with a model_best.pth under {ai}. "
+                 f"Pass --model-dir explicitly.")
+    return max(runs, key=lambda d: d.name)
 
 
 def tile_offsets(size: int, tile: int = TILE, min_overlap: int = MIN_OVERLAP):
@@ -375,11 +391,29 @@ def main():
     ap.add_argument("--out", type=Path, default=None, help="write COCO predictions JSON")
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--root", type=Path, default=None)
+    ap.add_argument("--val-dir", default="06_validation",
+                    help="which set to run on, relative to the Real_Data root, e.g. "
+                         "09_experiments/02_Chosen_Frame. Needs the same layout: "
+                         "frames/8bit/ and instances.json.")
+    ap.add_argument("--tag", default=None,
+                    help="name for preview files, e.g. 'v3' -> <frame>_v3pred.png. "
+                         "Defaults to the --out stem ('v3_predictions.json' -> 'v3'), "
+                         "else the model directory name.")
     args = ap.parse_args()
 
     root = args.root or real_data_root()
-    val = root / "06_validation"
+    val = root / args.val_dir
     model_dir = args.model_dir or default_model_dir()
+
+    # Preview filenames used to be hardcoded to "_v2pred.png", so scoring any
+    # other model overwrote v2's previews with someone else's detections under
+    # v2's name. The tag makes the file say which model drew it.
+    if args.tag:
+        tag = args.tag
+    elif args.out:
+        tag = args.out.stem.replace("_predictions", "")
+    else:
+        tag = model_dir.name
 
     gt = json.loads((val / "instances.json").read_text(encoding="utf-8"))
     id_by_name = {im["file_name"]: im["id"] for im in gt["images"]}
@@ -391,7 +425,20 @@ def main():
     else:
         sys.exit("give --frame <stem> or --all")
 
-    print(f"model:  {model_dir.name}")
+    # Say which weights these numbers came from, and at what iteration -- a
+    # 500-iteration quick test is the newest run too, and would otherwise be
+    # indistinguishable from the real one in the output.
+    best_meta = model_dir / "model_best.json"
+    iter_note = ""
+    if best_meta.exists():
+        try:
+            _b = json.loads(best_meta.read_text(encoding="utf-8"))
+            iter_note = (f"   (best checkpoint: iter {_b.get('iteration')}, "
+                         f"segm AP {_b.get('segm_AP', float('nan')):.1f} on composites)")
+        except (ValueError, TypeError):
+            pass
+    print(f"model:  {model_dir.name}{iter_note}")
+    print(f"preview tag: {tag}")
     t0 = time.time()
     predictor = build_predictor(model_dir, args.score_thresh, args.device)
     print(f"loaded in {time.time() - t0:.1f}s on {args.device}  "
@@ -419,7 +466,7 @@ def main():
         if args.preview:
             out_dir = val / "review_images"
             out_dir.mkdir(parents=True, exist_ok=True)
-            preview(view, dets, out_dir / f"{stem}_v2pred.png", args.preview_thresh)
+            preview(view, dets, out_dir / f"{stem}_{tag}pred.png", args.preview_thresh)
 
         image_id = id_by_name.get(f"{stem}.png")
         if image_id is not None:
