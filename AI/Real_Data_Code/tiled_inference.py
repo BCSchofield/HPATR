@@ -87,24 +87,54 @@ def real_data_root() -> Path:
     return Path(drive) / "Experiments" / "Real_Data"
 
 
+# The named production model. A promoted model lives in its own folder as
+# <Name>/<Name>.pth + config.yaml, matching the existing Dennis/Dennis.pth
+# convention, so the model in use has a stable name that does not change every
+# time something is retrained.
+PRODUCTION_MODEL = "Eden"
+
+
+def find_weights(model_dir: Path) -> Path:
+    """
+    The .pth inside a model folder.
+
+    Accepts both layouts: a promoted model named after its folder
+    (Eden/Eden.pth), and a raw training output (training_*/model_best.pth).
+    Checking the folder name first means promoting a model is a copy and a
+    rename, with no code change.
+    """
+    for cand in (model_dir / f"{model_dir.name}.pth", model_dir / "model_best.pth"):
+        if cand.exists():
+            return cand
+    sys.exit(f"no weights in {model_dir} -- expected {model_dir.name}.pth or "
+             f"model_best.pth")
+
+
 def default_model_dir() -> Path:
     """
-    Most recent training run that actually has weights to load.
+    The production model if one is promoted, else the newest training run.
 
-    This used to be hardcoded to one run directory, which silently scored the
-    wrong model the moment a newer one existed. Picking the newest is
-    self-maintaining, but a 500-iteration quick test is also "newest" -- so the
-    resolved run and its checkpoint iteration are printed before inference, and
-    --model-dir remains the way to be explicit.
+    Preferring a NAMED folder over "whatever trained most recently" is
+    deliberate: the newest training run is also whatever 500-iteration quick
+    test someone ran last, and silently scoring with that produces plausible,
+    wrong numbers. The resolved folder and its checkpoint iteration are printed
+    before inference either way, and --model-dir remains the explicit override.
     """
     drive = find_lacie_drive()
     if drive is None:
         sys.exit("LaCie drive not found. Pass --model-dir explicitly.")
     ai = Path(drive) / "Experiments" / "AI"
+
+    promoted = ai / PRODUCTION_MODEL
+    if (promoted / f"{PRODUCTION_MODEL}.pth").exists():
+        return promoted
+
     runs = [d for d in ai.glob("training_*") if (d / "model_best.pth").exists()]
     if not runs:
-        sys.exit(f"no training_* run with a model_best.pth under {ai}. "
-                 f"Pass --model-dir explicitly.")
+        sys.exit(f"no {PRODUCTION_MODEL}/ and no training_* run with weights "
+                 f"under {ai}. Pass --model-dir explicitly.")
+    print(f"  (no {PRODUCTION_MODEL}/ found -- falling back to the newest "
+          f"training run)")
     return max(runs, key=lambda d: d.name)
 
 
@@ -144,9 +174,14 @@ def build_predictor(model_dir: Path, score_thresh: float, device: str):
     from detectron2.config import get_cfg
     from detectron2.engine import DefaultPredictor
 
+    cfg_path = model_dir / "config.yaml"
+    if not cfg_path.exists():
+        sys.exit(f"no config.yaml in {model_dir}. It must travel with the weights "
+                 f"-- it pins the anchor layout and the 800 px input, and "
+                 f"rebuilding it by hand silently mismatches the anchors.")
     cfg = get_cfg()
-    cfg.merge_from_file(str(model_dir / "config.yaml"))
-    cfg.MODEL.WEIGHTS = str(model_dir / "model_best.pth")
+    cfg.merge_from_file(str(cfg_path))
+    cfg.MODEL.WEIGHTS = str(find_weights(model_dir))
     cfg.MODEL.DEVICE = device
     cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = score_thresh
     if cfg.INPUT.MIN_SIZE_TEST != TILE or cfg.INPUT.MAX_SIZE_TEST != TILE:
@@ -456,7 +491,11 @@ def main():
     # Say which weights these numbers came from, and at what iteration -- a
     # 500-iteration quick test is the newest run too, and would otherwise be
     # indistinguishable from the real one in the output.
-    best_meta = model_dir / "model_best.json"
+    # Promoted models keep this as <Name>_summary.json; raw training outputs as
+    # model_best.json. Check both so the provenance line never goes silent.
+    best_meta = next((p for p in (model_dir / f"{model_dir.name}_summary.json",
+                                  model_dir / "model_best.json") if p.exists()),
+                     model_dir / "model_best.json")
     iter_note = ""
     if best_meta.exists():
         try:

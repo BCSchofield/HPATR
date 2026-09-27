@@ -411,7 +411,17 @@
       "Bash(python3 -c \"from pyphantom import Phantom; print\\('pyphantom OK'\\)\")",
       "Read(//Volumes/LaCie/Experiments/2026/09/22/101947_NNA_4500sccm/shadowgraph/raw/CINE/**)",
       "Bash(python3 -u cine_extract.py /Volumes/LaCie/Experiments/2026/09/22/101947_NNA_4500sccm/shadowgraph/raw/CINE/recording_102003.cine --run-name CINE --output-root /private/tmp/claude-501/-Users-benschofield-Documents-GitHub-HPATR/441b34a7-fcb4-4b72-82e6-24f1b328ad88/scratchpad/ce_test/raw --stride 200 --limit 4)",
-      "Bash(python3 -c \"import ast; ast.parse\\(open\\('tiled_inference.py'\\).read\\(\\)\\); print\\('SYNTAX OK'\\)\")"
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('tiled_inference.py'\\).read\\(\\)\\); print\\('SYNTAX OK'\\)\")",
+      "Bash(ls /Volumes/LaCie/Experiments/AI/ | head -20; echo \"=== Dennis folder \\(naming convention\\) ===\"; ls -la /Volumes/LaCie/Experiments/AI/Dennis/ 2>/dev/null)",
+      "Read(//Volumes/LaCie/Experiments/AI/Dennis/**)",
+      "Bash(mkdir -p /Volumes/LaCie/Experiments/AI/Eden)",
+      "Bash(cp -p /Volumes/LaCie/Experiments/AI/training_2026_09_25_15_20_37/model_best.pth /Volumes/LaCie/Experiments/AI/Eden/Eden.pth)",
+      "Bash(cp -p /Volumes/LaCie/Experiments/AI/training_2026_09_25_15_20_37/config.yaml /Volumes/LaCie/Experiments/AI/Eden/config.yaml)",
+      "Bash(cp -p /Volumes/LaCie/Experiments/AI/training_2026_09_25_15_20_37/model_best.json /Volumes/LaCie/Experiments/AI/Eden/Eden_summary.json)",
+      "Bash(cp -p /Volumes/LaCie/Experiments/AI/training_2026_09_25_15_20_37/metrics.json /Volumes/LaCie/Experiments/AI/Eden/metrics.json)",
+      "Bash(awk 'NR>3 {printf \"%10.1f MB  %s\\\\n\", $5/1048576, $9}')",
+      "Read(//Volumes/LaCie/Experiments/AI/Eden/**)",
+      "Bash(python3 -u process_capture.py /Volumes/LaCie/Experiments/2026/09/22/101947_NNA_4500sccm/shadowgraph/raw/CINE/recording_102003.cine --run-dir /private/tmp/claude-501/-Users-benschofield-Documents-GitHub-HPATR/441b34a7-fcb4-4b72-82e6-24f1b328ad88/scratchpad/eden_test --stride 900 --limit 2 --no-images)"
     ],
     "additionalDirectories": [
       "/Volumes/LaCie/Experiments/Real_Data/00_frames/_dryrun",
