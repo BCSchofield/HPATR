@@ -28,7 +28,7 @@ instrument. Configuration:
 
 | setting | value |
 |---|---|
-| model | `training_2026_09_25_15_20_37`, `model_best.pth` (iter 19000) |
+| model | **`<LaCie>/Experiments/AI/Eden/Eden.pth`** (iter 19000; promoted 2026-09-27 from `training_2026_09_25_15_20_37/model_best.pth`, byte-identical copy — the training folder was NOT deleted) |
 | inference score floor | **0.05** (`tiled_inference.py` default — keep it; the JSON stores everything and the measurement threshold is applied afterwards) |
 | **measurement threshold** | **0.30** |
 | **response to report** | **D32** |
@@ -50,6 +50,235 @@ re-deriving it on composite validation first. See Step 2 below.
 to **+25%** (trial frame). That cancels when comparing two runs measured
 identically, which is why it is fine for ranking and not fine for quoting an
 absolute droplet size. Never report the number without the bias.
+
+---
+
+## WINDOWS LAB CHECKLIST — do these in order, 2026-09-28
+
+Written immediately before the first Windows session. Everything measured in
+this project so far is Mac CPU; none of the below has been verified on the lab
+machine.
+
+**1. Ethernet link speed — do this FIRST, it is the biggest single win.**
+See the section below. Network Connections -> camera adapter -> Status. If it
+reads 100 Mbps, that is a 30-minute save that should take 2-4 minutes.
+
+**2. `git pull` on `Testing`.** The Windows checkout predates the pinned
+window, the `frames/` layout, `process_capture.py`, the GUI wiring and the Eden
+promotion. Without this none of the rest applies.
+
+**3. LaCie drive letter.** It will be E: or F: depending on what else is
+plugged in. **No code change needed** — `find_lacie_drive()`
+(`src/config_loader.py:27`) loops D: through Z: and matches on drive *content*
+(a `LaCie`, `Phantom` or `Shadowgraph` folder at the root), not on a fixed
+letter. Confirm it returns non-`None`.
+
+**4. CUDA actually visible to torch.** `torch.cuda.is_available()` must return
+`True`. Check it explicitly: `tiled_inference.auto_device()` falls back to CPU
+**silently** if CUDA is missing, so a misconfigured environment looks like a
+working one that is merely slow.
+
+**5. The cine-reading library.** The likeliest missing dependency. Extraction
+has only ever run on the Mac, so `cine_extract.py`'s reader has never been
+exercised in the Windows conda env (`Detectron`). torch / detectron2 / opencv /
+pycocotools should already be there from training.
+
+**6. Test Pipeline button on an old .cine.** The real end-to-end check: file
+dialog -> `Trial_n` folder under today's date -> all four stages -> numbers back
+in the GUI.
+
+**7. Time it.** This is Step 4 below, and it gates the whole Taguchi workflow.
+Record seconds/frame on GPU and set the default `--stride` from the real number
+rather than the estimate.
+
+---
+
+## DATA TRANSFER — the camera save is on a 100 Mbit link. Diagnosed 2026-09-28
+
+**The measurement.** `recording_102003.cine` is **14,085,229,832 bytes**
+(14.08 GB): 2751 frames, 500 fps, 2560x1600 at 10-bit packed = 5.12 MB/frame.
+That file took **~30 minutes** to save from the camera.
+
+    14.08 GB / 1800 s = 7.8 MB/s = 62 Mbit/s
+
+**That number is the diagnosis.** 100BASE-TX gives 12.5 MB/s theoretical and
+7-11 MB/s once TCP/IP and the Phantom protocol have taken their cut. 7.8 MB/s is
+a textbook 100 Mbit link. On Gigabit the same file is **~2 minutes**; allowing
+for the LaCie sustaining maybe 80-120 MB/s in practice, call it 3-4 minutes.
+**An 8-15x win for the price of a cable.**
+
+**The Python code is NOT the bottleneck and there is nothing to optimise in it.**
+`PhantomController.save_recording()` (`src/gui/GUI_Clean.py:1088`) hands the
+entire transfer to the SDK via `save_non_blocking()` and then does nothing but
+poll `save_percentage` every 0.25 s. No per-frame or per-byte Python work is in
+the path, and `progress_cb` fires only when the integer percentage changes
+(<= 100 Qt events for the whole save). Do not go looking for a speedup here.
+
+**A correction, on the record.** Earlier the same day the LaCie's rated 130 MB/s
+was floated as the likely bottleneck, with an SSD as the fix. With the real
+numbers that is **wrong** — at 7.8 MB/s the drive is running at about 6% of what
+it can already absorb. **Do not buy an SSD for this.** Fix the network. The
+general lesson: measure the file and divide, before theorising about hardware.
+
+### The fix
+
+The camera is not on the motherboard's built-in port (that one carries the
+internet), which is itself supporting evidence — many cheap USB Ethernet
+dongles are 100 Mbit only.
+
+**Swap them.** Camera into the built-in Gigabit port; internet onto the dongle.
+Correct allocation of bandwidth: the camera moves 14 GB in a burst, browsing
+and email are fine on 100 Mbit. Confirm the built-in port really is Gigabit
+(most are; many recent boards are 2.5 GbE).
+
+**Windows adapter config must swap too** — the static IP currently lives on the
+wrong adapter:
+
+| adapter | setting |
+|---|---|
+| built-in port (now camera) | static IPv4 `100.100.100.2`, mask `255.255.255.0`, **no gateway** |
+| dongle (now internet) | back to DHCP / "Obtain an IP address automatically" |
+
+Leaving the gateway off the camera adapter stops Windows trying to route
+internet traffic down it.
+
+**No code change is needed for any of this.** `PhantomController.connect()`
+(`src/gui/GUI_Clean.py:1022`) accepts an `ip_address` argument but **never uses
+it** — the body calls `self.ph.discover()`, which finds the camera by broadcast.
+The `100.100.100.1` field in the Camera tab is cosmetic (saved in settings,
+not used to connect). The camera will be found on whichever adapter can see it.
+
+Also worth checking: a Cat5 cable caps at 100 Mbit (you need Cat5e/Cat6), a
+single damaged pair silently drops a Gigabit link to 100 Mbit, and any old
+switch in the path caps the whole link at its own speed.
+
+**Jumbo frames — second-order, do it only after the link is confirmed Gigabit.**
+Standard Ethernet carries at most 1500 bytes per packet (the MTU); jumbo frames
+raise that to ~9000. Every packet costs fixed overhead — headers plus a CPU
+interrupt — so for a 14 GB file it is ~9.4 M packets versus ~1.6 M, about 6x
+fewer. Phantom recommend it for download performance. **It is lossless and has
+nothing to do with image data** — no effect on resolution or bit depth, the
+bytes arriving are bit-identical; it only changes how they are parcelled in
+transit. Both ends must agree on MTU or you get dropped packets, so with a
+direct camera-to-PC cable there are only two ends to set. If anything goes
+flaky, turn it off — the Gigabit link alone is the bulk of the win.
+
+---
+
+## BACKUP / SYNC POLICY — sync the irreplaceable, regenerate the rest
+
+FreeFileSync was observed running at **~12 KB/s** over the recent output.
+
+**That is a small-files problem, not a bandwidth problem.** No disk or cable is
+inherently 12 KB/s. Every file costs an open, a metadata write, a data write, a
+close and a directory update, and on a spinning disk several of those can each
+cost a ~10 ms seek — capping throughput at roughly 50-100 *files*/s regardless
+of size. This pipeline is a small-file machine: one run at stride 10 is 276 PNGs
+plus 276 TIFFs; a full stride-1 extraction is 2751 of each — **5,502 files from
+a single run**, before marked-up output images. Real-time antivirus scanning
+each file on write multiplies it further.
+
+**The fix is to stop syncing derived data.**
+
+| regenerable — EXCLUDE from sync | irreplaceable — MUST sync |
+|---|---|
+| `frames/8bit/*.png` | the `.cine` files |
+| `frames/16bit/*.tiff` | hand-labelled annotation JSONs |
+| `background_median.tiff` | `Eden/Eden.pth` (hours of GPU time) |
+| `predictions.json` | code (already in git) |
+| marked-up output images | `summary.json` / `per_frame.csv` (tiny, keep) |
+
+**This is what pinning the 8-bit window bought, and it is worth stating plainly.**
+Because the window is now fixed at `[27.0, 876.0]` rather than computed per-run,
+re-extracting a cine produces **byte-identical** frames to the ones deleted.
+Before pinning, regenerated frames would have differed from the originals and
+discarding them would have been genuinely lossy. Derived data is now safe to
+throw away and rebuild on demand.
+
+Excluding `frames/` alone turns a sync of tens of thousands of small files into
+a handful of large `.cine` files, which run at full disk speed — one 14 GB
+sequential file has essentially no per-file overhead.
+
+Two settings to check in FreeFileSync:
+
+1. **Comparison mode** must be *file size and date*, not *content*. Comparing by
+   content reads both sides of every file in full on every run.
+2. **Exclusion filter** for `frames`, `8bit`, `16bit` and the marked-up image
+   folders.
+
+**Saving to the drive mid-sync is safe but slow.** FreeFileSync scans, builds a
+list, then works the list; files created after the scan are picked up next run.
+Nothing corrupts. The real problem is **contention** — two workloads on one
+spinning disk do far worse than half speed each, because the head seeks between
+them. **Pause the sync during lab captures.**
+
+**Verify the `.cine` files have actually finished syncing.** They are the only
+truly irreplaceable experimental data, and a job crawling through PNGs for hours
+may never have reached them.
+
+---
+
+## THE CAPTURE-TO-MEASUREMENT CHAIN — built 2026-09-27
+
+`process_capture.py` is **the** entry point. The GUI calls it; the CLI calls it.
+Nothing else re-implements the chain. That is a hard constraint: if the lab
+quick-look and the offline path diverge, the lab number will not match the
+thesis number and the discrepancy will be expensive to chase.
+
+    .cine -> cine_extract -> background -> tiled_inference -> measure_run
+
+**Folder layout produced** (`Trial_n` for test runs, real name for captures):
+
+    <run>/shadowgraph/raw/CINE/recording_*.cine        archival source
+    <run>/shadowgraph/raw/CINE/frames/16bit/           native TIFFs (measurement)
+    <run>/shadowgraph/raw/CINE/frames/8bit/            PNGs, pinned window (model input)
+    <run>/shadowgraph/raw/CINE/instances.json          COCO manifest, images-only
+    <run>/shadowgraph/raw/CINE/background_median.tiff
+    <run>/shadowgraph/analysis/predictions.json
+    <run>/shadowgraph/analysis/measurement_<thr>/      csv + summary + images
+
+`<run>/shadowgraph/raw/TIFFs/` stays separate: manual/optional camera exports,
+never read by the AI chain.
+
+### The pinned 8-bit window — the important change
+
+`PINNED_WINDOW = (27.0, 876.0)` in `cine_extract.py`, taken from the
+`05_dataset_v3` composites. **Every past run computed its own percentile window**
+(e.g. `[66.0, 901.0]` for `101947_NNA_4500sccm`), which made runs incomparable
+to each other *and* to the data the model was trained on. Worked example: an
+object at transmission 0.3 (raw ~242) maps to pixel **65** under the training
+window but **54** under that run's own — a ~17% contrast difference for an
+identical object.
+
+`--window-per-run` restores the old behaviour; do not use it for anything that
+will be compared. `check_window_fit()` samples 20 frames and warns if more than
+`CLIP_WARN_FRACTION` (2%) of pixels clip at either end. Measured on the 4500sccm
+run: **0.00% below, 1.28% above** — comfortably inside tolerance, so pinning is
+evidenced for this rig, not just assumed.
+
+Second-order benefit: re-extraction is now deterministic, which is what makes
+the derived-data-is-disposable backup policy above valid.
+
+### Device selection
+
+`auto_device()` in `tiled_inference.py` returns `cuda` if
+`torch.cuda.is_available()` else `cpu` — chosen by capability, not by OS. MPS is
+deliberately NOT auto-selected (detectron2's support is patchy). `--device`
+still overrides. **It falls back silently**, so verify CUDA explicitly on
+Windows rather than inferring it from the fact that inference ran.
+
+### Model resolution
+
+`default_model_dir()` prefers `<LaCie>/Experiments/AI/Eden/`, falling back to
+the newest `training_*` folder with a printed notice. `find_weights()` accepts
+`<dir>/<dirname>.pth` first, then `model_best.pth`, matching the existing
+`Dennis/Dennis.pth` convention. `config.yaml` must travel with the weights — it
+pins the anchor layout and the 800 px input; without it the model loads with
+wrong anchors and detects almost nothing.
+
+**Eden is on the LaCie drive only and is not in git** (335 MB). The fallback
+copy at `training_2026_09_25_15_20_37/` is on the same drive, so it is not
+protection against drive failure. See the backup table above.
 
 ---
 
@@ -247,6 +476,9 @@ Answered since this list was written:
 
 Still open, in priority order:
 
+0. **Fix the 100 Mbit camera link** (see DATA TRANSFER above). Cheapest and
+   largest win available: 30 min -> 2-4 min per save, for the price of a cable.
+   Do it before anything else on the Windows machine.
 1. **Step 4 below — GPU benchmark.** Now the single biggest lever: 75-150
    frames per run is 45-90 min on CPU and an estimated 2-4 min on GPU.
 2. **Swap the primary and secondary Taguchi responses.** The atomised fraction
@@ -317,8 +549,11 @@ that, so **~50 ms/tile**.
 planning any Taguchi campaign around CPU inference.**
 
     python tiled_inference.py --all --device cuda \
-      --model-dir <LaCie>/Experiments/AI/training_2026_09_25_15_20_37 \
       --out <scratch>/v3_gpu_timing.json
+
+(`--model-dir` is no longer needed — it defaults to `Eden/` now. Omitting
+`--device` auto-detects, but pass `cuda` explicitly here so the run fails loudly
+rather than silently timing the CPU.)
 
 Compare per-frame times against the CPU log. Caveats: the one-third
 forward-only ratio is a rule of thumb, data loading will not shrink, and the
@@ -2820,6 +3055,13 @@ being investigated. **Quantify it before attributing that gap to the model.**
 Fix: union across ALL classes for the denominator, keep per-class union for the
 numerator. Cheap to implement, and it should be measured (not just fixed) so the
 size of the effect is on record.
+
+**3. `Brightest_Frame` is still created despite being dropped.** The brightest-frame
+concept was retired on 2026-09-27 (the GUI now shows the **lowest-D32** frame
+instead, from `summary.json`'s `d32_extreme_frames`), but the capture path still
+makes the folder at `src/gui/GUI_Clean.py:4672` and `:4689`, and still populates
+it via `_brightest_frame()` when Save TIFFs is on. Harmless, just dead weight and
+one more folder to sync. Remove when next touching that code.
 
 **2. `score_v2.py` is misleadingly named.** It is the scorer, and it is
 model-agnostic — it has already been run against `v3_predictions.json`. The
