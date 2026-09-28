@@ -236,8 +236,34 @@ def detect_frame(predictor, view: np.ndarray, retile_truncated: bool = True):
     return merged, n_tiles
 
 
+def _full_mask(d) -> np.ndarray:
+    """Materialise a detection's frame-sized boolean mask from its stored crop.
+
+    Only call this where a frame-sized array is genuinely required -- RLE
+    encoding for the output JSON, and contour drawing for previews. Everything
+    else (areas, IoU, boxes) works on the crop directly, which is the whole
+    point of storing it that way.
+    """
+    fh, fw = d["shape"]
+    full = np.zeros((fh, fw), dtype=bool)
+    mh, mw = d["m"].shape
+    full[d["my"]:d["my"] + mh, d["mx"]:d["mx"] + mw] = d["m"]
+    return full
+
+
 def _collect(inst, x0, y0, fw, fh):
-    """Tile-local instances -> frame coordinates, flagging tile-edge truncation."""
+    """Tile-local instances -> frame coordinates, flagging tile-edge truncation.
+
+    Each detection's mask is stored as the smallest crop that contains it plus
+    the crop's frame offset, NOT as a frame-sized array.
+
+    That used to be a `np.zeros((fh, fw))` per detection -- 4.1 MB for a blob
+    40 px across -- and every later step then scanned all 4.1 M pixels to reach
+    the few hundred that mattered. Profiled on frame_0056 (391 detections):
+    _collect 25.9 s and _merge 31.9 s against 3.9 s for the actual model, with
+    1.6 GB of masks resident. The crop carries identical pixels, so areas,
+    boxes, IoU and the emitted RLE are all unchanged -- only the storage is.
+    """
     out = []
     if len(inst) == 0:
         return out
@@ -255,24 +281,58 @@ def _collect(inst, x0, y0, fw, fh):
             or (x2 >= TILE - EDGE_MARGIN and x0 + TILE < fw)
             or (y2 >= TILE - EDGE_MARGIN and y0 + TILE < fh)
         )
-        full = np.zeros((fh, fw), dtype=bool)
         mh = min(TILE, fh - y0)
         mw = min(TILE, fw - x0)
         if mh <= 0 or mw <= 0:
             continue
-        full[y0:y0 + mh, x0:x0 + mw] = m[:mh, :mw]
-        if not full.any():
+        # Clip to the frame exactly as the old full-frame assignment did.
+        sub = m[:mh, :mw]
+        if not sub.any():
             continue
-        ys, xs = np.where(full)
+        # Tighten to the blob's own bounds. np.where over <=800x800 rather than
+        # the whole frame, and the resulting box is identical: the old code took
+        # min/max over frame coordinates, which are these plus the tile origin.
+        ys, xs = np.where(sub)
+        ry0, ry1 = int(ys.min()), int(ys.max()) + 1
+        rx0, rx1 = int(xs.min()), int(xs.max()) + 1
+        crop = np.ascontiguousarray(sub[ry0:ry1, rx0:rx1])
         out.append({
-            "bbox_xyxy": [float(xs.min()), float(ys.min()),
-                          float(xs.max() + 1), float(ys.max() + 1)],
+            "bbox_xyxy": [float(x0 + rx0), float(y0 + ry0),
+                          float(x0 + rx1), float(y0 + ry1)],
             "score": float(s),
             "category": int(c),
-            "mask": full,
+            "m": crop,
+            "mx": x0 + rx0,
+            "my": y0 + ry0,
+            "shape": (fh, fw),
+            "area": int(crop.sum()),
             "truncated": bool(truncated),
         })
     return out
+
+
+def _crop_iou(a, b, area_a, area_b) -> float:
+    """Mask IoU between two crop-backed detections.
+
+    Identical arithmetic to pycocotools' iou() with iscrowd=0 --
+    intersection / (area_a + area_b - intersection) -- but the intersection is
+    counted only over the rectangle where the two crops actually overlap
+    instead of over the whole frame. Both counts are exact integers, so the
+    division yields the same double the RLE path produced.
+    """
+    ah, aw = a["m"].shape
+    bh, bw = b["m"].shape
+    ix0 = max(a["mx"], b["mx"])
+    iy0 = max(a["my"], b["my"])
+    ix1 = min(a["mx"] + aw, b["mx"] + bw)
+    iy1 = min(a["my"] + ah, b["my"] + bh)
+    if ix1 <= ix0 or iy1 <= iy0:
+        return 0.0
+    sa = a["m"][iy0 - a["my"]:iy1 - a["my"], ix0 - a["mx"]:ix1 - a["mx"]]
+    sb = b["m"][iy0 - b["my"]:iy1 - b["my"], ix0 - b["mx"]:ix1 - b["mx"]]
+    inter = float(np.count_nonzero(sa & sb))
+    union = area_a + area_b - inter
+    return inter / union if union > 0 else 0.0
 
 
 def _merge(dets):
@@ -300,15 +360,16 @@ def _merge(dets):
     Untruncated detections get +1.0 on the ordering key (scores are in [0,1]),
     so a whole object always outranks a seam fragment of the same object.
     """
-    from pycocotools import mask as mask_util
-
     if not dets:
         return []
     order = sorted(range(len(dets)),
                    key=lambda i: -(dets[i]["score"] + (0.0 if dets[i]["truncated"] else 1.0)))
-    rles = [mask_util.encode(np.asfortranarray(d["mask"].astype(np.uint8))) for d in dets]
 
-    areas = np.array([float(d["mask"].sum()) for d in dets])
+    areas = np.array([float(d["area"]) for d in dets])
+    # Boxes as arrays so the overlap prefilter below is one vectorised test
+    # rather than a Python loop over every pair.
+    bx = np.array([d["bbox_xyxy"] for d in dets], dtype=np.float64)
+
     keep = []
     suppressed = set()
     for i in order:
@@ -318,8 +379,19 @@ def _merge(dets):
         rest = [j for j in order if j not in suppressed and j != i and j not in keep]
         if not rest:
             continue
-        ious = mask_util.iou([rles[i]], [rles[j] for j in rest], [0] * len(rest))[0]
-        for j, iou in zip(rest, ious):
+        # Masks can only overlap where their BOXES overlap, so discard the
+        # non-overlapping majority with one cheap vectorised test and compute
+        # true mask IoU on the survivors only. Exact, not approximate: a pair
+        # whose boxes miss has zero mask intersection by construction.
+        rj = np.array(rest)
+        bi = bx[i]
+        cand = rj[(bx[rj, 0] < bi[2]) & (bx[rj, 2] > bi[0]) &
+                  (bx[rj, 1] < bi[3]) & (bx[rj, 3] > bi[1])]
+        if cand.size == 0:
+            continue
+        ious = [_crop_iou(dets[i], dets[j], areas[i], areas[j]) for j in cand]
+        for j, iou in zip(cand, ious):
+            j = int(j)
             if iou >= NMS_IOU:
                 suppressed.add(j)
                 continue
@@ -370,7 +442,11 @@ def to_coco(dets, image_id):
     from pycocotools import mask as mask_util
     out = []
     for d in dets:
-        rle = mask_util.encode(np.asfortranarray(d["mask"].astype(np.uint8)))
+        # The emitted RLE is frame-sized by definition, so this is the one place
+        # the full array is unavoidable -- but it now runs once per SURVIVING
+        # detection instead of once per raw tile detection in _merge and again
+        # here, which on frame_0056 is 391 encodes rather than 2297.
+        rle = mask_util.encode(np.asfortranarray(_full_mask(d).astype(np.uint8)))
         rle["counts"] = rle["counts"].decode("ascii")
         x1, y1, x2, y2 = d["bbox_xyxy"]
         out.append({
@@ -379,7 +455,7 @@ def to_coco(dets, image_id):
             "segmentation": rle,
             "bbox": [x1, y1, x2 - x1, y2 - y1],
             "score": d["score"],
-            "area": float(d["mask"].sum()),
+            "area": float(d["area"]),
             "truncated": d["truncated"],
         })
     return out
@@ -408,8 +484,11 @@ def preview(view, dets, path, score_thresh, show_tiles=True):
             continue
         shown += 1
         col = colours[d["category"]]
-        cnts, _ = cv2.findContours(d["mask"].astype(np.uint8), cv2.RETR_EXTERNAL,
+        # Contours in FRAME coordinates: find them on the crop (cheap) and shift
+        # by the crop origin, rather than rebuilding a frame-sized array.
+        cnts, _ = cv2.findContours(d["m"].astype(np.uint8), cv2.RETR_EXTERNAL,
                                    cv2.CHAIN_APPROX_SIMPLE)
+        cnts = [c + np.array([[d["mx"], d["my"]]], dtype=c.dtype) for c in cnts]
         cv2.drawContours(canvas, cnts, -1, col, 1)
         if d["truncated"]:
             x1, y1, x2, y2 = [int(v) for v in d["bbox_xyxy"]]

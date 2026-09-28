@@ -10,7 +10,7 @@ Layout:
   ┌─────────────────────────────────────────────────────┐
   │  Header bar: title + live status indicators         │
   ├──────────────────┬──────────────────────────────────┤
-  │  Left panel      │  Tab bar: Hardware / Camera /    │
+  │  Left panel      │  Tab bar: Hardware / Camera /    │2
   │  - Shadowgraph   │          Experiment / AFG        │
   │  - Pressure live │  Tab content                     │
   │  - Motor travel  │                                  │
@@ -21,6 +21,7 @@ Layout:
 
 import io
 import os
+import re
 import sys
 import math
 import time
@@ -1290,6 +1291,76 @@ class _GuiLogStream:
 
     def fileno(self):
         raise io.UnsupportedOperation("fileno")
+
+
+class _InferenceProgressFilter:
+    """Condense tiled_inference's per-frame output into grouped progress + ETA.
+
+    tiled_inference prints one line per frame.  At stride 10 a 2500-frame
+    capture is 250 of them, which buries every other stage in the console, and
+    none of them says how much longer the run has to go.
+
+    This sits in process_capture's `log` callback and rewrites that stream:
+    frame lines are counted and summarised every `every` frames, everything
+    else passes through untouched.  Deliberately done here rather than in
+    tiled_inference -- process_capture is the single entry point for both the
+    GUI and the CLI, and a stage that printed differently depending on its
+    caller is exactly what that design forbids.
+    """
+
+    # "frame_0056_n559   2560x1600  24 tiles   64.8s  det  391 (>=0.5: 252) ..."
+    _FRAME_RE = re.compile(r"^\s*(\S+)\s+\d+x\d+\s+(\d+) tiles\s+([\d.]+)s\s+det\s+(\d+)")
+    # "=== 3/4  inference on 250 frames ==="
+    _TOTAL_RE = re.compile(r"inference on (\d+) frames")
+
+    def __init__(self, emit, every=25):
+        self._emit = emit
+        self._every = max(1, every)
+        self._total = None
+        self._done = 0
+        self._elapsed = 0.0
+        self._dets = 0
+        self._t0 = None
+
+    def __call__(self, line: str):
+        text = line.rstrip()
+
+        m = self._TOTAL_RE.search(text)
+        if m:
+            self._total = int(m.group(1))
+            self._done = 0
+            self._elapsed = 0.0
+            self._dets = 0
+            self._t0 = time.time()
+            self._emit(text)
+            return
+
+        m = self._FRAME_RE.match(text)
+        if m is None:
+            self._emit(text)
+            return
+
+        self._done += 1
+        self._elapsed += float(m.group(3))
+        self._dets += int(m.group(4))
+
+        last = self._total is not None and self._done >= self._total
+        if self._done == 1 or last or self._done % self._every == 0:
+            self._emit(self._summary())
+
+    def _summary(self) -> str:
+        # Wall clock, not the sum of per-frame times: the gap between them is
+        # image loading and JSON writing, which the user waits through too.
+        wall = (time.time() - self._t0) if self._t0 else self._elapsed
+        per = wall / self._done if self._done else 0.0
+        head = (f"  inference {self._done}/{self._total}" if self._total
+                else f"  inference {self._done}")
+        pct = f" ({self._done * 100 // self._total}%)" if self._total else ""
+        eta = ""
+        if self._total and self._done < self._total and per > 0:
+            eta = f" — {AtomisationApp._fmt_eta(per * (self._total - self._done))} left"
+        return (f"{head}{pct}   {per:.1f} s/frame   "
+                f"{self._dets:,} detections{eta}")
 
 
 class _ThreadLocalStream:
@@ -3967,6 +4038,16 @@ class AtomisationApp(QMainWindow):
     # STALL_SG_THRESHOLD on the Arduino actually trips the motor off.
     SG_WARN_THRESHOLD = 150
 
+    # Console progress granularity, in percent, for long saves.  The status
+    # label still updates every percent; this only thins what reaches the log
+    # panel, so a long save cannot bury the rest of the run's output.
+    CONSOLE_PROGRESS_STEP = 10
+
+    # How many inference frames between console progress lines.  At stride 10
+    # a 2500-frame capture is 250 inference frames, so 25 gives ~10 updates —
+    # often enough to see it is alive, sparse enough not to flood the panel.
+    INFERENCE_LOG_EVERY = 25
+
     # Canonical master_log.xlsx column widths, in order A..L:
     #   Timestamp, Orifice, Flow Range, Pressure Range, Speed, Distance,
     #   Avg Lamella, Notes, Cone Image, Shadowgraph, Pressure Graph, Mass Flow Graph
@@ -4519,6 +4600,27 @@ class AtomisationApp(QMainWindow):
         ok = self.phantom.ping()
         self._cam_status_lbl.setText("Camera: connected ✓" if ok else "Camera: not responding")
 
+    @classmethod
+    def _transfer_summary(cls, path: str, elapsed: float) -> str:
+        """One line describing how fast a file actually came off the camera.
+
+        Measured 2026-09-28 on the Gigabit link: 71.7 MB/s (574 Mbit/s).  The
+        same rig managed 7.8 MB/s while the camera was on a 100 Mbit adapter,
+        so a rate printed every save is the cheapest possible guard against
+        silently regressing to that — it took a stopwatch and a file size to
+        find it the first time.
+        """
+        try:
+            mb = os.path.getsize(path) / 1e6
+        except OSError:
+            return f"── .cine saved in {cls._fmt_eta(elapsed)} ──"
+        if elapsed <= 0:
+            return f"── .cine saved: {mb:,.0f} MB ──"
+        rate = mb / elapsed
+        warn = "   ⚠ well below the 71 MB/s this link has done" if rate < 40 else ""
+        return (f"── .cine saved: {mb:,.0f} MB in {cls._fmt_eta(elapsed)}"
+                f"  ({rate:.1f} MB/s = {rate * 8:.0f} Mbit/s){warn} ──")
+
     @staticmethod
     def _fmt_eta(seconds) -> str:
         """Human-readable time remaining, e.g. '45s', '2m 05s', '1h 12m'."""
@@ -4736,7 +4838,14 @@ class AtomisationApp(QMainWindow):
                 time.sleep(settle)
 
                 def _progress_reporter(label):
-                    """Progress callback that also shows a time-remaining estimate."""
+                    """Progress callback: status label, progress bar, and console.
+
+                    The status label updates on every percent, but the console
+                    gets one line per CONSOLE_PROGRESS_STEP% — a 100-line wall
+                    of progress would push the rest of the run's log out of
+                    view, which is the thing the console is actually for.
+                    """
+                    state = {"next_log": 0}
                     def _cb(pct, eta=None):
                         txt = f"{label} {pct}%"
                         if eta is not None:
@@ -4745,6 +4854,9 @@ class AtomisationApp(QMainWindow):
                             self._cam_save_progress.setValue(p),
                             self._cam_arm_status_lbl.setText(t),
                         ))
+                        if pct >= state["next_log"] or pct >= 100:
+                            state["next_log"] = pct + self.CONSOLE_PROGRESS_STEP
+                            self._log_queue.put(f"  {txt}")
                     return _cb
 
                 # 1 — save .cine (optional)
@@ -4754,9 +4866,16 @@ class AtomisationApp(QMainWindow):
                         self._cam_save_progress.setValue(0),
                         self._cam_save_progress.setVisible(True),
                     ))
+                    _t_cine = time.time()
+                    self._log_queue.put(f"── saving .cine → {os.path.basename(cine_path)} ──")
                     self.phantom.save_recording(cine_path, file_format='cine',
                                                 frame_range=frame_range,
                                                 progress_cb=_progress_reporter("Saving .cine"))
+                    # Report the achieved rate, not just that it finished — a
+                    # save that silently drops to 8 MB/s is the difference
+                    # between 3 minutes and half an hour, and the only way to
+                    # notice is to print it every time.
+                    self._log_queue.put(self._transfer_summary(cine_path, time.time() - _t_cine))
                     QTimer.singleShot(0, self, lambda: self._cam_save_progress.setValue(0))
 
                 # 2 — read frames from camera RAM and write TIFFs ourselves.
@@ -4774,9 +4893,13 @@ class AtomisationApp(QMainWindow):
                                  _glob.glob(os.path.join(tiff_dir, "*.tiff"))):
                         try: os.remove(_old)
                         except OSError: pass
+                    _t_tiff = time.time()
+                    self._log_queue.put("── saving TIFFs ──")
                     self.phantom.save_tiffs_from_ram(tiff_dir, tiff_prefix='frame',
                                                      frame_range=frame_range,
                                                      progress_cb=_progress_reporter("Saving TIFFs"))
+                    self._log_queue.put(
+                        f"── TIFFs done in {self._fmt_eta(time.time() - _t_tiff)} ──")
                     QTimer.singleShot(0, self, lambda: self._cam_save_progress.setVisible(False))
 
                     # 2b — auto-run lamella batch on saved TIFFs if analysis is enabled
@@ -4998,13 +5121,18 @@ class AtomisationApp(QMainWindow):
                         _P(find_lacie_drive()) / "Experiments")
                 self._log_queue.put(f"run folder: {target}\n")
 
+                _t_chain = time.time()
                 summary = process_capture(
                     cine_path, target,
                     stride=10,
                     score_thresh=0.30,
                     images=True,
-                    log=lambda s: self._log_queue.put(s + "\n"),
+                    log=_InferenceProgressFilter(
+                        lambda s: self._log_queue.put(s + "\n"),
+                        every=self.INFERENCE_LOG_EVERY),
                 )
+                self._log_queue.put(
+                    f"── AI chain finished in {self._fmt_eta(time.time() - _t_chain)} ──\n")
                 self._pipeline_done.emit(summary)
             except Exception as e:
                 self._pipeline_err.emit(str(e))

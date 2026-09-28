@@ -32,3 +32,4 @@ Trials/Camera_Tester/
 **/06_validation/
 **/07_models/
 **/08_inference/
+*.txt
