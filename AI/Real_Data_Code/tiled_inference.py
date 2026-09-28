@@ -236,6 +236,60 @@ def detect_frame(predictor, view: np.ndarray, retile_truncated: bool = True):
     return merged, n_tiles
 
 
+def _tight_bounds(sub, bx1, by1, bx2, by2):
+    """Tight bounds of the True pixels in `sub` as (y0, y1, x0, x1, area).
+
+    Returns None when the mask is empty.
+
+    `np.where` over the whole tile was the last big cost in _collect: 640,000
+    pixels read per detection, ~1.2 billion per dense frame, plus an index
+    array allocated each time, sized by the blob. Two changes remove it:
+
+    1. Mask R-CNN pastes each instance mask INSIDE its predicted box, so the
+       box (padded for float->int rounding) is a valid search window -- a few
+       thousand pixels rather than 640,000.
+    2. `any(axis=)` reductions give the same bounds as `np.where(...).min()/max()`
+       without allocating anything proportional to the blob.
+
+    The shortcut is VERIFIED rather than assumed. `count_nonzero` over the tile
+    gives the mask's true area -- which the caller needs regardless -- and the
+    window's bounds are accepted only if the pixels they enclose account for
+    all of it. A blob outside the box (or a disconnected fragment beyond the
+    window, which an edge-touch test alone would miss) fails that check and
+    falls through to the exhaustive scan. Wrong assumptions cost time, never
+    pixels.
+    """
+    area = int(np.count_nonzero(sub))
+    if area == 0:
+        return None
+    h, w = sub.shape
+
+    def _bounds(a):
+        rows = a.any(axis=1)
+        if not rows.any():
+            return None
+        cols = a.any(axis=0)
+        return (int(np.argmax(rows)), len(rows) - int(np.argmax(rows[::-1])),
+                int(np.argmax(cols)), len(cols) - int(np.argmax(cols[::-1])))
+
+    pad = 2
+    sx0 = max(0, int(np.floor(bx1)) - pad)
+    sy0 = max(0, int(np.floor(by1)) - pad)
+    sx1 = min(w, int(np.ceil(bx2)) + pad)
+    sy1 = min(h, int(np.ceil(by2)) + pad)
+    if sx1 > sx0 and sy1 > sy0:
+        b = _bounds(sub[sy0:sy1, sx0:sx1])
+        if b is not None:
+            ry0, ry1, rx0, rx1 = b
+            y0, y1 = sy0 + ry0, sy0 + ry1
+            x0, x1 = sx0 + rx0, sx0 + rx1
+            if int(np.count_nonzero(sub[y0:y1, x0:x1])) == area:
+                return y0, y1, x0, x1, area
+
+    b = _bounds(sub)
+    return (b[0], b[1], b[2], b[3], area)
+
+
 def _full_mask(d) -> np.ndarray:
     """Materialise a detection's frame-sized boolean mask from its stored crop.
 
@@ -287,14 +341,13 @@ def _collect(inst, x0, y0, fw, fh):
             continue
         # Clip to the frame exactly as the old full-frame assignment did.
         sub = m[:mh, :mw]
-        if not sub.any():
+        # Tighten to the blob's own bounds, searching the predicted box first.
+        # Identical result to the old min/max over frame coordinates, which are
+        # these plus the tile origin; the empty-mask drop is folded in here.
+        bounds = _tight_bounds(sub, x1, y1, x2, y2)
+        if bounds is None:
             continue
-        # Tighten to the blob's own bounds. np.where over <=800x800 rather than
-        # the whole frame, and the resulting box is identical: the old code took
-        # min/max over frame coordinates, which are these plus the tile origin.
-        ys, xs = np.where(sub)
-        ry0, ry1 = int(ys.min()), int(ys.max()) + 1
-        rx0, rx1 = int(xs.min()), int(xs.max()) + 1
+        ry0, ry1, rx0, rx1, area = bounds
         crop = np.ascontiguousarray(sub[ry0:ry1, rx0:rx1])
         out.append({
             "bbox_xyxy": [float(x0 + rx0), float(y0 + ry0),
@@ -305,7 +358,7 @@ def _collect(inst, x0, y0, fw, fh):
             "mx": x0 + rx0,
             "my": y0 + ry0,
             "shape": (fh, fw),
-            "area": int(crop.sum()),
+            "area": area,
             "truncated": bool(truncated),
         })
     return out
