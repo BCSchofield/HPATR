@@ -300,6 +300,12 @@ def main():
 
     # ---- pooled over the run ----
     pooled_d32 = d32(all_focus_areas)
+    # Size distribution of every in-focus droplet in the run, pooled.
+    all_focus_d = equiv_um(all_focus_areas) if all_focus_areas else np.array([])
+    d_mean = float(all_focus_d.mean()) if len(all_focus_d) else float("nan")
+    d_std = float(all_focus_d.std(ddof=1)) if len(all_focus_d) > 1 else float("nan")
+    d_min = float(all_focus_d.min()) if len(all_focus_d) else float("nan")
+    d_max = float(all_focus_d.max()) if len(all_focus_d) else float("nan")
     tot_d = sum(v[0] for v in per_frame_atom_parts.values())
     tot_f = sum(v[1] for v in per_frame_atom_parts.values())
     tot_b = sum(v[2] for v in per_frame_atom_parts.values())
@@ -367,6 +373,19 @@ def main():
           f"   95% CI [{a_lo:.2f}, {a_hi:.2f}]   +/-{(a_hi - a_lo) / 2:.2f}"
           f" ({100 * (a_hi - a_lo) / 2 / pooled_atom:.1f}%)")
     print()
+    # The SIZE DISTRIBUTION of the in-focus droplets. Distinct from the CI
+    # above: the CI says how well D32 is known, this says how varied the
+    # droplets themselves are. D32 is a ratio of moments (sum d^3 / sum d^2)
+    # and deliberately weights large droplets, so it sits well above the mean
+    # -- do not read the spread below as an error bar on it.
+    if len(all_focus_d):
+        print(f"  droplet diameters         : mean {d_mean:.1f} um"
+              f"   SD {d_std:.1f} um"
+              f"   min {d_min:.1f}   max {d_max:.1f}")
+        print(f"                              (n={len(all_focus_d)} in focus;"
+              f" min/max are single detections -- the smallest sits on the"
+              f" model's noise floor)")
+        print()
     print(f"  Two runs are distinguishable only if they differ by more than")
     print(f"  ~{1.4 * (d_hi - d_lo) / 2:.1f} um D32 / ~{1.4 * (a_hi - a_lo) / 2:.2f} pp atomised.")
     print()
@@ -381,6 +400,20 @@ def main():
         print("  frames are already >=1 decorrelation time apart (~20 ms; every")
         print("  10th frame at 500 fps). For a CONSECUTIVE capture this interval")
         print("  is roughly 3x too narrow -- pass --ci-stride 10.")
+
+    # Atomised-fraction extremes, sorted RAW. `filaments` is the field that
+    # explains a degenerate reading: zero filaments makes the ratio 1 by
+    # construction, which is why a 100% frame is usually an artifact rather
+    # than perfect atomisation.
+    by_atom = sorted(rows, key=lambda r: r["atomised_pct"])
+
+    def _atom_extreme(r):
+        return {
+            "frame": r["frame"],
+            "atomised_pct": r["atomised_pct"],
+            "droplets": r["droplets_in_focus"] + r["droplets_out_of_focus"],
+            "filaments": r["filaments"],
+        }
 
     # ---- extreme frames ----
     # A frame with a handful of droplets has a meaningless per-frame D32 (one
@@ -455,17 +488,36 @@ def main():
         "droplets_in_focus": n_focus,
         "droplets_out_of_focus": n_oof,
         "d32_in_focus_um": round(pooled_d32, 2),
+        # Size distribution, NOT a precision statement -- see the note by the
+        # printout. Mean sits below D32 because D32 weights large droplets.
+        "droplet_d_mean_um": None if np.isnan(d_mean) else round(d_mean, 2),
+        "droplet_d_std_um": None if np.isnan(d_std) else round(d_std, 2),
+        "droplet_d_min_um": None if np.isnan(d_min) else round(d_min, 2),
+        "droplet_d_max_um": None if np.isnan(d_max) else round(d_max, 2),
         "d32_ci95": [round(d_lo, 2), round(d_hi, 2)],
         "atomised_pct": round(pooled_atom, 3),
         "atomised_ci95": [round(a_lo, 3), round(a_hi, 3)],
         "d32_extreme_frames": ({
             "lowest": {"frame": by_d32[0]["frame"],
-                      "d32_um": by_d32[0]["d32_in_focus_um"]},
+                      "d32_um": by_d32[0]["d32_in_focus_um"],
+                      "droplets_in_focus": by_d32[0]["droplets_in_focus"]},
             "highest": {"frame": by_d32[-1]["frame"],
-                       "d32_um": by_d32[-1]["d32_in_focus_um"]},
+                       "d32_um": by_d32[-1]["d32_in_focus_um"],
+                       "droplets_in_focus": by_d32[-1]["droplets_in_focus"]},
             "ratio": round(by_d32[-1]["d32_in_focus_um"] / by_d32[0]["d32_in_focus_um"], 3)
                 if by_d32[0]["d32_in_focus_um"] else None,
         } if len(with_d32) >= 2 else None),
+        # Deliberately RAW, with no sparse-frame guard. The atomised fraction
+        # is a ratio with an intermittent denominator, so its extremes are
+        # frequently degenerate -- a frame with zero filaments reads 100% by
+        # construction. Those frames are the interesting ones: they show where
+        # and why the measure fails. `droplets`/`filaments` travel with each
+        # entry so a degenerate frame is recognisable on sight rather than
+        # being mistaken for a real result.
+        "atomised_extreme_frames": ({
+            "lowest": _atom_extreme(by_atom[0]),
+            "highest": _atom_extreme(by_atom[-1]),
+        } if len(by_atom) >= 2 else None),
     }
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2))
 

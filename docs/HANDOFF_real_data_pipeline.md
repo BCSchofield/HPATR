@@ -53,6 +53,88 @@ absolute droplet size. Never report the number without the bias.
 
 ---
 
+## FIRST FULL END-TO-END RUN — 2026-09-28 afternoon. Trial_1, 4000 sccm
+
+A real capture (2751 frames, 2560x1600, 500 fps, 14.08 GB) taken through the
+whole chain for the first time. **Both numbers below are measured, and the
+biggest cost is not where anyone expected.**
+
+### Stage breakdown — the whole point of adding stage timing
+
+| stage | time | share |
+|---|---|---|
+| copy cine | 1m 39s | 3% | *Test Pipeline only; a real capture skips it* |
+| **extract frames** | **2m 09s** | **4%** |
+| background | 6s | 0% |
+| **inference** | **33m 09s** | **55%** |
+| **measurement** | **22m 49s** | **38%** |
+| TOTAL | 59m 52s | | real capture ~58 min |
+
+**Extraction was never the bottleneck.** It was the stage everyone feared —
+2751 frames decoded to 16-bit TIFF plus 8-bit PNG — and it is **4%**, at
+2.2 frames/s. Stop worrying about it.
+
+**measure_run is 38% and has NEVER been profiled.** That is exactly the
+position tiled_inference was in that morning, when the assumed bottleneck
+turned out to be 6% of runtime and the real one was unexamined numpy. Prime
+suspect is `--images`: it renders a marked-up full-resolution PNG for EVERY
+frame (276 of them) when the Extremes tab looks at 4. A two-pass approach
+(measure without images, then render only the extremes) would cut most of it.
+**Profile it before acting on that guess** -- that is the whole lesson of the
+morning.
+
+**Inference came in at 7.2 s/frame against a predicted 5.1.** The gap is
+detection DENSITY, not frame size: this run averaged 322 detections/frame
+against the benchmark's 226. The GUI's estimate scales with megapixels only,
+so it under-predicts dense runs by ~40%. Recalibrate when there are more runs.
+
+### The measurement itself
+
+    D32 (in-focus)     85.6 um    95% CI [83.7, 87.4]   +/-2.1%
+    atomised fraction   7.78 %    95% CI [6.74, 9.12]   +/-15.2%
+    276 frames, 28,769 in-focus droplets, 28,885 out of focus
+
+**+/-2.1% at 276 frames beats the precision table above** (which predicted
++/-2.5% at 168 frames). Two runs are separable at ~2.5 um D32 / ~1.66 pp.
+
+Confirms again that the atomised fraction is the weak response: 15% vs 2%.
+**Five frames read exactly 100% atomised** -- zero filaments, so the ratio is
+1 by construction -- and per-frame values ranged 0.62% to 100%. The
+sparse-frame guard works and reports both: raw lowest-D32 frame was
+`frame_0154` (32 droplets, atomised 100%), guarded lowest was `frame_0012`
+(70 droplets, 57.6 um).
+
+### A path bug worth remembering
+
+The trigger derived the run root with three `dirname()` calls from the cine's
+FILE path, landing one level short on `<run>/shadowgraph`. process_capture
+then built `<run>/shadowgraph/shadowgraph/raw/CINE`, decided the cine was
+missing, and copied 14 GB into a phantom tree -- where all analysis output
+then went. Fixed with `Path(cine_path).parents[3]`.
+
+`Path` was also not imported at module level in GUI_Clean.py (only locally
+inside two functions), so the fix compiled cleanly and would have raised
+NameError in the lab. **py_compile checks syntax, not names.**
+
+### Why progress appeared to hang
+
+A child process writing to a PIPE block-buffers stdout in ~8 KB chunks, so
+stages printing a short progress line every 25 frames emitted nothing for
+minutes and then a burst. `bufsize=1` on Popen only affects the PARENT's side
+and cannot unbuffer the child. Fixed with `PYTHONUNBUFFERED=1` in the stage
+environment. Extraction and inference now report percentage, rate and ETA.
+
+### Still open from this run
+
+1. **Profile measure_run** -- 38% of runtime, unexamined.
+2. **GPU tile batching** -- now the only remaining inference lever, worth
+   maybe 1.3-1.5x, against a 33-minute stage.
+3. **Stride.** 276 frames gave +/-2.1%, better than needed. Stride 20 would
+   roughly halve both big stages and still land near +/-3%.
+4. **Measure the decorrelation time properly** -- see the note below.
+
+---
+
 ## RESULTS OF THE FIRST WINDOWS SESSION — 2026-09-28. READ THIS FIRST
 
 Everything in the checklist below was done. Both headline numbers were
@@ -271,6 +353,62 @@ them. **Pause the sync during lab captures.**
 **Verify the `.cine` files have actually finished syncing.** They are the only
 truly irreplaceable experimental data, and a job crawling through PNGs for hours
 may never have reached them.
+
+---
+
+## FOLDER LAYOUT — CHANGED 2026-09-28. Runs before this date differ
+
+    <run>/shadowgraph/raw/CINE/recording_*.cine     the archival source, ALONE
+    <run>/shadowgraph/raw/frames/16bit/             native TIFFs
+    <run>/shadowgraph/raw/frames/8bit/              PNGs, pinned window
+    <run>/shadowgraph/raw/instances.json            manifest (an INPUT)
+    <run>/shadowgraph/raw/background_median.tiff
+    <run>/shadowgraph/analysis/predictions.json
+    <run>/shadowgraph/analysis/measurement_<thr>/   csv + summary + images
+
+**`raw/` is now the `--val-dir`**, not `raw/CINE/`. Frames used to live inside
+CINE/ purely to satisfy the `<val-dir>/frames/8bit` + `instances.json`
+contract that 06_validation and 09_experiments also satisfy — the thing that
+lets a capture be analysed by exactly the same code as the thesis validation
+set. Moving the boundary up one level keeps that contract intact (verified by
+test) while getting 30 GB of regenerable frames out of the same folder as the
+one irreplaceable file.
+
+Backup rule becomes simply: **sync `raw/CINE/`, skip the rest of `raw/`.**
+
+`TIFFs/` and `Brightest_Frame/` are no longer created eagerly — with Save
+TIFFs off they were made empty on every run and never written to.
+
+---
+
+## GUI — what exists as of 2026-09-28
+
+- **Stride field** beside "Run AI analysis after capture", with a live note
+  giving the frame gap in decorrelation times, frames analysed, and estimated
+  inference time at the current fps AND resolution. Warns below one
+  decorrelation time and names the stride that matches. Persists in
+  camera_settings.json as `ai_stride`.
+- **Extremes tab** (after Cone): lowest/highest D32 and highest/lowest
+  atomised fraction, scaled to the tab width, each captioned with the frame's
+  own numbers. A zero-filament frame is flagged inline as degenerate rather
+  than hidden — seeing where the measure breaks is the point.
+- **Three-line stats block** under the preview: 95% CI (precision) /
+  droplet spread (mean, SD, min, max) / measured-from (frames, stride,
+  in-focus and out-of-focus counts). Deliberately separated — the SD is a
+  distribution statistic and must never be read as an error bar on D32, which
+  is a ratio of moments and sits above the mean by construction.
+- **Progress + ETA** on .cine save, TIFF save, frame extraction and inference.
+  The .cine save also prints the achieved MB/s every time, so a silent
+  regression to the 100 Mbit link announces itself instead of needing a
+  stopwatch to find twice.
+- New `summary.json` fields: `droplet_d_mean_um`, `droplet_d_std_um`,
+  `droplet_d_min_um`, `droplet_d_max_um`, `atomised_extreme_frames`,
+  `_stage_seconds`, `_stride`.
+
+**Min/max droplet diameter are single detections** — the minimum sits on the
+model's noise floor (FP median 33.9 um, 71% under 50 um), so treat them as a
+statement about detector limits as much as about the spray. The SD is the
+trustworthy shape statistic.
 
 ---
 
@@ -543,9 +681,14 @@ Still open, in priority order:
    measurement science, not engineering — the items below are now the
    critical path.**
 
-1a. **Run the end-to-end Test Pipeline on a real .cine** (checklist item 6,
-   still not done). Everything upstream is verified in isolation but the whole
-   chain has never run start to finish on this machine.
+1a. ~~**Run the end-to-end Test Pipeline on a real .cine**~~ **DONE
+   2026-09-28** — Trial_1, 4000 sccm. See the first section of this document
+   for the stage breakdown and results.
+1b. **Profile `measure_run`.** It is **38%** of a run (22m 49s of 59m 52s) and
+   has never been looked at. Same situation inference was in that morning,
+   where the assumed bottleneck was 6% and the real one was unexamined. The
+   `--images` flag rendering a full-res PNG for every frame is the suspect,
+   but measure before acting.
 2. **Swap the primary and secondary Taguchi responses.** The atomised fraction
    measures at +/-32% and cannot rank runs; D32 measures at +/-7.3% and can.
    This document has it the wrong way round throughout — fix before any array.
@@ -2673,6 +2816,21 @@ under Step 6.
   direct re-read of the source `.cine`, so not an extraction artefact.
 - Liquid velocity ~1 m/s (features show shape, not streaks, at 10 µs).
 - Decorrelation time ~20 ms — frames closer than that are not independent samples.
+- **CAVEAT, added 2026-09-28. The 20.5 ms is INFERRED, not measured, and the
+  whole stride default rests on it.** The chain is: 10 µm/px at 10 µs exposure
+  means 1 m/s produces exactly 1 px of motion blur, so "features show shape,
+  not streaks" implies v of order 1 m/s; then 20.5 mm FOV ÷ 1 m/s = 20.5 ms.
+  Two problems. (a) "No streaks" bounds velocity from ABOVE only — 0.3 m/s
+  would also show no streaking — so it bounds decorrelation from BELOW, and
+  stride 10 may be *smaller* than needed, i.e. paying for correlated frames.
+  (b) It only counts transit time. Atomisation is intermittent (per-frame
+  atomised fraction 0.62%–100% on Trial_1), and if the pulsing is slower than
+  20 ms then intermittency, not transit, sets the real decorrelation time.
+  **Both are directly measurable from any capture:** at 500 fps consecutive
+  frames are 2 ms apart, so 1 m/s = 200 px of displacement — cross-correlate
+  adjacent stride-1 frames for velocity, and correlate frame n against n+k for
+  the decay itself, which captures transit and intermittency together. Worth
+  doing: it is the parameter deciding whether a condition costs 23 min or 4 h.
 
 **What the spray actually looks like**
 - Atomisation is **incomplete**. ~68% of detected liquid area is in filaments,

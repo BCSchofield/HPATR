@@ -37,8 +37,19 @@ Usage:
 import argparse
 import json
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
+
+
+def _fmt_dur(seconds) -> str:
+    """Human-readable duration: '45s', '2m 05s', '1h 12m'."""
+    s = int(round(seconds))
+    if s < 60:
+        return f"{s}s"
+    if s < 3600:
+        return f"{s // 60}m {s % 60:02d}s"
+    return f"{s // 3600}h {(s % 3600) // 60:02d}m"
 
 import numpy as np
 
@@ -259,6 +270,7 @@ def main():
 
         src_dtype = None
         vmin, vmax = None, None
+        _t_extract = time.time()
 
         for i, n in enumerate(nums):
             cine.load_frame(n)
@@ -278,8 +290,20 @@ def main():
             # 8-bit: the single fixed mapping, PNG for reliable Preview/QuickLook viewing.
             cv2.imwrite(str(dir_8 / f"{stem}.png"), to_8bit(frame, lo, hi))
 
-            if (i + 1) % 25 == 0 or i == len(nums) - 1:
-                print(f"    {i + 1}/{len(nums)}")
+            # Progress with a rate and an ETA. Extraction writes an ~8 MB TIFF
+            # plus a PNG per frame, so on a long capture this is the stage that
+            # looks hung; a bare "25/300" every 25 frames did not say whether
+            # it was moving or how much longer it had.
+            done = i + 1
+            if done % 25 == 0 or done == len(nums):
+                el = time.time() - _t_extract
+                rate = done / el if el > 0 else 0.0
+                eta = (len(nums) - done) / rate if rate > 0 else 0.0
+                print(f"    {done}/{len(nums)} ({done * 100 // len(nums)}%)"
+                      f"   {rate:.1f} frames/s"
+                      + (f"   ETA {_fmt_dur(eta)}" if done < len(nums)
+                         else f"   took {_fmt_dur(el)}"),
+                      flush=True)
 
         meta = {
             "run_name": args.run_name,

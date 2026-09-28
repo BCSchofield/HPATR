@@ -25,15 +25,18 @@ STAGES
   4. measure_run       D32 (in-focus droplets only) + atomised fraction (all
                        droplets), pooled over the run, with bootstrap CIs.
 
-FOLDER LAYOUT PRODUCED
+FOLDER LAYOUT PRODUCED  (changed 2026-09-28 -- see the note in process_capture)
 ----------------------
-    <run>/shadowgraph/raw/CINE/recording_*.cine      the archival source
-    <run>/shadowgraph/raw/CINE/frames/16bit/         native TIFFs
-    <run>/shadowgraph/raw/CINE/frames/8bit/          PNGs, pinned window
-    <run>/shadowgraph/raw/CINE/instances.json        manifest
-    <run>/shadowgraph/raw/CINE/background_median.tiff
+    <run>/shadowgraph/raw/CINE/recording_*.cine      the archival source, ALONE
+    <run>/shadowgraph/raw/frames/16bit/              native TIFFs
+    <run>/shadowgraph/raw/frames/8bit/               PNGs, pinned window
+    <run>/shadowgraph/raw/instances.json             manifest (an INPUT)
+    <run>/shadowgraph/raw/background_median.tiff
     <run>/shadowgraph/analysis/predictions.json
     <run>/shadowgraph/analysis/measurement_<thr>/    csv + summary + images
+
+`raw/` is what gets passed as --val-dir. Runs made before this date have
+frames and instances.json one level deeper, inside CINE/.
 
 Usage:
     python process_capture.py <cine> --run-dir <run folder>
@@ -42,6 +45,7 @@ Usage:
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -57,6 +61,16 @@ DEFAULT_STRIDE = 10
 BG_FRAMES = 40
 
 
+def _fmt_dur(seconds) -> str:
+    """Human-readable duration: '45s', '2m 05s', '1h 12m'."""
+    s = int(round(seconds))
+    if s < 60:
+        return f"{s}s"
+    if s < 3600:
+        return f"{s // 60}m {s % 60:02d}s"
+    return f"{s // 3600}h {(s % 3600) // 60:02d}m"
+
+
 def _run(cmd, log):
     """Run a stage as a subprocess, streaming its output through `log`.
 
@@ -66,8 +80,14 @@ def _run(cmd, log):
     depending on who called it.
     """
     log(f"$ {' '.join(str(c) for c in cmd)}")
+    # PYTHONUNBUFFERED is the reason progress appears at all. A child writing to
+    # a PIPE block-buffers its stdout in ~8 KB chunks, so a stage that prints a
+    # short progress line every 25 frames emits nothing for minutes and then a
+    # burst -- indistinguishable from being hung. bufsize=1 below only affects
+    # OUR side of the pipe; it cannot unbuffer the child.
+    env = dict(os.environ, PYTHONUNBUFFERED="1")
     p = subprocess.Popen([str(c) for c in cmd], stdout=subprocess.PIPE,
-                         stderr=subprocess.STDOUT, text=True, bufsize=1)
+                         stderr=subprocess.STDOUT, text=True, bufsize=1, env=env)
     for line in p.stdout:
         log(line.rstrip())
     p.wait()
@@ -109,7 +129,39 @@ def process_capture(cine: Path, run_dir: Path, *, stride=DEFAULT_STRIDE,
     if not cine.exists():
         raise FileNotFoundError(f"no such .cine: {cine}")
 
-    cine_dir = run_dir / "shadowgraph" / "raw" / "CINE"
+    # Per-stage wall clock. Only a total was reported before, which cannot tell
+    # you whether a slow run was the extraction, the model or the measurement --
+    # and those have completely different fixes.
+    stage_s = {}
+
+    class _Stage:
+        def __init__(self, name):
+            self.name = name
+        def __enter__(self):
+            self.t = time.time()
+            return self
+        def __exit__(self, *exc):
+            stage_s[self.name] = round(time.time() - self.t, 1)
+            log(f"    [{self.name} took {_fmt_dur(stage_s[self.name])}]")
+            return False
+
+    # Layout (changed 2026-09-28):
+    #   shadowgraph/raw/CINE/recording_*.cine   the archival source, ALONE
+    #   shadowgraph/raw/frames/{8bit,16bit}/    extracted frames
+    #   shadowgraph/raw/instances.json          image manifest (INPUT, not a result)
+    #   shadowgraph/raw/background_median.tiff
+    #   shadowgraph/analysis/                   predictions + measurement output
+    #
+    # `raw/` is the --val-dir. Every tool resolves <val-dir>/frames/8bit and
+    # <val-dir>/instances.json, which is the same contract 06_validation and
+    # 09_experiments satisfy -- that is what lets a capture be analysed by
+    # exactly the same code as the thesis validation set. Frames used to live
+    # inside CINE/ to meet it, which put 30 GB of regenerable data in the same
+    # folder as the one irreplaceable file. Moving the boundary up one level
+    # keeps the contract and makes the backup rule "sync raw/CINE, skip the
+    # rest of raw/".
+    raw_dir = run_dir / "shadowgraph" / "raw"
+    cine_dir = raw_dir / "CINE"
     analysis = run_dir / "shadowgraph" / "analysis"
     cine_dir.mkdir(parents=True, exist_ok=True)
     analysis.mkdir(parents=True, exist_ok=True)
@@ -120,45 +172,51 @@ def process_capture(cine: Path, run_dir: Path, *, stride=DEFAULT_STRIDE,
     local_cine = cine_dir / cine.name
     if cine.resolve() != local_cine.resolve():
         log(f"copying {cine.name} into the run folder ...")
-        shutil.copy2(cine, local_cine)
+        with _Stage("copy cine"):
+            shutil.copy2(cine, local_cine)
 
     # ---- 1. frames -------------------------------------------------------
     log("\n=== 1/4  extracting frames ===")
+    # output_root/run_name is where cine_extract writes, so this lands frames
+    # and instances.json directly in raw/ rather than inside CINE/.
     cmd = [sys.executable, HERE / "cine_extract.py", local_cine,
-           "--run-name", "CINE", "--output-root", cine_dir.parent,
+           "--run-name", raw_dir.name, "--output-root", raw_dir.parent,
            "--stride", stride, "--overwrite"]
     if limit:
         cmd += ["--limit", limit]
-    _run(cmd, log)
+    with _Stage("extract frames"):
+        _run(cmd, log)
 
-    frames_16 = cine_dir / "frames" / "16bit"
-    frames_8 = cine_dir / "frames" / "8bit"
+    frames_16 = raw_dir / "frames" / "16bit"
+    frames_8 = raw_dir / "frames" / "8bit"
     n_frames = len(list(frames_8.glob("*.png")))
     if n_frames == 0:
         raise RuntimeError(f"extraction produced no frames in {frames_8}")
 
     # ---- 2. background ---------------------------------------------------
     log("\n=== 2/4  background ===")
-    bg_path = build_background(frames_16, cine_dir / "background_median.tiff",
-                               bg_frames, log)
+    with _Stage("background"):
+        bg_path = build_background(frames_16, raw_dir / "background_median.tiff",
+                                   bg_frames, log)
 
     # ---- 3. inference ----------------------------------------------------
     log(f"\n=== 3/4  inference on {n_frames} frames ===")
     preds = analysis / "predictions.json"
     cmd = [sys.executable, HERE / "tiled_inference.py", "--all",
-           "--root", run_dir, "--val-dir", "shadowgraph/raw/CINE",
+           "--root", run_dir, "--val-dir", "shadowgraph/raw",
            "--out", preds]
     if device:
         cmd += ["--device", device]
     if model_dir:
         cmd += ["--model-dir", model_dir]
-    _run(cmd, log)
+    with _Stage("inference"):
+        _run(cmd, log)
 
     # ---- 4. measurement --------------------------------------------------
     log("\n=== 4/4  measurement ===")
     out_dir = analysis / f"measurement_{score_thresh:.2f}"
     cmd = [sys.executable, HERE / "measure_run.py", "--pred", preds,
-           "--root", run_dir, "--val-dir", "shadowgraph/raw/CINE",
+           "--root", run_dir, "--val-dir", "shadowgraph/raw",
            "--background", bg_path,
            "--sixteen-bit-dir", frames_16,
            "--score-thresh", score_thresh,
@@ -167,13 +225,26 @@ def process_capture(cine: Path, run_dir: Path, *, stride=DEFAULT_STRIDE,
         cmd += ["--images"]
     if ci_stride:
         cmd += ["--ci-stride", ci_stride]
-    _run(cmd, log)
+    with _Stage("measurement"):
+        _run(cmd, log)
 
     summary = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
     summary["_elapsed_total_s"] = round(time.time() - t0, 1)
     summary["_run_dir"] = str(run_dir)
     summary["_frames"] = n_frames
     summary["_measurement_dir"] = str(out_dir)
+    summary["_stage_seconds"] = stage_s
+    summary["_stride"] = stride
+
+    total = summary["_elapsed_total_s"]
+    log("\n=== stage breakdown ===")
+    for name, secs in stage_s.items():
+        share = f"{secs / total * 100:4.0f}%" if total else "   ?"
+        log(f"  {name:16s}{_fmt_dur(secs):>10}  {share}")
+    log(f"  {'TOTAL':16s}{_fmt_dur(total):>10}")
+    if n_frames:
+        log(f"  ({n_frames} frames at stride {stride} -> "
+            f"{total / n_frames:.2f} s/frame end to end)")
 
     log(f"\n=== done in {summary['_elapsed_total_s']:.0f} s ===")
     log(f"  D32 (in-focus)    {summary['d32_in_focus_um']} um   "

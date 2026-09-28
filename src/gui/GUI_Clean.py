@@ -23,6 +23,7 @@ import io
 import os
 import re
 import sys
+from pathlib import Path
 import math
 import time
 import json
@@ -1293,6 +1294,72 @@ class _GuiLogStream:
         raise io.UnsupportedOperation("fileno")
 
 
+class _ElidingLabel(QLabel):
+    """Label that shortens its text from the MIDDLE to fit the width it is given.
+
+    QLabel's word wrap breaks on whitespace, and a Windows path has none, so a
+    long result path just gets chopped at the right edge and the filename --
+    the only part anyone reads -- is the part that disappears. Eliding the
+    middle keeps the drive and the filename; the full text stays in a tooltip.
+    """
+    def __init__(self, text=""):
+        super().__init__()
+        self._full = text
+        self.setMinimumWidth(40)
+        self._apply()
+
+    def setText(self, text):                      # noqa: N802  (Qt naming)
+        self._full = text or ""
+        self._apply()
+
+    def fullText(self) -> str:                    # noqa: N802
+        return self._full
+
+    def resizeEvent(self, e):                     # noqa: N802
+        super().resizeEvent(e)
+        self._apply()
+
+    def _apply(self):
+        fm = self.fontMetrics()
+        super().setText(fm.elidedText(self._full, Qt.TextElideMode.ElideMiddle,
+                                      max(40, self.width() - 4)))
+        self.setToolTip(self._full)
+
+
+class _FitImageLabel(QLabel):
+    """Label that scales its image to the width available, keeping aspect.
+
+    Holds the ORIGINAL pixmap and rescales from it on every resize, so
+    repeated resizing never compounds resampling artefacts the way rescaling
+    an already-scaled copy would.
+    """
+    def __init__(self):
+        super().__init__()
+        self._src = None
+        self.setMinimumHeight(80)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+    def setSourcePixmap(self, pix):               # noqa: N802
+        self._src = pix
+        self._rescale()
+
+    def clearImage(self, message=""):             # noqa: N802
+        self._src = None
+        super().clear()
+        super().setText(message)
+
+    def resizeEvent(self, e):                     # noqa: N802
+        super().resizeEvent(e)
+        self._rescale()
+
+    def _rescale(self):
+        if self._src is None or self._src.isNull():
+            return
+        w = max(1, self.width())
+        super().setPixmap(self._src.scaledToWidth(
+            w, Qt.TransformationMode.SmoothTransformation))
+
+
 class _InferenceProgressFilter:
     """Condense tiled_inference's per-frame output into grouped progress + ETA.
 
@@ -1774,9 +1841,11 @@ class AtomisationApp(QMainWindow):
         self._shadow_label.setText("No result found\nClick ↻ Refresh")
         preview_card.layout().addWidget(self._shadow_label)
 
-        self._result_path_label = QLabel("")
+        # Eliding, not wrapping: a Windows path has no spaces, so word wrap
+        # cannot break it and the filename -- the only part worth reading --
+        # was the part being cut off.
+        self._result_path_label = _ElidingLabel("")
         self._result_path_label.setStyleSheet(f"color: {CLR_TEXT_SEC}; font-size: 10px;")
-        self._result_path_label.setWordWrap(True)
         preview_card.layout().addWidget(self._result_path_label)
 
         self._pipeline_status = QLabel("")
@@ -1787,14 +1856,21 @@ class AtomisationApp(QMainWindow):
         # AI metrics — populated after pipeline run
         metrics_row = QWidget()
         mr = QHBoxLayout(metrics_row); mr.setContentsMargins(0, 0, 0, 0); mr.setSpacing(16)
-        self._ai_confidence_lbl = QLabel("Confidence: –")
-        self._ai_diameter_lbl   = QLabel("Avg droplet: –")
-        self._ai_dl_lbl         = QLabel("D/L: –")
-        for lbl in [self._ai_confidence_lbl, self._ai_diameter_lbl, self._ai_dl_lbl]:
-            lbl.setStyleSheet(f"color: {CLR_TEXT_SEC}; font-size: 11px;")
+        self._ai_diameter_lbl   = QLabel("Run SMD: –")
+        self._ai_dl_lbl         = QLabel("Atomised Fraction: –")
+        for lbl in [self._ai_diameter_lbl, self._ai_dl_lbl]:
+            lbl.setStyleSheet(f"color: {CLR_TEXT}; font-size: 12px; font-weight:600;")
             mr.addWidget(lbl)
         mr.addStretch()
         preview_card.layout().addWidget(metrics_row)
+
+        # The CI line gets its own full-width row: sharing a horizontal row
+        # with the two headline numbers left it about 40 characters short, so
+        # the droplet count fell off the right-hand edge.
+        self._ai_confidence_lbl = QLabel("Confidence: –")
+        self._ai_confidence_lbl.setStyleSheet(f"color: {CLR_TEXT_SEC}; font-size: 11px;")
+        self._ai_confidence_lbl.setWordWrap(True)
+        preview_card.layout().addWidget(self._ai_confidence_lbl)
 
         vl.addWidget(preview_card)
 
@@ -2031,6 +2107,7 @@ class AtomisationApp(QMainWindow):
         self._tabs.addTab(self._build_afg_tab(),          "  AFG1062  ")
         self._tabs.addTab(self._build_calibration_tab(),  "  Calibration  ")
         self._tabs.addTab(self._build_cone_tab(),         "  Cone  ")
+        self._tabs.addTab(self._build_extremes_tab(),     "  Extremes  ")
         self._tabs.addTab(self._build_how_to_tab(),       "")
         # Hide the How To tab itself — its content is reached via the corner
         # button below.  Indexed off the count so adding/removing a tab above
@@ -2614,6 +2691,11 @@ class AtomisationApp(QMainWindow):
         self._cam_width.textChanged.connect(self._update_cam_capacity)
         self._cam_height.textChanged.connect(self._update_cam_capacity)
         self._update_cam_capacity()
+        # The stride note quotes fps and the capture length, so it has to follow
+        # every field that feeds it, not just the stride box.
+        for _f in (self._cam_fps, self._cam_pre_s, self._cam_post_s,
+                   self._cam_width, self._cam_height):
+            _f.textChanged.connect(self._update_stride_note)
 
         # Read-only label showing where captures will be saved
         self._cam_save_lbl = QLabel(self._cam_path_hint())
@@ -2645,7 +2727,37 @@ class AtomisationApp(QMainWindow):
             "Runs the full chain on the saved .cine: frame extraction → "
             "background → tiled inference → D32 and atomised fraction.<br>"
             "Unticked, the capture is saved and nothing else happens.")
-        c3.layout().addWidget(self._pipeline_check)
+
+        # Stride sits beside the checkbox it governs, with a live note giving
+        # the real cost -- frames analysed and expected inference time at the
+        # camera's current fps. The cost of stride 1 is an hour, and that is
+        # not something to discover after pressing go.
+        self._ai_stride = QLineEdit(str(self.DEFAULT_STRIDE))
+        self._ai_stride.setFixedWidth(56)
+        self._ai_stride.setValidator(QIntValidator(1, 1000))
+        self._ai_stride.setToolTip(
+            "<b>Analyse every Nth frame</b><br>"
+            "1 = every frame. Higher = fewer frames, proportionally faster.<br>"
+            "The default matches the decorrelation time: frames closer together "
+            "than that largely contain the SAME droplets, so they add compute "
+            "without adding independent information.")
+        _ai_row = QWidget()
+        _ar = QHBoxLayout(_ai_row); _ar.setContentsMargins(0, 0, 0, 0); _ar.setSpacing(8)
+        _ar.addWidget(self._pipeline_check)
+        _ar.addStretch()
+        _sl = QLabel("Stride"); _sl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
+        _ar.addWidget(_sl)
+        _ar.addWidget(self._ai_stride)
+        c3.layout().addWidget(_ai_row)
+
+        self._ai_stride_note = QLabel("")
+        self._ai_stride_note.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
+        self._ai_stride_note.setWordWrap(True)
+        c3.layout().addWidget(self._ai_stride_note)
+
+        self._ai_stride.textChanged.connect(self._update_stride_note)
+        self._ai_stride.editingFinished.connect(self._save_camera_settings)
+        self._pipeline_check.stateChanged.connect(self._update_stride_note)
 
         self._cam_arm_status_lbl = QLabel("Not armed")
         self._cam_arm_status_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
@@ -3088,6 +3200,126 @@ class AtomisationApp(QMainWindow):
         scroll.setWidget(w); return scroll
 
     # ── Cone tab ──────────────────────────────────────────────────────────────
+
+    # The four extreme frames, in the order they are stacked in the tab.
+    # (summary key, sub-key, heading, what the reader should take from it)
+    EXTREME_PANELS = (
+        ("d32_extreme_frames", "lowest",
+         "LOWEST D32 — finest atomisation in the run",
+         "The finest spray the run produced."),
+        ("d32_extreme_frames", "highest",
+         "HIGHEST D32 — coarsest atomisation in the run",
+         "The coarsest. The lowest/highest ratio is the frame-to-frame swing."),
+        ("atomised_extreme_frames", "highest",
+         "HIGHEST atomised fraction",
+         "Often degenerate: a frame with no filaments reads 100% by "
+         "construction. Check the filament count before believing it."),
+        ("atomised_extreme_frames", "lowest",
+         "LOWEST atomised fraction",
+         "Mostly unbroken liquid — threads and lamellae, little droplet area."),
+    )
+
+    def _build_extremes_tab(self):
+        """Full-resolution views of the four extreme frames of the last run.
+
+        Shown at native resolution in a scroll area rather than scaled to fit:
+        the point is to look at individual droplets and filament edges, which a
+        390 px thumbnail cannot show. The per-frame numbers sit above each
+        image so a degenerate frame is identifiable without cross-referencing
+        per_frame.csv.
+        """
+        scroll = QScrollArea(); scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("background:transparent; border:none;")
+        w = QWidget(); vl = QVBoxLayout(w)
+        vl.setSpacing(16); vl.setContentsMargins(16, 16, 16, 16)
+
+        self._extreme_hint = QLabel(
+            "No run analysed yet — these populate when the AI chain finishes.")
+        self._extreme_hint.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
+        self._extreme_hint.setWordWrap(True)
+        vl.addWidget(self._extreme_hint)
+
+        self._extreme_labels = {}      # (key, sub) -> (caption QLabel, image QLabel)
+        for key, sub, heading, why in self.EXTREME_PANELS:
+            c = card()
+            c.layout().addWidget(section_label(heading))
+
+            why_lbl = QLabel(why)
+            why_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
+            why_lbl.setWordWrap(True)
+            c.layout().addWidget(why_lbl)
+
+            cap = QLabel("–")
+            cap.setStyleSheet(f"color:{CLR_TEXT}; font-size:12px; font-weight:600;")
+            cap.setWordWrap(True)
+            c.layout().addWidget(cap)
+
+            # Scaled to the tab width rather than shown at native resolution:
+            # a 2560x1600 frame meant scrolling in two directions to see one
+            # image. The full-resolution file is on disk and its path is under
+            # each image, for when the detail actually matters.
+            img = _FitImageLabel()
+            img.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
+            img.clearImage("not available")
+            c.layout().addWidget(img)
+
+            path_lbl = _ElidingLabel("")
+            path_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:10px;")
+            c.layout().addWidget(path_lbl)
+
+            self._extreme_labels[(key, sub)] = (cap, img, path_lbl)
+            vl.addWidget(c)
+
+        vl.addStretch()
+        scroll.setWidget(w)
+        return scroll
+
+    def _update_extremes_tab(self, results: dict):
+        """Fill the Extremes tab from a finished measure_run summary."""
+        mdir = results.get("_measurement_dir")
+        found = 0
+        for key, sub, _heading, _why in self.EXTREME_PANELS:
+            cap, img, path_lbl = self._extreme_labels[(key, sub)]
+            ext = (results.get(key) or {}).get(sub) or {}
+            stem = ext.get("frame")
+            if not stem:
+                cap.setText("– (not reported for this run)")
+                img.clearImage("not available")
+                path_lbl.setText("")
+                continue
+
+            if "d32_um" in ext:
+                bits = [f"D32 {ext['d32_um']} µm",
+                        f"{ext.get('droplets_in_focus', '?')} in-focus droplets"]
+            else:
+                fil = ext.get("filaments")
+                bits = [f"atomised {ext['atomised_pct']} %",
+                        f"{ext.get('droplets', '?')} droplets",
+                        f"{fil} filaments"]
+                if fil == 0:
+                    bits.append("⚠ zero filaments — ratio is 1 by construction")
+            cap.setText(f"{stem}   ·   " + "   ·   ".join(str(b) for b in bits))
+
+            path = os.path.join(mdir, f"{stem}.png") if mdir else None
+            if path and os.path.exists(path):
+                pix = QPixmap(path)
+                if not pix.isNull():
+                    img.setSourcePixmap(pix)
+                    path_lbl.setText(f"{path}   ({pix.width()}×{pix.height()} full size)")
+                    found += 1
+                    continue
+            img.clearImage(f"image not found: {path}")
+            path_lbl.setText(path or "")
+
+        if found:
+            self._extreme_hint.setText(
+                f"From {os.path.basename(results.get('_run_dir', '') or '')} — "
+                f"{results.get('_frames', '?')} frames at stride "
+                f"{results.get('_stride', '?')}. Shown at full resolution; scroll to pan.")
+        else:
+            self._extreme_hint.setText(
+                "Run finished but no marked-up images were found — "
+                "measure_run needs --images (process_capture passes it by default).")
 
     def _build_cone_tab(self):
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
@@ -4048,6 +4280,28 @@ class AtomisationApp(QMainWindow):
     # often enough to see it is alive, sparse enough not to flood the panel.
     INFERENCE_LOG_EVERY = 25
 
+    # Liquid crosses the 20.5 mm field of view at ~1 m/s, so the scene is fully
+    # replaced every ~20.5 ms.  Frames closer together than that largely contain
+    # the SAME droplets and are not independent samples.
+    #
+    # CAVEAT, and it matters: the velocity is inferred from motion blur (at
+    # 10 um/px and 10 us exposure, ~1 m/s gives the ~1 px of blur observed), not
+    # measured.  At 2 m/s the right stride would be half this.  Measure it
+    # properly by correlating frame n against n+k on a real capture.
+    DECORRELATION_MS = 20.5
+    DEFAULT_STRIDE = 10
+
+    # Inference cost scales with frame AREA, not frame count, so the estimate
+    # has to know the resolution.  Measured 2026-09-28 on the RTX 4070 Ti SUPER
+    # after the mask-storage fix, split by size:
+    #     2048x1152 (2.36 MP)   2.3 s/frame   ->  0.97 s/MP
+    #     2560x1600 (4.10 MP)   5.1 s/frame   ->  1.25 s/MP
+    # Superlinear because a bigger frame needs more tiles AND holds more
+    # detections.  The higher figure is used: over-estimating a wait is much
+    # less annoying than under-estimating it, and a flat per-frame constant
+    # told a 2560x1600 user 6 min for a job that actually took 23.
+    INFERENCE_S_PER_MEGAPIXEL = 1.25
+
     # Canonical master_log.xlsx column widths, in order A..L:
     #   Timestamp, Orifice, Flow Range, Pressure Range, Speed, Distance,
     #   Avg Lamella, Notes, Cone Image, Shadowgraph, Pressure Graph, Mass Flow Graph
@@ -4600,6 +4854,63 @@ class AtomisationApp(QMainWindow):
         ok = self.phantom.ping()
         self._cam_status_lbl.setText("Camera: connected ✓" if ok else "Camera: not responding")
 
+    def _get_ai_stride(self) -> int:
+        """Stride from the field, falling back to the default if unusable."""
+        try:
+            return max(1, int(self._ai_stride.text()))
+        except (ValueError, AttributeError):
+            return self.DEFAULT_STRIDE
+
+    def _update_stride_note(self):
+        """Live cost of the current stride at the camera's current settings.
+
+        Reads fps and the capture length from the live fields, so changing the
+        frame rate updates the note without needing Apply Config.
+        """
+        if not hasattr(self, "_ai_stride_note"):
+            return
+        if not self._pipeline_check.isChecked():
+            self._ai_stride_note.setText("AI analysis off — the capture is saved and nothing else runs.")
+            return
+
+        stride = self._get_ai_stride()
+        try:
+            fps = float(self._cam_fps.text())
+        except (ValueError, AttributeError):
+            fps = 0.0
+
+        parts = []
+        if fps > 0:
+            gap_ms = stride * 1000.0 / fps
+            decor = gap_ms / self.DECORRELATION_MS
+            ideal = max(1, round(self.DECORRELATION_MS * fps / 1000.0))
+            parts.append(f"stride {stride} at {fps:.0f} fps = {gap_ms:.1f} ms apart "
+                         f"({decor:.2f}× the ~{self.DECORRELATION_MS:.1f} ms decorrelation time)")
+            if decor < 0.9:
+                parts.append(f"⚠ below one decorrelation time — frames share droplets, "
+                             f"so the extra compute buys little new information "
+                             f"(stride {ideal} matches it)")
+        else:
+            parts.append(f"stride {stride} — set a frame rate to see the timing")
+
+        pre, post = self._cam_frame_counts()
+        total = pre + post
+        if total > 0:
+            n = max(1, total // stride)
+            try:
+                mp = (float(self._cam_width.text()) *
+                      float(self._cam_height.text())) / 1e6
+            except (ValueError, AttributeError):
+                mp = 0.0
+            if mp > 0:
+                secs = n * mp * self.INFERENCE_S_PER_MEGAPIXEL
+                parts.append(f"{total:,} captured → {n:,} analysed → "
+                             f"~{self._fmt_eta(secs)} inference at {mp:.1f} MP "
+                             f"(plus extraction)")
+            else:
+                parts.append(f"{total:,} captured → {n:,} analysed")
+        self._ai_stride_note.setText(".  ".join(parts) + ".")
+
     @classmethod
     def _transfer_summary(cls, path: str, elapsed: float) -> str:
         """One line describing how fast a file actually came off the camera.
@@ -4782,9 +5093,8 @@ class AtomisationApp(QMainWindow):
             _run_folder = os.path.join(
                 _base, _now.strftime("%Y"), _now.strftime("%m"),
                 _now.strftime("%d"), f"{_now.strftime('%H%M%S')}_Manual")
+            # As above: TIFFs/ and Brightest_Frame/ are made on demand only.
             for _sub in [os.path.join("shadowgraph", "raw", "CINE"),
-                         os.path.join("shadowgraph", "raw", "TIFFs"),
-                         os.path.join("shadowgraph", "raw", "Brightest_Frame"),
                          os.path.join("shadowgraph", "analysis"),
                          "cone"]:
                 os.makedirs(os.path.join(_run_folder, _sub), exist_ok=True)
@@ -4934,8 +5244,13 @@ class AtomisationApp(QMainWindow):
                 # Pipeline button uses, so a dry run there proves this path.
                 if run_pipeline:
                     if save_video and os.path.exists(cine_path):
-                        _run_folder_for_ai = os.path.dirname(os.path.dirname(
-                            os.path.dirname(cine_path)))   # .../shadowgraph/raw/CINE -> run root
+                        # <run>/shadowgraph/raw/CINE/recording.cine -> <run>.
+                        # parents[] is indexed from the FILE, so the run root is
+                        # [3], not [2]: three dirname() calls land on
+                        # <run>/shadowgraph and process_capture then builds
+                        # <run>/shadowgraph/shadowgraph/raw/CINE, decides the
+                        # cine is missing, and copies the whole 14 GB into it.
+                        _run_folder_for_ai = str(Path(cine_path).parents[3])
                         QTimer.singleShot(0, self, lambda c=cine_path, r=_run_folder_for_ai: (
                             self._log("── AI analysis enabled — starting on the saved .cine ──"),
                             self._run_ai_chain(c, run_dir=r),
@@ -4977,8 +5292,8 @@ class AtomisationApp(QMainWindow):
             px_per_mm = self._get_px_per_mm()
         self._pipeline_status.setText("Pipeline: running…")
         self._ai_confidence_lbl.setText("Confidence: –")
-        self._ai_diameter_lbl.setText("Avg droplet: –")
-        self._ai_dl_lbl.setText("D/L: –")
+        self._ai_diameter_lbl.setText("Run SMD: –")
+        self._ai_dl_lbl.setText("Atomised Fraction: –")
         self._log(f"── AI pipeline started ({os.path.basename(frames_folder)}) ──")
 
         def _worker():
@@ -5020,26 +5335,81 @@ class AtomisationApp(QMainWindow):
         aci = results.get("atomised_ci95") or [None, None]
         n_focus = results.get("droplets_in_focus")
 
-        if d32 is not None:
-            half = (ci[1] - ci[0]) / 2 if None not in ci else None
-            pct = f" ±{100 * half / d32:.1f}%" if half else ""
-            self._ai_diameter_lbl.setText(f"D32: {d32:.1f} µm{pct}")
-        else:
-            self._ai_diameter_lbl.setText("D32: –")
+        # The two headline numbers carry the value only; both confidence
+        # intervals live in the Confidence slot, so the run's precision is read
+        # in one place rather than as two separate +/- tails.
+        self._ai_diameter_lbl.setText(
+            f"Run SMD: {d32:.1f} µm" if d32 is not None else "Run SMD: –")
+        self._ai_dl_lbl.setText(
+            f"Atomised Fraction: {atom:.2f} %" if atom is not None
+            else "Atomised Fraction: –")
 
-        if atom is not None:
-            ahalf = (aci[1] - aci[0]) / 2 if None not in aci else None
-            apct = f" ±{100 * ahalf / atom:.0f}%" if ahalf else ""
-            self._ai_dl_lbl.setText(f"Atomised: {atom:.2f} %{apct}")
-        else:
-            self._ai_dl_lbl.setText("Atomised: –")
+        # Line 1 — precision of the two run numbers.
+        bits = []
+        if d32 is not None and None not in ci:
+            half = (ci[1] - ci[0]) / 2
+            bits.append(f"SMD {ci[0]:.1f}–{ci[1]:.1f} µm (±{100 * half / d32:.1f}%)"
+                        if d32 else f"SMD {ci[0]:.1f}–{ci[1]:.1f} µm")
+        if atom is not None and None not in aci:
+            ahalf = (aci[1] - aci[0]) / 2
+            bits.append(f"atomised {aci[0]:.2f}–{aci[1]:.2f} % "
+                        f"(±{100 * ahalf / atom:.0f}%)" if atom
+                        else f"atomised {aci[0]:.2f}–{aci[1]:.2f} %")
+        # Line 3 — what the numbers were computed FROM. Its own line because
+        # it answers a different question again: not how precise or how
+        # varied, but how much evidence is behind them.
+        frames = results.get("_frames", results.get("frames", "?"))
+        counted = []
+        if frames not in (None, "?"):
+            stride = results.get("_stride")
+            counted.append(f"{frames:,} frames" if isinstance(frames, int)
+                           else f"{frames} frames")
+            if stride:
+                counted.append(f"stride {stride}")
+        if n_focus is not None:
+            counted.append(f"{n_focus:,} in-focus droplets")
+        n_oof = results.get("droplets_out_of_focus")
+        if n_oof is not None:
+            counted.append(f"{n_oof:,} out of focus")
 
-        self._ai_confidence_lbl.setText(
-            f"{results.get('frames', '?')} frames, {n_focus} in-focus droplets"
-            if n_focus is not None else "Confidence: –")
+        # Line 2 — the SIZE DISTRIBUTION, which is a different thing entirely.
+        # Kept on its own line and explicitly labelled so the spread is never
+        # mistaken for an error bar on the SMD above it.
+        mean = results.get("droplet_d_mean_um")
+        sd   = results.get("droplet_d_std_um")
+        dmin = results.get("droplet_d_min_um")
+        dmax = results.get("droplet_d_max_um")
+        dist = []
+        if mean is not None:
+            dist.append(f"mean {mean:.1f} µm")
+        if sd is not None:
+            dist.append(f"SD {sd:.1f} µm")
+        if dmin is not None and dmax is not None:
+            dist.append(f"range {dmin:.1f}–{dmax:.1f} µm")
+
+        lines = []
+        if bits:
+            lines.append("95% CI:  " + "   ".join(bits))
+        if dist:
+            lines.append("Droplet spread:  " + "   ".join(dist))
+        if counted:
+            lines.append("Measured from:  " + "   ".join(counted))
+        self._ai_confidence_lbl.setText("\n".join(lines) if lines else "Confidence: –")
 
         self._log(f"  D32 {d32} µm   95% CI {ci}")
         self._log(f"  atomised {atom} %   95% CI {aci}")
+
+        # Stage breakdown, so a slow run says WHICH stage was slow.
+        stages = results.get("_stage_seconds") or {}
+        if stages:
+            total = results.get("_elapsed_total_s") or sum(stages.values())
+            self._log("  ── stage breakdown ──")
+            for name, secs in stages.items():
+                share = f"{secs / total * 100:3.0f}%" if total else "  ?"
+                self._log(f"    {name:16s}{self._fmt_eta(secs):>10}  {share}")
+            self._log(f"    {'TOTAL':16s}{self._fmt_eta(total):>10}")
+
+        self._update_extremes_tab(results)
 
         # Show the lowest-D32 frame's marked-up image.
         ext = (results.get("d32_extreme_frames") or {}).get("lowest") or {}
@@ -5124,7 +5494,7 @@ class AtomisationApp(QMainWindow):
                 _t_chain = time.time()
                 summary = process_capture(
                     cine_path, target,
-                    stride=10,
+                    stride=self._get_ai_stride(),
                     score_thresh=0.30,
                     images=True,
                     log=_InferenceProgressFilter(
@@ -6009,9 +6379,10 @@ class AtomisationApp(QMainWindow):
             "experiment_logs", "Experiments")
         self._run_folder = os.path.join(
             _exp_base, _now.strftime("%Y"), _now.strftime("%m"), _now.strftime("%d"), _run_id)
+        # Only the folders every run uses. TIFFs/ and Brightest_Frame/ are
+        # created at the point of use instead — with Save TIFFs off they were
+        # being made empty on every single run and never written to.
         for _sub in [os.path.join("shadowgraph", "raw", "CINE"),
-                     os.path.join("shadowgraph", "raw", "TIFFs"),
-                     os.path.join("shadowgraph", "raw", "Brightest_Frame"),
                      os.path.join("shadowgraph", "analysis"),
                      "cone"]:
             os.makedirs(os.path.join(self._run_folder, _sub), exist_ok=True)
@@ -6449,7 +6820,9 @@ class AtomisationApp(QMainWindow):
             else:
                 ws.cell(row=row_num, column=9).value = 'NO DATA AVAILABLE'
 
-            shadow_src = self._result_path_label.text()
+            # fullText(), NOT text(): the label elides its middle for display,
+            # so text() returns a path with "..." in it that no file matches.
+            shadow_src = self._result_path_label.fullText()
             if shadow_src and os.path.exists(shadow_src):
                 simg = XLImage(shadow_src)
                 simg.width = self.SHADOWGRAPH_W_PX; simg.height = DISPLAY_H
@@ -6523,6 +6896,7 @@ class AtomisationApp(QMainWindow):
             finally:
                 self._save_fmt_guard = False
             self._pipeline_check.setChecked(bool(s.get("run_ai_analysis", False)))
+            self._ai_stride.setText(str(s.get("ai_stride", self.DEFAULT_STRIDE)))
             # Orifice — only restore a value the combo actually offers, so an old
             # or hand-edited settings file can't leave it blank.
             _orifice = s.get("orifice", "")
@@ -6603,6 +6977,7 @@ class AtomisationApp(QMainWindow):
                 "save_tiffs":        self._cam_save_tiffs_chk.isChecked(),
                 "orifice":           self._orifice_combo.currentText(),
                 "run_ai_analysis":   self._pipeline_check.isChecked(),
+                "ai_stride":         self._get_ai_stride(),
                 "cone_autofocus":    self._cone_autofocus_chk.isChecked(),
                 "cone_focus":        self._cone_focus_spin.value(),
                 "cone_top_crop":     self._cone_top_crop_spin.value(),
