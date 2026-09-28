@@ -53,7 +53,44 @@ absolute droplet size. Never report the number without the bias.
 
 ---
 
+## RESULTS OF THE FIRST WINDOWS SESSION — 2026-09-28. READ THIS FIRST
+
+Everything in the checklist below was done. Both headline numbers were
+**measured on the lab machine**, not estimated, and both beat the estimate.
+
+| | before | after | |
+|---|---|---|---|
+| camera download | 7.8 MB/s (62 Mbit) | **71.7 MB/s (574 Mbit)** | **9.2x** |
+| inference | 22.8 s/frame | **1.4 s/frame** | **15.9x** |
+| a 250-frame run | 95 min | **6 min** | |
+
+**The lab machine.** RTX 4070 Ti SUPER, 17.2 GB. `torch 2.6.0+cu124`,
+`detectron2 0.6`, `cv2 4.8.1`, `numpy 1.26.4`, `cine-handler 0.1.1` — all in
+**system Python 3.11** (`C:\Users\55154111\AppData\Local\Programs\Python\
+Python311\python.exe`). There is NO `Detectron` conda env on this machine; the
+handoff assumed one and was wrong. `process_capture` spawns stages with
+`sys.executable`, so launching the GUI by that absolute path keeps every stage
+on the right interpreter. Launching it as a bare `python GUI_Clean.py` from
+`(base)` would put the whole chain on conda's Python, which has no torch.
+
+**Network: done.** Camera is on the built-in Intel I219-LM at `100.100.100.1`
+static /16, internet on the Realtek USB dongle via DHCP. Both links negotiate
+1 Gbps. Camera answers at `100.100.231.39`. The prediction of "8-15x for the
+price of a cable" landed at 9.2x. Jumbo frames were NOT done — at 574 Mbit
+there may still be headroom to ~900, but this is no longer the bottleneck.
+
+**Inference: the GPU was never the problem.** See the corrected Step 4 below.
+The 30x estimate was right about the hardware and wrong about where the time
+went; the fix was in our own code and is now committed.
+
+**Still outstanding from the checklist:** item 6 (Test Pipeline end-to-end on a
+real .cine) has not been run. A 2970-frame, 15.2 GB capture from the speed test
+is sitting in the session scratchpad on C: if a test subject is wanted.
+
+---
+
 ## WINDOWS LAB CHECKLIST — do these in order, 2026-09-28
+### (items 1-5 and 7 COMPLETE — see the results section above)
 
 Written immediately before the first Windows session. Everything measured in
 this project so far is Mac CPU; none of the below has been verified on the lab
@@ -90,6 +127,25 @@ in the GUI.
 **7. Time it.** This is Step 4 below, and it gates the whole Taguchi workflow.
 Record seconds/frame on GPU and set the default `--stride` from the real number
 rather than the estimate.
+
+---
+
+## DATA TRANSFER — FIXED 2026-09-28, measured at 71.7 MB/s. Diagnosis kept below
+
+**Resolved.** The adapters were swapped as prescribed and a 2970-frame,
+15,207 MB cine came off the camera in **212 s = 71.7 MB/s = 574 Mbit/s**,
+steady the whole way. The 14.08 GB reference file would now take **3.3 min
+against the original 30** — a 9.2x change, inside the predicted 8-15x band.
+
+The diagnosis below stands as written and is kept because the reasoning is the
+transferable part: measure the file and divide, before theorising about
+hardware. The GUI now prints the achieved MB/s after every .cine save, so a
+silent regression to 100 Mbit announces itself instead of needing a stopwatch
+to find a second time.
+
+Note 574 Mbit is ~57% of theoretical Gigabit, so jumbo frames may still have
+something to give. Second-order; do not spend time on it while a 6-minute
+inference run is the longer pole.
 
 ---
 
@@ -476,11 +532,20 @@ Answered since this list was written:
 
 Still open, in priority order:
 
-0. **Fix the 100 Mbit camera link** (see DATA TRANSFER above). Cheapest and
-   largest win available: 30 min -> 2-4 min per save, for the price of a cable.
-   Do it before anything else on the Windows machine.
-1. **Step 4 below — GPU benchmark.** Now the single biggest lever: 75-150
-   frames per run is 45-90 min on CPU and an estimated 2-4 min on GPU.
+0. ~~**Fix the 100 Mbit camera link**~~ **DONE 2026-09-28** — 9.2x, measured at
+   71.7 MB/s. See DATA TRANSFER above.
+1. ~~**Step 4 — GPU benchmark**~~ **DONE 2026-09-28** — 15.9x, commit `b1678d4`.
+   The bottleneck was our own mask handling, not the GPU. See the corrected
+   Step 4, and note the "batch the tiles" advice there is now retracted.
+
+   **Both throughput blockers are cleared. A 250-frame condition is ~6 min of
+   inference plus ~3.3 min to pull the .cine. The remaining work is all
+   measurement science, not engineering — the items below are now the
+   critical path.**
+
+1a. **Run the end-to-end Test Pipeline on a real .cine** (checklist item 6,
+   still not done). Everything upstream is verified in isolation but the whole
+   chain has never run start to finish on this machine.
 2. **Swap the primary and secondary Taguchi responses.** The atomised fraction
    measures at +/-32% and cannot rank runs; D32 measures at +/-7.3% and can.
    This document has it the wrong way round throughout — fix before any array.
@@ -526,7 +591,45 @@ Do this alongside Step 1: it answers the same false-positive question from the
 other direction, and if it shows the FPs are mostly real-but-unmeasurable
 objects, the v4 priorities change.
 
-### Step 4 — BENCHMARK GPU INFERENCE AT WORK (do this early, it gates everything)
+### Step 4 — GPU INFERENCE  [DONE 2026-09-28 — 15.9x, but NOT for the expected reason]
+
+**Result: 22.8 s/frame -> 1.4 s/frame. A 250-frame run is 6 min, not 95.**
+Committed as `b1678d4`. Read the next four paragraphs before optimising
+anything else in this pipeline, because the first measurement was misleading
+and the handoff's own recommendation was wrong.
+
+**The GPU was never the bottleneck.** First clean run on the RTX 4070 Ti SUPER
+came in at 22.8 s/frame — *slower per tile than the Mac CPU*, with GPU
+utilisation sitting at **2%**. That looks like a broken CUDA setup. It was not:
+a bare forward pass on an 800x800 tile, timed with `cuda.synchronize()`,
+measures **56 ms** — almost exactly the 50 ms estimated below. The card was
+doing what was predicted and then waiting.
+
+**cProfile found the real cost, and it was our own code.** On frame_0056
+(391 detections): `_merge` 31.9 s, `_collect` 25.9 s, model forward 3.9 s.
+**94% was numpy on full-frame masks.** `_collect` allocated a
+`np.zeros((1600, 2560))` — 4.1 MB — for *every detection*, so a blob 40 px
+across cost the same as the whole frame, and every later step then scanned
+4.1M pixels to reach a few hundred. 1.6 GB of masks resident per frame.
+
+**The fix was to store each mask as a crop plus a frame offset.** Same pixels,
+different container. Output verified **byte-identical**: 4514 detections, same
+order, same RLE strings, same areas, unchanged in every class and size band —
+so no past number is invalidated and nothing needs re-running. 456 s -> 29 s on
+the 20-frame benchmark; memory 9.8 GB -> 1.8 GB; GPU util 2% -> 22%.
+
+**CORRECTION — ignore the "batch the tiles" advice at the end of this section.**
+It was written before anything was profiled. Batching optimises the forward
+pass, which was **6%** of runtime, so the ceiling on that entire approach was a
+6% gain — a week of work for nothing. The lesson generalises: performance
+intuition here was wrong by a factor of fifteen, and one cProfile run found it
+in two minutes. **Profile before optimising.** Post-fix the forward pass is
+~75% of what remains, so batching is *now* the only real lever left, worth
+perhaps 1.3-1.5x. Not obviously worth it against a 6-minute run.
+
+---
+
+#### The original estimate, kept for the record
 
 **Everything measured so far is Mac CPU. Nothing has ever been timed on the
 GPU.** This is not a convenience question — it decides whether the Taguchi
