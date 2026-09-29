@@ -16,6 +16,11 @@ tmp/
 __pycache__/
 *.pyc
 
+# Claude Code per-machine settings. Rewritten by the tool as it works and
+# different on every machine (Mac vs the Windows lab PC), so tracking it made
+# every pull collide. Shared settings belong in .claude/settings.json.
+.claude/settings.local.json
+
 # --- Real-data pipeline (docs/HANDOFF_real_data_pipeline.md) ---
 # Frames, object libraries, datasets and checkpoints live on the LaCie drive
 # at /Volumes/LaCie/Experiments/Real_Data — never in the repo.
