@@ -135,6 +135,209 @@ environment. Extraction and inference now report percentage, rate and ETA.
 
 ---
 
+## SIZE DISTRIBUTIONS — added 2026-09-30, runs automatically
+
+`measure_run.py` now writes the **individual object sizes**, not just
+aggregates. Before this, `per_frame.csv` held only counts and per-frame D32,
+so recovering a single droplet's diameter meant re-deriving the focus split
+from `predictions.json` plus the 16-bit frames — a 7-minute job to answer a
+question that should be a file read.
+
+Three files, in `analysis/measurement_<thr>/`:
+
+| file | contents |
+|---|---|
+| `droplet_sizes.csv` | every droplet: frame, diameter_um, in_focus |
+| `object_areas.csv` | every filament/blob instance: frame, class, area_px, area_mm2 |
+| `size_histograms.png` | two panels — see below |
+
+**Cost: ~0.4 s and 1.7 MB per run** (0.29 s of it just importing matplotlib),
+against a measurement stage of minutes. It is in `measure_run.py`, which
+`process_capture.py` already calls as stage 4, so every capture gets it with no
+wiring change.
+
+**Matplotlib is optional deliberately.** CSVs are written first and the plot is
+attempted second, inside a `try`. A missing matplotlib on the lab machine
+prints a note and skips the figure rather than discarding a completed
+measurement. **Check it is installed on the Windows PC.**
+
+**Binning.** Droplets get linear 25 µm bins, in-focus green and out-of-focus
+magenta, stacked, matching the colours drawn on the frames. Filament and blob
+areas share one panel on **log** bins — their areas span ~5 orders of magnitude
+(median ~0.04 mm², max ~30), so linear bins put everything in the first one.
+
+**The histogram counts DETECTED INSTANCES, not whole objects.** One long
+filament is emitted as several overlapping sub-segments, so the instance count
+is not a filament count. The atomised fraction unions them; the histogram does
+not. Stated on the figure itself so a stray copy cannot be misread.
+
+`--replot` redraws the figure from the CSVs and measures nothing, so changing
+the plot costs seconds. Use it instead of re-running a measurement.
+
+### First result: 4000 vs 4500 sccm are indistinguishable
+
+Both re-measured 2026-09-30; point estimates reproduced exactly (D32 85.57 and
+85.77), confirming the measurement is deterministic.
+
+| | p10 | p50 | p90 | 0-25 | 25-50 | 50-75 µm | in-focus |
+|---|---|---|---|---|---|---|---|
+| 4000 sccm | 22.6 | 40.7 | 79.8 | 17.3% | 45.9% | 24.8% | 49.9% |
+| 4500 sccm | 22.6 | 40.7 | 79.0 | 16.5% | 45.1% | 26.8% | 48.6% |
+
+Identical medians to one decimal and matching bin-for-bin. This is **stronger
+evidence than the D32 comparison alone** — two different distributions can
+share a D32 by coincidence, but these agree across the whole shape.
+
+**The competing explanation, which is not yet excluded.** This may show the
+*measurement* is insensitive rather than the conditions being identical. The
+mode sits in the 25-50 µm bin, and the false-positive median is 33.9 µm — so
+the peak is where the detector's noise floor lives, and the distribution may be
+reporting detector characteristics more than spray physics. **3000 vs 4500 is
+the test that discriminates between those two readings**, which is a second,
+independent reason to run it beyond the bias-stability question.
+
+---
+
+## MEASUREMENT IS 14.4x FASTER — 2026-09-30. And the guess was wrong again
+
+**424 s -> 29.4 s on Trial_1 (276 frames), measurement unchanged.** Two fixes,
+both found by profiling, neither where anyone expected.
+
+### The guess that was wrong, for the second time
+
+The handoff named `--images` as the prime suspect for `measure_run`'s 38%.
+Measured on the same machine, same data: **43.3 s with images vs 37.0 s
+without**. Rendering 276 full-resolution PNGs is **15%**, not the bulk. Chasing
+it would have won 15% and left a 14x sitting untouched.
+
+That is now **twice** the assumed bottleneck has been wrong — inference in the
+morning (assumed GPU, actually numpy, 6% vs 94%) and measurement here. Treat
+"obviously it's X" as a hypothesis to test, never a reason to start editing.
+
+### Fix 1 — crop before the per-pixel work (2.5x)
+
+Every detection ran `.astype()`, `.any()` and `T[mask]` over the **whole
+2560x1600 frame**. `T[mb].min()` boolean-indexed 4.1 M elements to read the
+darkest pixel of a droplet whose median bounding box is **16 px**.
+
+Now `toBbox` (which reads the RLE without decoding it, and is exact, so it
+cannot clip) gives the box and every operation runs inside it. **424 s ->
+172 s**, verified byte-identical on nine summary fields.
+
+Same bug, same shape, same file family as the one that made tiled inference
+15.9x slow. Worth assuming it exists elsewhere.
+
+### Fix 2 — stop decoding frame-sized masks at all (a further 5.9x)
+
+Profiling the 172 s version put **78% in `pycocotools.decode`**, which always
+materialises a full 4.1 M-pixel array regardless of object size. Measured over
+6,574 detections:
+
+| | |
+|---|---|
+| pixels decode writes | 26,927,104,000 |
+| pixels actually needed | 10,874,420 |
+| **overshoot** | **2,476x** |
+| median RLE length | 19 bytes (~13 runs) |
+
+`tiled_inference` **already held the crop** — that is what made it 15.9x faster
+— and was converting back to frame-sized and discarding it when writing COCO.
+It now emits both:
+
+    "segmentation"      frame-sized RLE   (unchanged; COCO-valid, score_v2.py unaffected)
+    "segmentation_crop" RLE over the object's own bounding box
+    "crop_xy"           [x, y] origin of that crop
+
+`measure_run` reads the crop when present and never builds a frame-sized array.
+**Files without the field fall back automatically** to Fix 1's path — slower,
+identical answer — so old predictions still work untouched.
+
+Cost: predictions.json grows ~42% (19 MB -> 27 MB per run).
+
+**Verification.** All 263 masks on a fresh frame were decoded both ways — full
+frame, and crop placed back at its offset — and compared pixel by pixel: **zero
+mismatches**. The two representations are the same mask.
+
+### Chain timings on the Mac, 2026-09-30, Trial_1
+
+| stage | time | share |
+|---|---|---|
+| extract frames | ~2.1 min | 3.6% |
+| background | 6 s | 0.2% |
+| **inference (CPU)** | **57.7 min** | **95.5%** |
+| measurement | **29 s** | **0.8%** |
+| TOTAL | ~60.5 min | |
+
+Measurement has gone from 38% of the chain to **0.8%**. It is no longer worth
+optimising. On the Mac, CPU inference is now effectively the entire cost
+(12.5 s/frame, median 16 tiles) — which is simply the argument for doing real
+runs on the Windows GPU, where inference is 1.4 s/frame.
+
+**Expect this to help Windows MORE than the Mac.** Windows' measurement ran at
+4.96 s/frame against the Mac's 1.54 — backwards, given the hardware. The likely
+cause is memory bandwidth: the old code was shovelling 4 MB arrays per
+detection, and Apple Silicon has far more bandwidth than a typical desktop. Both
+fixes cut memory traffic by orders of magnitude, so the machine that was most
+starved should gain most. **Unverified — measure it.**
+
+### Still available, probably not needed
+
+- **Multiprocessing over frames.** Frames are independent. But the GUI turns out
+  to use ~1 core (20 `threading.Thread`s, all GIL-bound and I/O-blocked; no
+  multiprocessing anywhere), while torch already uses 5 threads and OpenCV 15 —
+  so adding more risks oversubscription. And at 29 s, measurement no longer
+  justifies it.
+- **A hand-written cropped-RLE decoder** (the other route to Fix 2). Not needed
+  now that the crop is written at source, and strictly riskier.
+
+---
+
+## RUN METADATA — what is recorded, changed 2026-09-30
+
+Five independent variables. Before today only three were recorded, and the
+2026-09 captures are not fully comparable as a result — see the RPM note below.
+
+| variable | where it lives now |
+|---|---|
+| Gas flow (sccm) | folder name + `run_summary.xlsx` + full time series w/ camera windows |
+| Silicone flow rate (steps/s) | folder name + `run_summary.xlsx` ("Speed (steps/s)") |
+| Exit orifice | folder name + `run_summary.xlsx` |
+| **Bubbler height (mm)** | **NEW** — GUI field, persisted, folder name + both spreadsheets |
+| **Bubbler RPM** | **NEW to the record** — GUI already had it, it was never saved |
+
+**Run folder naming is now:**
+
+    133346_4500sccm_1000rpm_6000sps_or1.2_bh40
+
+Missing values become explicit tokens (`norpm`, `nosps`, `noor`, `nobh`), never
+dropped segments — an unrecorded run must not look identical to a deliberate
+one. All three naming sites share one `_run_id()` method. ~52 chars, well
+inside Windows' path limit.
+
+**`run_summary.xlsx` is authoritative; the folder name is a scannable copy.** Do
+not parse the name back as data — a renamed folder would disagree silently.
+
+**`Distance (mm)` is now `Motor Travel (mm)`** everywhere, including the master
+log, because bubbler height is also a distance in mm and the two were one
+mistake away from being confused. Motor Travel is the plunger stroke.
+
+**master_log.xlsx went 12 -> 14 columns** (bubbler height and RPM at C and D,
+beside Orifice). Migration tested on a copy of the real 60-row file: all 130
+image anchors shifted correctly. The header row is now stamped from a single
+`MASTER_HEADERS` constant on every save — `openpyxl`'s `insert_cols()` gives a
+new column no style at all, which is why 'Mass Flow Graph' was the one unbold,
+unfilled header in the file, and why every future migration would have repeated
+it.
+
+**Why this matters, concretely.** RPM was previously recorded only in free-text
+Notes, and inconsistently: `101947`/`103608` say "500rpm", `133346` says
+"1000rpm later on" (ambiguous, and implies it CHANGED mid-run), and `125917` and
+`114715` say nothing at all. Two of the three runs compared on 2026-09-30 have
+no RPM on record, so **the 4000-vs-4500 "clean pair" claim is not verifiable**.
+Not backfilled by decision — this is for future runs only.
+
+---
+
 ## RESULTS OF THE FIRST WINDOWS SESSION — 2026-09-28. READ THIS FIRST
 
 Everything in the checklist below was done. Both headline numbers were
@@ -684,11 +887,30 @@ Still open, in priority order:
 1a. ~~**Run the end-to-end Test Pipeline on a real .cine**~~ **DONE
    2026-09-28** — Trial_1, 4000 sccm. See the first section of this document
    for the stage breakdown and results.
-1b. **Profile `measure_run`.** It is **38%** of a run (22m 49s of 59m 52s) and
-   has never been looked at. Same situation inference was in that morning,
-   where the assumed bottleneck was 6% and the real one was unexamined. The
-   `--images` flag rendering a full-res PNG for every frame is the suspect,
-   but measure before acting.
+1b. ~~**Profile `measure_run`**~~ **DONE 2026-09-30 — 14.4x, 424 s -> 29.4 s.**
+   The `--images` suspicion was wrong (15%); the real cost was full-frame numpy
+   and full-frame RLE decoding. See the measurement-speed section above. It is
+   now 0.8% of the chain and not worth further work.
+
+1c. **FULL RUNTHROUGH TEST — do this first on the Windows machine.**
+   Everything below has changed since the last end-to-end run and none of it has
+   been exercised together on the lab PC:
+
+   - `measure_run` speedups (both fixes)
+   - `tiled_inference` emitting `segmentation_crop` / `crop_xy`
+   - size-distribution CSVs + histograms (needs **matplotlib** — confirm it is
+     installed, or the figure silently skips)
+   - the new GUI Bubbler height field, and that it persists
+   - the new run folder naming, `<time>_<flow>sccm_<rpm>rpm_<sps>sps_or<x>_bh<y>`
+   - `run_summary.xlsx` gaining Bubbler Height + Bubbler RPM
+   - **master_log.xlsx migrating 12 -> 14 columns on first save** — back the file
+     up before the first run; the migration is tested but only against a copy
+   - `Distance (mm)` -> `Motor Travel (mm)` throughout
+
+   Use the Test Pipeline button on an old .cine first, then a real capture.
+   **Record the stage timings** — the Windows measurement figure is the one
+   number that would confirm or kill the memory-bandwidth theory above.
+   Also grab `python -c "import os; print(os.cpu_count())"` while there.
 2. **Swap the primary and secondary Taguchi responses.** The atomised fraction
    measures at +/-32% and cannot rank runs; D32 measures at +/-7.3% and can.
    This document has it the wrong way round throughout — fix before any array.

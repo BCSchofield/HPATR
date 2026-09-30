@@ -100,6 +100,31 @@ def d32(areas):
     return float((d ** 3).sum() / (d ** 2).sum())
 
 
+def det_crop(d):
+    """(mask_crop, x, y, h, w) for one detection, without ever building a
+    frame-sized array if it can be avoided.
+
+    tiled_inference writes `segmentation_crop` -- the mask encoded over its own
+    bounding box -- alongside the frame-sized `segmentation` COCO requires.
+    Decoding the frame-sized one costs 4.1 M pixels whatever the object's size,
+    and the median detection is a 16 px box.
+
+    Predictions written before that field existed still work: they fall back to
+    decoding the frame and slicing, which is what this did previously. Slower,
+    identical answer.
+    """
+    sc = d.get("segmentation_crop")
+    if sc is not None:
+        h, w = sc["size"]
+        x, y = (int(v) for v in d["crop_xy"])
+        return mask_util.decode(sc).astype(bool), x, y, h, w
+    x, y, w, h = mask_util.toBbox(d["segmentation"])
+    x, y = int(x), int(y)
+    w, h = int(np.ceil(w)), int(np.ceil(h))
+    full = mask_util.decode(d["segmentation"])
+    return full[y:y + h, x:x + w].astype(bool), x, y, h, w
+
+
 def union_area(rles):
     """Union, not sum. One long filament is emitted as several overlapping
     sub-segments; summing double-counts the overlap (measured: filament 20.5%,
@@ -161,13 +186,155 @@ def ring_contours(mask, bbox, offset, shape):
     return [c + np.array([[x0, y0]], dtype=c.dtype) for c in cnts]
 
 
+DROPLET_BIN_UM = 25.0
+
+# Matplotlib hex equivalents of the BGR constants above, so a histogram bar
+# and the outline drawn on the frame are the same colour.
+PLOT_GREEN, PLOT_MAGENTA, PLOT_ORANGE, PLOT_BLUE = "#00c800", "#c800c8", "#ffa500", "#0078ff"
+
+
+def px_to_mm2(area_px):
+    return np.asarray(area_px, dtype=float) * (UM_PER_PX ** 2) / 1e6
+
+
+def write_distributions(out_dir, per_focus, per_oof, per_fil, per_blob):
+    """Per-object size distributions: CSVs always, plot only if matplotlib is
+    importable.
+
+    The CSVs are the durable artefact. per_frame.csv carries only aggregates,
+    so before this existed the individual sizes were recoverable solely by
+    re-deriving the focus split from predictions.json plus the 16-bit frames.
+    Writing them once means any future histogram, fit or percentile is a read
+    rather than a re-measurement.
+
+    Plotting is optional ON PURPOSE: this runs inside the production chain, and
+    a missing matplotlib on the lab machine must not cost a 20-minute
+    measurement. The data is written first, the figure second.
+    """
+    stems = sorted(per_focus)
+
+    drop_csv = out_dir / "droplet_sizes.csv"
+    with open(drop_csv, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["frame", "diameter_um", "in_focus"])
+        for s in stems:
+            for a in per_focus.get(s, []):
+                w.writerow([s, round(float(equiv_um(a)), 3), 1])
+            for a in per_oof.get(s, []):
+                w.writerow([s, round(float(equiv_um(a)), 3), 0])
+
+    obj_csv = out_dir / "object_areas.csv"
+    with open(obj_csv, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["frame", "class", "area_px", "area_mm2"])
+        for s in stems:
+            for a in per_fil.get(s, []):
+                w.writerow([s, "filament", round(float(a), 1), round(float(px_to_mm2(a)), 6)])
+            for a in per_blob.get(s, []):
+                w.writerow([s, "blob", round(float(a), 1), round(float(px_to_mm2(a)), 6)])
+
+    focus_d = equiv_um([a for s in stems for a in per_focus.get(s, [])]) \
+        if any(per_focus.values()) else np.array([])
+    oof_d = equiv_um([a for s in stems for a in per_oof.get(s, [])]) \
+        if any(per_oof.values()) else np.array([])
+    fil_mm2 = px_to_mm2([a for s in stems for a in per_fil.get(s, [])]) \
+        if any(per_fil.values()) else np.array([])
+    blob_mm2 = px_to_mm2([a for s in stems for a in per_blob.get(s, [])]) \
+        if any(per_blob.values()) else np.array([])
+
+    return drop_csv, obj_csv, plot_distributions(out_dir, focus_d, oof_d,
+                                                 fil_mm2, blob_mm2)
+
+
+def read_distributions(out_dir):
+    """Load the arrays back out of the CSVs, so the figure can be redrawn
+    without repeating a 7-minute measurement."""
+    focus_d, oof_d = [], []
+    with open(out_dir / "droplet_sizes.csv", newline="", encoding="utf-8") as f:
+        for r in csv.DictReader(f):
+            (focus_d if r["in_focus"] == "1" else oof_d).append(float(r["diameter_um"]))
+    fil, blob = [], []
+    with open(out_dir / "object_areas.csv", newline="", encoding="utf-8") as f:
+        for r in csv.DictReader(f):
+            (fil if r["class"] == "filament" else blob).append(float(r["area_mm2"]))
+    return (np.array(focus_d), np.array(oof_d), np.array(fil), np.array(blob))
+
+
+def plot_distributions(out_dir, focus_d, oof_d, fil_mm2, blob_mm2):
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("  (matplotlib not installed -- CSVs written, histogram skipped)")
+        return None
+
+    fig, axes = plt.subplots(2, 1, figsize=(10, 9))
+
+    # --- droplets: linear 25 um bins -------------------------------------
+    ax = axes[0]
+    all_d = np.concatenate([d for d in (focus_d, oof_d) if d.size]) \
+        if (focus_d.size or oof_d.size) else np.array([])
+    if all_d.size:
+        top = (np.floor(all_d.max() / DROPLET_BIN_UM) + 1) * DROPLET_BIN_UM
+        edges = np.arange(0, top + DROPLET_BIN_UM, DROPLET_BIN_UM)
+        ax.hist([focus_d, oof_d], bins=edges, stacked=True,
+                color=[PLOT_GREEN, PLOT_MAGENTA],
+                label=[f"in focus (n={focus_d.size:,})",
+                       f"out of focus (n={oof_d.size:,})"],
+                edgecolor="white", linewidth=0.5)
+        ax.set_xticks(edges[::2])
+        ax.legend()
+    ax.set_title(f"Droplet diameter — {DROPLET_BIN_UM:.0f} µm bins\n"
+                 "D32 uses the in-focus population only", fontsize=11)
+    ax.set_xlabel("equivalent diameter (µm)")
+    ax.set_ylabel("count")
+
+    # --- un-atomised liquid (filament + blob): LOG bins -------------------
+    # One panel, both classes. Areas span ~5 orders of magnitude (median
+    # ~0.04 mm^2, max ~30), so linear bins would put everything in the first.
+    # Stacked rather than merged: total bar height IS the combined
+    # distribution, and the split costs nothing to keep.
+    ax = axes[1]
+    both = np.concatenate([v for v in (fil_mm2, blob_mm2) if v.size]) \
+        if (fil_mm2.size or blob_mm2.size) else np.array([])
+    if both.size and both.min() > 0 and both.max() > both.min():
+        edges = np.logspace(np.log10(both.min()), np.log10(both.max()), 30)
+        ax.hist([fil_mm2, blob_mm2], bins=edges, stacked=True,
+                color=[PLOT_ORANGE, PLOT_BLUE],
+                label=[f"filament (n={fil_mm2.size:,})",
+                       f"blob (n={blob_mm2.size:,})"],
+                edgecolor="white", linewidth=0.5)
+        ax.set_xscale("log")
+        ax.legend()
+    ax.set_title(f"Un-atomised liquid — filament + blob area, log bins "
+                 f"(n={both.size:,})", fontsize=11)
+    ax.set_xlabel("area (mm²)")
+    ax.set_ylabel("count")
+
+    ax.text(0.5, -0.22,
+            "Counts are DETECTED INSTANCES, not whole objects: one long filament is emitted as "
+            "several\noverlapping sub-segments. Use the atomised fraction, which unions them, "
+            "for area share.",
+            transform=ax.transAxes, ha="center", va="top",
+            fontsize=8, color="#555555")
+
+    fig.tight_layout()
+    png = out_dir / "size_histograms.png"
+    fig.savefig(png, dpi=130, bbox_inches="tight")
+    plt.close(fig)
+    return png
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--pred", type=Path, required=True)
+    # Not required=True: --replot needs neither, and argparse cannot express
+    # "required unless another flag is set". Checked below instead.
+    ap.add_argument("--pred", type=Path, default=None)
     ap.add_argument("--root", type=Path, default=None)
     ap.add_argument("--val-dir", default="06_validation")
-    ap.add_argument("--background", type=Path, required=True,
+    ap.add_argument("--background", type=Path, default=None,
                     help="temporal-median background for THIS run. The wrong one "
                          "silently corrupts every transmission value.")
     ap.add_argument("--sixteen-bit-dir", type=Path, default=None,
@@ -179,6 +346,10 @@ def main():
                     help="default: <val-dir>/measurement_<thresh>")
     ap.add_argument("--images", action="store_true",
                     help="write a marked-up full-res image per frame")
+    ap.add_argument("--replot", action="store_true",
+                    help="redraw size_histograms.png from the CSVs already in "
+                         "--out-dir and exit. Measures nothing, so changing the "
+                         "figure costs seconds instead of a full re-measurement.")
     ap.add_argument("--droplet-ring", type=int, default=10)
     ap.add_argument("--n-boot", type=int, default=2000)
     ap.add_argument("--ci-stride", type=int, default=1, metavar="N",
@@ -196,6 +367,16 @@ def main():
     sb_dir = args.sixteen_bit_dir or (val / "frames" / "16bit")
     out_dir = args.out_dir or (val / f"measurement_{args.score_thresh:.2f}")
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.replot:
+        png = plot_distributions(out_dir, *read_distributions(out_dir))
+        print(f"replotted: {png}" if png else "matplotlib missing -- nothing drawn")
+        return
+
+    missing = [f for f, v in (("--pred", args.pred), ("--background", args.background))
+               if v is None]
+    if missing:
+        sys.exit(f"{' and '.join(missing)} required (omit only with --replot)")
 
     manifest = json.loads((val / "instances.json").read_text(encoding="utf-8"))
     name_by_id = {im["id"]: Path(im["file_name"]).stem for im in manifest["images"]}
@@ -223,6 +404,9 @@ def main():
     rows = []
     per_frame_focus_areas = {}   # for the run-level bootstrap over frames
     per_frame_atom_parts = {}
+    per_frame_oof_areas = {}     # size distributions only, never D32
+    per_frame_fil_areas = {}
+    per_frame_blob_areas = {}
     all_focus_areas = []
 
     for img_id in sorted(by_img):
@@ -234,25 +418,32 @@ def main():
         T = raw.astype(np.float32) / np.maximum(bg, 1.0)
 
         focus_a, oof_a = [], []
+        fil_a, blob_a = [], []
         rle_drop, rle_fil, rle_blob = [], [], []
         drawn = []
         for d in dets:
-            m = mask_util.decode(d["segmentation"])
-            mb = m.astype(bool)
+            mb, bx, by, bh, bw = det_crop(d)
             if not mb.any():
                 continue
             cid = d["category_id"]
             if cid == DROPLET:
-                sharp = bool(T[mb].min() <= args.focus_max)
+                sharp = bool(T[by:by + bh, bx:bx + bw][mb].min() <= args.focus_max)
                 (focus_a if sharp else oof_a).append(d["area"])
                 rle_drop.append(d["segmentation"])
-                drawn.append((d, m, GREEN if sharp else MAGENTA))
+                colour = GREEN if sharp else MAGENTA
             elif cid == FILAMENT:
                 rle_fil.append(d["segmentation"])
-                drawn.append((d, m, ORANGE))
+                fil_a.append(d["area"])
+                colour = ORANGE
             else:
                 rle_blob.append(d["segmentation"])
-                drawn.append((d, m, BLUE))
+                blob_a.append(d["area"])
+                colour = BLUE
+            # Frame-sized array only for drawing, and only when drawing is on.
+            if args.images:
+                m = np.zeros(T.shape, np.uint8)
+                m[by:by + bh, bx:bx + bw] = mb
+                drawn.append((d, m, colour))
 
         a_drop = union_area(rle_drop)
         a_fil = union_area(rle_fil)
@@ -277,6 +468,9 @@ def main():
         })
         per_frame_focus_areas[stem] = focus_a
         per_frame_atom_parts[stem] = (a_drop, a_fil, a_blob)
+        per_frame_oof_areas[stem] = oof_a
+        per_frame_fil_areas[stem] = fil_a
+        per_frame_blob_areas[stem] = blob_a
         all_focus_areas.extend(focus_a)
 
         if args.images:
@@ -521,9 +715,17 @@ def main():
     }
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2))
 
+    drop_csv, obj_csv, png = write_distributions(
+        out_dir, per_frame_focus_areas, per_frame_oof_areas,
+        per_frame_fil_areas, per_frame_blob_areas)
+
     print(f"\n  elapsed {elapsed:.1f} s")
     print(f"  written: {csv_path}")
     print(f"           {out_dir / 'summary.json'}")
+    print(f"           {drop_csv.name}  (every droplet, one row each)")
+    print(f"           {obj_csv.name}  (every filament/blob instance)")
+    if png:
+        print(f"           {png.name}")
     if args.images:
         print(f"           {len(rows)} images in {out_dir}")
 

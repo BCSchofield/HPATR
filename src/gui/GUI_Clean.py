@@ -316,6 +316,21 @@ def ghost_button(text):
     """)
     return btn
 
+def _cond_token(text, suffix, absent):
+    """One condition value for a run folder name.
+
+    A value that was never entered becomes an explicit token ("norpm"), never a
+    dropped segment: an unrecorded run must not end up looking identical to a
+    deliberate one. That ambiguity is exactly what made the 2026-09 captures
+    impossible to compare -- RPM sat in free-text notes on some runs and nowhere
+    on others, and nothing in the folder name said which.
+    """
+    try:
+        return f"{float(str(text).strip()):g}{suffix}"
+    except (TypeError, ValueError):
+        return absent
+
+
 def input_row(label_text, widget, label_width=130):
     row = QWidget()
     hl = QHBoxLayout(row)
@@ -1984,7 +1999,24 @@ class AtomisationApp(QMainWindow):
         self._orifice_combo = QComboBox()
         self._orifice_combo.addItems(["0.2mm","0.3mm","0.5mm","0.8mm","1mm","1.2mm","1.4mm","1.6mm","1.8mm","2mm"])
         self._orifice_combo.currentTextChanged.connect(self._save_camera_settings)
-        nozzle_card.layout().addWidget(input_row("Orifice", self._orifice_combo, label_width=90))
+        nozzle_card.layout().addWidget(input_row("Orifice", self._orifice_combo, label_width=100))
+
+        # Hardware state, not a per-run setting: it persists between runs and is
+        # only correct if you update it after physically moving the bubbler.
+        self._bubbler_height_entry = QLineEdit()
+        self._bubbler_height_entry.setPlaceholderText("mm")
+        self._bubbler_height_entry.setValidator(QDoubleValidator(0.0, 1000.0, 1))
+        self._bubbler_height_entry.setToolTip(
+            "<b>Bubbler height (mm)</b><br>"
+            "Distance from the bottom of the bubbler to the inside of the "
+            "atomisation chamber. A smaller height means more shear thinning "
+            "of the silicone.<br><br>"
+            "This is a HARDWARE STATE and persists between runs — update it "
+            "when you physically move the bubbler, not per run.<br><br>"
+            "Not the same as Motor Travel, which is the plunger stroke.")
+        self._bubbler_height_entry.editingFinished.connect(self._save_camera_settings)
+        nozzle_card.layout().addWidget(
+            input_row("Bubbler height", self._bubbler_height_entry, label_width=100))
 
         vl.addWidget(nozzle_card)
 
@@ -2459,7 +2491,7 @@ class AtomisationApp(QMainWindow):
         _dist_rl = QHBoxLayout(_dist_row); _dist_rl.setContentsMargins(0,0,0,0); _dist_rl.setSpacing(6)
         self._volume_lbl = QLabel("≈ – mL")
         self._volume_lbl.setStyleSheet(f"color: {CLR_TEXT_SEC}; font-size: 12px;")
-        _dist_rl.addWidget(input_row("Distance (mm)", self._distance_entry))
+        _dist_rl.addWidget(input_row("Motor Travel (mm)", self._distance_entry))
         _dist_rl.addWidget(self._volume_lbl)
         c3.layout().addWidget(_dist_row)
 
@@ -2518,7 +2550,7 @@ class AtomisationApp(QMainWindow):
             "Flushes the nozzle to clear any blockages")
         self._move_btn.setToolTip(
             "<b>Move motor</b><br>"
-            "1. Reads the Speed (steps/s) and Distance (mm) fields<br>"
+            "1. Reads the Speed (steps/s) and Motor Travel (mm) fields<br>"
             "2. Sends a relative move command to the Portenta<br>"
             "3. Motor moves by that distance at that speed")
         self._home_btn.clicked.connect(self._home_motor)
@@ -4302,15 +4334,25 @@ class AtomisationApp(QMainWindow):
     # told a 2560x1600 user 6 min for a job that actually took 23.
     INFERENCE_S_PER_MEGAPIXEL = 1.25
 
-    # Canonical master_log.xlsx column widths, in order A..L:
-    #   Timestamp, Orifice, Flow Range, Pressure Range, Speed, Distance,
-    #   Avg Lamella, Notes, Cone Image, Shadowgraph, Pressure Graph, Mass Flow Graph
-    # Shadowgraph (J) is sized for the 300 px images placed there; the cone (I)
-    # and the two graph columns (K, L) are widened further from their actual
+    # Canonical master_log.xlsx layout, A..N. MASTER_HEADERS is stamped onto row 1
+    # on every save, so a rename here reaches existing workbooks and a column added
+    # by a migration cannot end up nameless or unstyled (which is how 'Mass Flow
+    # Graph' ended up the only unbold, unfilled header in the file).
+    # Shadowgraph (L) is sized for the 300 px images placed there; the cone (K)
+    # and the two graph columns (M, N) are widened further from their actual
     # rendered image sizes when those images exist.
-    MASTER_COL_COUNT  = 12
-    MASTER_COL_LETTERS = 'ABCDEFGHIJKL'
-    MASTER_COL_WIDTHS = (20, 8, 18, 18, 14, 12, 12, 35, 36.5, 43, 56, 56)
+    MASTER_HEADERS = ('Timestamp', 'Orifice', 'Bubbler Height (mm)', 'Bubbler RPM',
+                      'Flow Range (sccm)', 'Pressure Range (barA)', 'Speed (steps/s)',
+                      'Motor Travel (mm)', 'Avg Lamella Thickness', 'Notes',
+                      'Cone Image', 'Shadowgraph', 'Pressure Graph', 'Mass Flow Graph')
+    MASTER_COL_COUNT  = 14
+    MASTER_COL_LETTERS = 'ABCDEFGHIJKLMN'
+    MASTER_COL_WIDTHS = (20, 8, 16, 12, 18, 18, 14, 12, 12, 35, 36.5, 43, 56, 56)
+
+    # Header row style, matched to what the existing master_log.xlsx already uses:
+    # theme-1 fill at 0.15 tint (dark grey) with bold white Calibri.
+    MASTER_HDR_FILL_THEME, MASTER_HDR_FILL_TINT = 1, 0.1499984740745262
+    MASTER_HDR_FONT_THEME = 0
 
     # Shadowgraph thumbnails are placed at a fixed width; the column above is
     # derived from it (Excel column width ~= pixels / 7).
@@ -4531,7 +4573,7 @@ class AtomisationApp(QMainWindow):
             flow_str = f"{float(flow_raw):.0f}sccm"
         except ValueError:
             flow_str = "?sccm"
-        run_id = f"{now.strftime('%H%M%S')}_{flow_str}"
+        run_id = self._run_id(now, flow_str)
         lacie = find_lacie_drive()
         exp_base = os.path.join(lacie, "Experiments") if lacie else os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
@@ -6353,7 +6395,7 @@ class AtomisationApp(QMainWindow):
                        "Please fill in all three fields before starting:\n"
                        "  • Target Flow (sccm)\n"
                        "  • Motor Speed (steps/s)\n"
-                       "  • Motor Distance (mm)")
+                       "  • Motor Travel (mm)")
             return
         if self.cumulative_distance + distance > self.MAX_MOTOR_MM:
             remaining = self.MAX_MOTOR_MM - self.cumulative_distance
@@ -6372,7 +6414,7 @@ class AtomisationApp(QMainWindow):
 
         # ── Create run folder eagerly ──────────────────────────────────────────
         _now = datetime.now()
-        _run_id = f"{_now.strftime('%H%M%S')}_{flow:.0f}sccm"
+        _run_id = self._run_id(_now, f"{flow:.0f}sccm")
         _lacie = find_lacie_drive()
         _exp_base = os.path.join(_lacie, "Experiments") if _lacie else os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
@@ -6492,7 +6534,7 @@ class AtomisationApp(QMainWindow):
         try:
             from openpyxl import load_workbook, Workbook
             from openpyxl.drawing.image import Image as XLImage
-            from openpyxl.styles import Alignment, PatternFill, Font
+            from openpyxl.styles import Alignment, PatternFill, Font, Color
             from openpyxl.utils import get_column_letter, column_index_from_string
 
             lacie        = find_lacie_drive()
@@ -6503,6 +6545,8 @@ class AtomisationApp(QMainWindow):
             notes        = self._notes_text.toPlainText()
             speed_str    = self._speed_entry.text()
             distance_str = self._distance_entry.text()
+            bubbler_str  = self._bubbler_height_entry.text().strip()
+            rpm_str      = self._rpm_entry.text().strip()
 
             # Use the frozen snapshot taken at experiment end — not the live buffer
             snap = self._last_experiment_snapshot
@@ -6530,7 +6574,7 @@ class AtomisationApp(QMainWindow):
                 _exp_base = os.path.join(lacie, "Experiments") if lacie else os.path.join(
                     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                     "experiment_logs", "Experiments")
-                _run_id = f"{now.strftime('%H%M%S')}_{f_range_file or 'unknownsccm'}"
+                _run_id = self._run_id(now, f_range_file or 'unknownsccm')
                 run_dir = os.path.join(_exp_base, now.strftime("%Y"), now.strftime("%m"),
                                        now.strftime("%d"), _run_id)
                 for _sub in [os.path.join("shadowgraph", "raw"),
@@ -6612,10 +6656,12 @@ class AtomisationApp(QMainWindow):
 
             fps_val = float(self._cam_fps.text()) if self._cam_fps.text() else 1000.0
             meta = {
-                'Field': ['Timestamp', 'Orifice', 'Flow Range (sccm)',
-                          'Pressure Range (barA)', 'Speed (steps/s)', 'Distance (mm)',
+                'Field': ['Timestamp', 'Orifice', 'Bubbler Height (mm)',
+                          'Bubbler RPM', 'Flow Range (sccm)',
+                          'Pressure Range (barA)', 'Speed (steps/s)', 'Motor Travel (mm)',
                           'FPS', 'Notes'],
-                'Value': [ts_str, orifice, f_range_str, p_range_str,
+                'Value': [ts_str, orifice, bubbler_str or 'NOT RECORDED',
+                          rpm_str or 'NOT RECORDED', f_range_str, p_range_str,
                           speed_str, distance_str, fps_val, notes],
             }
             with pd.ExcelWriter(ind_path, engine='openpyxl') as writer:
@@ -6742,6 +6788,28 @@ class AtomisationApp(QMainWindow):
                             if hasattr(_anc, 'to') and _anc.to and _anc.to.col >= 2:
                                 _anc.to.col -= 1
 
+                # ── Migrate to the bubbler format ───────────────────────────────
+                # Runs after the migrations above have brought an older file up to
+                # the 12-column layout, where C is 'Flow Range (sccm)'. Bubbler
+                # height and RPM go in beside Orifice as C and D, so every column
+                # from C rightwards shifts two to the right.
+                if ws.cell(row=1, column=3).value == 'Flow Range (sccm)':
+                    ws.insert_cols(3, 2)
+                    ws.cell(row=1, column=3).value = 'Bubbler Height (mm)'
+                    ws.cell(row=1, column=4).value = 'Bubbler RPM'
+                    for _img in ws._images:
+                        _anc = _img.anchor
+                        if isinstance(_anc, str):
+                            _m = _re.match(r'^([A-Z]+)(\d+)$', _anc)
+                            if _m and column_index_from_string(_m.group(1)) >= 3:
+                                _new_col = get_column_letter(column_index_from_string(_m.group(1)) + 2)
+                                _img.anchor = f'{_new_col}{_m.group(2)}'
+                        elif hasattr(_anc, '_from'):
+                            if _anc._from.col >= 2:   # 0-indexed: 2 == Excel col C
+                                _anc._from.col += 2
+                            if hasattr(_anc, 'to') and _anc.to and _anc.to.col >= 2:
+                                _anc.to.col += 2
+
                 _mf_col = self.MASTER_COL_COUNT
                 if ws.cell(row=1, column=_mf_col).value != 'Mass Flow Graph':
                     ws.cell(row=1, column=_mf_col).value = 'Mass Flow Graph'
@@ -6769,12 +6837,26 @@ class AtomisationApp(QMainWindow):
                 wb = Workbook()
                 ws = wb.active
                 ws.title = 'Experiments'
-                ws.append(['Timestamp', 'Orifice', 'Flow Range (sccm)',
-                           'Pressure Range (barA)', 'Speed (steps/s)', 'Distance (mm)',
-                           'Avg Lamella Thickness', 'Notes', 'Cone Image', 'Shadowgraph',
-                           'Pressure Graph', 'Mass Flow Graph'])
+                ws.append(list(self.MASTER_HEADERS))
                 for col, width in zip(self.MASTER_COL_LETTERS, self.MASTER_COL_WIDTHS):
                     ws.column_dimensions[col].width = width
+
+            # Stamp the canonical header names and style on EVERY save, for both
+            # new and migrated workbooks. openpyxl's insert_cols() gives a new
+            # column no style at all, and setting .value on it does not inherit
+            # one from its neighbours -- which is why 'Mass Flow Graph' was the
+            # single unbold, unfilled header in the existing log. Doing it here
+            # also carries renames (Distance -> Motor Travel) into old files.
+            _hdr_fill = PatternFill(fill_type='solid',
+                                    start_color=Color(theme=self.MASTER_HDR_FILL_THEME,
+                                                      tint=self.MASTER_HDR_FILL_TINT))
+            _hdr_font = Font(name='Calibri', size=11, bold=True,
+                             color=Color(theme=self.MASTER_HDR_FONT_THEME))
+            for _c, _name in enumerate(self.MASTER_HEADERS, start=1):
+                _hc = ws.cell(row=1, column=_c)
+                _hc.value = _name
+                _hc.fill = _hdr_fill
+                _hc.font = _hdr_font
 
             # Reapply the canonical widths on every save.  openpyxl's
             # insert_cols()/delete_cols() above move cell values but NOT
@@ -6782,7 +6864,7 @@ class AtomisationApp(QMainWindow):
             # the wrong column — Shadowgraph inherits the old Pressure Graph width
             # and renders enormous.  Reapplying here also repairs workbooks that
             # were migrated before this was fixed.
-            # I/J/K/L are re-set from their actual images further down.
+            # K/L/M/N are re-set from their actual images further down.
             for col, width in zip(self.MASTER_COL_LETTERS, self.MASTER_COL_WIDTHS):
                 ws.column_dimensions[col].width = width
 
@@ -6790,15 +6872,18 @@ class AtomisationApp(QMainWindow):
             row_num = 2
             center_mid = Alignment(horizontal='center', vertical='center', wrap_text=True)
             top_left   = Alignment(horizontal='left',   vertical='top',    wrap_text=True)
-            for col, val in enumerate([ts_str, orifice, f_range_str, p_range_str,
+            for col, val in enumerate([ts_str, orifice,
+                                       bubbler_str or 'NOT RECORDED',
+                                       rpm_str or 'NOT RECORDED',
+                                       f_range_str, p_range_str,
                                        speed_str, distance_str, _lamella_cell_val,
                                        notes, '', '', '', ''], start=1):
                 cell = ws.cell(row=row_num, column=col)
                 cell.value = val
-                cell.alignment = top_left if col == 8 else center_mid
+                cell.alignment = top_left if col == 10 else center_mid
             # Orange highlight for "Input Self" lamella cell
             if _lamella_orange:
-                _lc = ws.cell(row=row_num, column=7)
+                _lc = ws.cell(row=row_num, column=9)
                 _lc.fill = PatternFill(start_color='FFA500', end_color='FFA500', fill_type='solid')
                 _lc.font = Font(color='000000', bold=True)
             ws.row_dimensions[row_num].height = 125
@@ -6813,12 +6898,12 @@ class AtomisationApp(QMainWindow):
                     _cone_disp_w = max(1, int(_cw * _cone_disp_h / _ch))
                     cimg = XLImage(_cone_img_path)
                     cimg.width = _cone_disp_w; cimg.height = _cone_disp_h
-                    ws.column_dimensions['I'].width = max(10, _cone_disp_w / 7.0)
-                    ws.add_image(cimg, f'I{row_num}')
+                    ws.column_dimensions['K'].width = max(10, _cone_disp_w / 7.0)
+                    ws.add_image(cimg, f'K{row_num}')
                 else:
-                    ws.cell(row=row_num, column=9).value = 'NO DATA AVAILABLE'
+                    ws.cell(row=row_num, column=11).value = 'NO DATA AVAILABLE'
             else:
-                ws.cell(row=row_num, column=9).value = 'NO DATA AVAILABLE'
+                ws.cell(row=row_num, column=11).value = 'NO DATA AVAILABLE'
 
             # fullText(), NOT text(): the label elides its middle for display,
             # so text() returns a path with "..." in it that no file matches.
@@ -6828,15 +6913,15 @@ class AtomisationApp(QMainWindow):
                 simg.width = self.SHADOWGRAPH_W_PX; simg.height = DISPLAY_H
                 # Size the column to the image rather than leaving whatever
                 # width the migration left behind (Excel width ~= px / 7)
-                ws.column_dimensions['J'].width = self.SHADOWGRAPH_W_PX / 7.0
-                ws.add_image(simg, f'J{row_num}')
+                ws.column_dimensions['L'].width = self.SHADOWGRAPH_W_PX / 7.0
+                ws.add_image(simg, f'L{row_num}')
             else:
-                ws.cell(row=row_num, column=10).value = 'NO DATA AVAILABLE'
+                ws.cell(row=row_num, column=12).value = 'NO DATA AVAILABLE'
 
-            # Pressure graph in K, mass flow graph immediately right of it in L
+            # Pressure graph in M, mass flow graph immediately right of it in N
             for _col_letter, _col_idx, _img_bytes, _img_w in (
-                    ('K', 11, pressure_bytes, pressure_img_width),
-                    ('L', 12, flow_bytes,     flow_img_width)):
+                    ('M', 13, pressure_bytes, pressure_img_width),
+                    ('N', 14, flow_bytes,     flow_img_width)):
                 if _img_bytes:
                     _gimg = XLImage(io.BytesIO(_img_bytes))
                     _gimg.width = _img_w; _gimg.height = DISPLAY_H
@@ -6904,6 +6989,9 @@ class AtomisationApp(QMainWindow):
                 self._orifice_combo.blockSignals(True)
                 self._orifice_combo.setCurrentText(_orifice)
                 self._orifice_combo.blockSignals(False)
+            self._bubbler_height_entry.blockSignals(True)
+            self._bubbler_height_entry.setText(str(s.get("bubbler_height_mm", "")))
+            self._bubbler_height_entry.blockSignals(False)
             self._update_cam_capacity()
             px_per_mm = float(s.get("px_per_mm", 0.0))
             if px_per_mm > 0:
@@ -6950,6 +7038,25 @@ class AtomisationApp(QMainWindow):
         except Exception as e:
             print(f"[WARNING] Could not load camera settings: {e}")
 
+    def _run_id(self, now, flow_str):
+        """`HHMMSS_4500sccm_1000rpm_6000sps_or1.2_bh40`.
+
+        run_summary.xlsx remains authoritative; this is a human-scannable copy
+        so a folder listing shows the condition without opening anything. Do not
+        parse it back as data -- a renamed folder would silently disagree with
+        the spreadsheet and nothing would say which was right.
+        """
+        orifice = (self._orifice_combo.currentText() or "").replace("mm", "").strip()
+        bh = _cond_token(self._bubbler_height_entry.text(), "", "")
+        parts = [
+            flow_str,
+            _cond_token(self._rpm_entry.text(), "rpm", "norpm"),
+            _cond_token(self._speed_entry.text(), "sps", "nosps"),
+            f"or{orifice}" if orifice else "noor",
+            f"bh{bh}" if bh else "nobh",
+        ]
+        return f"{now.strftime('%H%M%S')}_" + "_".join(parts)
+
     def _save_camera_settings(self):
         try:
             # Read existing px_per_mm so it's preserved even if called before calibration
@@ -6976,6 +7083,7 @@ class AtomisationApp(QMainWindow):
                 "save_video":        self._cam_save_video_chk.isChecked(),
                 "save_tiffs":        self._cam_save_tiffs_chk.isChecked(),
                 "orifice":           self._orifice_combo.currentText(),
+                "bubbler_height_mm": self._bubbler_height_entry.text().strip(),
                 "run_ai_analysis":   self._pipeline_check.isChecked(),
                 "ai_stride":         self._get_ai_stride(),
                 "cone_autofocus":    self._cone_autofocus_chk.isChecked(),

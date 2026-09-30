@@ -501,11 +501,27 @@ def to_coco(dets, image_id):
         # here, which on frame_0056 is 391 encodes rather than 2297.
         rle = mask_util.encode(np.asfortranarray(_full_mask(d).astype(np.uint8)))
         rle["counts"] = rle["counts"].decode("ascii")
+
+        # The same mask a second time, encoded over its own crop instead of the
+        # frame, plus the crop's origin. `segmentation` stays frame-sized so this
+        # file is still valid COCO and score_v2.py is unaffected; consumers that
+        # only need the object read the crop and never materialise a frame.
+        #
+        # Decoding a frame-sized RLE costs 4.1 M pixels regardless of object
+        # size, and the median detection here is a 16 px bounding box -- 2,476x
+        # more work than needed, measured across 6,574 detections. We already
+        # hold the crop (that is what made inference 15.9x faster); this stops
+        # throwing it away at the file boundary.
+        crop = mask_util.encode(np.asfortranarray(d["m"].astype(np.uint8)))
+        crop["counts"] = crop["counts"].decode("ascii")
+
         x1, y1, x2, y2 = d["bbox_xyxy"]
         out.append({
             "image_id": image_id,
             "category_id": d["category"] + 1,      # contiguous 0-2 -> COCO 1-3
             "segmentation": rle,
+            "segmentation_crop": crop,
+            "crop_xy": [int(d["mx"]), int(d["my"])],
             "bbox": [x1, y1, x2 - x1, y2 - y1],
             "score": d["score"],
             "area": float(d["area"]),
