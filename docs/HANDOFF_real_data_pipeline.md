@@ -338,6 +338,139 @@ Not backfilled by decision — this is for future runs only.
 
 ---
 
+## SAVING IS NOW AUTOMATIC — 2026-09-30
+
+**The spreadsheets used to stamp the wrong time.** The run folder stamped
+`datetime.now()` at experiment START; `_save_to_excel` called `datetime.now()`
+again when Save was clicked. They differed by the whole run duration plus
+however long the notes took. Both now use `self._run_started_at`, so the folder
+name, `run_summary.xlsx` and the `master_log.xlsx` row all agree.
+
+**Two automatic saves, one row.**
+
+1. **Experiment end** (`_on_movement_complete`) — gets the run on disk before
+   anyone can forget. No D32 and no shadowgraph yet: the motor stops minutes
+   before inference and measurement finish.
+2. **AI chain completion** (`_on_pipeline_complete`) — fills in D32, the
+   atomised fraction and the lowest-D32 frame.
+
+A manual Save afterwards is only needed for notes typed later. **All of them
+UPDATE the same row**, matched on the start timestamp, rather than appending.
+`_save_to_excel` previously appended unconditionally, so before this an
+accidental double-click produced two rows for one run.
+
+Updating also purges images already anchored to that row — openpyxl keeps
+images in a flat list with no notion of replacement, so they would otherwise
+stack in the same cells.
+
+Both auto-saves are wrapped in try/except. The end-of-experiment one runs during
+cleanup while the gas is being shut off; a spreadsheet error must never
+interrupt that.
+
+### master_log.xlsx is now 16 columns
+
+    A Timestamp            E Flow Range        I  D32 (um)        M Cone Image
+    B Orifice              F Pressure Range    J  Atomised (%)    N Shadowgraph
+    C Bubbler Height (mm)  G Speed (steps/s)   K  Avg Lamella     O Pressure Graph
+    D Bubbler RPM          H Motor Travel (mm) L  Notes           P Mass Flow Graph
+
+Everything the run PRODUCED (I, J, K) sits right of everything that was SET.
+D32 and atomised are written as **plain numbers**, not "85.6 +/-2.1%", so they
+sort and plot as Taguchi responses; the CIs stay in `summary.json`.
+
+`_last_ai_results` is cleared at experiment start, so a run whose AI chain has
+not finished leaves those cells **blank rather than inheriting the previous
+run's D32**. A stale number in that sheet would be far worse than an empty cell.
+
+**Migrations chain 12 -> 14 -> 16 on first save.** Tested against a copy of the
+real 60-row log: all 130 image anchors landed correctly and every header kept
+its style. **Back up `master_log.xlsx` before the first run tomorrow** — it is
+a one-way change to the file holding every experiment logged.
+
+### Dead code removed, and one piece that must NOT be
+
+Removed: `_run_pipeline()` (26 lines, the Dennis-era chain), `_poll_serial()`
+(body was `pass`), `self.serial_reader_thread`, `self.pulse_amplitude`, and four
+unused imports. An AST scan now reports zero unreferenced methods and zero
+unused imports.
+
+`_run_pipeline` was worse than unused: it emitted `ai_run()`'s output through
+`_pipeline_done`, which now lands in a handler expecting a `measure_run`
+summary. Anything calling it would have failed confusingly. Removing it leaves
+`src/ai/process_run.py` (15 KB) with **no callers anywhere in the repo** — left
+on disk, not deleted.
+
+**`self._arduino_thread/_worker`, `_rpm_thread/_worker`, `_mfc_thread/_worker`
+look dead and are load-bearing.** Nothing reads them; holding the reference IS
+the point. Without it Python garbage-collects the QThread mid-run and PySide
+aborts with "QThread: Destroyed while thread is still running". All three sites
+now carry a DO NOT REMOVE comment, because every static-analysis pass will flag
+them again.
+
+Stale help text fixed: the tooltips and How To still described
+`ai_result.png`, `FINAL_OPTIMIZED_RESULT.png`, `Outputs/` and `LIGHT_BG`/
+`DARK_BG` from the retired CV pipeline, and told you to
+`conda activate Detectron2` on Windows — an env that **does not exist on the lab
+PC**. `_find_latest_result()` was looking for those same retired filenames, so
+the Refresh button and startup preview silently found nothing; it now reads
+`summary.json` and returns the lowest-D32 frame.
+
+---
+
+## GUI IS SLOW TO START — analysed 2026-09-30, NOT yet measured on Windows
+
+**The Mac is the wrong machine to profile this on**, which is the main finding.
+Measured here: 1.6 s total, of which widget construction is only 0.46 s. On the
+lab PC it is "much slower" — because the Mac skips most of the expensive work
+entirely.
+
+| cost | Mac | Windows |
+|---|---|---|
+| `from pyphantom import ...` | **skipped** (ImportError, not installed) | loads the whole camera SDK at module import |
+| `import pyvisa` | skipped | loads the VISA runtime |
+| `from Cone_4 import ...` | present | pulls in **scipy**, hundreds of files |
+| `find_lacie_drive()` at import | 0.0 ms (`/Volumes/LaCie` exists) | probes **23 drive letters**, before the window exists |
+| `comports()` x3 during construction | fast | SetupAPI/registry walk each, worst case with FTDI devices — and this rig has three |
+| pandas + matplotlib.pyplot | 0.53 s | worse from a slower disk |
+| Windows Defender | n/a | **scans every file on import** — multiplies the whole chain |
+
+`_get_serial_ports()` is called once per `connection_card`, and there are three
+(Portenta, Arduino Uno, AliCat MFC).
+
+**Separately, the UI stalls periodically.** `_poll_lacie` runs **on the main
+thread every 5 s** and calls `find_lacie_drive()`. Free on the Mac; on Windows
+it probes 23 drive letters, and a disconnected mapped network drive makes
+`.exists()` block on an SMB timeout. That matches "*sometimes* unresponsive"
+exactly -- sometimes, because it depends on drive state.
+
+Checked and CLEARED as causes: the live graphs redraw from a bounded 60 s
+buffer, and the 100 ms log drain is cheap. `_refresh_shadowgraph` walks the
+whole Experiments tree at startup but is correctly on a worker thread -- it will
+hammer the LaCie without freezing the UI.
+
+### Fixes, in order of expected payoff on Windows
+
+0. **Add the repo and Python folders to Windows Defender exclusions.** Not a
+   code change, free, reversible, and it may beat everything below combined.
+   **Do this first so we learn how much is AV rather than code.**
+1. **Call `comports()` once**, not three times — build the list and share it.
+2. **Defer `pyphantom` and `pyvisa`** to first camera/AFG connect.
+   `importlib.util.find_spec` can set the AVAILABLE flags without loading.
+3. **Defer `pandas` and `matplotlib`** into `_save_to_excel` -- they appear in
+   only two methods and nothing at startup touches either. ~0.5 s here.
+4. **Defer `Cone_4`/scipy** to first use of the Cone tab.
+5. **Move `_poll_lacie` off the main thread** (and poll far less often than 5 s
+   -- it changes when a disk is physically unplugged).
+
+**MEASURE BEFORE REWRITING IMPORT STRUCTURE.** None of the above is measured on
+Windows; it is reasoning about what the code does there. Today alone the assumed
+bottleneck was wrong twice (inference: assumed GPU, actually numpy; measurement:
+assumed `--images`, actually full-frame decode). Print a timestamp at module
+import, after each optional-SDK import, after construction, and after the first
+paint, and let the numbers choose.
+
+---
+
 ## RESULTS OF THE FIRST WINDOWS SESSION — 2026-09-28. READ THIS FIRST
 
 Everything in the checklist below was done. Both headline numbers were
@@ -911,6 +1044,28 @@ Still open, in priority order:
    **Record the stage timings** — the Windows measurement figure is the one
    number that would confirm or kill the memory-bandwidth theory above.
    Also grab `python -c "import os; print(os.cpu_count())"` while there.
+
+   **Back up `master_log.xlsx` first** — it migrates 12 -> 16 columns on the
+   first save and that is one-way.
+
+   Also new and untested together: automatic saving at experiment end and again
+   at AI-chain completion, updating one row rather than appending; the
+   Timestamp now being the experiment's START; D32 and atomised fraction as
+   columns I and J.
+
+1d. **MEASURE GUI STARTUP ON THE LAB PC.** See the GUI-slowness section above.
+   It is "much slower" there than the 1.6 s measured on the Mac, and the Mac
+   cannot reproduce it — `pyphantom` and `pyvisa` are not installed here, so
+   the two most expensive imports never run.
+
+   Order of work:
+   - **First, add the repo + Python folders to Windows Defender exclusions.**
+     Free, reversible, and it may be most of the problem. Re-time afterwards.
+   - Then instrument: print a timestamp at module import, after each optional
+     SDK import, after construction, and after first paint.
+   - Only then change import structure. The candidate fixes are listed above
+     in expected-payoff order, but **do not start editing until the numbers
+     say which one matters** — the assumed bottleneck was wrong twice today.
 2. **Swap the primary and secondary Taguchi responses.** The atomised fraction
    measures at +/-32% and cannot rank runs; D32 measures at +/-7.3% and can.
    This document has it the wrong way round throughout — fix before any array.

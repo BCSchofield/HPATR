@@ -24,7 +24,6 @@ import os
 import re
 import sys
 from pathlib import Path
-import math
 import time
 import json
 import queue
@@ -52,10 +51,10 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QLineEdit, QComboBox, QCheckBox, QTextEdit, QPlainTextEdit,
     QFrame, QTabWidget, QSizePolicy, QProgressBar, QScrollArea,
-    QSpacerItem, QGridLayout, QMessageBox, QFileDialog, QSpinBox, QInputDialog
+    QGridLayout, QMessageBox, QFileDialog, QSpinBox, QInputDialog
 )
-from PySide6.QtCore import Qt, QTimer, Signal, Slot, QObject, QThread, QSize, QEvent, QRegularExpression, QRectF, QPointF
-from PySide6.QtGui import QFont, QPixmap, QImage, QColor, QPalette, QIcon, QPainter, QPen, QPolygonF, QIntValidator, QDoubleValidator, QRegularExpressionValidator
+from PySide6.QtCore import Qt, QTimer, Signal, Slot, QObject, QThread, QSize, QEvent, QRectF, QPointF
+from PySide6.QtGui import QFont, QPixmap, QImage, QColor, QPalette, QIcon, QPainter, QPen, QPolygonF, QIntValidator, QDoubleValidator
 
 # ── Path setup ──────────────────────────────────────────────────────────────
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -1200,7 +1199,7 @@ class PhantomController:
 class AFGController:
     def __init__(self):
         self.rm = None; self.afg = None; self.is_connected = False
-        self.pulse_duration = 0.001; self.pulse_amplitude = 5.0
+        self.pulse_duration = 0.001
         self.channel = 1
 
     def connect(self, resource_name=None):
@@ -1513,7 +1512,6 @@ class AtomisationApp(QMainWindow):
         self.arduino: ArduinoController | None = None
         self.arduino_connected = False
         self.serial_reading_active = False
-        self.serial_reader_thread = None
 
         self.rpm_arduino: RpmController | None = None
         self.rpm_connected = False
@@ -1542,6 +1540,8 @@ class AtomisationApp(QMainWindow):
         self.cleaning_in_progress = False
         self._experiment_saved = True   # True until an experiment runs unsaved
         self._run_folder = None          # Set eagerly on Start Experiment, cleared on next start
+        self._run_started_at = None      # datetime of that start; the spreadsheets stamp THIS
+        self._last_ai_results = None     # measure_run summary for the CURRENT run only
         self._cam_pre_frames  = 0        # computed from pre-trigger seconds × fps at Apply Config
         self._cam_post_frames = 0        # computed from post-trigger seconds × fps at Apply Config
 
@@ -1837,9 +1837,10 @@ class AtomisationApp(QMainWindow):
         self._refresh_btn.setFixedHeight(28)
         self._refresh_btn.setToolTip(
             "<b>Refresh latest result</b><br>"
-            "1. Scans the LaCie drive for ai_result.png<br>"
-            "2. Looks in the current run's shadowgraph/analysis/ folder<br>"
-            "3. Displays the most recent result in the preview above")
+            "1. Looks in the current run's shadowgraph/analysis/ folder<br>"
+            "2. Otherwise scans the LaCie drive for the most recently measured run<br>"
+            "3. Shows that run's LOWEST-D32 frame — the finest-atomised one — "
+            "marked up with its detections")
         self._refresh_btn.clicked.connect(self._refresh_shadowgraph)
         tr.addWidget(self._refresh_btn)
         preview_card.layout().addWidget(top_row)
@@ -2050,10 +2051,13 @@ class AtomisationApp(QMainWindow):
         save_btn.setFixedHeight(36)
         save_btn.setToolTip(
             "<b>Save to Excel</b><br>"
-            "1. Reads the current run fields (pressure, date, notes, etc.)<br>"
-            "2. Appends a new row to the experiment log spreadsheet<br>"
-            "3. Saves the ai_result image path and metrics alongside it<br>"
-            "4. Writes the file to the LaCie drive")
+            "1. Reads the run fields (orifice, bubbler height, RPM, notes, …)<br>"
+            "2. Writes run_summary.xlsx in the run folder and a row in master_log.xlsx<br>"
+            "3. Adds D32, atomised fraction and the lowest-D32 frame once the AI chain "
+            "has finished<br>"
+            "4. UPDATES this run's existing row rather than adding a second one<br><br>"
+            "Runs automatically when an experiment ends and again when the AI chain "
+            "completes — you only need this to save notes written afterwards.")
         save_btn.clicked.connect(self._save_to_excel)
         sr.addWidget(self._save_path_lbl, stretch=1)
         sr.addWidget(save_btn)
@@ -3583,10 +3587,11 @@ class AtomisationApp(QMainWindow):
                  "Click Apply Config to push settings to the camera before capturing. Typical settings: "
                  "1000 fps, 640×480, 100 µs exposure."),
                 ("Capturing",
-                 "Click ● Capture to trigger a high-speed recording. The cine file is transferred and "
-                 "converted to TIFF frames automatically. Tick Run analysis pipeline to detect droplets "
-                 "and ligaments after capture — results are saved to Outputs/FINAL_OPTIMIZED_RESULT.png "
-                 "and the Latest Result panel updates on completion."),
+                 "Click ● Capture to trigger a high-speed recording. The .cine is saved into the run "
+                 "folder. Tick Run AI analysis after capture and the chain runs on it automatically: "
+                 "frames are extracted, the model detects droplets, filaments and blobs, and D32 plus "
+                 "the atomised fraction are measured. Outputs land in the run's shadowgraph/analysis/ "
+                 "folder and the Latest Result panel shows the lowest-D32 frame when it finishes."),
                 ("Calibration",
                  "Go to the Calibration sub-panel to set the pixel-to-mm scale. Capture a live frame "
                  "with a known reference object in view, draw the reference line, and enter the real "
@@ -3628,22 +3633,30 @@ class AtomisationApp(QMainWindow):
             ("SAVING RESULTS", [
                 ("Excel log",
                  "Pick the Orifice in the right panel, add any notes (fluid composition, "
-                 "temperature, observations), then click Save to Excel. Results are written to a per-run "
-                 "folder on the LaCie drive: Experiments/YYYY/MM/DD/HHMMSS_flowsccm/run_summary.xlsx."),
+                 "temperature, observations), then click Save to Excel. Two files are written: "
+                 "run_summary.xlsx inside the run folder, and a row in Experiments/Logs/master_log.xlsx. "
+                 "Saving happens automatically when an experiment ends and again when the AI chain "
+                 "finishes, so use the button only to add notes written afterwards — it updates the "
+                 "same row rather than creating a second one."),
                 ("Shadowgraph result",
-                 "The Latest Result panel (left) shows the most recent FINAL_OPTIMIZED_RESULT.png found "
-                 "in the current run's shadowgraph/analysis/ folder. Click ↻ Refresh to scan for a newer result after analysis."),
+                 "The Latest Result panel (left) shows the LOWEST-D32 frame of the most recently "
+                 "measured run — the finest-atomised frame, outlined green (in focus), magenta (out of "
+                 "focus), orange (filament) and blue (blob). Click ↻ Refresh to look again once analysis "
+                 "has finished."),
             ]),
             ("TIPS & ENVIRONMENT", [
-                ("Dark/light background",
-                 "The analysis pipeline saves both light- and dark-background versions of the result "
-                 "image. Check the Outputs/ folder for LIGHT_BG and DARK_BG variants."),
+                ("Where the analysis output goes",
+                 "Everything for a run lives under its own folder: raw/CINE/ holds the recording, "
+                 "raw/frames/ the extracted frames, and analysis/ the predictions, per-frame marked-up "
+                 "images, measurements and size histograms. Only raw/CINE/ needs backing up — "
+                 "everything else can be regenerated from it."),
                 ("Running on macOS",
                  "The GUI runs on macOS for layout/design work. Phantom camera capture and Arduino serial "
                  "require Windows (or the correct driver). Connect warnings will appear for unavailable hardware."),
                 ("Python environment",
                  "macOS: conda activate phantom → python src/gui/GUI_Clean.py\n"
-                 "Windows: conda activate Detectron2 → python src/gui/GUI_Clean.py"),
+                 "Windows: there is NO conda env — use system Python 3.11 by its full path. "
+                 "Launching from (base) puts the whole AI chain on a Python with no torch."),
                 ("Cone detection dependency",
                  "Cone_4 requires scipy (pip install scipy). If 'Cone_4.py not found' appears, ensure "
                  "scipy is installed in the active conda environment and that Trials/Cone_4.py exists "
@@ -3910,6 +3923,11 @@ class AtomisationApp(QMainWindow):
         worker.result.connect(thread.quit)
         worker.error.connect(thread.quit)
         thread.start()
+        # DO NOT REMOVE: these look unused and are not. Nothing reads them --
+        # holding the reference IS the point. Without it Python garbage-collects
+        # the QThread while it is still running and PySide aborts with
+        # "QThread: Destroyed while thread is still running". Static analysis
+        # and tidy-up passes flag these as dead every time; they are load-bearing.
         self._arduino_thread = thread; self._arduino_worker = worker
 
     def _do_arduino_connect(self, port):
@@ -3969,6 +3987,11 @@ class AtomisationApp(QMainWindow):
         worker.result.connect(thread.quit)
         worker.error.connect(thread.quit)
         thread.start()
+        # DO NOT REMOVE: these look unused and are not. Nothing reads them --
+        # holding the reference IS the point. Without it Python garbage-collects
+        # the QThread while it is still running and PySide aborts with
+        # "QThread: Destroyed while thread is still running". Static analysis
+        # and tidy-up passes flag these as dead every time; they are load-bearing.
         self._rpm_thread = thread; self._rpm_worker = worker
 
     def _do_rpm_connect(self, port):
@@ -4038,6 +4061,11 @@ class AtomisationApp(QMainWindow):
         worker.result.connect(thread.quit)
         worker.error.connect(thread.quit)
         thread.start()
+        # DO NOT REMOVE: these look unused and are not. Nothing reads them --
+        # holding the reference IS the point. Without it Python garbage-collects
+        # the QThread while it is still running and PySide aborts with
+        # "QThread: Destroyed while thread is still running". Static analysis
+        # and tidy-up passes flag these as dead every time; they are load-bearing.
         self._mfc_thread = thread; self._mfc_worker = worker
 
     def _do_mfc_connect(self, port):
@@ -4343,11 +4371,12 @@ class AtomisationApp(QMainWindow):
     # rendered image sizes when those images exist.
     MASTER_HEADERS = ('Timestamp', 'Orifice', 'Bubbler Height (mm)', 'Bubbler RPM',
                       'Flow Range (sccm)', 'Pressure Range (barA)', 'Speed (steps/s)',
-                      'Motor Travel (mm)', 'Avg Lamella Thickness', 'Notes',
+                      'Motor Travel (mm)', 'D32 (um)', 'Atomised (%)',
+                      'Avg Lamella Thickness', 'Notes',
                       'Cone Image', 'Shadowgraph', 'Pressure Graph', 'Mass Flow Graph')
-    MASTER_COL_COUNT  = 14
-    MASTER_COL_LETTERS = 'ABCDEFGHIJKLMN'
-    MASTER_COL_WIDTHS = (20, 8, 16, 12, 18, 18, 14, 12, 12, 35, 36.5, 43, 56, 56)
+    MASTER_COL_COUNT  = 16
+    MASTER_COL_LETTERS = 'ABCDEFGHIJKLMNOP'
+    MASTER_COL_WIDTHS = (20, 8, 16, 12, 18, 18, 14, 12, 11, 12, 12, 35, 36.5, 43, 56, 56)
 
     # Header row style, matched to what the existing master_log.xlsx already uses:
     # theme-1 fill at 0.15 tint (dark grey) with bold white Calibri.
@@ -4448,9 +4477,6 @@ class AtomisationApp(QMainWindow):
             except Exception as e:
                 log_serial(f"Serial reader warning: {e}")
 
-    def _poll_serial(self):
-        pass  # Serial reading handled by background thread above
-
     def _record_alicat_sample(self, pressure: float, flow: float):
         """Feed one Alicat frame into the live graphs and the experiment log."""
         now = time.time()
@@ -4517,6 +4543,18 @@ class AtomisationApp(QMainWindow):
                 'camera_windows': list(self.pressure_data.get('camera_windows', [])),
             }
             self._experiment_saved = False
+            # Save immediately, so a run is on disk before anyone can forget.
+            # Notes are written AFTER a run, so this row is expected to be
+            # incomplete -- saving again once they are typed updates this same
+            # row rather than adding a second one (matched on the start
+            # timestamp). Never let a save failure break the end-of-experiment
+            # flow: the pressure is off and the UI must finish resetting.
+            try:
+                self._save_to_excel()
+                self._log("Experiment saved automatically — add Notes and save "
+                          "again to update the same row.")
+            except Exception as _e:
+                self._log(f"Auto-save failed ({_e}) — use Save to Excel.")
             self._exp_progress.setRange(0, 100)
             self._exp_progress.setValue(100)
             QTimer.singleShot(800, lambda: (
@@ -5123,7 +5161,6 @@ class AtomisationApp(QMainWindow):
                                         f"recording_{ts}.cine")
             tiff_prefix  = os.path.join(run_folder, "shadowgraph", "raw", "TIFFs", "frame")
             tiff_dir     = os.path.join(run_folder, "shadowgraph", "raw", "TIFFs")
-            bright_dir   = os.path.join(run_folder, "shadowgraph", "raw", "Brightest_Frame")
             analysis_dir = os.path.join(run_folder, "shadowgraph", "analysis")
         else:
             # Manual trigger — create a new run folder with the same structure
@@ -5135,7 +5172,7 @@ class AtomisationApp(QMainWindow):
             _run_folder = os.path.join(
                 _base, _now.strftime("%Y"), _now.strftime("%m"),
                 _now.strftime("%d"), f"{_now.strftime('%H%M%S')}_Manual")
-            # As above: TIFFs/ and Brightest_Frame/ are made on demand only.
+            # As above: TIFFs/ is made on demand only.
             for _sub in [os.path.join("shadowgraph", "raw", "CINE"),
                          os.path.join("shadowgraph", "analysis"),
                          "cone"]:
@@ -5144,28 +5181,12 @@ class AtomisationApp(QMainWindow):
                                         f"recording_{ts}.cine")
             tiff_prefix  = os.path.join(_run_folder, "shadowgraph", "raw", "TIFFs", "frame")
             tiff_dir     = os.path.join(_run_folder, "shadowgraph", "raw", "TIFFs")
-            bright_dir   = os.path.join(_run_folder, "shadowgraph", "raw", "Brightest_Frame")
             analysis_dir = os.path.join(_run_folder, "shadowgraph", "analysis")
             # Update the save path label to show where this capture went
             QTimer.singleShot(0, self,
                 lambda p=_run_folder: self._cam_save_lbl.setText(f"Saving to: {p}"))
 
         frame_range = (-pre_frames, post_frames - 1) if pre_frames > 0 else None
-
-        def _brightest_frame(folder):
-            import glob, cv2 as _cv2
-            tiffs = glob.glob(os.path.join(folder, "*.tif")) + \
-                    glob.glob(os.path.join(folder, "*.tiff"))
-            if not tiffs:
-                return None
-            best, best_val = None, -1
-            for f in tiffs:
-                img = _cv2.imread(f, _cv2.IMREAD_UNCHANGED)
-                if img is not None:
-                    val = float(img.mean())
-                    if val > best_val:
-                        best_val, best = val, f
-            return best
 
         def _do_trigger():
             import shutil, glob as _glob
@@ -5233,7 +5254,6 @@ class AtomisationApp(QMainWindow):
                 # 2 — read frames from camera RAM and write TIFFs ourselves.
                 # This bypasses the SDK's save() which has a known bug that throws
                 # an exception even when the save succeeds.
-                bright_path = None
                 if save_tiffs:
                     QTimer.singleShot(0, self, lambda: (
                         self._cam_arm_status_lbl.setText("Saving TIFFs…"),
@@ -5261,19 +5281,13 @@ class AtomisationApp(QMainWindow):
                         QTimer.singleShot(0, self,
                             lambda d=_captured_tiff_dir: self._lamella_run_batch_auto(d))
 
-                    # 3 — find brightest frame, copy to Brightest_Frame/
-                    os.makedirs(bright_dir, exist_ok=True)
-                    best = _brightest_frame(tiff_dir)
-                    if best:
-                        bright_path = os.path.join(bright_dir, os.path.basename(best))
-                        shutil.copy2(best, bright_path)
                 else:
-                    # No TIFF sequence on disk — the brightest-frame, AI and lamella
-                    # steps all read from it, so they have nothing to work on.
+                    # No TIFF sequence on disk — the AI and lamella steps both
+                    # read from it, so they have nothing to work on.
                     if run_pipeline or self._lamella_on:
                         QTimer.singleShot(0, self, lambda: self._log(
-                            "  (Save TIFFs is off — brightest frame, AI pipeline and "
-                            "lamella analysis skipped for this capture)"))
+                            "  (Save TIFFs is off — AI pipeline and lamella "
+                            "analysis skipped for this capture)"))
 
                 QTimer.singleShot(0, self,
                     lambda: self._cam_status_lbl.setText("Trigger saved ✓"))
@@ -5328,32 +5342,6 @@ class AtomisationApp(QMainWindow):
         except ValueError:
             return 0.0
 
-    def _run_pipeline(self, frames_folder: str, output_folder: str, px_per_mm: float = None):
-        """Run Dennis AI pipeline in a background thread so the UI stays responsive."""
-        if px_per_mm is None:
-            px_per_mm = self._get_px_per_mm()
-        self._pipeline_status.setText("Pipeline: running…")
-        self._ai_confidence_lbl.setText("Confidence: –")
-        self._ai_diameter_lbl.setText("Run SMD: –")
-        self._ai_dl_lbl.setText("Atomised Fraction: –")
-        self._log(f"── AI pipeline started ({os.path.basename(frames_folder)}) ──")
-
-        def _worker():
-            _stream = _GuiLogStream(self._log_queue)
-            self._tl_stdout.set(_stream)
-            self._tl_stderr.set(_stream)
-            try:
-                sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-                from ai.process_run import run as ai_run
-                results = ai_run(frames_folder, output_folder, px_per_mm)
-                self._pipeline_done.emit(results)
-            except Exception as e:
-                self._pipeline_err.emit(str(e))
-            finally:
-                self._tl_stdout.clear()
-                self._tl_stderr.clear()
-        threading.Thread(target=_worker, daemon=True).start()
-
     def _on_pipeline_complete(self, results: dict):
         """
         Display a finished measure_run summary.
@@ -5366,6 +5354,10 @@ class AtomisationApp(QMainWindow):
         self._pipeline_status.setText("Pipeline: complete ✓")
         self._log("── AI chain complete ✓ ──")
         self._flash_log_border(CLR_GREEN)
+        # Held for the spreadsheet row. Cleared at experiment start so a run
+        # whose AI chain has not finished can never inherit the previous run's
+        # D32 -- a stale number in the master log is worse than a blank one.
+        self._last_ai_results = results
 
         self._test_pipeline_btn.setEnabled(True)
         self._test_pipeline_btn.setText("Test Pipeline")
@@ -5470,8 +5462,25 @@ class AtomisationApp(QMainWindow):
                     self._shadow_label.setPixmap(pix)
                     self._shadow_label.setText("")
                     self._result_path_label.setText(path)
+                    self._autosave_after_ai()
                     return
         self._refresh_shadowgraph()
+        self._autosave_after_ai()
+
+    def _autosave_after_ai(self):
+        """Second save, once the AI chain has produced numbers and an image.
+
+        The end-of-experiment save runs when the motor stops, which is minutes
+        before inference and measurement finish -- so that row has no D32, no
+        atomised fraction and no shadowgraph. Saving again here fills them in.
+        It UPDATES the same row rather than adding one, matched on the
+        experiment's start timestamp.
+        """
+        try:
+            self._save_to_excel()
+            self._log("  master_log updated with the AI results.")
+        except Exception as e:
+            self._log(f"  (auto-save after AI failed: {e} -- use Save to Excel)")
 
     def _on_pipeline_error(self, err: str):
         self._pipeline_status.setText(f"Pipeline error: {err}")
@@ -6411,9 +6420,15 @@ class AtomisationApp(QMainWindow):
         self.pressure_data['experiment_data'] = {'timestamps':[], 'pressures':[], 'flows':[]}
         self.pressure_data['camera_windows'] = []
         self._last_cone_path = None   # reset so we only capture this experiment's image
+        self._last_ai_results = None  # ditto: never carry a previous run's D32 into this row
 
         # ── Create run folder eagerly ──────────────────────────────────────────
+        # Kept so the spreadsheets can stamp the moment the experiment STARTED
+        # rather than the moment Save was clicked. Those differ by the whole run
+        # duration plus however long the notes took, which made the master_log
+        # timestamp disagree with the run folder it refers to.
         _now = datetime.now()
+        self._run_started_at = _now
         _run_id = self._run_id(_now, f"{flow:.0f}sccm")
         _lacie = find_lacie_drive()
         _exp_base = os.path.join(_lacie, "Experiments") if _lacie else os.path.join(
@@ -6421,9 +6436,10 @@ class AtomisationApp(QMainWindow):
             "experiment_logs", "Experiments")
         self._run_folder = os.path.join(
             _exp_base, _now.strftime("%Y"), _now.strftime("%m"), _now.strftime("%d"), _run_id)
-        # Only the folders every run uses. TIFFs/ and Brightest_Frame/ are
-        # created at the point of use instead — with Save TIFFs off they were
-        # being made empty on every single run and never written to.
+        # Only the folders every run uses. TIFFs/ is created at the point of use
+        # instead — with Save TIFFs off it was being made empty on every single
+        # run and never written to. Brightest_Frame is gone entirely: the GUI
+        # shows the lowest-D32 frame from summary.json instead (2026-09-27).
         for _sub in [os.path.join("shadowgraph", "raw", "CINE"),
                      os.path.join("shadowgraph", "analysis"),
                      "cone"]:
@@ -6471,16 +6487,48 @@ class AtomisationApp(QMainWindow):
     # Logic — Shadowgraph preview
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _find_latest_result(self):
-        try:
-            # Check the active run folder first — prefer ai_result.png, fall back to CV result
-            if self._run_folder:
-                for fname in ("ai_result.png", "FINAL_OPTIMIZED_RESULT.png"):
-                    f = os.path.join(self._run_folder, "shadowgraph", "analysis", fname)
-                    if os.path.exists(f):
-                        return f
+    @staticmethod
+    def _lowest_d32_image(run_dir):
+        """The marked-up lowest-D32 frame for a finished run, or None.
 
-            # Fall back to scanning Experiments tree for most-recent result
+        Reads the frame name out of measure_run's summary.json rather than
+        guessing a filename, so this agrees with what the pipeline actually
+        chose and with what _on_pipeline_complete displays.
+        """
+        import glob as _g
+        analysis = os.path.join(run_dir, "shadowgraph", "analysis")
+        if not os.path.isdir(analysis):
+            return None
+        for mdir in sorted(_g.glob(os.path.join(analysis, "measurement_*")),
+                           key=os.path.getmtime, reverse=True):
+            summary = os.path.join(mdir, "summary.json")
+            if not os.path.exists(summary):
+                continue
+            try:
+                with open(summary, encoding="utf-8") as fh:
+                    ext = (json.load(fh).get("d32_extreme_frames") or {})
+                stem = (ext.get("lowest") or {}).get("frame")
+            except (OSError, ValueError):
+                continue
+            if stem:
+                f = os.path.join(mdir, f"{stem}.png")
+                if os.path.exists(f):
+                    return f
+        return None
+
+    def _find_latest_result(self):
+        """Newest available lowest-D32 preview: this run first, else most recent.
+
+        Previously this looked for `ai_result.png` / `FINAL_OPTIMIZED_RESULT.png`,
+        filenames from the retired CV pipeline that the current chain never
+        writes -- so it silently found nothing and the preview stayed empty.
+        """
+        try:
+            if self._run_folder:
+                f = self._lowest_d32_image(self._run_folder)
+                if f:
+                    return f
+
             lacie = find_lacie_drive()
             base  = os.path.join(lacie, "Experiments") if lacie else None
             if not base or not os.path.exists(base): return None
@@ -6495,9 +6543,9 @@ class AtomisationApp(QMainWindow):
                 for month in latest_subdir(year):
                     for day in latest_subdir(month):
                         for run in latest_subdir(day):
-                            for fname in ("ai_result.png", "FINAL_OPTIMIZED_RESULT.png"):
-                                f = os.path.join(run, "shadowgraph", "analysis", fname)
-                                if os.path.exists(f): return f
+                            f = self._lowest_d32_image(run)
+                            if f:
+                                return f
         except Exception as e:
             print(f"Error finding result: {e}")
         return None
@@ -6524,7 +6572,7 @@ class AtomisationApp(QMainWindow):
                 return
         self._shadow_label.setPixmap(QPixmap())
         self._shadow_label.setText("No result found\nClick ↻ Refresh")
-        self._result_path_label.setText("Searching: LaCie/Experiments/…/shadowgraph/analysis/ai_result.png")
+        self._result_path_label.setText("Searching: LaCie/Experiments/…/analysis/measurement_*/ for a measured run")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Logic — Excel save
@@ -6538,7 +6586,11 @@ class AtomisationApp(QMainWindow):
             from openpyxl.utils import get_column_letter, column_index_from_string
 
             lacie        = find_lacie_drive()
-            now          = datetime.now()
+            # The experiment's start, so the spreadsheet row, the run_summary and
+            # the run folder all carry the same time. Falls back to now() only
+            # when there is no run folder to agree with (a save with no
+            # experiment behind it, which builds its own folder below).
+            now          = getattr(self, "_run_started_at", None) or datetime.now()
             ts_str       = now.strftime("%Y-%m-%d %H:%M:%S")
 
             orifice      = self._orifice_combo.currentText()
@@ -6547,6 +6599,14 @@ class AtomisationApp(QMainWindow):
             distance_str = self._distance_entry.text()
             bubbler_str  = self._bubbler_height_entry.text().strip()
             rpm_str      = self._rpm_entry.text().strip()
+
+            # Plain numbers, not "85.6 +/-2.1%": these are Taguchi responses and
+            # need to sort and plot in Excel. The confidence intervals live in
+            # the run's summary.json. Blank when the AI chain has not run --
+            # never a stale value from a previous run (cleared at run start).
+            _ai = self._last_ai_results or {}
+            d32_val  = _ai.get('d32_in_focus_um', '')
+            atom_val = _ai.get('atomised_pct', '')
 
             # Use the frozen snapshot taken at experiment end — not the live buffer
             snap = self._last_experiment_snapshot
@@ -6719,6 +6779,11 @@ class AtomisationApp(QMainWindow):
                 "experiment_logs")
             os.makedirs(_master_base, exist_ok=True)
             master_path = os.path.join(_master_base, 'master_log.xlsx')
+            # Row for THIS run, if it is already logged. The Timestamp column
+            # holds the experiment's start time, which is unique per run, so it
+            # identifies the row without needing a hidden key. Set below once
+            # the migrations have guaranteed column A is Timestamp.
+            _existing_row = None
             if os.path.exists(master_path):
                 wb = load_workbook(master_path)
                 ws = wb.active
@@ -6810,29 +6875,64 @@ class AtomisationApp(QMainWindow):
                             if hasattr(_anc, 'to') and _anc.to and _anc.to.col >= 2:
                                 _anc.to.col += 2
 
+                # ── Migrate to the measurement format ───────────────────────────
+                # D32 and atomised fraction go in beside the other measured
+                # responses, left of Avg Lamella Thickness, so everything the run
+                # PRODUCED sits together and to the right of everything that was
+                # SET. Column I was Avg Lamella in the 14-column layout.
+                if ws.cell(row=1, column=9).value == 'Avg Lamella Thickness':
+                    ws.insert_cols(9, 2)
+                    ws.cell(row=1, column=9).value = 'D32 (um)'
+                    ws.cell(row=1, column=10).value = 'Atomised (%)'
+                    for _img in ws._images:
+                        _anc = _img.anchor
+                        if isinstance(_anc, str):
+                            _m = _re.match(r'^([A-Z]+)(\d+)$', _anc)
+                            if _m and column_index_from_string(_m.group(1)) >= 9:
+                                _new_col = get_column_letter(column_index_from_string(_m.group(1)) + 2)
+                                _img.anchor = f'{_new_col}{_m.group(2)}'
+                        elif hasattr(_anc, '_from'):
+                            if _anc._from.col >= 8:   # 0-indexed: 8 == Excel col I
+                                _anc._from.col += 2
+                            if hasattr(_anc, 'to') and _anc.to and _anc.to.col >= 8:
+                                _anc.to.col += 2
+
                 _mf_col = self.MASTER_COL_COUNT
                 if ws.cell(row=1, column=_mf_col).value != 'Mass Flow Graph':
                     ws.cell(row=1, column=_mf_col).value = 'Mass Flow Graph'
                     ws.column_dimensions[get_column_letter(_mf_col)].width = 56
 
-                # Shift row_dimensions down one row before inserting
-                old_dims = {r: ws.row_dimensions[r].height
-                            for r in list(ws.row_dimensions.keys()) if r >= 2}
-                for r in sorted(old_dims.keys(), reverse=True):
-                    ws.row_dimensions[r + 1].height = old_dims[r]
+                # Is this run already logged? Re-saving must UPDATE that row, not
+                # append a second one -- the experiment auto-saves when it ends,
+                # and you then write the Notes and save again. Appending would
+                # give two rows per run, and a stray double-click on Save would
+                # do the same.
+                for _r in range(2, ws.max_row + 1):
+                    if str(ws.cell(row=_r, column=1).value).strip() == ts_str:
+                        _existing_row = _r
+                        break
 
-                # Shift every existing image anchor down one row before inserting
-                for img in ws._images:
-                    anchor = img.anchor
-                    if isinstance(anchor, str):
-                        m = _re.match(r'^([A-Z]+)(\d+)$', anchor)
-                        if m and int(m.group(2)) >= 2:
-                            img.anchor = f'{m.group(1)}{int(m.group(2)) + 1}'
-                    elif hasattr(anchor, '_from'):
-                        if anchor._from.row >= 1:   # 0-indexed: row 1 == Excel row 2
-                            anchor._from.row += 1
-                        if hasattr(anchor, 'to') and anchor.to and anchor.to.row >= 1:
-                            anchor.to.row += 1
+                # Everything below only makes room for a NEW row. Updating an
+                # existing one must not shift anything.
+                if _existing_row is None:
+                    # Shift row_dimensions down one row before inserting
+                    old_dims = {r: ws.row_dimensions[r].height
+                                for r in list(ws.row_dimensions.keys()) if r >= 2}
+                    for r in sorted(old_dims.keys(), reverse=True):
+                        ws.row_dimensions[r + 1].height = old_dims[r]
+
+                    # Shift every existing image anchor down one row before inserting
+                    for img in ws._images:
+                        anchor = img.anchor
+                        if isinstance(anchor, str):
+                            m = _re.match(r'^([A-Z]+)(\d+)$', anchor)
+                            if m and int(m.group(2)) >= 2:
+                                img.anchor = f'{m.group(1)}{int(m.group(2)) + 1}'
+                        elif hasattr(anchor, '_from'):
+                            if anchor._from.row >= 1:   # 0-indexed: row 1 == Excel row 2
+                                anchor._from.row += 1
+                            if hasattr(anchor, 'to') and anchor.to and anchor.to.row >= 1:
+                                anchor.to.row += 1
             else:
                 wb = Workbook()
                 ws = wb.active
@@ -6864,26 +6964,39 @@ class AtomisationApp(QMainWindow):
             # the wrong column — Shadowgraph inherits the old Pressure Graph width
             # and renders enormous.  Reapplying here also repairs workbooks that
             # were migrated before this was fixed.
-            # K/L/M/N are re-set from their actual images further down.
+            # M/N/O/P are re-set from their actual images further down.
             for col, width in zip(self.MASTER_COL_LETTERS, self.MASTER_COL_WIDTHS):
                 ws.column_dimensions[col].width = width
 
-            ws.insert_rows(2)
-            row_num = 2
+            if _existing_row is None:
+                ws.insert_rows(2)
+                row_num = 2
+            else:
+                row_num = _existing_row
+                # Drop the images already anchored to this row. openpyxl keeps
+                # them in a flat list with no concept of replacement, so without
+                # this the new cone/shadowgraph/graph images stack on top of the
+                # old ones in the same cells.
+                _r0 = row_num - 1          # anchors are 0-indexed
+                ws._images = [im for im in ws._images
+                              if not (hasattr(im.anchor, '_from')
+                                      and im.anchor._from.row == _r0)]
+
             center_mid = Alignment(horizontal='center', vertical='center', wrap_text=True)
             top_left   = Alignment(horizontal='left',   vertical='top',    wrap_text=True)
             for col, val in enumerate([ts_str, orifice,
                                        bubbler_str or 'NOT RECORDED',
                                        rpm_str or 'NOT RECORDED',
                                        f_range_str, p_range_str,
-                                       speed_str, distance_str, _lamella_cell_val,
+                                       speed_str, distance_str,
+                                       d32_val, atom_val, _lamella_cell_val,
                                        notes, '', '', '', ''], start=1):
                 cell = ws.cell(row=row_num, column=col)
                 cell.value = val
-                cell.alignment = top_left if col == 10 else center_mid
+                cell.alignment = top_left if col == 12 else center_mid
             # Orange highlight for "Input Self" lamella cell
             if _lamella_orange:
-                _lc = ws.cell(row=row_num, column=9)
+                _lc = ws.cell(row=row_num, column=11)
                 _lc.fill = PatternFill(start_color='FFA500', end_color='FFA500', fill_type='solid')
                 _lc.font = Font(color='000000', bold=True)
             ws.row_dimensions[row_num].height = 125
@@ -6898,12 +7011,12 @@ class AtomisationApp(QMainWindow):
                     _cone_disp_w = max(1, int(_cw * _cone_disp_h / _ch))
                     cimg = XLImage(_cone_img_path)
                     cimg.width = _cone_disp_w; cimg.height = _cone_disp_h
-                    ws.column_dimensions['K'].width = max(10, _cone_disp_w / 7.0)
-                    ws.add_image(cimg, f'K{row_num}')
+                    ws.column_dimensions['M'].width = max(10, _cone_disp_w / 7.0)
+                    ws.add_image(cimg, f'M{row_num}')
                 else:
-                    ws.cell(row=row_num, column=11).value = 'NO DATA AVAILABLE'
+                    ws.cell(row=row_num, column=13).value = 'NO DATA AVAILABLE'
             else:
-                ws.cell(row=row_num, column=11).value = 'NO DATA AVAILABLE'
+                ws.cell(row=row_num, column=13).value = 'NO DATA AVAILABLE'
 
             # fullText(), NOT text(): the label elides its middle for display,
             # so text() returns a path with "..." in it that no file matches.
@@ -6913,15 +7026,15 @@ class AtomisationApp(QMainWindow):
                 simg.width = self.SHADOWGRAPH_W_PX; simg.height = DISPLAY_H
                 # Size the column to the image rather than leaving whatever
                 # width the migration left behind (Excel width ~= px / 7)
-                ws.column_dimensions['L'].width = self.SHADOWGRAPH_W_PX / 7.0
-                ws.add_image(simg, f'L{row_num}')
+                ws.column_dimensions['N'].width = self.SHADOWGRAPH_W_PX / 7.0
+                ws.add_image(simg, f'N{row_num}')
             else:
-                ws.cell(row=row_num, column=12).value = 'NO DATA AVAILABLE'
+                ws.cell(row=row_num, column=14).value = 'NO DATA AVAILABLE'
 
-            # Pressure graph in M, mass flow graph immediately right of it in N
+            # Pressure graph in O, mass flow graph immediately right of it in P
             for _col_letter, _col_idx, _img_bytes, _img_w in (
-                    ('M', 13, pressure_bytes, pressure_img_width),
-                    ('N', 14, flow_bytes,     flow_img_width)):
+                    ('O', 15, pressure_bytes, pressure_img_width),
+                    ('P', 16, flow_bytes,     flow_img_width)):
                 if _img_bytes:
                     _gimg = XLImage(io.BytesIO(_img_bytes))
                     _gimg.width = _img_w; _gimg.height = DISPLAY_H
