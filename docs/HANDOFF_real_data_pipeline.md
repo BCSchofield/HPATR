@@ -21,6 +21,154 @@ file is the operational summary of it.
 
 ---
 
+## 2026-10-01 — SECOND WINDOWS SESSION. READ THIS FIRST
+
+### Headline: a capture now goes through the chain in ~19 min, not ~60
+
+Same cine every time (`recording_114813.cine`, the Trial_1 capture: 2751
+frames, 500 fps, 2560x1600), stride 10 → 276 frames, threshold 0.30, lab PC
+(RTX 4070 Ti SUPER, 32 logical CPUs, 128 GB RAM).
+
+| stage | 28 Sep (Trial_1) | 1 Oct, before fixes | **1 Oct, after fixes** |
+|---|---|---|---|
+| copy cine *(Full Analyse only)* | 1m 39s | 5m 13s | — (analysed in place) |
+| extract frames | 2m 09s | 1m 56s | 2m 01s |
+| background | 6s | 7s | 0s (reused; fresh ~7s) |
+| inference | 33m 09s | 30m 53s | **15m 51s** |
+| measurement | 22m 49s | 5m 00s | **54s** |
+| **total, real capture** | **~58 min** | **~38 min** | **~19 min** |
+
+**The numbers never moved:** D32 85.57 µm [83.74, 87.38], atomised 7.785%
+[6.745, 9.118], on every run, before and after every change, on both machines.
+The measurement is deterministic. Outputs: `E:\Experiments\2026\09\28\Trial_CINE`.
+
+### The assumed bottleneck was wrong a THIRD time
+
+The memory-bandwidth theory in the measurement section below ("expect this to
+help Windows MORE") was **wrong**. Profiled on the lab PC:
+
+- **Measurement:** 240 of 295 s was **rendering the 276 marked-up PNGs**,
+  ~0.9 s and 7.5 MB each, written to the LaCie. On the Mac that was 15% of the
+  step; here it was 82%. Without images, measurement is 43 s.
+- **Inference:** the per-frame log line times only `detect_frame` (~2.2 s/frame),
+  while the wall clock was ~6.7 s/frame. The missing ~4.4 s was **`to_coco`**,
+  outside the timed block. For every detection (~320 per frame) it built a
+  frame-sized bool mask, then `.astype(uint8)`, then `np.asfortranarray`:
+  three 4 MB arrays per object, and 77% of its time was the two copies. It is
+  the same full-frame bug as the two before, in the one place the crop fix
+  never reached. GPU utilisation was **19%** during inference, so the stage is
+  CPU-bound.
+- Trial_1's "7.2 s/frame vs 1.4 benchmark" on 28 Sep was this same overhead,
+  not a CPU fallback. The log confirms cuda + Eden, and its predictions were
+  written after `b1678d4`.
+
+### What changed, and how each was verified
+
+**Inference — `tiled_inference.py`.** `_full_mask(d, np.uint8, "F")` builds the
+encoder's layout directly, removing both copies. **Byte-identical** output over
+1,178 detections on 4 frames, and `to_coco` is 3.7x faster. Still left:
+pycocotools scans the whole frame once per detection, ~1 s/frame. Encoding the
+frame-sized RLE straight from the crop is the next lever, worth it only if
+16 min per run becomes the constraint.
+
+**Images — `measure_run.py --images {all,extremes}`.** A bare `--images` still
+means `all`. `extremes` draws the raw lowest/highest-D32 frames, the guarded
+("solid") lowest/highest D32 when they differ, and the lowest/highest atomised
+frames: 5 images for Trial_CINE. Those were **byte-identical** to the old code's,
+and the CSVs and summary numbers are unchanged. `process_capture` now defaults
+to `extremes` (`--images all|extremes`, `--no-images`). Any frame can be
+regenerated from the cine, because the 8-bit window is pinned.
+
+**`--ci-stride` is automatic** (closes "FPS → --ci-stride, needed" below).
+`process_capture` with `ci_stride=None` sets `max(1, round(0.0205 * fps / stride))`,
+taking fps from `extraction_metadata.json`. That gives 1 at 500 fps/stride 10
+(unchanged), **10 at stride 1**, and 3 at 1300 fps/stride 10. Verified with a
+30-frame stride-1 smoke run: `ci_stride: 10` in the provenance. Cosmetic leftover:
+`measure_run` still prints its generic "CIs use ALL frames … 3x too narrow"
+warning whenever the CI stride is 1, even when that is correct.
+
+**Full Analyse Cine** (renamed from Test Pipeline). Picking a cine opens a dialog:
+- If the cine sits in `<run>/shadowgraph/raw/CINE/` and was analysed before, it
+  offers **that stride, reusing the analysis in place**. It skips extraction,
+  background and inference and only re-measures with every image drawn: 5–8 min
+  for 276 frames. Measured 5m 00s and 7m 50s; the second was probably contention
+  on the LaCie.
+- **Any other stride** (box defaults to 1) re-runs the whole chain into a **new**
+  Trial_n, so a real run's results are never overwritten. A live estimate shows
+  as you type; stride 1 on 2,751 frames ≈ 3 h 50 min and ~63 GB.
+- Reuse requires `process_capture.can_reuse()`: same stride in the metadata;
+  8-bit and 16-bit frame counts both complete; background present; and
+  `predictions.json` newer than both `instances.json` and the newest `Eden/*.pth`.
+  Trial_1 and Trial_CINE both qualify.
+- **It never writes master_log.** Bug found while building it: the post-AI
+  auto-save matched its row on the *last experiment's* start time, so a Full
+  Analyse run after a real experiment would have **overwritten that real run's
+  D32**, through both the auto-save and a later manual Save via
+  `_last_ai_results`. Fixed via `summary["_save_to_log"]`. The old
+  `_is_test_pipeline` flag was never set True anywhere and has been removed.
+
+**GUI — master_log Shadowgraph column.** It used to take whatever the preview
+panel showed, and the preview falls back to the newest result from *any* run, so
+runs saved without AI got an old run's image. It now uses
+`_lowest_d32_image(run_dir)`, this run only, else NO DATA AVAILABLE. **Rows saved
+before this fix keep their wrong images**; delete those by hand.
+
+**GUI — bubbler (spin) motor failsafe.** `_stop_bubbler_failsafe()` sends `STOP`
+to the Uno **first thing** in `_on_movement_complete` (when an experiment was
+active) and in `_on_experiment_timeout`, before the gas shut-off and the save.
+It sends unconditionally rather than trusting `rpm_spinning`, which is GUI
+bookkeeping; `STOP` is idempotent on the Uno (`stopMotor()` plus driver
+disable). A failed write shows red and logs "stop it manually". Closing the GUI
+and the GUI E-stop already stopped it. Ben has a physical E-stop. A firmware
+heartbeat watchdog and a serial write timeout were offered and **declined**.
+
+**GUI — the save no longer freezes the UI. This was a safety bug.** The
+auto-save at experiment end ran on the GUI thread. master_log is **83 MB with
+140 embedded images**, ~9 s just to load and save, and the GUI was **blocked
+11.3 s**, measured, including the bubbler's Stop button. Now:
+`_collect_save_job()` snapshots every widget and run value on the GUI thread,
+and `_write_excel(job)` does the file work on a **single-worker**
+`ThreadPoolExecutor` (FIFO, so saves keep their order). Callbacks return to the
+GUI thread. The charts use `matplotlib.figure.Figure`, not pyplot's global
+registry. `closeEvent` stops all hardware **first**, then waits for a pending
+save so master_log is never truncated. **Verified byte-identical against git
+HEAD's save**, both run on copies of the real master_log: every cell, width,
+height and image (65 rows, 144 images) plus both run_summary sheets. GUI-thread
+time went from 11.3 s to 0.00 s. master_log keeps growing (~10 s per save),
+so consider not embedding images in it eventually.
+
+**GUI — five `except Exception as e:` lambdas** (lamella model load, lamella
+batch ×2, analysis Excel, cone angle) referenced `e` after Python had deleted it,
+so the error handler would raise NameError and hide the real message. Fixed
+with `lambda e=e:`.
+
+"Settling N s" on a camera save = post-trigger seconds + 2 s of commit margin.
+Intended.
+
+### Not verified yet: do these in the lab
+
+- **Click through the real GUI:** the Full Analyse dialog; the bubbler stopping
+  by itself when a real experiment ends; buttons staying responsive while
+  "Saving to Excel…" shows. Everything above was tested headless, against a
+  fake Uno or on file copies, never on the rig.
+- **The main AI stride field read 15 on 2026-10-01**, not the default 10. Check
+  which stride each Taguchi run was analysed at. Stride changes only CI width,
+  not the point estimate, but record it.
+- **Optical window contamination.** Large soft grey patches sit at the *same*
+  positions in frames 0.9 s apart, so they are static: out-of-focus residue on
+  the window or lens. They mostly cancel in T through the background median but
+  cost local contrast. Clean the window before more captures. They look like
+  blobs at a glance and are not.
+- **Home PC (RTX 5070 Ti, Blackwell)** needs PyTorch ≥ 2.7 built for CUDA ≥ 12.8.
+  The lab's `torch 2.6.0+cu124` cannot run on it, and detectron2 must be rebuilt
+  against whatever torch is installed. Check with
+  `torch.zeros(1).cuda() + 1`, because `auto_device()` falls back to the CPU
+  silently. Expected time ≈ the lab PC (~15–17 min AI); the CPU matters as much
+  as the GPU now.
+- GUI startup (1d below) is still unmeasured.
+
+---
+
 ## OPERATING CONFIGURATION — settled 2026-09-27. Use this tomorrow.
 
 v3 is good enough to pipe into the GUI **for D32 only**, as a RELATIVE
@@ -273,6 +421,9 @@ optimising. On the Mac, CPU inference is now effectively the entire cost
 (12.5 s/frame, median 16 tiles) — which is simply the argument for doing real
 runs on the Windows GPU, where inference is 1.4 s/frame.
 
+**[WRONG — 2026-10-01: profiled on the lab PC, Windows was slow because of
+image rendering (82% of the step) and to_coco's frame copies, not memory
+bandwidth. See the 2026-10-01 section at the top.]**
 **Expect this to help Windows MORE than the Mac.** Windows' measurement ran at
 4.96 s/frame against the Mac's 1.54 — backwards, given the hardware. The likely
 cause is memory bandwidth: the old code was shovelling 4 MB arrays per
@@ -1082,7 +1233,9 @@ frames the naive version would have done ~500M operations per run; it now does
    per-frame number.
 4. **The video -> frames pipeline** — cine to 8-bit + 16-bit frames with the
    correct fixed intensity window, feeding this. Not started.
-5. **FPS -> `--ci-stride`, needed.** Decorrelation time is fixed physically
+5. ~~**FPS -> `--ci-stride`, needed.**~~ **DONE 2026-10-01, in
+   `process_capture.auto_ci_stride()`** (not in measure_run, which still takes
+   it by hand when run directly). Decorrelation time is fixed physically
    (~20.5 ms, liquid crossing the 20.5 mm FOV at ~1 m/s), so the correct stride
    in FRAMES depends on fps: `round(0.0205 * fps)` -- 10 at 500 fps, 26 at
    1300 fps (matches the figure already used elsewhere in this document).
@@ -1168,6 +1321,58 @@ minutes per condition** on CPU. At the estimated GPU speed that is 2-4 minutes.
 That is the entire argument for Step 4 in one line.
 
 ---
+
+## NEXT ACTIONS — updated 2026-10-01
+
+### 0. Analyse the Taguchi run Ben has just captured. TOP PRIORITY
+
+**D32 does not need skeletonisation. Start ranking on it now.** D32 is computed
+from the model's in-focus **droplet** masks only (see `measure_run.py`). A
+skeleton pass replaces the **filament** area, which feeds only the atomised
+fraction's denominator. D32 is also the response that can actually rank runs
+(±2% at 276 frames, against ±15% for atomised). Item 2 below makes it the
+primary response.
+
+1. **Inventory first.** List the Taguchi run folders. For each, record whether
+   `analysis/measurement_0.30/summary.json` exists, its stride (`_stride`, or
+   `raw/extraction_metadata.json`), frame count, and the five set variables from
+   `run_summary.xlsx` (gas sccm, silicone steps/s, orifice, bubbler height,
+   bubbler RPM). Runs whose AI never ran: use Full Analyse Cine (reuses nothing,
+   new Trial folder) or run `process_capture.py <cine> --run-dir <run>` directly.
+   **Check the stride.** The main field read 15 on 2026-10-01.
+2. **Rank on D32** with `compare_runs.py --label <cond> <summary.json> …`. It
+   refuses mismatched threshold, focus cut-off or µm/px, and calls a difference
+   real only when the 95% CIs do not overlap. Then the Taguchi analysis proper
+   (S/N ratios, main effects) on D32 across the array.
+3. **Before quoting the atomised fraction across the array, build the skeleton
+   filament area.** The design is already settled; see "Split the pipeline by
+   morphology" (item 7 of the original plan, further down). In short:
+   - Keep the tiled model for **droplets**; discard its filament masks for area.
+   - On the **whole frame** (filaments reach 1000+ px and would be cut at tile
+     seams), segment liquid with `extract_candidates.py`'s existing rule
+     (T < 0.95, edge at each object's own half-maximum). Do not invent a second
+     threshold.
+   - **Subtract the droplet masks first**, then treat the remainder as
+     filament/blob, or the denominator counts the same liquid twice. Fix OPEN
+     BUG 1 (cross-class union) at the same time: it is the same denominator.
+   - Area = ∫ local width along the skeleton, width from the distance
+     transform (`thread_width` in `extract_candidates.py`).
+   - **Build it inside `measure_run.py`.** It only needs the 16-bit frames and
+     the background, both already on disk, and not the model. Every Taguchi run
+     can then be re-measured with `process_capture.py --reuse` at about a minute
+     each, with no re-inference.
+   - **Validate before trusting it:** score it against the hand labels on the
+     20-frame benchmark and record how the atomised-fraction gap (−23 to −26%)
+     moves. Then re-measure **every** run with it. Never mix old-method and
+     new-method atomised numbers in one table.
+4. The 3000 vs 4500 sccm bias-stability test (item 4) matters more now: the
+   Taguchi ranking assumes D32's bias is the same across conditions.
+
+### Status of the 2026-09-30 list
+
+- **1c (full runthrough on Windows): DONE 2026-10-01** except the GUI
+  click-through. See the section at the top.
+- **1d (GUI startup on the lab PC): still open.**
 
 ## NEXT ACTIONS — updated 2026-09-27
 

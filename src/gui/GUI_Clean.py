@@ -51,7 +51,8 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QLineEdit, QComboBox, QCheckBox, QTextEdit, QPlainTextEdit,
     QFrame, QTabWidget, QSizePolicy, QProgressBar, QScrollArea,
-    QGridLayout, QMessageBox, QFileDialog, QSpinBox, QInputDialog
+    QGridLayout, QMessageBox, QFileDialog, QSpinBox, QInputDialog,
+    QDialog, QDialogButtonBox, QRadioButton
 )
 from PySide6.QtCore import Qt, QTimer, Signal, Slot, QObject, QThread, QSize, QEvent, QRectF, QPointF
 from PySide6.QtGui import QFont, QPixmap, QImage, QColor, QPalette, QIcon, QPainter, QPen, QPolygonF, QIntValidator, QDoubleValidator
@@ -2854,25 +2855,31 @@ class AtomisationApp(QMainWindow):
                         apply_btn, self._cam_abort_btn, self._cam_arm_btn, self._cam_trigger_btn]:
                 btn.setEnabled(False)
 
-        # Test Pipeline card
+        # Full Analyse Cine card
         c_test = card(w)
-        c_test.layout().addWidget(section_label("TEST PIPELINE"))
+        c_test.layout().addWidget(section_label("FULL ANALYSE CINE"))
         c_test.layout().addWidget(separator())
         _test_desc = QLabel(
-            "Pick a .cine and run the full AI chain on it, exactly as a real "
-            "capture would. Builds a Trial_n run folder under today's date."
+            "Pick a .cine, choose a stride, and get a marked-up image of EVERY "
+            "analysed frame. If the cine was analysed before, that stride is "
+            "offered first and reuses the AI results. Real captures draw only "
+            "the extreme frames. Never writes to the master log."
         )
         _test_desc.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
         _test_desc.setWordWrap(True)
         c_test.layout().addWidget(_test_desc)
-        self._test_pipeline_btn = accent_button("Test Pipeline", CLR_ACCENT)
+        self._test_pipeline_btn = accent_button(self.FULL_ANALYSE_LABEL, CLR_ACCENT)
         self._test_pipeline_btn.setFixedHeight(36)
         self._test_pipeline_btn.setToolTip(
-            "<b>Test pipeline</b><br>"
+            "<b>Full Analyse Cine</b><br>"
             "1. Asks for a .cine file<br>"
-            "2. Creates Experiments/YYYY/MM/DD/Trial_n/<br>"
-            "3. Extracts frames → background → inference → D32 + atomised<br>"
-            "Same code path as a real capture, so what works here works there.")
+            "2. Asks for a stride — the one it was analysed at before (reuses "
+            "the AI results, only draws images) or any other (1 = every frame)<br>"
+            "3. A new stride runs extract → background → inference → D32 + "
+            "atomised into Experiments/YYYY/MM/DD/Trial_n/<br>"
+            "4. Draws a marked-up image of every analysed frame<br>"
+            "Same code path as a real capture, which draws only the extremes. "
+            "Results never go into master_log.")
         self._test_pipeline_btn.clicked.connect(self._run_test_pipeline)
         c_test.layout().addWidget(self._test_pipeline_btn, alignment=Qt.AlignmentFlag.AlignRight)
         vl.addWidget(c_test)
@@ -4340,6 +4347,9 @@ class AtomisationApp(QMainWindow):
     # often enough to see it is alive, sparse enough not to flood the panel.
     INFERENCE_LOG_EVERY = 25
 
+    # The pick-a-.cine button's label, restored after every run.
+    FULL_ANALYSE_LABEL = "Full Analyse Cine"
+
     # Liquid crosses the 20.5 mm field of view at ~1 m/s, so the scene is fully
     # replaced every ~20.5 ms.  Frames closer together than that largely contain
     # the SAME droplets and are not independent samples.
@@ -4523,12 +4533,32 @@ class AtomisationApp(QMainWindow):
         self._set_status("Homed", CLR_GREEN)
 
     @Slot()
+    def _stop_bubbler_failsafe(self, reason: str):
+        """End-of-experiment failsafe: stop the bubbler (spin) motor.
+
+        Sent unconditionally rather than gated on self.rpm_spinning -- that flag
+        is GUI bookkeeping and can be stale, while STOP on the Uno is idempotent
+        (stopMotor() + driver disabled, harmless when already stopped). Runs
+        FIRST in the end-of-experiment paths, before the gas shut-off and the
+        Excel save, so nothing that follows can delay it.
+        """
+        if not (self.rpm_connected and self.rpm_arduino):
+            return
+        try:
+            self.rpm_arduino.send_stop()
+            self._reset_rpm_spin_ui()
+            self._log(f"Bubbler motor stopped automatically ({reason}).")
+        except Exception as e:
+            self._log(f"⚠ Bubbler motor auto-stop FAILED ({e}) -- stop it manually.")
+            self._set_status(f"Bubbler auto-stop failed: {e}", CLR_RED)
+
     def _on_movement_complete(self):
         self._experiment_watchdog.stop()
         self.cumulative_distance = self._pre_move_cumulative + self._pending_move_distance
         self._pending_move_distance = 0.0
         self._update_travel_bar()
         if self.pressure_data['experiment_active']:
+            self._stop_bubbler_failsafe("experiment complete")
             self.pressure_data['experiment_active'] = False
             self._cone_auto_timer.stop()
             self._cone_auto_status_lbl.setText("Auto-capture: inactive")
@@ -4549,10 +4579,17 @@ class AtomisationApp(QMainWindow):
             # row rather than adding a second one (matched on the start
             # timestamp). Never let a save failure break the end-of-experiment
             # flow: the pressure is off and the UI must finish resetting.
+            # Runs in the background (see _save_to_excel_async), so the GUI --
+            # including the bubbler Stop -- stays responsive during the ~10 s
+            # master_log write.
+            def _after_auto_save(ok, err):
+                if ok:
+                    self._log("Experiment saved automatically — add Notes and save "
+                              "again to update the same row.")
+                else:
+                    self._log(f"Auto-save failed ({err}) — use Save to Excel.")
             try:
-                self._save_to_excel()
-                self._log("Experiment saved automatically — add Notes and save "
-                          "again to update the same row.")
+                self._save_to_excel_async(on_done=_after_auto_save)
             except Exception as _e:
                 self._log(f"Auto-save failed ({_e}) — use Save to Excel.")
             self._exp_progress.setRange(0, 100)
@@ -4645,6 +4682,7 @@ class AtomisationApp(QMainWindow):
     def _on_experiment_timeout(self):
         """Watchdog fired — serial reader likely died. Kill the gas and recover UI."""
         if self.pressure_data['experiment_active']:
+            self._stop_bubbler_failsafe("experiment timed out")
             self.pressure_data['experiment_active'] = False
             self._cone_auto_timer.stop()
             if self.alicat_connected and self.alicat:
@@ -5354,14 +5392,21 @@ class AtomisationApp(QMainWindow):
         self._pipeline_status.setText("Pipeline: complete ✓")
         self._log("── AI chain complete ✓ ──")
         self._flash_log_border(CLR_GREEN)
-        # Held for the spreadsheet row. Cleared at experiment start so a run
-        # whose AI chain has not finished can never inherit the previous run's
-        # D32 -- a stale number in the master log is worse than a blank one.
-        self._last_ai_results = results
+        # Full Analyse Cine re-analyses some OTHER cine. Its numbers must never
+        # reach the master log: the row is matched on the last experiment's
+        # start time, so they would overwrite that real run's D32 -- both via
+        # the auto-save below and via a later manual Save reading
+        # _last_ai_results.
+        to_log = results.get("_save_to_log", True)
+        if to_log:
+            # Held for the spreadsheet row. Cleared at experiment start so a run
+            # whose AI chain has not finished can never inherit the previous
+            # run's D32 -- a stale number in the master log is worse than a
+            # blank one.
+            self._last_ai_results = results
 
         self._test_pipeline_btn.setEnabled(True)
-        self._test_pipeline_btn.setText("Test Pipeline")
-        self._is_test_pipeline = False
+        self._test_pipeline_btn.setText(self.FULL_ANALYSE_LABEL)
 
         d32 = results.get("d32_in_focus_um")
         ci = results.get("d32_ci95") or [None, None]
@@ -5462,12 +5507,12 @@ class AtomisationApp(QMainWindow):
                     self._shadow_label.setPixmap(pix)
                     self._shadow_label.setText("")
                     self._result_path_label.setText(path)
-                    self._autosave_after_ai()
+                    self._autosave_after_ai(to_log)
                     return
         self._refresh_shadowgraph()
-        self._autosave_after_ai()
+        self._autosave_after_ai(to_log)
 
-    def _autosave_after_ai(self):
+    def _autosave_after_ai(self, to_log=True):
         """Second save, once the AI chain has produced numbers and an image.
 
         The end-of-experiment save runs when the motor stops, which is minutes
@@ -5476,9 +5521,16 @@ class AtomisationApp(QMainWindow):
         It UPDATES the same row rather than adding one, matched on the
         experiment's start timestamp.
         """
+        if not to_log:
+            self._log("  Full Analyse Cine -- master_log not touched.")
+            return
+        def _after(ok, err):
+            if ok:
+                self._log("  master_log updated with the AI results.")
+            else:
+                self._log(f"  (auto-save after AI failed: {err} -- use Save to Excel)")
         try:
-            self._save_to_excel()
-            self._log("  master_log updated with the AI results.")
+            self._save_to_excel_async(on_done=_after)
         except Exception as e:
             self._log(f"  (auto-save after AI failed: {e} -- use Save to Excel)")
 
@@ -5487,20 +5539,133 @@ class AtomisationApp(QMainWindow):
         self._log(f"── AI chain error: {err} ──")
         self._flash_log_border("#ff3b30")
         self._test_pipeline_btn.setEnabled(True)
-        self._test_pipeline_btn.setText("Test Pipeline")
-        self._is_test_pipeline = False
+        self._test_pipeline_btn.setText(self.FULL_ANALYSE_LABEL)
+
+    # Per-frame costs measured on the lab PC, 2026-10-01 (Trial_CINE, 500 fps,
+    # 2560x1600). Used only for the Full Analyse estimate -- approximate, and
+    # inference scales with detection density, not just frame count.
+    _EST_EXTRACT_FPS = 2.4
+    _EST_INFER_S = 3.45
+    _EST_MEASURE_S = 0.2
+    _EST_IMAGE_S = 0.9
+    _EST_COPY_S = 300
+
+    @staticmethod
+    def _ai_code_on_path():
+        p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         "..", "AI", "Real_Data_Code")
+        if p not in sys.path:
+            sys.path.insert(0, p)
+
+    def _ask_full_analyse_stride(self, prev, reusable):
+        """Ask which stride to analyse a picked cine at.
+
+        Offers the stride it was analysed at before (reusing that analysis, so
+        only the images are drawn) or a typed stride, which re-runs the AI into
+        a new Trial folder. Returns (stride, reuse) or None if cancelled.
+        """
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Full Analyse Cine")
+        v = QVBoxLayout(dlg)
+        total = (prev or {}).get("total_frames_in_cine")
+
+        rb_prev, prev_stride = None, None
+        if prev and prev.get("stride"):
+            prev_stride = int(prev["stride"])
+            n_prev = prev.get("frame_count") or 0
+            when = str(prev.get("extracted_utc", ""))[:10]
+            v.addWidget(QLabel(
+                f"This cine was analysed at <b>stride {prev_stride}</b> "
+                f"({n_prev:,} of {total:,} frames) on {when}."
+                if total else
+                f"This cine was analysed at <b>stride {prev_stride}</b> "
+                f"({n_prev:,} frames) on {when}."))
+            if reusable:
+                secs = n_prev * (self._EST_MEASURE_S + self._EST_IMAGE_S)
+                text = (f"Use stride {prev_stride} — reuse the AI results and just "
+                        f"draw all {n_prev:,} images (~{self._fmt_eta(secs)})")
+            else:
+                text = (f"Use stride {prev_stride} — re-run (the previous frames or "
+                        f"predictions are missing or out of date)")
+            rb_prev = QRadioButton(text)
+            rb_prev.setChecked(True)
+            v.addWidget(rb_prev)
+        else:
+            v.addWidget(QLabel("No previous analysis found next to this cine."))
+
+        row = QHBoxLayout()
+        rb_new = QRadioButton("Use a different stride:" if rb_prev else "Stride:")
+        edit = QLineEdit("1")
+        edit.setFixedWidth(56)
+        edit.setValidator(QIntValidator(1, 1000))
+        row.addWidget(rb_new)
+        row.addWidget(edit)
+        row.addWidget(QLabel("(1 = every frame)"))
+        row.addStretch()
+        v.addLayout(row)
+        if rb_prev is None:
+            rb_new.setChecked(True)
+
+        est = QLabel("")
+        est.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
+        est.setWordWrap(True)
+        v.addWidget(est)
+
+        def _update_estimate():
+            try:
+                s = max(1, int(edit.text()))
+            except ValueError:
+                est.setText("")
+                return
+            if total:
+                n = -(-total // s)
+                secs = (self._EST_COPY_S + n / self._EST_EXTRACT_FPS
+                        + n * (self._EST_INFER_S + self._EST_MEASURE_S + self._EST_IMAGE_S))
+                est.setText(f"Stride {s}: {n:,} frames, ~{self._fmt_eta(secs)} "
+                            f"(approx., from the 2026-10-01 timings). Re-runs the "
+                            f"AI into a new Trial folder.")
+            else:
+                est.setText(f"Stride {s}: re-runs the AI into a new Trial folder.")
+
+        edit.textChanged.connect(_update_estimate)
+        edit.textEdited.connect(lambda _t: rb_new.setChecked(True))
+        _update_estimate()
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                                   | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Run")
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        v.addWidget(buttons)
+
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return None
+        if rb_prev is not None and rb_prev.isChecked():
+            return prev_stride, reusable
+        try:
+            s = max(1, int(edit.text()))
+        except ValueError:
+            return None
+        return s, (reusable and s == prev_stride)
 
     def _run_test_pipeline(self):
         """
-        Pick a .cine and run the full AI chain on it into a Trial_n folder.
+        Full Analyse Cine: pick a .cine, choose a stride, and run the AI chain
+        drawing a marked-up image of EVERY analysed frame.
+
+        If the cine sits in a run folder that was already analysed, that
+        stride is offered first and reuses the analysis in place (only the
+        images are drawn). Any other stride re-runs the AI into a new Trial_n,
+        so a real run's results are never overwritten. Never writes to the
+        master log -- see _on_pipeline_complete.
 
         Deliberately the SAME entry point a real capture uses
-        (process_capture.process_capture), so a dry run here proves the live
-        path rather than exercising a parallel one that could drift from it.
+        (process_capture.process_capture), so this proves the live path rather
+        than exercising a parallel one that could drift from it.
         """
         start_dir = find_lacie_drive() or os.path.expanduser("~")
         cine_path, _ = QFileDialog.getOpenFileName(
-            self, "Pick a .cine to run the AI pipeline on",
+            self, "Pick a .cine to analyse",
             start_dir, "Phantom cine (*.cine);;All files (*)")
         if not cine_path:
             return
@@ -5512,20 +5677,54 @@ class AtomisationApp(QMainWindow):
                        "which isn't mounted.")
             return
 
-        self._run_ai_chain(cine_path, run_dir=None, tag="Trial")
+        # <run>/shadowgraph/raw/CINE/<file>.cine -> <run>
+        picked = Path(cine_path)
+        run = None
+        if (len(picked.parents) > 3 and picked.parent.name == "CINE"
+                and picked.parents[1].name == "raw"
+                and picked.parents[2].name == "shadowgraph"):
+            run = picked.parents[3]
 
-    def _run_ai_chain(self, cine_path, run_dir=None, tag="Trial"):
+        self._ai_code_on_path()
+        from process_capture import previous_analysis, can_reuse
+        prev = previous_analysis(run) if run else None
+        if prev and Path(prev.get("source_cine", "")).name != picked.name:
+            prev = None          # another cine's analysis in the same folder
+        reusable = bool(prev) and can_reuse(run, int(prev.get("stride") or 0))
+
+        choice = self._ask_full_analyse_stride(prev, reusable)
+        if choice is None:
+            return
+        stride, reuse = choice
+        self._log(f"── Full Analyse Cine: stride {stride}, "
+                  f"{'reusing the existing analysis in ' + str(run) if reuse else 'new Trial folder'} ──")
+        self._run_ai_chain(cine_path, run_dir=str(run) if reuse else None,
+                           tag="Trial", images="all", stride=stride,
+                           reuse=reuse, save_to_log=False)
+
+    def _run_ai_chain(self, cine_path, run_dir=None, tag="Trial", images="extremes",
+                      stride=None, reuse=False, save_to_log=True):
         """
         Run process_capture in a worker thread, streaming its log to the panel.
 
         run_dir=None creates the next Trial_n under today's date; a real
         capture passes its own already-created run folder instead.
+
+        images="extremes" (real captures) draws only the frames the Extremes
+        tab shows; Full Analyse Cine passes "all". Drawing every frame was ~80%
+        of measurement time on the lab PC, and the .cine can regenerate any
+        frame later.
+
+        stride=None uses the main AI stride field. reuse=True lets
+        process_capture skip to measurement if run_dir already holds a complete
+        analysis at that stride. save_to_log=False (Full Analyse Cine) keeps
+        the results out of the master log.
         """
         import threading
 
-        sys.path.insert(0, os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "..", "AI", "Real_Data_Code"))
+        self._ai_code_on_path()
+        if stride is None:
+            stride = self._get_ai_stride()
 
         self._test_pipeline_btn.setEnabled(False)
         self._test_pipeline_btn.setText("Running…")
@@ -5545,13 +5744,15 @@ class AtomisationApp(QMainWindow):
                 _t_chain = time.time()
                 summary = process_capture(
                     cine_path, target,
-                    stride=self._get_ai_stride(),
+                    stride=stride,
                     score_thresh=0.30,
-                    images=True,
+                    images=images,
+                    reuse=reuse,
                     log=_InferenceProgressFilter(
                         lambda s: self._log_queue.put(s + "\n"),
                         every=self.INFERENCE_LOG_EVERY),
                 )
+                summary["_save_to_log"] = save_to_log
                 self._log_queue.put(
                     f"── AI chain finished in {self._fmt_eta(time.time() - _t_chain)} ──\n")
                 self._pipeline_done.emit(summary)
@@ -5685,7 +5886,10 @@ class AtomisationApp(QMainWindow):
                 fname = os.path.basename(model_path)
                 QTimer.singleShot(0, self, lambda: _on_done(seg, fname, device, None))
             except Exception as e:
-                QTimer.singleShot(0, self, lambda: _on_done(None, None, None, e))
+                # e=e: Python deletes `e` when the except block ends, so a bare
+                # lambda would raise NameError when the timer fires and the real
+                # error would never be shown. Same fix at every site below.
+                QTimer.singleShot(0, self, lambda e=e: _on_done(None, None, None, e))
 
         def _on_done(seg, fname, device, err):
             if err:
@@ -5809,7 +6013,7 @@ class AtomisationApp(QMainWindow):
             except Exception as e:
                 import traceback
                 traceback.print_exc()
-                QTimer.singleShot(0, self, lambda: self._lamella_batch_error(str(e)))
+                QTimer.singleShot(0, self, lambda e=e: self._lamella_batch_error(str(e)))
 
         threading.Thread(target=_run, daemon=True).start()
 
@@ -5900,7 +6104,7 @@ class AtomisationApp(QMainWindow):
                 QTimer.singleShot(0, self, lambda: self._lamella_analysis_done(out))
             except Exception as e:
                 import traceback; traceback.print_exc()
-                QTimer.singleShot(0, self, lambda: self._log(f"Analysis Excel error: {e}"))
+                QTimer.singleShot(0, self, lambda e=e: self._log(f"Analysis Excel error: {e}"))
 
         threading.Thread(target=_run, daemon=True).start()
 
@@ -5960,7 +6164,7 @@ class AtomisationApp(QMainWindow):
             except Exception as e:
                 import traceback
                 traceback.print_exc()
-                QTimer.singleShot(0, self, lambda: self._lamella_batch_error(str(e)))
+                QTimer.singleShot(0, self, lambda e=e: self._lamella_batch_error(str(e)))
 
         threading.Thread(target=_run, daemon=True).start()
 
@@ -6271,7 +6475,7 @@ class AtomisationApp(QMainWindow):
                 angle, annotated_bgr, _debug = detect_cone_angle(
                     _Path(raw_path), top_crop_ratio=top_crop)
             except Exception as e:
-                def _on_err():
+                def _on_err(e=e):
                     self._cone_angle_lbl.setText(f"Analysis error: {e}")
                     self._cone_angle_lbl.setVisible(True)
                     self._cone_capture_btn.setEnabled(True)
@@ -6578,490 +6782,584 @@ class AtomisationApp(QMainWindow):
     # Logic — Excel save
     # ─────────────────────────────────────────────────────────────────────────
 
+    # ── Saving runs OFF the GUI thread ───────────────────────────────────────
+    # master_log.xlsx is ~83 MB with 140 embedded images (2026-10-01); loading
+    # and re-saving it alone measured ~9 s. Run on the GUI thread -- as the
+    # end-of-experiment auto-save did -- that froze every button, including
+    # the bubbler motor's Stop, for the whole save. Now: everything read from
+    # the GUI is snapshotted here on the GUI thread (fast), and the file work
+    # runs on a single background worker. One worker means saves run one at a
+    # time in the order requested, exactly as the old synchronous calls did.
+
     def _save_to_excel(self):
+        """Save button and auto-saves. Returns immediately; see _save_to_excel_async."""
+        self._save_to_excel_async()
+
+    def _save_to_excel_async(self, on_done=None):
+        """Snapshot the run now, write the spreadsheets in the background.
+
+        `on_done(ok, err)` is called back on the GUI thread when the write
+        finishes.
+        """
         try:
-            from openpyxl import load_workbook, Workbook
-            from openpyxl.drawing.image import Image as XLImage
-            from openpyxl.styles import Alignment, PatternFill, Font, Color
-            from openpyxl.utils import get_column_letter, column_index_from_string
+            job = self._collect_save_job()
+        except Exception as e:
+            self._set_status(f"Save error: {e}", CLR_RED)
+            if on_done:
+                on_done(False, str(e))
+            return
 
-            lacie        = find_lacie_drive()
-            # The experiment's start, so the spreadsheet row, the run_summary and
-            # the run folder all carry the same time. Falls back to now() only
-            # when there is no run folder to agree with (a save with no
-            # experiment behind it, which builds its own folder below).
-            now          = getattr(self, "_run_started_at", None) or datetime.now()
-            ts_str       = now.strftime("%Y-%m-%d %H:%M:%S")
+        ex = getattr(self, "_excel_executor", None)
+        if ex is None:
+            from concurrent.futures import ThreadPoolExecutor
+            ex = self._excel_executor = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="excel-save")
+        self._set_status("Saving to Excel…")
 
-            orifice      = self._orifice_combo.currentText()
-            notes        = self._notes_text.toPlainText()
-            speed_str    = self._speed_entry.text()
-            distance_str = self._distance_entry.text()
-            bubbler_str  = self._bubbler_height_entry.text().strip()
-            rpm_str      = self._rpm_entry.text().strip()
-
-            # Plain numbers, not "85.6 +/-2.1%": these are Taguchi responses and
-            # need to sort and plot in Excel. The confidence intervals live in
-            # the run's summary.json. Blank when the AI chain has not run --
-            # never a stale value from a previous run (cleared at run start).
-            _ai = self._last_ai_results or {}
-            d32_val  = _ai.get('d32_in_focus_um', '')
-            atom_val = _ai.get('atomised_pct', '')
-
-            # Use the frozen snapshot taken at experiment end — not the live buffer
-            snap = self._last_experiment_snapshot
-            camera_windows = snap.get('camera_windows', [])
-            pressures = snap['pressures']
-            flows     = snap.get('flows', [])
-            if pressures:
-                p_min, p_max = min(pressures), max(pressures)
-                p_range_str  = f"{p_min:.2f}–{p_max:.2f} barA"
+        def _run():
+            try:
+                result = self._write_excel(job)
+            except Exception as e:
+                QTimer.singleShot(0, self, lambda e=e: self._on_excel_save_failed(e, on_done))
             else:
-                p_range_str  = "N/A"
+                QTimer.singleShot(0, self, lambda r=result: self._on_excel_saved(r, on_done))
+        ex.submit(_run)
+
+    def _on_excel_saved(self, result, on_done):
+        ind_path, master_path, run_dir = result
+        self._experiment_saved = True
+        self._set_status("Saved: run_summary.xlsx  +  master_log.xlsx updated", CLR_GREEN)
+        self._save_path_lbl.setText(f"{ind_path}\nMaster: {master_path}")
+
+        # Update header last-save label to this run folder (clickable, bold, underlined)
+        self._last_saved_run_folder = run_dir
+        _folder_name = os.path.basename(run_dir)
+        self._hdr_last_save_lbl.setText(_folder_name)
+        self._hdr_last_save_lbl.setStyleSheet(
+            f"color: {CLR_TEXT}; font-size: 12px; font-weight: 700; text-decoration: underline;"
+            " cursor: pointer;"
+        )
+        self._hdr_last_save_lbl.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._update_next_save_preview()
+        if on_done:
+            on_done(True, None)
+
+    def _on_excel_save_failed(self, e, on_done):
+        self._set_status(f"Save error: {e}", CLR_RED)
+        if on_done:
+            on_done(False, str(e))
+
+    def _collect_save_job(self) -> dict:
+        """Everything the save reads from the GUI or from run state, read NOW on
+        the GUI thread. _write_excel touches nothing else of self's mutable
+        state, so a new experiment starting mid-save cannot leak into the row
+        being written."""
+        lacie        = find_lacie_drive()
+        # The experiment's start, so the spreadsheet row, the run_summary and
+        # the run folder all carry the same time. Falls back to now() only
+        # when there is no run folder to agree with (a save with no
+        # experiment behind it, which builds its own folder below).
+        now          = getattr(self, "_run_started_at", None) or datetime.now()
+
+        # Use the frozen snapshot taken at experiment end — not the live buffer.
+        # Copied, so the background write never shares lists with the GUI.
+        snap = {k: (list(v) if isinstance(v, list) else v)
+                for k, v in self._last_experiment_snapshot.items()}
+        flows = snap.get('flows', [])
+        flow_entry = self._flow_entry.text()
+        f_range_file = f"{max(flows):.0f}sccm" if flows else None
+
+        # ── Resolve run folder (created at Start Experiment, or now as fallback) ──
+        if self._run_folder:
+            run_dir = self._run_folder
+        else:
+            _exp_base = os.path.join(lacie, "Experiments") if lacie else os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                "experiment_logs", "Experiments")
+            _run_id = self._run_id(now, f_range_file or 'unknownsccm')
+            run_dir = os.path.join(_exp_base, now.strftime("%Y"), now.strftime("%m"),
+                                   now.strftime("%d"), _run_id)
+            for _sub in [os.path.join("shadowgraph", "raw"),
+                         os.path.join("shadowgraph", "analysis"), "cone"]:
+                os.makedirs(os.path.join(run_dir, _sub), exist_ok=True)
+            self._run_folder = run_dir
+
+        return {
+            'lacie':        lacie,
+            'now':          now,
+            'orifice':      self._orifice_combo.currentText(),
+            'notes':        self._notes_text.toPlainText(),
+            'speed_str':    self._speed_entry.text(),
+            'distance_str': self._distance_entry.text(),
+            'bubbler_str':  self._bubbler_height_entry.text().strip(),
+            'rpm_str':      self._rpm_entry.text().strip(),
+            'flow_entry':   flow_entry,
+            'fps_text':     self._cam_fps.text(),
+            'ai':           dict(self._last_ai_results or {}),
+            'snap':         snap,
+            'run_dir':      run_dir,
+            'last_tiff_dir': self._last_tiff_dir,
+            'px_per_mm':    self._get_px_per_mm(),
+            'last_cone_path': self._last_cone_path,
+        }
+
+    def _write_excel(self, job: dict):
+        """The file work of a save: run_summary.xlsx and the master_log row.
+        Runs on the save worker -- reads only `job` and class constants, never
+        a widget. Returns (ind_path, master_path, run_dir). Raises on failure.
+        """
+        from openpyxl import load_workbook, Workbook
+        from openpyxl.drawing.image import Image as XLImage
+        from openpyxl.styles import Alignment, PatternFill, Font, Color
+        from openpyxl.utils import get_column_letter, column_index_from_string
+        from matplotlib.figure import Figure
+
+        lacie        = job['lacie']
+        now          = job['now']
+        ts_str       = now.strftime("%Y-%m-%d %H:%M:%S")
+
+        orifice      = job['orifice']
+        notes        = job['notes']
+        speed_str    = job['speed_str']
+        distance_str = job['distance_str']
+        bubbler_str  = job['bubbler_str']
+        rpm_str      = job['rpm_str']
+
+        # Plain numbers, not "85.6 +/-2.1%": these are Taguchi responses and
+        # need to sort and plot in Excel. The confidence intervals live in
+        # the run's summary.json. Blank when the AI chain has not run --
+        # never a stale value from a previous run (cleared at run start).
+        _ai = job['ai']
+        d32_val  = _ai.get('d32_in_focus_um', '')
+        atom_val = _ai.get('atomised_pct', '')
+
+        snap = job['snap']
+        camera_windows = snap.get('camera_windows', [])
+        pressures = snap['pressures']
+        flows     = snap.get('flows', [])
+        if pressures:
+            p_min, p_max = min(pressures), max(pressures)
+            p_range_str  = f"{p_min:.2f}–{p_max:.2f} barA"
+        else:
+            p_range_str  = "N/A"
+        if flows:
+            f_min, f_max = min(flows), max(flows)
+            f_range_str  = f"{f_min:.0f}–{f_max:.0f} sccm"
+        else:
+            raw = job['flow_entry']
+            f_range_str  = f"{raw} sccm" if raw else "N/A"
+
+        run_dir  = job['run_dir']
+        ind_path = os.path.join(run_dir, "run_summary.xlsx")
+
+        # ── Build data frame with camera window annotations ──────────────────
+        # cam_start_N / cam_end_N values appear only on the row whose timestamp
+        # is closest to the camera window boundary; all other rows are blank.
+        press_df = None
+        if snap['timestamps']:
+            _cols = {'timestamps': snap['timestamps'],
+                     'pressures':  snap['pressures']}
             if flows:
-                f_min, f_max = min(flows), max(flows)
-                f_range_str  = f"{f_min:.0f}–{f_max:.0f} sccm"
-                f_range_file = f"{f_max:.0f}sccm"
-            else:
-                raw = self._flow_entry.text()
-                f_range_str  = f"{raw} sccm" if raw else "N/A"
-                f_range_file = None
+                _cols['flows_sccm'] = flows
+            press_df = pd.DataFrame(_cols)
+            if camera_windows:
+                _ts_arr = snap['timestamps']
+                for _i, (_cw_s, _cw_e) in enumerate(camera_windows, start=1):
+                    _col_s, _col_e = f'cam_start_{_i}', f'cam_end_{_i}'
+                    press_df[_col_s] = float('nan')
+                    press_df[_col_e] = float('nan')
+                    _idx_s = min(range(len(_ts_arr)), key=lambda j: abs(_ts_arr[j] - _cw_s))
+                    _idx_e = min(range(len(_ts_arr)), key=lambda j: abs(_ts_arr[j] - _cw_e))
+                    press_df.at[_idx_s, _col_s] = round(_cw_s, 3)
+                    press_df.at[_idx_e, _col_e] = round(_cw_e, 3)
 
-            # ── Resolve run folder (created at Start Experiment, or now as fallback) ──
-            if self._run_folder:
-                run_dir = self._run_folder
-            else:
-                _exp_base = os.path.join(lacie, "Experiments") if lacie else os.path.join(
-                    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-                    "experiment_logs", "Experiments")
-                _run_id = self._run_id(now, f_range_file or 'unknownsccm')
-                run_dir = os.path.join(_exp_base, now.strftime("%Y"), now.strftime("%m"),
-                                       now.strftime("%d"), _run_id)
-                for _sub in [os.path.join("shadowgraph", "raw"),
-                             os.path.join("shadowgraph", "analysis"), "cone"]:
-                    os.makedirs(os.path.join(run_dir, _sub), exist_ok=True)
-                self._run_folder = run_dir
-            ind_path = os.path.join(run_dir, "run_summary.xlsx")
+        # ── Render charts (shared between run_summary and master_log) ────────
+        # DPI = DISPLAY_H / fig_h → PNG always renders at exactly DISPLAY_H px tall.
+        DISPLAY_H          = 165
+        MIN_W_PX           = 347
+        PX_PER_SEC         = MIN_W_PX / 10.0
+        FIG_H_IN           = 2.0
+        DPI                = DISPLAY_H / FIG_H_IN
 
-            # ── Build data frame with camera window annotations ──────────────────
-            # cam_start_N / cam_end_N values appear only on the row whose timestamp
-            # is closest to the camera window boundary; all other rows are blank.
-            press_df = None
-            if snap['timestamps']:
-                _cols = {'timestamps': snap['timestamps'],
-                         'pressures':  snap['pressures']}
-                if flows:
-                    _cols['flows_sccm'] = flows
-                press_df = pd.DataFrame(_cols)
-                if camera_windows:
-                    _ts_arr = snap['timestamps']
-                    for _i, (_cw_s, _cw_e) in enumerate(camera_windows, start=1):
-                        _col_s, _col_e = f'cam_start_{_i}', f'cam_end_{_i}'
-                        press_df[_col_s] = float('nan')
-                        press_df[_col_e] = float('nan')
-                        _idx_s = min(range(len(_ts_arr)), key=lambda j: abs(_ts_arr[j] - _cw_s))
-                        _idx_e = min(range(len(_ts_arr)), key=lambda j: abs(_ts_arr[j] - _cw_e))
-                        press_df.at[_idx_s, _col_s] = round(_cw_s, 3)
-                        press_df.at[_idx_e, _col_e] = round(_cw_e, 3)
+        def _render_chart(series, ylabel, colour, range_str):
+            """Render one trace to PNG bytes; returns (bytes, display width px)."""
+            if not series:
+                return None, MIN_W_PX
+            t0          = snap['timestamps'][0]
+            rel_ts      = [t - t0 for t in snap['timestamps']]
+            duration_s  = rel_ts[-1] if rel_ts else 0.0
+            target_w_px = max(MIN_W_PX, int(duration_s * PX_PER_SEC))
+            # Figure, not plt.subplots: this runs on the save worker, and
+            # pyplot's global figure registry is not thread-safe. Same Agg
+            # renderer, so the PNG is identical.
+            fig = Figure(figsize=(target_w_px / DPI, FIG_H_IN))
+            ax = fig.subplots()
+            fig.patch.set_facecolor('white')
+            ax.set_facecolor('#f5f5f7')
+            ax.plot(rel_ts, series, color=colour, linewidth=2.5, solid_capstyle='round')
+            ax.fill_between(rel_ts, series, alpha=0.12, color=colour)
+            for _cw_s, _cw_e in camera_windows:
+                ax.axvspan(_cw_s - t0, _cw_e - t0, alpha=0.2, color='red', zorder=0)
+            ax.set_xlabel('Time (s)', fontsize=8, color='#3a3a3c')
+            ax.set_ylabel(ylabel, fontsize=8, color='#3a3a3c')
+            ax.set_title(f'{orifice}  {range_str}',
+                         fontsize=8, color='#1c1c1e', pad=4, loc='left')
+            ax.tick_params(colors='#6e6e73', labelsize=7)
+            ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
+            ax.spines['left'].set_color('#d1d1d6'); ax.spines['bottom'].set_color('#d1d1d6')
+            ax.grid(True, alpha=0.4, color='#d1d1d6', linewidth=0.6)
+            ax.set_ylim(bottom=0)
+            fig.tight_layout(pad=0.6)
+            buf = io.BytesIO()
+            fig.savefig(buf, format='png', dpi=DPI, bbox_inches='tight', facecolor='white')
+            import struct as _struct
+            buf.seek(16)
+            actual_w = _struct.unpack('>I', buf.read(4))[0]
+            actual_h = _struct.unpack('>I', buf.read(4))[0]
+            width_px = max(MIN_W_PX, int(actual_w * DISPLAY_H / actual_h))
+            # Return bytes, not the buffer: PIL closes the BytesIO inside XLImage,
+            # and the same image is reused for the master log.
+            return buf.getvalue(), width_px
 
-            # ── Render charts (shared between run_summary and master_log) ────────
-            # DPI = DISPLAY_H / fig_h → PNG always renders at exactly DISPLAY_H px tall.
-            DISPLAY_H          = 165
-            MIN_W_PX           = 347
-            PX_PER_SEC         = MIN_W_PX / 10.0
-            FIG_H_IN           = 2.0
-            DPI                = DISPLAY_H / FIG_H_IN
+        pressure_bytes, pressure_img_width = _render_chart(
+            pressures, 'Pressure (barA)', '#0a84ff', p_range_str)
+        flow_bytes, flow_img_width = _render_chart(
+            flows, 'Mass Flow (sccm)', '#30d158', f_range_str)
 
-            def _render_chart(series, ylabel, colour, range_str):
-                """Render one trace to PNG bytes; returns (bytes, display width px)."""
-                if not series:
-                    return None, MIN_W_PX
-                t0          = snap['timestamps'][0]
-                rel_ts      = [t - t0 for t in snap['timestamps']]
-                duration_s  = rel_ts[-1] if rel_ts else 0.0
-                target_w_px = max(MIN_W_PX, int(duration_s * PX_PER_SEC))
-                fig, ax = plt.subplots(figsize=(target_w_px / DPI, FIG_H_IN))
-                fig.patch.set_facecolor('white')
-                ax.set_facecolor('#f5f5f7')
-                ax.plot(rel_ts, series, color=colour, linewidth=2.5, solid_capstyle='round')
-                ax.fill_between(rel_ts, series, alpha=0.12, color=colour)
-                for _cw_s, _cw_e in camera_windows:
-                    ax.axvspan(_cw_s - t0, _cw_e - t0, alpha=0.2, color='red', zorder=0)
-                ax.set_xlabel('Time (s)', fontsize=8, color='#3a3a3c')
-                ax.set_ylabel(ylabel, fontsize=8, color='#3a3a3c')
-                ax.set_title(f'{orifice}  {range_str}',
-                             fontsize=8, color='#1c1c1e', pad=4, loc='left')
-                ax.tick_params(colors='#6e6e73', labelsize=7)
-                ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
-                ax.spines['left'].set_color('#d1d1d6'); ax.spines['bottom'].set_color('#d1d1d6')
-                ax.grid(True, alpha=0.4, color='#d1d1d6', linewidth=0.6)
-                ax.set_ylim(bottom=0)
-                fig.tight_layout(pad=0.6)
-                buf = io.BytesIO()
-                fig.savefig(buf, format='png', dpi=DPI, bbox_inches='tight', facecolor='white')
-                plt.close(fig)
-                import struct as _struct
-                buf.seek(16)
-                actual_w = _struct.unpack('>I', buf.read(4))[0]
-                actual_h = _struct.unpack('>I', buf.read(4))[0]
-                width_px = max(MIN_W_PX, int(actual_w * DISPLAY_H / actual_h))
-                # Return bytes, not the buffer: PIL closes the BytesIO inside XLImage,
-                # and the same image is reused for the master log.
-                return buf.getvalue(), width_px
+        fps_val = float(job['fps_text']) if job['fps_text'] else 1000.0
+        meta = {
+            'Field': ['Timestamp', 'Orifice', 'Bubbler Height (mm)',
+                      'Bubbler RPM', 'Flow Range (sccm)',
+                      'Pressure Range (barA)', 'Speed (steps/s)', 'Motor Travel (mm)',
+                      'FPS', 'Notes'],
+            'Value': [ts_str, orifice, bubbler_str or 'NOT RECORDED',
+                      rpm_str or 'NOT RECORDED', f_range_str, p_range_str,
+                      speed_str, distance_str, fps_val, notes],
+        }
+        with pd.ExcelWriter(ind_path, engine='openpyxl') as writer:
+            pd.DataFrame(meta).to_excel(writer, sheet_name='Metadata', index=False)
+            if press_df is not None:
+                press_df.to_excel(writer, sheet_name='Pressure', index=False)
+                _anchor_row = len(press_df) + 3
+                _ws = writer.sheets['Pressure']
+                if pressure_bytes:
+                    _rs_img = XLImage(io.BytesIO(pressure_bytes))
+                    _rs_img.width  = pressure_img_width
+                    _rs_img.height = DISPLAY_H
+                    _ws.add_image(_rs_img, f'A{_anchor_row}')
+                if flow_bytes:
+                    # Sit the flow chart immediately right of the pressure chart:
+                    # default column width is ~64 px, so step that many columns over.
+                    _col = (pressure_img_width // 64) + 2 if pressure_bytes else 1
+                    _fl_img = XLImage(io.BytesIO(flow_bytes))
+                    _fl_img.width  = flow_img_width
+                    _fl_img.height = DISPLAY_H
+                    _ws.add_image(_fl_img, f'{get_column_letter(_col)}{_anchor_row}')
 
-            pressure_bytes, pressure_img_width = _render_chart(
-                pressures, 'Pressure (barA)', '#0a84ff', p_range_str)
-            flow_bytes, flow_img_width = _render_chart(
-                flows, 'Mass Flow (sccm)', '#30d158', f_range_str)
-
-            fps_val = float(self._cam_fps.text()) if self._cam_fps.text() else 1000.0
-            meta = {
-                'Field': ['Timestamp', 'Orifice', 'Bubbler Height (mm)',
-                          'Bubbler RPM', 'Flow Range (sccm)',
-                          'Pressure Range (barA)', 'Speed (steps/s)', 'Motor Travel (mm)',
-                          'FPS', 'Notes'],
-                'Value': [ts_str, orifice, bubbler_str or 'NOT RECORDED',
-                          rpm_str or 'NOT RECORDED', f_range_str, p_range_str,
-                          speed_str, distance_str, fps_val, notes],
-            }
-            with pd.ExcelWriter(ind_path, engine='openpyxl') as writer:
-                pd.DataFrame(meta).to_excel(writer, sheet_name='Metadata', index=False)
-                if press_df is not None:
-                    press_df.to_excel(writer, sheet_name='Pressure', index=False)
-                    _anchor_row = len(press_df) + 3
-                    _ws = writer.sheets['Pressure']
-                    if pressure_bytes:
-                        _rs_img = XLImage(io.BytesIO(pressure_bytes))
-                        _rs_img.width  = pressure_img_width
-                        _rs_img.height = DISPLAY_H
-                        _ws.add_image(_rs_img, f'A{_anchor_row}')
-                    if flow_bytes:
-                        # Sit the flow chart immediately right of the pressure chart:
-                        # default column width is ~64 px, so step that many columns over.
-                        _col = (pressure_img_width // 64) + 2 if pressure_bytes else 1
-                        _fl_img = XLImage(io.BytesIO(flow_bytes))
-                        _fl_img.width  = flow_img_width
-                        _fl_img.height = DISPLAY_H
-                        _ws.add_image(_fl_img, f'{get_column_letter(_col)}{_anchor_row}')
-
-            # ── Compute lamella thickness value for master_log ────────────────
-            import csv as _csv_mod, re as _re
-            _lamella_cell_val = 'N/A'
-            _lamella_orange   = False
-            if self._last_tiff_dir:
-                _lam_csv = os.path.join(self._last_tiff_dir, 'lamella_thickness.csv')
-                if os.path.exists(_lam_csv):
-                    _thicknesses = []
-                    with open(_lam_csv, newline='') as _lf:
-                        for _lr in _csv_mod.DictReader(_lf):
-                            if str(_lr.get('ok', '')).lower() == 'true':
-                                try:
-                                    _thicknesses.append(float(_lr['thickness_px']))
-                                except (ValueError, KeyError):
-                                    pass
-                    if _thicknesses:
-                        _avg_px    = sum(_thicknesses) / len(_thicknesses)
-                        _pxmm      = self._get_px_per_mm()
-                        if _pxmm > 0:
-                            _lamella_cell_val = f"{_avg_px:.1f} px / {_avg_px / _pxmm:.3f} mm"
-                        else:
-                            _lamella_cell_val = f"{_avg_px:.1f} px"
+        # ── Compute lamella thickness value for master_log ────────────────
+        import csv as _csv_mod, re as _re
+        _lamella_cell_val = 'N/A'
+        _lamella_orange   = False
+        if job['last_tiff_dir']:
+            _lam_csv = os.path.join(job['last_tiff_dir'], 'lamella_thickness.csv')
+            if os.path.exists(_lam_csv):
+                _thicknesses = []
+                with open(_lam_csv, newline='') as _lf:
+                    for _lr in _csv_mod.DictReader(_lf):
+                        if str(_lr.get('ok', '')).lower() == 'true':
+                            try:
+                                _thicknesses.append(float(_lr['thickness_px']))
+                            except (ValueError, KeyError):
+                                pass
+                if _thicknesses:
+                    _avg_px    = sum(_thicknesses) / len(_thicknesses)
+                    _pxmm      = job['px_per_mm']
+                    if _pxmm > 0:
+                        _lamella_cell_val = f"{_avg_px:.1f} px / {_avg_px / _pxmm:.3f} mm"
                     else:
-                        _lamella_orange   = True
-                        _lamella_cell_val = 'Input Self'
+                        _lamella_cell_val = f"{_avg_px:.1f} px"
                 else:
                     _lamella_orange   = True
                     _lamella_cell_val = 'Input Self'
-
-            # ── Master log: insert at row 2, shift image anchors first ───────
-            _master_base = os.path.join(lacie, "Experiments", "Logs") if lacie else os.path.join(
-                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-                "experiment_logs")
-            os.makedirs(_master_base, exist_ok=True)
-            master_path = os.path.join(_master_base, 'master_log.xlsx')
-            # Row for THIS run, if it is already logged. The Timestamp column
-            # holds the experiment's start time, which is unique per run, so it
-            # identifies the row without needing a hidden key. Set below once
-            # the migrations have guaranteed column A is Timestamp.
-            _existing_row = None
-            if os.path.exists(master_path):
-                wb = load_workbook(master_path)
-                ws = wb.active
-
-                # ── Migrate old header format (no Avg Lamella Thickness column) ──
-                _hdr = [ws.cell(row=1, column=c).value for c in range(1, ws.max_column + 1)]
-                if len(_hdr) >= 7 and _hdr[6] == 'Notes':
-                    ws.insert_cols(7)
-                    ws.cell(row=1, column=7).value = 'Avg Lamella Thickness'
-                    ws.column_dimensions['G'].width = 12
-                    # Shift image anchors that were in columns H+ (index >= 7, 1-based)
-                    for _img in ws._images:
-                        _anc = _img.anchor
-                        if isinstance(_anc, str):
-                            _m = _re.match(r'^([A-Z]+)(\d+)$', _anc)
-                            if _m and column_index_from_string(_m.group(1)) >= 8:
-                                _new_col = get_column_letter(column_index_from_string(_m.group(1)) + 1)
-                                _img.anchor = f'{_new_col}{_m.group(2)}'
-                        elif hasattr(_anc, '_from'):
-                            if _anc._from.col >= 7:  # 0-indexed: 7 = Excel col H
-                                _anc._from.col += 1
-                            if hasattr(_anc, 'to') and _anc.to and _anc.to.col >= 7:
-                                _anc.to.col += 1
-
-                # ── Migrate to the flow-first format ────────────────────────────
-                # Old layout: D = 'Pressure Range' (BAR, from the retired pressure
-                # controller).  New layout inserts 'Flow Range (sccm)' at D and pushes
-                # pressure to E, so every column from D rightwards shifts by one, and
-                # a 'Mass Flow Graph' column is appended at the end.
-                _hdr = [ws.cell(row=1, column=c).value for c in range(1, ws.max_column + 1)]
-                if len(_hdr) >= 4 and _hdr[3] == 'Pressure Range':
-                    ws.insert_cols(4)
-                    ws.cell(row=1, column=4).value = 'Flow Range (sccm)'
-                    ws.cell(row=1, column=5).value = 'Pressure Range (barA)'
-                    ws.column_dimensions['D'].width = 18
-                    ws.column_dimensions['E'].width = 18
-                    for _img in ws._images:
-                        _anc = _img.anchor
-                        if isinstance(_anc, str):
-                            _m = _re.match(r'^([A-Z]+)(\d+)$', _anc)
-                            if _m and column_index_from_string(_m.group(1)) >= 4:
-                                _new_col = get_column_letter(column_index_from_string(_m.group(1)) + 1)
-                                _img.anchor = f'{_new_col}{_m.group(2)}'
-                        elif hasattr(_anc, '_from'):
-                            if _anc._from.col >= 3:   # 0-indexed: 3 == Excel col D
-                                _anc._from.col += 1
-                            if hasattr(_anc, 'to') and _anc.to and _anc.to.col >= 3:
-                                _anc.to.col += 1
-                # ── Migrate away from the Nozzle column ─────────────────────────
-                # Runs after the migrations above have brought an older file up to
-                # the 13-column with-Nozzle layout.  Nozzle was column B, so every
-                # column from C rightwards shifts one to the left.
-                if ws.cell(row=1, column=2).value == 'Nozzle':
-                    if ws.cell(row=1, column=13).value != 'Mass Flow Graph':
-                        ws.cell(row=1, column=13).value = 'Mass Flow Graph'
-                    ws.delete_cols(2)
-                    for _img in ws._images:
-                        _anc = _img.anchor
-                        if isinstance(_anc, str):
-                            _m = _re.match(r'^([A-Z]+)(\d+)$', _anc)
-                            if _m and column_index_from_string(_m.group(1)) >= 3:
-                                _new_col = get_column_letter(column_index_from_string(_m.group(1)) - 1)
-                                _img.anchor = f'{_new_col}{_m.group(2)}'
-                        elif hasattr(_anc, '_from'):
-                            if _anc._from.col >= 2:   # 0-indexed: 2 == Excel col C
-                                _anc._from.col -= 1
-                            if hasattr(_anc, 'to') and _anc.to and _anc.to.col >= 2:
-                                _anc.to.col -= 1
-
-                # ── Migrate to the bubbler format ───────────────────────────────
-                # Runs after the migrations above have brought an older file up to
-                # the 12-column layout, where C is 'Flow Range (sccm)'. Bubbler
-                # height and RPM go in beside Orifice as C and D, so every column
-                # from C rightwards shifts two to the right.
-                if ws.cell(row=1, column=3).value == 'Flow Range (sccm)':
-                    ws.insert_cols(3, 2)
-                    ws.cell(row=1, column=3).value = 'Bubbler Height (mm)'
-                    ws.cell(row=1, column=4).value = 'Bubbler RPM'
-                    for _img in ws._images:
-                        _anc = _img.anchor
-                        if isinstance(_anc, str):
-                            _m = _re.match(r'^([A-Z]+)(\d+)$', _anc)
-                            if _m and column_index_from_string(_m.group(1)) >= 3:
-                                _new_col = get_column_letter(column_index_from_string(_m.group(1)) + 2)
-                                _img.anchor = f'{_new_col}{_m.group(2)}'
-                        elif hasattr(_anc, '_from'):
-                            if _anc._from.col >= 2:   # 0-indexed: 2 == Excel col C
-                                _anc._from.col += 2
-                            if hasattr(_anc, 'to') and _anc.to and _anc.to.col >= 2:
-                                _anc.to.col += 2
-
-                # ── Migrate to the measurement format ───────────────────────────
-                # D32 and atomised fraction go in beside the other measured
-                # responses, left of Avg Lamella Thickness, so everything the run
-                # PRODUCED sits together and to the right of everything that was
-                # SET. Column I was Avg Lamella in the 14-column layout.
-                if ws.cell(row=1, column=9).value == 'Avg Lamella Thickness':
-                    ws.insert_cols(9, 2)
-                    ws.cell(row=1, column=9).value = 'D32 (um)'
-                    ws.cell(row=1, column=10).value = 'Atomised (%)'
-                    for _img in ws._images:
-                        _anc = _img.anchor
-                        if isinstance(_anc, str):
-                            _m = _re.match(r'^([A-Z]+)(\d+)$', _anc)
-                            if _m and column_index_from_string(_m.group(1)) >= 9:
-                                _new_col = get_column_letter(column_index_from_string(_m.group(1)) + 2)
-                                _img.anchor = f'{_new_col}{_m.group(2)}'
-                        elif hasattr(_anc, '_from'):
-                            if _anc._from.col >= 8:   # 0-indexed: 8 == Excel col I
-                                _anc._from.col += 2
-                            if hasattr(_anc, 'to') and _anc.to and _anc.to.col >= 8:
-                                _anc.to.col += 2
-
-                _mf_col = self.MASTER_COL_COUNT
-                if ws.cell(row=1, column=_mf_col).value != 'Mass Flow Graph':
-                    ws.cell(row=1, column=_mf_col).value = 'Mass Flow Graph'
-                    ws.column_dimensions[get_column_letter(_mf_col)].width = 56
-
-                # Is this run already logged? Re-saving must UPDATE that row, not
-                # append a second one -- the experiment auto-saves when it ends,
-                # and you then write the Notes and save again. Appending would
-                # give two rows per run, and a stray double-click on Save would
-                # do the same.
-                for _r in range(2, ws.max_row + 1):
-                    if str(ws.cell(row=_r, column=1).value).strip() == ts_str:
-                        _existing_row = _r
-                        break
-
-                # Everything below only makes room for a NEW row. Updating an
-                # existing one must not shift anything.
-                if _existing_row is None:
-                    # Shift row_dimensions down one row before inserting
-                    old_dims = {r: ws.row_dimensions[r].height
-                                for r in list(ws.row_dimensions.keys()) if r >= 2}
-                    for r in sorted(old_dims.keys(), reverse=True):
-                        ws.row_dimensions[r + 1].height = old_dims[r]
-
-                    # Shift every existing image anchor down one row before inserting
-                    for img in ws._images:
-                        anchor = img.anchor
-                        if isinstance(anchor, str):
-                            m = _re.match(r'^([A-Z]+)(\d+)$', anchor)
-                            if m and int(m.group(2)) >= 2:
-                                img.anchor = f'{m.group(1)}{int(m.group(2)) + 1}'
-                        elif hasattr(anchor, '_from'):
-                            if anchor._from.row >= 1:   # 0-indexed: row 1 == Excel row 2
-                                anchor._from.row += 1
-                            if hasattr(anchor, 'to') and anchor.to and anchor.to.row >= 1:
-                                anchor.to.row += 1
             else:
-                wb = Workbook()
-                ws = wb.active
-                ws.title = 'Experiments'
-                ws.append(list(self.MASTER_HEADERS))
-                for col, width in zip(self.MASTER_COL_LETTERS, self.MASTER_COL_WIDTHS):
-                    ws.column_dimensions[col].width = width
+                _lamella_orange   = True
+                _lamella_cell_val = 'Input Self'
 
-            # Stamp the canonical header names and style on EVERY save, for both
-            # new and migrated workbooks. openpyxl's insert_cols() gives a new
-            # column no style at all, and setting .value on it does not inherit
-            # one from its neighbours -- which is why 'Mass Flow Graph' was the
-            # single unbold, unfilled header in the existing log. Doing it here
-            # also carries renames (Distance -> Motor Travel) into old files.
-            _hdr_fill = PatternFill(fill_type='solid',
-                                    start_color=Color(theme=self.MASTER_HDR_FILL_THEME,
-                                                      tint=self.MASTER_HDR_FILL_TINT))
-            _hdr_font = Font(name='Calibri', size=11, bold=True,
-                             color=Color(theme=self.MASTER_HDR_FONT_THEME))
-            for _c, _name in enumerate(self.MASTER_HEADERS, start=1):
-                _hc = ws.cell(row=1, column=_c)
-                _hc.value = _name
-                _hc.fill = _hdr_fill
-                _hc.font = _hdr_font
+        # ── Master log: insert at row 2, shift image anchors first ───────
+        _master_base = os.path.join(lacie, "Experiments", "Logs") if lacie else os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            "experiment_logs")
+        os.makedirs(_master_base, exist_ok=True)
+        master_path = os.path.join(_master_base, 'master_log.xlsx')
+        # Row for THIS run, if it is already logged. The Timestamp column
+        # holds the experiment's start time, which is unique per run, so it
+        # identifies the row without needing a hidden key. Set below once
+        # the migrations have guaranteed column A is Timestamp.
+        _existing_row = None
+        if os.path.exists(master_path):
+            wb = load_workbook(master_path)
+            ws = wb.active
 
-            # Reapply the canonical widths on every save.  openpyxl's
-            # insert_cols()/delete_cols() above move cell values but NOT
-            # column_dimensions, so a format migration leaves widths attached to
-            # the wrong column — Shadowgraph inherits the old Pressure Graph width
-            # and renders enormous.  Reapplying here also repairs workbooks that
-            # were migrated before this was fixed.
-            # M/N/O/P are re-set from their actual images further down.
+            # ── Migrate old header format (no Avg Lamella Thickness column) ──
+            _hdr = [ws.cell(row=1, column=c).value for c in range(1, ws.max_column + 1)]
+            if len(_hdr) >= 7 and _hdr[6] == 'Notes':
+                ws.insert_cols(7)
+                ws.cell(row=1, column=7).value = 'Avg Lamella Thickness'
+                ws.column_dimensions['G'].width = 12
+                # Shift image anchors that were in columns H+ (index >= 7, 1-based)
+                for _img in ws._images:
+                    _anc = _img.anchor
+                    if isinstance(_anc, str):
+                        _m = _re.match(r'^([A-Z]+)(\d+)$', _anc)
+                        if _m and column_index_from_string(_m.group(1)) >= 8:
+                            _new_col = get_column_letter(column_index_from_string(_m.group(1)) + 1)
+                            _img.anchor = f'{_new_col}{_m.group(2)}'
+                    elif hasattr(_anc, '_from'):
+                        if _anc._from.col >= 7:  # 0-indexed: 7 = Excel col H
+                            _anc._from.col += 1
+                        if hasattr(_anc, 'to') and _anc.to and _anc.to.col >= 7:
+                            _anc.to.col += 1
+
+            # ── Migrate to the flow-first format ────────────────────────────
+            # Old layout: D = 'Pressure Range' (BAR, from the retired pressure
+            # controller).  New layout inserts 'Flow Range (sccm)' at D and pushes
+            # pressure to E, so every column from D rightwards shifts by one, and
+            # a 'Mass Flow Graph' column is appended at the end.
+            _hdr = [ws.cell(row=1, column=c).value for c in range(1, ws.max_column + 1)]
+            if len(_hdr) >= 4 and _hdr[3] == 'Pressure Range':
+                ws.insert_cols(4)
+                ws.cell(row=1, column=4).value = 'Flow Range (sccm)'
+                ws.cell(row=1, column=5).value = 'Pressure Range (barA)'
+                ws.column_dimensions['D'].width = 18
+                ws.column_dimensions['E'].width = 18
+                for _img in ws._images:
+                    _anc = _img.anchor
+                    if isinstance(_anc, str):
+                        _m = _re.match(r'^([A-Z]+)(\d+)$', _anc)
+                        if _m and column_index_from_string(_m.group(1)) >= 4:
+                            _new_col = get_column_letter(column_index_from_string(_m.group(1)) + 1)
+                            _img.anchor = f'{_new_col}{_m.group(2)}'
+                    elif hasattr(_anc, '_from'):
+                        if _anc._from.col >= 3:   # 0-indexed: 3 == Excel col D
+                            _anc._from.col += 1
+                        if hasattr(_anc, 'to') and _anc.to and _anc.to.col >= 3:
+                            _anc.to.col += 1
+            # ── Migrate away from the Nozzle column ─────────────────────────
+            # Runs after the migrations above have brought an older file up to
+            # the 13-column with-Nozzle layout.  Nozzle was column B, so every
+            # column from C rightwards shifts one to the left.
+            if ws.cell(row=1, column=2).value == 'Nozzle':
+                if ws.cell(row=1, column=13).value != 'Mass Flow Graph':
+                    ws.cell(row=1, column=13).value = 'Mass Flow Graph'
+                ws.delete_cols(2)
+                for _img in ws._images:
+                    _anc = _img.anchor
+                    if isinstance(_anc, str):
+                        _m = _re.match(r'^([A-Z]+)(\d+)$', _anc)
+                        if _m and column_index_from_string(_m.group(1)) >= 3:
+                            _new_col = get_column_letter(column_index_from_string(_m.group(1)) - 1)
+                            _img.anchor = f'{_new_col}{_m.group(2)}'
+                    elif hasattr(_anc, '_from'):
+                        if _anc._from.col >= 2:   # 0-indexed: 2 == Excel col C
+                            _anc._from.col -= 1
+                        if hasattr(_anc, 'to') and _anc.to and _anc.to.col >= 2:
+                            _anc.to.col -= 1
+
+            # ── Migrate to the bubbler format ───────────────────────────────
+            # Runs after the migrations above have brought an older file up to
+            # the 12-column layout, where C is 'Flow Range (sccm)'. Bubbler
+            # height and RPM go in beside Orifice as C and D, so every column
+            # from C rightwards shifts two to the right.
+            if ws.cell(row=1, column=3).value == 'Flow Range (sccm)':
+                ws.insert_cols(3, 2)
+                ws.cell(row=1, column=3).value = 'Bubbler Height (mm)'
+                ws.cell(row=1, column=4).value = 'Bubbler RPM'
+                for _img in ws._images:
+                    _anc = _img.anchor
+                    if isinstance(_anc, str):
+                        _m = _re.match(r'^([A-Z]+)(\d+)$', _anc)
+                        if _m and column_index_from_string(_m.group(1)) >= 3:
+                            _new_col = get_column_letter(column_index_from_string(_m.group(1)) + 2)
+                            _img.anchor = f'{_new_col}{_m.group(2)}'
+                    elif hasattr(_anc, '_from'):
+                        if _anc._from.col >= 2:   # 0-indexed: 2 == Excel col C
+                            _anc._from.col += 2
+                        if hasattr(_anc, 'to') and _anc.to and _anc.to.col >= 2:
+                            _anc.to.col += 2
+
+            # ── Migrate to the measurement format ───────────────────────────
+            # D32 and atomised fraction go in beside the other measured
+            # responses, left of Avg Lamella Thickness, so everything the run
+            # PRODUCED sits together and to the right of everything that was
+            # SET. Column I was Avg Lamella in the 14-column layout.
+            if ws.cell(row=1, column=9).value == 'Avg Lamella Thickness':
+                ws.insert_cols(9, 2)
+                ws.cell(row=1, column=9).value = 'D32 (um)'
+                ws.cell(row=1, column=10).value = 'Atomised (%)'
+                for _img in ws._images:
+                    _anc = _img.anchor
+                    if isinstance(_anc, str):
+                        _m = _re.match(r'^([A-Z]+)(\d+)$', _anc)
+                        if _m and column_index_from_string(_m.group(1)) >= 9:
+                            _new_col = get_column_letter(column_index_from_string(_m.group(1)) + 2)
+                            _img.anchor = f'{_new_col}{_m.group(2)}'
+                    elif hasattr(_anc, '_from'):
+                        if _anc._from.col >= 8:   # 0-indexed: 8 == Excel col I
+                            _anc._from.col += 2
+                        if hasattr(_anc, 'to') and _anc.to and _anc.to.col >= 8:
+                            _anc.to.col += 2
+
+            _mf_col = self.MASTER_COL_COUNT
+            if ws.cell(row=1, column=_mf_col).value != 'Mass Flow Graph':
+                ws.cell(row=1, column=_mf_col).value = 'Mass Flow Graph'
+                ws.column_dimensions[get_column_letter(_mf_col)].width = 56
+
+            # Is this run already logged? Re-saving must UPDATE that row, not
+            # append a second one -- the experiment auto-saves when it ends,
+            # and you then write the Notes and save again. Appending would
+            # give two rows per run, and a stray double-click on Save would
+            # do the same.
+            for _r in range(2, ws.max_row + 1):
+                if str(ws.cell(row=_r, column=1).value).strip() == ts_str:
+                    _existing_row = _r
+                    break
+
+            # Everything below only makes room for a NEW row. Updating an
+            # existing one must not shift anything.
+            if _existing_row is None:
+                # Shift row_dimensions down one row before inserting
+                old_dims = {r: ws.row_dimensions[r].height
+                            for r in list(ws.row_dimensions.keys()) if r >= 2}
+                for r in sorted(old_dims.keys(), reverse=True):
+                    ws.row_dimensions[r + 1].height = old_dims[r]
+
+                # Shift every existing image anchor down one row before inserting
+                for img in ws._images:
+                    anchor = img.anchor
+                    if isinstance(anchor, str):
+                        m = _re.match(r'^([A-Z]+)(\d+)$', anchor)
+                        if m and int(m.group(2)) >= 2:
+                            img.anchor = f'{m.group(1)}{int(m.group(2)) + 1}'
+                    elif hasattr(anchor, '_from'):
+                        if anchor._from.row >= 1:   # 0-indexed: row 1 == Excel row 2
+                            anchor._from.row += 1
+                        if hasattr(anchor, 'to') and anchor.to and anchor.to.row >= 1:
+                            anchor.to.row += 1
+        else:
+            wb = Workbook()
+            ws = wb.active
+            ws.title = 'Experiments'
+            ws.append(list(self.MASTER_HEADERS))
             for col, width in zip(self.MASTER_COL_LETTERS, self.MASTER_COL_WIDTHS):
                 ws.column_dimensions[col].width = width
 
-            if _existing_row is None:
-                ws.insert_rows(2)
-                row_num = 2
-            else:
-                row_num = _existing_row
-                # Drop the images already anchored to this row. openpyxl keeps
-                # them in a flat list with no concept of replacement, so without
-                # this the new cone/shadowgraph/graph images stack on top of the
-                # old ones in the same cells.
-                _r0 = row_num - 1          # anchors are 0-indexed
-                ws._images = [im for im in ws._images
-                              if not (hasattr(im.anchor, '_from')
-                                      and im.anchor._from.row == _r0)]
+        # Stamp the canonical header names and style on EVERY save, for both
+        # new and migrated workbooks. openpyxl's insert_cols() gives a new
+        # column no style at all, and setting .value on it does not inherit
+        # one from its neighbours -- which is why 'Mass Flow Graph' was the
+        # single unbold, unfilled header in the existing log. Doing it here
+        # also carries renames (Distance -> Motor Travel) into old files.
+        _hdr_fill = PatternFill(fill_type='solid',
+                                start_color=Color(theme=self.MASTER_HDR_FILL_THEME,
+                                                  tint=self.MASTER_HDR_FILL_TINT))
+        _hdr_font = Font(name='Calibri', size=11, bold=True,
+                         color=Color(theme=self.MASTER_HDR_FONT_THEME))
+        for _c, _name in enumerate(self.MASTER_HEADERS, start=1):
+            _hc = ws.cell(row=1, column=_c)
+            _hc.value = _name
+            _hc.fill = _hdr_fill
+            _hc.font = _hdr_font
 
-            center_mid = Alignment(horizontal='center', vertical='center', wrap_text=True)
-            top_left   = Alignment(horizontal='left',   vertical='top',    wrap_text=True)
-            for col, val in enumerate([ts_str, orifice,
-                                       bubbler_str or 'NOT RECORDED',
-                                       rpm_str or 'NOT RECORDED',
-                                       f_range_str, p_range_str,
-                                       speed_str, distance_str,
-                                       d32_val, atom_val, _lamella_cell_val,
-                                       notes, '', '', '', ''], start=1):
-                cell = ws.cell(row=row_num, column=col)
-                cell.value = val
-                cell.alignment = top_left if col == 12 else center_mid
-            # Orange highlight for "Input Self" lamella cell
-            if _lamella_orange:
-                _lc = ws.cell(row=row_num, column=11)
-                _lc.fill = PatternFill(start_color='FFA500', end_color='FFA500', fill_type='solid')
-                _lc.font = Font(color='000000', bold=True)
-            ws.row_dimensions[row_num].height = 125
+        # Reapply the canonical widths on every save.  openpyxl's
+        # insert_cols()/delete_cols() above move cell values but NOT
+        # column_dimensions, so a format migration leaves widths attached to
+        # the wrong column — Shadowgraph inherits the old Pressure Graph width
+        # and renders enormous.  Reapplying here also repairs workbooks that
+        # were migrated before this was fixed.
+        # M/N/O/P are re-set from their actual images further down.
+        for col, width in zip(self.MASTER_COL_LETTERS, self.MASTER_COL_WIDTHS):
+            ws.column_dimensions[col].width = width
 
-            _cone_img_path = self._last_cone_path or ""
-            if _cone_img_path and os.path.exists(_cone_img_path):
-                _cone_raw = cv2.imread(_cone_img_path)
-                if _cone_raw is not None:
-                    _ch, _cw = _cone_raw.shape[:2]
-                    # Scale to match the row height (DISPLAY_H px) preserving aspect ratio
-                    _cone_disp_h = DISPLAY_H
-                    _cone_disp_w = max(1, int(_cw * _cone_disp_h / _ch))
-                    cimg = XLImage(_cone_img_path)
-                    cimg.width = _cone_disp_w; cimg.height = _cone_disp_h
-                    ws.column_dimensions['M'].width = max(10, _cone_disp_w / 7.0)
-                    ws.add_image(cimg, f'M{row_num}')
-                else:
-                    ws.cell(row=row_num, column=13).value = 'NO DATA AVAILABLE'
+        if _existing_row is None:
+            ws.insert_rows(2)
+            row_num = 2
+        else:
+            row_num = _existing_row
+            # Drop the images already anchored to this row. openpyxl keeps
+            # them in a flat list with no concept of replacement, so without
+            # this the new cone/shadowgraph/graph images stack on top of the
+            # old ones in the same cells.
+            _r0 = row_num - 1          # anchors are 0-indexed
+            ws._images = [im for im in ws._images
+                          if not (hasattr(im.anchor, '_from')
+                                  and im.anchor._from.row == _r0)]
+
+        center_mid = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        top_left   = Alignment(horizontal='left',   vertical='top',    wrap_text=True)
+        for col, val in enumerate([ts_str, orifice,
+                                   bubbler_str or 'NOT RECORDED',
+                                   rpm_str or 'NOT RECORDED',
+                                   f_range_str, p_range_str,
+                                   speed_str, distance_str,
+                                   d32_val, atom_val, _lamella_cell_val,
+                                   notes, '', '', '', ''], start=1):
+            cell = ws.cell(row=row_num, column=col)
+            cell.value = val
+            cell.alignment = top_left if col == 12 else center_mid
+        # Orange highlight for "Input Self" lamella cell
+        if _lamella_orange:
+            _lc = ws.cell(row=row_num, column=11)
+            _lc.fill = PatternFill(start_color='FFA500', end_color='FFA500', fill_type='solid')
+            _lc.font = Font(color='000000', bold=True)
+        ws.row_dimensions[row_num].height = 125
+
+        _cone_img_path = job['last_cone_path'] or ""
+        if _cone_img_path and os.path.exists(_cone_img_path):
+            _cone_raw = cv2.imread(_cone_img_path)
+            if _cone_raw is not None:
+                _ch, _cw = _cone_raw.shape[:2]
+                # Scale to match the row height (DISPLAY_H px) preserving aspect ratio
+                _cone_disp_h = DISPLAY_H
+                _cone_disp_w = max(1, int(_cw * _cone_disp_h / _ch))
+                cimg = XLImage(_cone_img_path)
+                cimg.width = _cone_disp_w; cimg.height = _cone_disp_h
+                ws.column_dimensions['M'].width = max(10, _cone_disp_w / 7.0)
+                ws.add_image(cimg, f'M{row_num}')
             else:
                 ws.cell(row=row_num, column=13).value = 'NO DATA AVAILABLE'
+        else:
+            ws.cell(row=row_num, column=13).value = 'NO DATA AVAILABLE'
 
-            # fullText(), NOT text(): the label elides its middle for display,
-            # so text() returns a path with "..." in it that no file matches.
-            shadow_src = self._result_path_label.fullText()
-            if shadow_src and os.path.exists(shadow_src):
-                simg = XLImage(shadow_src)
-                simg.width = self.SHADOWGRAPH_W_PX; simg.height = DISPLAY_H
-                # Size the column to the image rather than leaving whatever
-                # width the migration left behind (Excel width ~= px / 7)
-                ws.column_dimensions['N'].width = self.SHADOWGRAPH_W_PX / 7.0
-                ws.add_image(simg, f'N{row_num}')
+        # THIS run's lowest-D32 frame only. It used to take whatever the
+        # preview panel showed, and the preview falls back to the newest
+        # result from ANY run -- so a run saved without AI analysis got an
+        # old run's image beside its blank D32 cells.
+        shadow_src = self._lowest_d32_image(run_dir)
+        if shadow_src:
+            simg = XLImage(shadow_src)
+            simg.width = self.SHADOWGRAPH_W_PX; simg.height = DISPLAY_H
+            # Size the column to the image rather than leaving whatever
+            # width the migration left behind (Excel width ~= px / 7)
+            ws.column_dimensions['N'].width = self.SHADOWGRAPH_W_PX / 7.0
+            ws.add_image(simg, f'N{row_num}')
+        else:
+            ws.cell(row=row_num, column=14).value = 'NO DATA AVAILABLE'
+
+        # Pressure graph in O, mass flow graph immediately right of it in P
+        for _col_letter, _col_idx, _img_bytes, _img_w in (
+                ('O', 15, pressure_bytes, pressure_img_width),
+                ('P', 16, flow_bytes,     flow_img_width)):
+            if _img_bytes:
+                _gimg = XLImage(io.BytesIO(_img_bytes))
+                _gimg.width = _img_w; _gimg.height = DISPLAY_H
+                # Widen the column to fit the image (56 chars ≈ 347 px baseline)
+                ws.column_dimensions[_col_letter].width = max(56, _img_w * 56 / 347)
+                ws.add_image(_gimg, f'{_col_letter}{row_num}')
             else:
-                ws.cell(row=row_num, column=14).value = 'NO DATA AVAILABLE'
+                ws.cell(row=row_num, column=_col_idx).value = 'NO DATA AVAILABLE'
 
-            # Pressure graph in O, mass flow graph immediately right of it in P
-            for _col_letter, _col_idx, _img_bytes, _img_w in (
-                    ('O', 15, pressure_bytes, pressure_img_width),
-                    ('P', 16, flow_bytes,     flow_img_width)):
-                if _img_bytes:
-                    _gimg = XLImage(io.BytesIO(_img_bytes))
-                    _gimg.width = _img_w; _gimg.height = DISPLAY_H
-                    # Widen the column to fit the image (56 chars ≈ 347 px baseline)
-                    ws.column_dimensions[_col_letter].width = max(56, _img_w * 56 / 347)
-                    ws.add_image(_gimg, f'{_col_letter}{row_num}')
-                else:
-                    ws.cell(row=row_num, column=_col_idx).value = 'NO DATA AVAILABLE'
-
-            wb.save(master_path)
-
-            self._experiment_saved = True
-            self._set_status("Saved: run_summary.xlsx  +  master_log.xlsx updated", CLR_GREEN)
-            self._save_path_lbl.setText(f"{ind_path}\nMaster: {master_path}")
-
-            # Update header last-save label to this run folder (clickable, bold, underlined)
-            self._last_saved_run_folder = run_dir
-            _folder_name = os.path.basename(run_dir)
-            self._hdr_last_save_lbl.setText(_folder_name)
-            self._hdr_last_save_lbl.setStyleSheet(
-                f"color: {CLR_TEXT}; font-size: 12px; font-weight: 700; text-decoration: underline;"
-                " cursor: pointer;"
-            )
-            self._hdr_last_save_lbl.setCursor(Qt.CursorShape.PointingHandCursor)
-            self._update_next_save_preview()
-        except Exception as e:
-            self._set_status(f"Save error: {e}", CLR_RED)
+        wb.save(master_path)
+        return ind_path, master_path, run_dir
 
     # ─────────────────────────────────────────────────────────────────────────
     # Settings persistence
@@ -7315,6 +7613,12 @@ class AtomisationApp(QMainWindow):
                 t.join(timeout=1.0)
         if self.phantom:     self.phantom.disconnect()
         if self.afg:         self.afg.disconnect()
+        # Let a save in progress finish -- AFTER the hardware above is stopped,
+        # so it never delays a motor or the gas. Killing it mid-write could
+        # leave a truncated master_log.xlsx, which holds every run ever logged.
+        ex = getattr(self, "_excel_executor", None)
+        if ex is not None:
+            ex.shutdown(wait=True)
         plt.close('all')
         super().closeEvent(event)
 
