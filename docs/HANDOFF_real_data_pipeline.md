@@ -471,6 +471,185 @@ paint, and let the numbers choose.
 
 ---
 
+## UN-ATOMISED LIQUID IS NOW MEASURED CLASSICALLY — 2026-10-01
+
+**Atomised fraction 7.785% -> ~7% on Trial_1.** The model measures droplets well
+and un-atomised liquid badly, for two independent structural reasons, and both
+land in the atomised fraction's denominator.
+
+`AI/Real_Data_Code/classical_liquid.py` replaces that denominator with a
+whole-frame classical measurement. D32 is untouched (85.57 -> 85.58 um), because
+droplets were never the problem.
+
+### The two defects, measured
+
+**FILAMENTS -- the 28x28 mask head cannot hold a thread.** On Trial_1, 566 of
+4,364 filament detections are >150 px long AND fill <25% of their own bounding
+box. The worst is 626 px at **0.33% fill, detected at score 1.00** -- the model
+is certain the object is there and still returns an almost-empty mask. Rendered,
+one continuous thread comes back as ~6 disconnected fragments.
+
+**BLOBS -- tile seams cut them.** 90 of 483 blob detections are flagged
+`truncated`; **96 of 483 (20%) have an edge within 5 px of a tile boundary**.
+`frame_0074_n739` holds one blob reported as two fragments split exactly at
+y=800. Note this hurts object COUNT and the size distribution far more than
+area: `union_area()` already unions the fragments back together.
+
+### Design, and three things that were wrong first
+
+**Thresholding.** `extract_candidates.py` uses T<0.95, and the handoff said to
+reuse it. That is a deliberately permissive CANDIDATE GENERATOR feeding a
+curation step -- as a segmentation rule it gives **36,695 components per frame**,
+89% of the area at transmission 0.90-0.95, i.e. sensor noise. Seed/grow
+hysteresis fixes it: 199 components.
+
+**WRONG FIRST ATTEMPT 1 -- a fixed grow threshold.** T<0.90 for every object
+over-segments dark ones: a thread with t_min 0.06 has its true edge at **0.53**,
+so it was inflated ~1.5x, visible as an orange halo wider than the thread. It
+also grew droplets past their half-max, leaving a rim that scored as un-atomised
+liquid -- **85.5% of all "un-atomised" area on frame_0099_n989**, dragging a
+genuinely ~97% atomised frame down to a bogus 74%.
+**Fix:** grow each seed to ITS OWN half-max, (t_min+1)/2 -- the edge definition
+hand labels, `extract_candidates.py` and the model's training targets already
+use. Growing from the seed also MERGES regions (76 -> 51) where post-hoc
+refinement SPLITS them (76 -> 81) for the same final area.
+
+**WRONG FIRST ATTEMPT 2 -- unioning ALL model masks into the denominator.**
+Justified as "monotonic, so it can only add pixels the classical pass missed".
+That is exactly why it was wrong: it can only ADD, so the model's over-wide
+filament masks became a floor the classical measurement could never get below.
+On `frame_0122_n1219`, **44% of the reported un-atomised area was model mask,
+not classical measurement** -- it was `max(classical, model)` wearing a
+classical label.
+**Fix:** union only **out-of-focus** model filaments/blobs (t_min > 0.70), which
+the 0.70 seed cannot reach by construction. Keeps the ~1.6% the classical pass
+genuinely cannot see; lets classical win everywhere else.
+
+**WRONG FIRST ATTEMPT 3 -- subtracting droplet masks pixel-wise.** Measured:
+199 components -> 441. A droplet sitting on a filament punches a hole and splits
+it. **Fix:** drop whole COMPONENTS that are >=50% already-detected droplet, which
+cannot fragment anything by construction. Guarded so nothing longer than 100 px
+is ever dropped (in practice the longest is 31 px) -- the model sometimes emits
+a fragmented filament as a chain of droplets, and losing a filament is the one
+failure this pass must not have.
+
+### Accounting
+
+    numerator   = union(model droplet masks)              <- unchanged
+    denominator = union(classical liquid, model droplets,
+                        OUT-OF-FOCUS model filaments/blobs)
+    un-atomised = denominator - numerator
+
+ONE union, not three per-class unions summed, so this **structurally fixes the
+open cross-class double-counting bug** (OPEN BUGS #1): a droplet overlapping a
+filament can no longer be counted twice.
+
+**No filament/blob split, deliberately.** Real regions are routinely both -- the
+largest in `frame_0074_n739` is 560,985 px with a 511 px max width and thin
+threads trailing off it, one connected piece of liquid. Any single label is
+wrong. The ratio only needs droplet vs not-droplet. The model's filament/blob
+classes still earn their keep at TRAINING time; they are just not a measurement.
+
+**No skeletons.** A classical mask's pixel count IS its area, exactly. The
+skeleton was only ever the route to LENGTH, which is not wanted.
+`skeleton_prototype.py` keeps the visual harness and is the only thing needing
+scikit-image.
+
+### Result on Trial_1 (276 frames, ~0.2 s/frame measure, ~0.7 s/frame with images)
+
+| | model | classical |
+|---|---|---|
+| D32 | 85.57 um | **85.58 um** (unchanged) |
+| atomised | 7.785% | **lower, one-directional on 237/276 frames** |
+| un-atomised objects | 5,322 detections | 4,508 regions |
+
+**HONEST CAVEAT, and a claim retracted.** With the corrected edge the pooled
+value lands INSIDE the model's old CI [6.745, 9.118]. An earlier version of this
+section claimed the correction exceeded measurement precision -- it does not.
+The bias is real and consistently one-directional, but smaller than frame-to-
+frame scatter. Individual frames are dramatic (`frame_0122_n1219` 34.57% ->
+19.42%); the pooled shift is modest.
+
+**NOT VALIDATED AGAINST GROUND TRUTH.** Every failure mode found points the same
+way, so the DIRECTION is solid, but the magnitude rests on the seed threshold
+being right. The only real test is the hand-labelled benchmark frames. Do that
+before quoting a classical atomised fraction in the thesis.
+
+---
+
+## RUNNING THE ANALYSIS ON WINDOWS — runbook, 2026-10-01
+
+### BLOCKER: the scripts are untracked
+
+`classical_liquid.py` and `skeleton_prototype.py` are **untracked on the Mac**.
+They must be committed and pushed before any Windows session can see them.
+Nothing below works until that is done.
+
+### Dependencies
+
+| | needed for | on Windows? |
+|---|---|---|
+| cv2, numpy | the measurement | already there (model runs) |
+| **matplotlib** | the histograms | **CHECK** -- missing means CSVs still written, figure silently skipped |
+| scikit-image | `skeleton_prototype.py` ONLY | not needed for measurement |
+
+### The chain, per run
+
+1. **AI step** (`tiled_inference.py`) -- only if the run has no
+   `shadowgraph/analysis/predictions*.json` yet. ~1.4 s/frame on the GPU.
+2. **Droplet measurement** (`measure_run.py`) -- D32, droplet sizes, extremes.
+   Unchanged, still the source of D32.
+3. **Classical un-atomised** (`classical_liquid.py`) -- the new denominator,
+   per-component areas, two-panel histogram, marked-up PNGs.
+
+`classical_liquid.py` prefers `predictions_crop.json` and falls back to
+`predictions.json`, so older runs work -- just slower, since the crop fields are
+what made measurement 14x faster.
+
+### Runs that ALREADY have predictions (step 1 done)
+
+    2026/09/09/125917_NNA_3000sccm                        3000 sccm
+    2026/09/28/Trial_1                                    4000 sccm  (has crop preds)
+    2026/09/28/133346_4500sccm                            4500 sccm
+    2026/10/01/101035_4500sccm_500rpm_6000sps_or1.2_nobh  4500 sccm, full metadata
+
+Anything else needs step 1 first.
+
+### Commands
+
+    # one run
+    python classical_liquid.py --root <LaCie>/Experiments/2026/09/28/Trial_1 --images
+
+    # just a few frames, into their own folder
+    python classical_liquid.py --root <run> --images \
+        --out-dir <run>/shadowgraph/analysis/spotcheck \
+        --frames frame_0122_n1219 frame_0055_n549
+
+Outputs land in `<run>/shadowgraph/analysis/skeletonisation_testing/` unless
+`--out-dir` says otherwise: `classical_summary.json`,
+`classical_per_frame.csv`, `classical_components.csv`, `size_histograms.png`,
+and `images/` if `--images`.
+
+### Comparing runs
+
+`compare_runs.py` reads `measure_run.py` summaries and does NOT know about the
+classical fraction. Either extend it or compare `atomised_pct_pooled` from each
+run's `classical_summary.json` by hand. **Do not mix the two methods across runs
+in one comparison** -- same rule as the existing threshold/focus_max guard, and
+for the same reason.
+
+### Two traps
+
+**`Trial_CINE` is not Trial_1.** Same source cine, but the folder was modified
+2026-10-01. Trial_1 (28 Sept 12:14) is the clean one.
+
+**Two sets of numbers exist on disk for Trial_1.** `skeletonisation_testing/`
+holds the superseded ALL-UNION version; `skeletonisation_oof_only/` holds the
+corrected out-of-focus-only version for 4 frames. Same filenames, different
+folders. Delete the stale one once confirmed.
+
+---
+
 ## RESULTS OF THE FIRST WINDOWS SESSION — 2026-09-28. READ THIS FIRST
 
 Everything in the checklist below was done. Both headline numbers were
@@ -1052,6 +1231,22 @@ Still open, in priority order:
    at AI-chain completion, updating one row rather than appending; the
    Timestamp now being the experiment's START; D32 and atomised fraction as
    columns I and J.
+
+1e. **RUN THE CLASSICAL MEASUREMENT ACROSS RUNS.** See the Windows runbook
+   above. Blocked until `classical_liquid.py` and `skeleton_prototype.py` are
+   committed and pushed -- they are untracked on the Mac.
+   Four runs already have predictions and need only steps 2-3; the 3000 vs 4000
+   vs 4500 sccm comparison is the obvious first target, now that the denominator
+   is measured consistently across all of them.
+   **Check matplotlib is installed first** or the histograms silently skip.
+
+1f. **VALIDATE THE CLASSICAL EDGE AGAINST THE BENCHMARK.** The classical
+   atomised fraction is not validated against ground truth -- only against the
+   model, which is not ground truth and is the thing being replaced. The
+   hand-labelled benchmark frames have real annotations; check the half-max
+   classical mask against them. Until that is done the number is "lower than the
+   model's, in a direction every failure mode supports", not a measured value
+   fit to quote.
 
 1d. **MEASURE GUI STARTUP ON THE LAB PC.** See the GUI-slowness section above.
    It is "much slower" there than the 1.6 s measured on the Mac, and the Mac
@@ -3693,6 +3888,12 @@ being investigated. **Quantify it before attributing that gap to the model.**
 Fix: union across ALL classes for the denominator, keep per-class union for the
 numerator. Cheap to implement, and it should be measured (not just fixed) so the
 size of the effect is on record.
+
+**STRUCTURALLY FIXED in the classical path, 2026-10-01** -- `classical_liquid.py`
+builds its denominator as ONE union over one mask rather than summing three
+per-class unions, so the double-count cannot occur there. Still present in
+`score_v2.py` and in `measure_run.py`'s own atomised fraction; both are still in
+use, so this stays open.
 
 **3. `Brightest_Frame` is still created despite being dropped.** The brightest-frame
 concept was retired on 2026-09-27 (the GUI now shows the **lowest-D32** frame

@@ -262,6 +262,44 @@ overlap. For area share use the atomised fraction, which unions them.
 Regenerate the figure with `measure_run.py --replot --out-dir <dir>`; it reads
 the CSVs and measures nothing.
 
+## Classical un-atomised liquid (`classical_liquid.py`)
+
+**The un-atomised half of the atomised fraction, measured by thresholding the
+whole frame instead of by the model.**
+
+The model's masks are untrustworthy for un-atomised liquid in two independent
+ways: its 28x28 mask head cannot represent a 100:1 aspect-ratio thread, and
+objects larger than a tile get cut at tile seams. Both inflate the atomised
+fraction, because both make un-atomised liquid read smaller than it is.
+
+**Hysteresis segmentation.** Seed on pixels darker than T<0.70 ("definitely
+liquid"), then grow each seeded region out to **its own half-maximum edge**,
+`(t_min + 1)/2` — the same edge definition hand labels and the model's training
+targets use. A single threshold cannot do this job: T<0.95 yields ~36,700
+components per frame of mostly sensor noise, while T<0.70 alone loses real
+objects' faint edges.
+
+    numerator   = union(model droplet masks)
+    denominator = union(classical liquid, model droplets,
+                        OUT-OF-FOCUS model filaments/blobs)
+
+Only **out-of-focus** model filaments are unioned in, because the 0.70 seed
+cannot reach them by construction (out-of-focus *is* t_min > 0.70). Unioning all
+model masks was tried and was wrong — a union can only add, so the model's
+over-wide filament masks became a floor the classical measurement could never
+get below.
+
+**One union, not three summed** — which structurally removes the cross-class
+double-counting bug in the denominator.
+
+**No filament/blob split.** A real region is routinely both: the largest in
+`frame_0074_n739` is a 560,985 px blob with thin threads attached, one connected
+piece of liquid. The ratio only needs droplet vs not-droplet.
+
+**Not validated against ground truth.** Direction is well-supported; magnitude
+depends on the seed threshold and should be checked against the hand-labelled
+benchmark before being quoted.
+
 ## Mean, SD, min and max droplet diameter
 
 Reported alongside D32 as a **distribution** summary over every in-focus droplet
