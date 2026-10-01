@@ -290,16 +290,21 @@ def _tight_bounds(sub, bx1, by1, bx2, by2):
     return (b[0], b[1], b[2], b[3], area)
 
 
-def _full_mask(d) -> np.ndarray:
-    """Materialise a detection's frame-sized boolean mask from its stored crop.
+def _full_mask(d, dtype=bool, order="C") -> np.ndarray:
+    """Materialise a detection's frame-sized mask from its stored crop.
 
     Only call this where a frame-sized array is genuinely required -- RLE
     encoding for the output JSON, and contour drawing for previews. Everything
     else (areas, IoU, boxes) works on the crop directly, which is the whole
     point of storing it that way.
+
+    `dtype`/`order` let to_coco ask for the uint8 Fortran-ordered array
+    pycocotools wants directly. Building it as bool/C and converting afterwards
+    cost two extra frame-sized copies per detection -- profiled 2026-10-01 at
+    77% of to_coco, which was itself ~2x the model's time per frame.
     """
     fh, fw = d["shape"]
-    full = np.zeros((fh, fw), dtype=bool)
+    full = np.zeros((fh, fw), dtype=dtype, order=order)
     mh, mw = d["m"].shape
     full[d["my"]:d["my"] + mh, d["mx"]:d["mx"] + mw] = d["m"]
     return full
@@ -499,7 +504,7 @@ def to_coco(dets, image_id):
         # the full array is unavoidable -- but it now runs once per SURVIVING
         # detection instead of once per raw tile detection in _merge and again
         # here, which on frame_0056 is 391 encodes rather than 2297.
-        rle = mask_util.encode(np.asfortranarray(_full_mask(d).astype(np.uint8)))
+        rle = mask_util.encode(_full_mask(d, np.uint8, "F"))
         rle["counts"] = rle["counts"].decode("ascii")
 
         # The same mask a second time, encoded over its own crop instead of the

@@ -186,6 +186,27 @@ def ring_contours(mask, bbox, offset, shape):
     return [c + np.array([[x0, y0]], dtype=c.dtype) for c in cnts]
 
 
+def render_frame(view_path, items, f_d32, atom, droplet_ring, out_path):
+    """Write one marked-up full-res frame.
+
+    `items` holds (detection, mask_crop, x, y, h, w, colour). The frame-sized
+    mask is built here, per detection, only for frames actually being drawn --
+    so in extremes mode the other ~270 frames never pay for it.
+    """
+    view = cv2.imread(str(view_path), cv2.IMREAD_UNCHANGED)
+    canvas = cv2.cvtColor(view, cv2.COLOR_GRAY2BGR) if view.ndim == 2 else view.copy()
+    for d, mb, bx, by, bh, bw, col in items:
+        m = np.zeros(canvas.shape[:2], np.uint8)
+        m[by:by + bh, bx:bx + bw] = mb
+        if d["category_id"] == DROPLET and droplet_ring > 0:
+            cnts = ring_contours(m, d["bbox"], droplet_ring, canvas.shape[:2])
+        else:
+            cnts, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cv2.drawContours(canvas, cnts, -1, col, 1)
+    annotate(canvas, f_d32, atom)
+    cv2.imwrite(str(out_path), canvas)
+
+
 DROPLET_BIN_UM = 25.0
 
 # Matplotlib hex equivalents of the BGR constants above, so a histogram bar
@@ -344,8 +365,14 @@ def main():
                     help="must match extract_candidates.py")
     ap.add_argument("--out-dir", type=Path, default=None,
                     help="default: <val-dir>/measurement_<thresh>")
-    ap.add_argument("--images", action="store_true",
-                    help="write a marked-up full-res image per frame")
+    ap.add_argument("--images", nargs="?", const="all", default=None,
+                    choices=["all", "extremes"],
+                    help="write marked-up full-res images. 'all' (the default when "
+                         "the flag is given bare) draws every frame; 'extremes' "
+                         "draws only the extreme D32 / atomised frames the GUI "
+                         "shows. On the lab PC 'all' is ~80%% of measurement time "
+                         "(~0.9 s and 7.5 MB per frame), and any frame can be "
+                         "regenerated later from the .cine.")
     ap.add_argument("--replot", action="store_true",
                     help="redraw size_histograms.png from the CSVs already in "
                          "--out-dir and exit. Measures nothing, so changing the "
@@ -408,6 +435,9 @@ def main():
     per_frame_fil_areas = {}
     per_frame_blob_areas = {}
     all_focus_areas = []
+    # extremes mode: which frames to draw is only known once every frame is
+    # measured, so hold each frame's crops (small) and draw afterwards.
+    pending_images = {}
 
     for img_id in sorted(by_img):
         stem = name_by_id[img_id]
@@ -439,11 +469,9 @@ def main():
                 rle_blob.append(d["segmentation"])
                 blob_a.append(d["area"])
                 colour = BLUE
-            # Frame-sized array only for drawing, and only when drawing is on.
+            # Crop only; render_frame builds the frame-sized mask if it draws.
             if args.images:
-                m = np.zeros(T.shape, np.uint8)
-                m[by:by + bh, bx:bx + bw] = mb
-                drawn.append((d, m, colour))
+                drawn.append((d, mb, bx, by, bh, bw, colour))
 
         a_drop = union_area(rle_drop)
         a_fil = union_area(rle_fil)
@@ -473,20 +501,11 @@ def main():
         per_frame_blob_areas[stem] = blob_a
         all_focus_areas.extend(focus_a)
 
-        if args.images:
-            view = cv2.imread(str(val / "frames" / "8bit" / f"{stem}.png"),
-                              cv2.IMREAD_UNCHANGED)
-            canvas = cv2.cvtColor(view, cv2.COLOR_GRAY2BGR) if view.ndim == 2 else view.copy()
-            for d, m, col in drawn:
-                if d["category_id"] == DROPLET and args.droplet_ring > 0:
-                    cnts = ring_contours(m, d["bbox"], args.droplet_ring,
-                                         canvas.shape[:2])
-                else:
-                    cnts, _ = cv2.findContours(m, cv2.RETR_EXTERNAL,
-                                               cv2.CHAIN_APPROX_SIMPLE)
-                cv2.drawContours(canvas, cnts, -1, col, 1)
-            annotate(canvas, f_d32, atom)
-            cv2.imwrite(str(out_dir / f"{stem}.png"), canvas)
+        if args.images == "all":
+            render_frame(val / "frames" / "8bit" / f"{stem}.png", drawn,
+                         f_d32, atom, args.droplet_ring, out_dir / f"{stem}.png")
+        elif args.images == "extremes":
+            pending_images[stem] = (drawn, f_d32, atom)
 
         print(f"  {stem:>24}  focus {len(focus_a):4d}  oof {len(oof_a):4d}  "
               f"fil {len(rle_fil):3d}  blob {len(rle_blob):2d}   "
@@ -715,6 +734,24 @@ def main():
     }
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2))
 
+    # The four frames the GUI's Extremes tab shows (raw D32 low/high, atomised
+    # low/high), plus the sparse-frame-guarded D32 extremes when they differ --
+    # those are the ones worth looking at when the raw ones are artifacts.
+    n_images = len(rows) if args.images == "all" else 0
+    if args.images == "extremes":
+        want = []
+        if len(with_d32) >= 2:
+            want += [by_d32[0]["frame"], by_d32[-1]["frame"]]
+            if solid:
+                want += [solid[0]["frame"], solid[-1]["frame"]]
+        if len(by_atom) >= 2:
+            want += [by_atom[0]["frame"], by_atom[-1]["frame"]]
+        for stem in dict.fromkeys(want):          # de-duplicate, keep order
+            drawn, f_d32, atom = pending_images[stem]
+            render_frame(val / "frames" / "8bit" / f"{stem}.png", drawn,
+                         f_d32, atom, args.droplet_ring, out_dir / f"{stem}.png")
+            n_images += 1
+
     drop_csv, obj_csv, png = write_distributions(
         out_dir, per_frame_focus_areas, per_frame_oof_areas,
         per_frame_fil_areas, per_frame_blob_areas)
@@ -727,7 +764,7 @@ def main():
     if png:
         print(f"           {png.name}")
     if args.images:
-        print(f"           {len(rows)} images in {out_dir}")
+        print(f"           {n_images} images ({args.images}) in {out_dir}")
 
 
 if __name__ == "__main__":
