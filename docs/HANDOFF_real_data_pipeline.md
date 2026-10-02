@@ -21,7 +21,223 @@ file is the operational summary of it.
 
 ---
 
-## 2026-10-01 — SECOND WINDOWS SESSION. READ THIS FIRST
+## 2026-10-02 — FIRST TAGUCHI ARRAY (L9) ANALYSED. READ THIS FIRST
+
+Home PC (BENS-PC: RTX 5060 Ti, i7-9700K 8 cores, 32 GB), LaCie on `D:`.
+Everything is in **`<LaCie>/Experiments/2026/10/01/taguchi_L9_analysis/`**:
+`results/taguchi_report.md` (all tables), `results/taguchi_results.json`,
+`results/main_effects.png`, `results/per_run.png`, `results/odd/` (flagged
+frames + `odd_flags.csv`), and the timings CSVs.
+
+### The array
+
+Captured 2026-10-01, `Notes` column "Taguchi 1"–"Taguchi 9". L9, 3 factors x 3
+levels, verified orthogonal (every level 3x, every factor pair fully crossed).
+Constant: orifice 1.2 mm, bubbler height 1, **800 fps**, 2048x1152, 4,961 frames
+(6.2 s) per cine. Measured gas flow during the camera window held to ~1% of set
+point on every run (from each `run_summary.xlsx` Pressure sheet).
+
+| T# | run | sccm | rpm | sps |
+|---|---|---|---|---|
+| 1 | 104852 | 3000 | 300 | 4000 |
+| 2 | 105626 | 6000 | 300 | 6000 |
+| 3 | 110546 | 9000 | 300 | 8000 |
+| 4 | 111830 | 3000 | 600 | 6000 |
+| 5 | 112618 | 6000 | 600 | 8000 |
+| 6 | 113233 | 9000 | 600 | 4000 |
+| 7 | 114130 | 3000 | 900 | 8000 |
+| 8 | 114825 | 6000 | 900 | 4000 |
+| 9 | 115713 | 9000 | 900 | 6000 |
+
+`120606_9000sccm_900rpm_8000sps` ("MAX TEST") is in the same day folder, is
+NOT part of the array, and was **not** analysed (Ben: not yet). It could serve
+later as a Taguchi confirmation run (predict it from the additive model, then
+measure).
+
+### Settings used — identical on all 9
+
+Stride 10 (497 frames/run; ~300 independent at 800 fps, decorrelation ~16
+frames), auto ci-stride 2 (249 CI frames), score threshold 0.30, focus cut-off
+0.70, model `Eden` (= v3, `training_2026_09_25_15_20_37` iteration 19000),
+pinned 8-bit window [27, 876] (fit 0.07–0.14% clipped high), **every image drawn**
+(`--images all`) for both the model and classical passes.
+
+### Results
+
+D32 = in-focus droplets (`measure_run.py`). Atomised = **classical**
+(`classical_liquid.py`); the model-only fraction is listed for reference only
+and is never mixed into the analysis. CIs: bootstrap over frames (every 2nd
+frame), centred on the all-frame value.
+
+| T# | D32 um [95% CI] | atomised % classical [95% CI] | (model-only %) |
+|---|---|---|---|
+| 1 | 90.0 [87.4, 92.8] | 8.2 [6.8, 9.9] | 6.8 |
+| 2 | 88.1 [86.1, 89.9] | 14.8 [13.2, 16.7] | 10.8 |
+| 3 | 88.8 [87.3, 90.5] | 18.9 [17.2, 20.9] | 13.3 |
+| 4 | 91.5 [89.0, 94.2] | 4.6 [3.9, 5.5] | 3.9 |
+| 5 | 88.6 [86.9, 90.3] | 12.6 [11.1, 14.5] | 9.9 |
+| 6 | 89.2 [87.3, 91.1] | 19.4 [17.1, 21.9] | 13.8 |
+| 7 | 90.6 [87.8, 93.3] | 4.9 [4.1, 5.9] | 4.4 |
+| 8 | 89.5 [87.0, 91.9] | 15.3 [13.3, 17.6] | 11.5 |
+| 9 | 90.5 [88.7, 92.3] | 16.8 [14.4, 19.4] | 12.8 |
+
+**Atomised fraction (classical) — gas flow dominates:**
+
+| factor | level means | ANOVA p | p vs meas. noise | % contribution |
+|---|---|---|---|---|
+| **Gas flow** | 3000: 5.87, 6000: 14.23, 9000: 18.38 | **0.002** | **<0.001** | **93.9** |
+| Silicone | 4000: 14.29, 6000: 12.07, 8000: 12.13 | **0.042** | **0.004** | 3.7 |
+| Bubbler RPM | 300: 13.96, 600: 12.21, 900: 12.30 | 0.068 | 0.033 | 2.2 |
+| error (unassigned column) | | | | 0.2 |
+
+**D32 — no factor significant.** All 9 runs within 88.1–91.5 um (<4%).
+
+| factor | level means | ANOVA p | p vs meas. noise | % contribution |
+|---|---|---|---|---|
+| Gas flow | 3000: 90.73, 6000: 88.72, 9000: 89.49 | 0.103 | 0.094 | 62.0 |
+| Bubbler RPM | 300: 88.96, 600: 89.78, 900: 90.19 | 0.232 | 0.391 | 23.6 |
+| Silicone | 4000: 89.56, 6000: 90.03, 8000: 89.35 | 0.495 | 0.742 | 7.3 |
+| error | | | | 7.1 |
+
+**Reading:** within this window, gas flow roughly triples the atomised fraction
+(steep 3000→6000, flatter 6000→9000); lowest silicone flow (4000 sps) atomises
+~2 points better; RPM borderline (passes the noise test, not the ANOVA). The
+droplets that are made come out about the same size whatever the setting.
+
+**How significance was tested** (`taguchi_analysis.py`):
+1. ANOVA, error from the L9's unassigned 4th column — **2 dof**, F(2,2),
+   p = 1/(1+F) exactly (no scipy on this PC; exact for 2 numerator dof). Weak by
+   construction.
+2. Effect vs **measurement noise**: observed between-level SS against the same
+   statistic computed from frame-bootstrap noise alone (2000 replicates, seed 0).
+   **Does not include run-to-run repeatability — there are no replicate runs.**
+   S/N ratios (single-observation forms) are in the JSON; with n=1 per run they
+   are monotone transforms and cannot change a ranking.
+
+### Caveats — state these with the numbers
+
+1. **No replicates.** Gas flow is unambiguous by any test. The silicone and RPM
+   effects are small (2–4% contribution) and could be within run-to-run
+   variation that nothing here measures. **Repeat 2–3 conditions** to settle them.
+2. **The 200 um droplet ceiling (settled decision 2) is NOT enforced in
+   `measure_run.py`.** Every run has ~0.2% of in-focus "droplets" over 200 um
+   (max 268–291 um), almost certainly blobs classed as droplets. Cubic
+   weighting makes them matter: capping at 200 um lowers every run's D32 by
+   **4.3–5.5%** (e.g. T1 90.03 → 85.79). Near-uniform, so the ranking barely
+   moves, and **re-running the D32 ANOVA with the cap changes no conclusion**
+   (gas still largest at 60%, p 0.10 → 0.23; RPM 0.55, silicone 0.68). Quote
+   absolute D32 with the cap applied (~84–88 um). Fix in `measure_run.py`
+   before the next campaign, and report the 150/300 um sensitivity the decision
+   asks for.
+3. **Absolute atomised fractions read low** (~27% vs hand labels — see the
+   validation below). Fine for ranking; caveat absolute values. The bias may
+   depend on condition (−12% at 4500 sccm vs −33% at 3000 on the benchmark, from
+   only 5 vs 15 frames) — which is exactly the factor that turned out to matter.
+   Worth a closer look before writing up the gas-flow effect's *size*.
+4. In-focus D32 is "D32 of confidently-sized droplets", not the spray's true
+   D32 — unchanged from the measurement section below.
+
+### Odd flags — 27, nothing alarming (`results/odd/`)
+
+- **23 x `atomised_100pct`**: frames with no un-atomised liquid at all — spray
+  gaps (intermittency, already an established fact). Up to 4 example images per
+  run; most common at 3000 sccm (66 such frames in T1).
+- **4 x `d32_outlier`**: single frames at ~190–205 um vs run median ~84, each
+  driven by one >200 um "droplet" (caveat 2). E.g. T7 `frame_0158_n1579`: 12
+  in-focus droplets, one at 270 um.
+- No stage was >2x its median across runs.
+
+### Classical atomised fraction — VALIDATED against the benchmark, 2026-10-01
+
+New `validate_classical.py`: runs `classical_liquid.measure_frame` unchanged on
+the 20 hand-labelled frames (v3 predictions, per-run backgrounds via
+`frame_runs.json`) and compares against the hand labels. Results saved in
+`06_validation/classical_validation_2026-10-01/`.
+
+Hand-drawn filament/blob outlines were never refined (rule 5, ~1.6x wide), so
+the fair reference trims each non-droplet GT shape to its own half-max inside
+the drawn outline — the classical pass's own edge rule. Pooled, all 20 frames:
+
+| | atomised % | un-atomised px |
+|---|---|---|
+| GT half-max, all annotations | 8.74 | 939,665 |
+| model only (old) | 6.12 | 1,008,688 |
+| **classical (new)** | **6.41** | **959,743** |
+
+- **Un-atomised area: classical 1.02x GT** (model-only 1.07x). The classical
+  denominator is right.
+- Atomised still reads **−27%** vs GT — that is the **numerator**: the model's
+  droplet area is ~27% under GT (small-droplet recall, already documented), not
+  the classical pass.
+- Per run: 4500 sccm −12%, 3000 sccm −33% (5 / 15 frames — noisy; caveat 3).
+- Per-frame rank correlation with GT: classical 0.55, model 0.53 — modest.
+
+### Timings (s) — home PC, all images drawn
+
+| T# | sccm | extract | inference | measure | classical | total |
+|---|---|---|---|---|---|---|
+| 1 | 3000 | 190 | 411 | 319 | 420 | 1342 (22m) |
+| 2 | 6000 | 176 | 926 | 352* | 603 | ~2057 (~34m)* |
+| 3 | 9000 | 221 | 1559 | 361 | 699 | 2843 (47m) |
+| 4 | 3000 | 222 | 433 | 318 | 420 | 1395 (23m) |
+| 5 | 6000 | 226 | 1011 | 347 | 617 | 2204 (37m) |
+| 6 | 9000 | 219 | 890 | 341 | 558 | 2011 (34m) |
+| 7 | 3000 | 222 | 459 | 316 | 421 | 1420 (24m) |
+| 8 | 6000 | 226 | 673 | 341 | 515 | 1758 (29m) |
+| 9 | 9000 | 224 | 1074 | 350 | 599 | 2250 (38m) |
+
+\* T2 was interrupted during its classical pass; extract/inference/first
+measure are from that attempt's log, classical from the resumed run
+(`timings_run2_first_attempt.csv`). `taguchi_report.md`'s total for T2 (1048 s)
+is the resume only — use ~2057 s.
+
+- **~4 h 50 min for 9 runs.** Background ~2 s.
+- **Inference scales with how busy the frame is** — gas AND silicone flow: 9000
+  sccm ran 15 min at 4000 sps but 26 min at 8000 sps. ~0.8–3.1 s/frame.
+- **Drawing all images is ~70–80% of the measure and classical stages**
+  (estimated from earlier no-image timings, not measured here) — ~10–13 min per
+  run. `classical_liquid.py` has no extremes-only mode yet; add one before
+  routine runs.
+- LaCie writes on this PC are now fast (0.4–0.5 s per frame-sized image, was
+  6.8 s on 2026-09-24) — whatever changed, not a bottleneck any more.
+
+### Tooling added this session (all in `AI/Real_Data_Code/`, NOT yet committed)
+
+- **`batch_runs.py`** — run folders through `process_capture` + `classical_liquid`,
+  every stage timed, `timings.csv/json` rewritten after each run, one failure
+  does not stop the rest. `--reuse` re-measures runs that already have a
+  complete analysis (skips extraction/inference).
+- **`taguchi_analysis.py`** — L9 analysis as above. Re-derives both responses
+  from the per-frame files and **refuses to run** if they disagree with each
+  run's own summary (all 9 matched). Checks the array is orthogonal.
+- **`validate_classical.py`** — the benchmark check above.
+- `cine-handler 0.1.1` installed into the home PC's `Detectron` env (was missing;
+  the lab PC already had it). numpy there is 2.0.2 (lab 1.26.4).
+
+### Two operational lessons
+
+- **Run long jobs as a process Windows owns, not one the assistant's session
+  owns.** The batch was killed twice: once by the background-job time limit,
+  once by session clean-up. Launching via WMI
+  (`Invoke-CimMethod Win32_Process Create`, wrapped in `cmd /c` for log
+  redirection) survived; it shows a **blank CMD window — closing it kills the
+  batch**. Restarts are deterministic, so nothing was wrong in the data.
+- **A monitor that only greps for "done" lines is silent on a kill.** Also check
+  the process still exists, or watch the timings file directly.
+
+### Next
+
+1. **Commit and push** the three new scripts and this doc (they are untracked).
+2. Enforce the 200 um droplet ceiling in `measure_run.py`; re-measure all 9 with
+   `batch_runs.py --reuse` (no re-inference) and report 150/300 um sensitivity.
+3. Repeat 2–3 conditions for run-to-run variation (resolves silicone/RPM).
+4. Look into whether the atomised bias depends on gas flow (caveat 3).
+5. Optional: MAX TEST as a confirmation run.
+6. Add an extremes-only image mode to `classical_liquid.py`.
+
+---
+
+## 2026-10-01 — SECOND WINDOWS SESSION (lab PC)
 
 ### Headline: a capture now goes through the chain in ~19 min, not ~60
 
