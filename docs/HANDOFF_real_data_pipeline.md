@@ -21,7 +21,609 @@ file is the operational summary of it.
 
 ---
 
-## 2026-10-02 — FIRST TAGUCHI ARRAY (L9) ANALYSED. READ THIS FIRST
+## 2026-10-02 (afternoon) — TAGUCHI RE-ANALYSIS SET UP ON THE MAC. READ THIS FIRST
+
+A reproducible re-analysis of the L9 array, built from scratch in a campaign
+folder on the Mac, with the raw data read-only throughout. **ALL FOUR PHASES
+ARE DONE** (1 inspect, 1.5 cache, 2 size floor, 3 metrics, 4 Taguchi), plus a
+consolidated `analysis/output/report.md`. Nothing further can be extracted from
+this array by analysis; what remains is experimental — see "Where this leaves
+the campaign" below.
+
+Everything lives in **`<LaCie>/Experiments/Taguchi/First Taguchi Trial (RPM,
+SCCM, Silicone Flow)/`** (note: the folder name is not "Taguchi First Trial").
+
+    README.md                  array, settings, published results, caveats
+    run_manifest.json          T# -> folder, levels, which frames are the extremes
+    runs/T1..T9_<hhmmss>_<sccm>sccm_<rpm>rpm_<sps>sps/
+        run_summary.xlsx       factor levels + measured pressure trace
+        measurement_0.30/      droplet_sizes, object_areas, per_frame, summary.json,
+                               size_histograms.png, extreme_images/ (4 frames)
+        classical_0.30/        classical_per_frame, classical_components,
+                               classical_summary.json, size_histograms.png,
+                               extreme_images/ (same 4 frames)
+    results_2026-10-01/        the completed analysis, verbatim, + timings CSVs
+    analysis/                  code (see below)
+    analysis/output/           every output this re-analysis produces
+
+The collected data is 227 files / 597 MB; with the analysis outputs the folder
+is 277 files / 635 MB. Only the **4 extreme frames per run** were copied (D32
+lowest/highest, atomised lowest/highest), each tagged with its role in the
+filename; the other 493 mark-ups per run stay at source. `predictions.json`
+(310 MB) and the 16-bit frames (27 GB) were deliberately **not** copied — they
+are read in place. 45 data files were checksummed against source: 0 mismatches.
+
+### Ground rules this re-analysis follows
+
+Raw data is never modified. Code in `analysis/`, outputs in `analysis/output/`.
+One config file, `analysis/config.yaml`, holds every path, threshold and the
+pixel scale; no script hard-codes any of them. The pipeline is staged so a
+focus-rejection filter slots in later as an optional step — `focus.extra_rejection`
+already exists in the config with `enabled: false`.
+
+### Phase 1 — three findings that change how the data must be handled
+
+**1. Diameter is QUANTISED, and it bites exactly where the suspicion was.**
+Diameter comes from an integer pixel area (`2*sqrt(area/pi) * 10 um/px`), so only
+discrete values exist. Below 30 um there are **7 distinct diameters**, and that is
+~26% of all in-focus droplets; below 40 um, 12 values and ~42%. The single most
+common droplet in every run is **22.57 um — a 4-pixel mask**.
+
+So "the mode sits in the 25-50 um bin" is partly the pixel grid, not the spray.
+Consequences: log bins below ~40 um are quantisation artefacts rather than
+resolved structure; D10 and Dv10 cannot be trusted below about one pixel step
+(2-5 um down there); D32/D43 are volume-weighted and far less affected. This is
+an argument for a size floor that is **independent of recall**.
+
+**2. The ground truth was quantised too — and that half is fixable.**
+`instances.json` stores each annotation as a **rasterised** COCO mask. Hand-drawn
+droplet radii are 0.66-12.9 px, mostly under 2.5, so rasterising collapses their
+areas onto the digital-disc lattice:
+
+    r=1 ->   5 px -> 25.2 um        r=5 ->  81 px -> 101.6 um
+    r=2 ->  13 px -> 40.7 um        r=6 -> 113 px -> 119.9 um
+    r=3 ->  29 px -> 60.8 um        r=7 -> 149 px -> 137.7 um
+    r=4 ->  49 px -> 79.0 um        r=8 -> 197 px -> 158.4 um
+
+**2,991 of 3,097 droplet annotations (97%) sit on just nine values**, ~20 um
+apart. Binned physically that gives alternating full and near-empty bins (1,334
+droplets in 60-80 um, 12 in 50-60) and makes sizing error unmeasurable.
+
+**The LabelMe files underneath do not have this problem**: droplets are stored as
+circles with a *continuous* radius (3,006 of 3,097; the rest polygons), giving
+**1,349 distinct diameters over 13.1-257.9 um**, smooth and unimodal. So size
+work takes the diameter from the circle radius and the mask from
+`instances.json` for IoU matching only. Implemented as two separate loaders in
+`analysis/taguchi_lib/validation.py` (`load_gt_sizes` vs `load_instances`), with
+the reason written into the module so neither gets used for the wrong job.
+
+That turns an unusable budget into **100+ annotations in every bin from 20 um
+up**. Below 20 um there are only 18 annotations, so nothing can be said there.
+The prediction side stays quantised regardless — this fixes the GT half only.
+
+**3. The benchmark cannot speak for 6000 or 9000 sccm.** It is 20 frames from two
+older recordings: 15 at 3000 sccm (2048x1152) and 5 at 4500 sccm (2560x1600 —
+and 4500 is not even a level in this array). **Nothing at 6000 or 9000**, where
+the atomised fraction doubles and triples and frames carry 2-3x the droplets.
+Occlusion rises with loading, so any floor derived here is **measured at the
+sparse end and assumed to transfer**, and is likely optimistic for T3/T6/T9.
+It is the only ground truth that exists, so Phase 2 proceeds on it, but that
+assumption gets stated rather than buried. The fix, if more weight is wanted,
+is labelling a handful of frames from T3/T6/T9 — separate work, not started.
+
+### Phase 1 — other things worth knowing
+
+- **All 16 consistency checks pass**, including reproducing each run's published
+  D32 from the collected CSVs. Array re-verified orthogonal (every level 3x,
+  every factor pair fully crossed).
+- **Frame-edge exclusion was never being done.** `truncated` in
+  `predictions.json` means cut by a **TILE** seam that is not a frame edge; a
+  droplet clipped by the real image boundary is kept, with a short mask. Needs
+  `bbox`, which `droplet_sizes.csv` does not carry.
+- **The pooled-vs-mean gap on the atomised fraction is large.** The published
+  figure is `atomised_pct_pooled`; the mean of per-frame percentages runs
+  **9.7-28.9 pp higher** (T1 is the worst: 8.16% pooled vs 37.08% mean), because
+  near-empty frames read ~100% atomised and get equal weight in a mean. Use the
+  pooled ratio.
+- **The asymmetry is deliberate and should be stated in any write-up:** the
+  atomised numerator uses **all** droplets, in focus or not, while D32 uses
+  **in-focus only**. An out-of-focus droplet is still atomised liquid; its size
+  is not trustworthy.
+- **Duplicate rows in `droplet_sizes.csv` are expected, not corruption** — up to
+  67% in T3. Quantisation plus no position column makes two droplets of the same
+  area in the same frame identical rows. De-duplicating would delete real
+  droplets.
+- `p = 1/(1+F)` for F(2,2), used because the home PC had no scipy, is **exact** —
+  verified against scipy to 6 dp on all six published values. That column is sound.
+
+### Phase 1.5 — the per-detection cache. GATE PASSED 9/9
+
+One pass per run over `predictions.json` + the 16-bit frames + the run's own
+background, writing `analysis/output/00_cache/T<n>_detections.csv.gz`: one row
+per kept detection, any class, with `bbox`, `touches_frame_edge`, continuous
+`t_min`, `score`, `area_px`, `diameter_um`, `in_focus`.
+
+**The arithmetic is copied from `measure_run.py`, not reimplemented** — same
+`det_crop`, same `d["area"]` (not recomputed), same `T = raw/max(bg,1)`, same
+skip of empty masks. The cache is **unfiltered**: frame-edge contact is a column,
+not applied, so it can be checked against the published numbers.
+
+**Gate: every run reproduces its published in-focus count, out-of-focus count and
+pooled D32.** All nine pass; max D32 deviation 0.0049 um, which is rounding
+against the 2-dp stored value. `verify_against_published()` marks a run FAILED
+rather than letting it through. 765,491 rows, 28 MB, 279 s to build. Re-running
+without `--force` re-verifies from cache in seconds.
+
+**`t_min` reveals that the focus gate slices a continuum at its thickest point.**
+This is the important finding and it supports Ben's suspicion directly:
+
+| | value |
+|---|---|
+| p95 of in-focus droplet t_min | **0.688-0.691 on every run** (gate is 0.70) |
+| share of in-focus droplets in 0.60-0.70 | **35-43%** |
+
+The in-focus population is dominated by droplets that only just qualify. The
+0.70 cut is not separating a sharp in-focus population from a sharp
+out-of-focus one, so a small change in the cutoff moves a large number of
+droplets — exactly the condition under which out-of-focus droplets could be
+inflating D32. The binary flag was hiding how marginal this population is.
+**No new focus rejection was applied, per instruction.**
+
+**Frame-edge exclusion is a correctness fix, not a material one.** It moves D32
+by **-0.22% to +0.05%**; those droplets are only 1.2-1.5% of the population. The
+200 um cap stays much larger at -4.3% to -5.5% (reproduces the published
+figure). Neither reorders the runs.
+
+One detail that looks like a bug and is not: edge-touching droplets measure
+**6-14% LARGER** than interior ones. Clipping should shrink a mask, so the naive
+expectation is the opposite. It is geometric sampling — the chance of overlapping
+the border grows with size, so edge contact preferentially selects large
+droplets, and that outweighs the clipping loss. Excluding them is still right,
+but it slightly *lowers* D32 rather than raising it.
+
+### PHASE 2 — the size floor. DONE 2026-10-02. The headline overturns the premise
+
+Outputs in `analysis/output/02_size_floor/`: `report.md`, 10 CSVs, 5 figures in
+PNG and SVG. Run on the **Mac** — Phase 2 needs no inference and no GPU, only
+`v3_predictions.json` against the hand labels, and the Mac has scipy where the
+home PC does not.
+
+Method: per-class greedy matching in descending score order on mask IoU, the
+`score_v2.py` convention, at four IoU thresholds. Frame-edge exclusion applied to
+**both** sides. Recall binned on continuous GT diameter with Wilson intervals;
+sizing error bootstrapped over frames.
+
+#### Small droplets are NOT under-detected. Their MASKS are wrong
+
+This was the suspicion going in (smallest anchor 8 px ≈ 80 µm). It is wrong, and
+the correct version is more useful.
+
+| size bin | IoU ≥ 0.10 | IoU ≥ 0.25 | IoU ≥ 0.50 | 0.25 → 0.50 drop |
+|---|---|---|---|---|
+| 20-25 µm | 94.7% | 94.7% | 69.9% | **24.8 pp** |
+| 25-30 µm | 96.3% | 95.5% | 69.8% | **25.7 pp** |
+| 30-35 µm | 95.5% | 89.6% | 74.0% | **15.6 pp** |
+| 35-40 µm | 93.1% | 89.9% | 78.0% | **11.9 pp** |
+| 40-50 µm | 93.5% | 89.9% | 78.7% | **11.2 pp** |
+| 50-60 µm | 94.0% | 92.9% | 90.3% | 2.6 pp |
+| 60-80 µm | 91.7% | 91.7% | 90.8% | 0.9 pp |
+| 80-100 µm | 93.0% | 91.2% | 87.7% | 3.5 pp |
+| 100-150 µm | 91.9% | 91.9% | 91.9% | 0.0 pp |
+
+**Detection recall is 92-96% and FLAT at every size from under 20 µm to 150 µm.**
+The detector finds small droplets at the same rate as large ones. Anchors are
+region-proposal priors and the box regressor moves off them; the 80 µm anchor
+floor is not what limits anything.
+
+What collapses below 50 µm is **mask agreement**. The 0.25 → 0.50 drop is 11-26 pp
+below 50 µm and 0-3.5 pp above it. That is exactly what Phase 1's quantisation
+predicts: a 25 µm droplet is a 5-pixel mask, so one pixel out moves its area 20%
+and its diameter 10% — enough to fail a 0.50 IoU test. An 80-pixel mask does not
+care about one pixel.
+
+#### THE FLOOR: 50 µm, and it applies to VOLUME-WEIGHTED METRICS ONLY
+
+Because the deficit is mask precision and not blindness, a blanket floor is the
+wrong instrument. The scope matters as much as the number:
+
+- **Count-based metrics need NO floor.** Droplets per frame, the number
+  distribution, D10, D50 — these need an object to be *found*, and that works at
+  ~93% at every size. Applying 50 µm to them would discard roughly **60% of
+  correctly-detected droplets** for no reason.
+- **Volume-weighted metrics DO need it.** D32, D43, Dv10/Dv50/Dv90, span — these
+  are built from mask **area**, which is unreliable below 50 µm.
+
+In `config.yaml`:
+
+    size_floor:
+      diameter_um: 50.0
+      applies_to: "volume_weighted"
+      volume_weighted_metrics: [d32_um, d43_um, dv10_um, dv50_um, dv90_um, span]
+      count_metrics: [droplets_per_frame, d_mean_um, d10_um, d50_um]
+
+50 µm is where the IoU-0.50 drop collapses from 11-26 pp to under 3.5 pp, and it
+sits clear of the coarse end of the quantisation lattice. A round number in a
+flat region — chosen the way the 0.30 score threshold was.
+
+#### The sizing bias, quantified — and it explains the D32 bias
+
+Signed relative error on matched pairs, measurable GT:
+
+| 35-50 µm | 50-60 | 60-80 | 80-100 | 100-150 |
+|---|---|---|---|---|
+| +4% | +7% | +8.5% | +11% | +17% |
+
+**Systematic over-sizing that grows with size.** D32 and D43 are volume-weighted,
+so they are dominated by exactly the droplets that are most over-sized. This is a
+direct quantitative explanation for the **+10% to +25% D32 bias** the project
+already records from the benchmark.
+
+**The floor does not fix this and must not be sold as doing so.** The bias lives
+*above* the floor. By removing the only near-unbiased population (the small end),
+applying the floor may make the absolute D32 bias slightly *worse*. Fine for
+RANKING runs measured identically, which is the stated purpose. Not acceptable
+for quoting an absolute diameter.
+
+Below ~35 µm the median sizing error is **pinned to zero by the lattice** and is
+not a measurement — marked `(pinned)` in the report and shaded on the figures.
+
+#### A correction made mid-phase, worth recording
+
+The sizing analysis was got wrong first. `refine_labels.py:246` converts a round
+droplet to a circle using the equivalent-area radius `r = sqrt(area/pi)`, so
+**46.3% of droplet circle radii are back-computed from a pixel count** and sit on
+the Phase 1 lattice. The first read of that was "those are contaminated, use the
+free-hand subset" — which flipped the sizing curve from +4…+17% to −14…−36% and
+looked like a major finding.
+
+It was wrong. The free-hand droplets are the ones refinement **failed** on:
+
+| | refined GT | free-hand GT |
+|---|---|---|
+| recall, 35-40 µm | 97.0% | 50.0% |
+| recall, 40-50 µm | 95.0% | 59.0% |
+| recall, 60-80 µm | 95.0% | 57.9% |
+| n per bin | 126-240 | 5-24 |
+
+They are selected for difficulty — faint, ambiguous, overlapping — and the model
+struggles with the same ones. The obvious alternative explanation was tested and
+rejected: free-hand radii are **not** over-drawn (drawn/rasterised area 0.970 vs
+0.966, indistinguishable; 1-5% larger within matched area bands). The refined
+subset is primary: representative, 93% of matched pairs, and its radius preserves
+the refined mask's area, which is the project's own half-max edge definition.
+
+Lesson for next time: when excluding a subset of ground truth, check the excluded
+part's recall before trusting what is left.
+
+#### Limitations carried forward
+
+- **The floor is measured at 3000 and 4500 sccm only**, and 4500 is not a level in
+  the array. Nothing at 6000 or 9000, where frames carry 2-3x the droplets. Above
+  the floor the two recordings agree within their intervals, but both are at the
+  sparse end. Transfer to T3/T6/T9 is an assumption; if it fails it OVER-states
+  recall there.
+- **IoU is harsh on tiny objects**, which is the point of reporting four
+  thresholds rather than one.
+- **Greedy matching is one-to-one**: a merged pair or a fragmented filament reads
+  as a miss plus a false positive. Not quantified.
+- Prediction diameters remain quantised. The floor handles it; nothing fixes it.
+
+---
+
+### WOULD CLASSICAL SIZING FIX THE D32 BIAS? Ben's question, 2026-10-02
+
+Short answer: **probably yes for the large end, which is exactly where the D32
+leverage is — but it must be validated the same way the classical denominator
+was, and there is one real risk.**
+
+**The case for it is strong, and it is not speculation.** The same classical
+half-max rule has already been tested against these hand labels once, for the
+un-atomised denominator, and came out at **1.02x ground-truth area against the
+model's 1.07x** (2026-10-01, `validate_classical.py`). When the classical edge
+rule was measured against hand labels it was near-unbiased. That is the single
+most relevant data point available.
+
+The rule is also the *same definition* everywhere: the hand labels, the model's
+training targets and `classical_liquid.py` all put an object's edge at its own
+half-maximum, `(t_min+1)/2`. The model is an approximation of that rule; a
+classical pass applies it directly. There is no reason to expect the
+approximation to beat the thing it approximates.
+
+**The architecture this points to.** Phase 2 says detection recall is 92-96% at
+every size while mask area is unreliable below 50 µm. So: **use the model as the
+DETECTOR and the classical half-max as the SIZER** — seed each classical
+measurement from a model droplet detection, then grow to that object's own
+half-max and take the pixel count as the area. That plays to each method's
+measured strength instead of asking the mask head to do something it is bad at.
+It also fits D32's existing definition for free: `classical_liquid.py` seeds at
+t <= 0.70, which **is** the focus gate, and D32 already uses in-focus droplets
+only, so every droplet that feeds D32 is seedable by construction.
+
+**The real risk: merging.** The classical pass grows from seeds and MERGES
+touching regions — measured, 76 components -> 51, where post-hoc refinement
+splits them 76 -> 81. For the un-atomised denominator that is harmless, because
+only the union area matters. **For D32 it is not harmless**: two touching 60 µm
+droplets merged into one region would read as a single ~85 µm droplet, and cubic
+weighting would make that worse than the bias being fixed. Any droplet sizer
+needs a split step (watershed on the distance transform, seeded from the model's
+individual detections — which is the natural fix, since the model already
+separates them) and that step needs its own validation.
+
+**What it will NOT fix:** quantisation at the small end. A classical mask is
+still an integer pixel count, so the discrete-diameter problem below ~40 µm is
+unchanged. That is what the 50 µm floor is for, and the floor stays either way.
+
+**How to test it cheaply, when the time comes.** Run the classical half-max sizer
+on the 20 benchmark frames, seeded from the v3 detections, and re-run the Phase 2
+sizing-error table against it. If the +4 -> +17% ramp flattens toward zero, it
+works; if it flattens but the counts drop, merging is eating droplets. Both
+outcomes are visible in one table, and the harness to produce it already exists
+in `analysis/phase2_size_floor.py`.
+
+**Not started, and deliberately so.** Ben's instruction on 2026-10-02 was to see
+what the current setup gives first. Phases 3 and 4 run on the pipeline as it
+stands; this is a candidate for afterwards, alongside the deferred focus
+rejection — and the two are closely related, since both replace a model verdict
+with a classical measurement on the same frames.
+
+### PHASE 3 — per-condition metrics. DONE 2026-10-02
+
+Outputs in `analysis/output/03_metrics/`: `report.md`, 11 CSVs, 5 figures
+(PNG + SVG). Population: in-focus droplets, frame-edge excluded. Floor applied
+by SCOPE — volume metrics only.
+
+#### Three findings
+
+**1. The floor does NOT rescue D32.** Above 50 µm it spans **100.1-103.3 µm
+across the nine runs (3.2%)**. It was flat before at 88-91 µm; the floor raised
+everything by about the same amount. Flat is flat.
+
+**2. D32 is set by ~3% of the droplets — the worst-measured 3%.**
+
+| | share of count | share of VOLUME |
+|---|---|---|
+| droplets > 150 µm | 3.2-3.8% | **29-33%** |
+| droplets > 200 µm | ~0.5% | 7.5-9.6% |
+| droplets > 100 µm | — | **57-60%** |
+
+D32 and D43 weight by d³ and d⁴, so they are set almost entirely by that
+sliver — which is exactly where Phase 2 measured +17% sizing error and where the
+unenforced 200 µm ceiling lives. **This explains both facts at once**: why D32
+carries a large absolute bias, and why it is nonetheless stable run to run. A
+few hundred large objects, measured consistently badly, set the number every
+time.
+
+**3. Count percentiles are quantisation-locked.** **D10 = 22.6 µm on all nine
+runs, identically** — it is the 4-pixel mask. D50 takes four distinct values
+across nine conditions. These cannot discriminate and more data will not help.
+**D10 is excluded from Phase 4**; running an ANOVA on a constant manufactures a
+p-value from the pixel grid.
+
+The count metric that DOES work is **droplets per frame**: 34 to 134 across the
+array, tracking gas flow, and immune to every sizing defect in Phase 2.
+
+#### Steady state and intermittency
+
+**6 of 18 run-metric combinations are non-stationary.** Worst is T7, droplets
+per frame **+156%** from the start of its own capture to the end. A Taguchi
+response assumes one steady condition per run; where that fails the reported
+number averages over a transient.
+
+**Intermittency is gas-flow dependent** — at the 50%-of-own-mean threshold the
+3000 sccm runs have 20-34% of frames below it against 5-12% at 6000-9000. Low
+gas flow does not just atomise less, it atomises less *steadily*. Config section
+`intermittency`; caveat recorded that stride 10 at 800 fps makes consecutive
+retained frames 12.5 ms apart.
+
+#### A correction to the CIs, measured not assumed
+
+The handoff's "~16 cine frame" decorrelation implies ~1.6 retained frames at
+stride 10, which is what `frame_stride: 2` encodes. **Measured, that holds only
+at high gas flow:**
+
+| gas flow | decorrelation lag | effective n / nominal n |
+|---|---|---|
+| 3000 sccm | **5-12 frames** (62-150 ms) | 0.07-0.17 |
+| 6000 sccm | 2-3 frames | 0.28-0.44 |
+| 9000 sccm | 1-2 frames | 0.45-0.63 |
+
+Replaced with a **moving-block bootstrap** at the measured lag (block 1 reduces
+exactly to the independent-frame bootstrap; verified). Like-for-like, CI width
+block / independent:
+
+| metric | ratio |
+|---|---|
+| droplets per frame | **1.00-2.75x** (worst at 3000 sccm) |
+| mean diameter | 1.00-1.39x |
+| D32 | 0.92-1.08x — negligible |
+
+So the D32 intervals were fine either way; the **counts** were understated by up
+to 2.75x at low gas flow, and counts are what Phase 4 uses. Two wrong
+comparisons were made before this was right — first floored vs unfloored
+populations, then confounding the scheme with sample size. Compare like with
+like.
+
+---
+
+### PHASE 4 — Taguchi re-analysis. DONE 2026-10-02. LAST PHASE IN THE PLAN
+
+Outputs in `analysis/output/04_taguchi/`: `report.md`, `anova.csv`,
+`main_effects.csv`, `taguchi_results.json`, 3 figures (PNG + SVG).
+
+**Validation: reproduces the published ANOVA EXACTLY** — gas 93.90% p 0.0017,
+RPM 2.25% p 0.0676, silicone 3.69% p 0.0423, error 0.16%, all to 4 dp,
+independent implementation. The L9's 4th column is derived in code
+(`residual_column`) rather than hard-coded and matches the standard array; error
+SS is cross-checked against subtraction on all 12 responses and agrees
+everywhere.
+
+#### The headline holds, and now has a second witness
+
+| response | gas flow contribution | p | floored? |
+|---|---|---|---|
+| Atomised fraction (classical) | **93.9%** | 0.002 | no |
+| **Droplets per frame** | **79.0%** | 0.011 | no |
+| D32 (above floor) | 38.6% | 0.160 | yes |
+
+**Droplets per frame is the useful addition.** It is a pure count, so it is
+immune to every sizing defect Phase 2 found, and it was not available before
+this re-analysis. Two unrelated measurements agreeing is much stronger than
+either alone — and neither is size-floored, so the floor cannot have
+manufactured the result.
+
+**D32 stays non-significant on every factor in both populations.**
+
+#### Does the floor change any conclusion? Mostly no — but not "none"
+
+**Two verdicts cross p = 0.05**, both on **D43**: gas flow p 0.105 -> 0.038,
+RPM p 0.072 -> 0.048. Read as fragility, not discovery: both merely cross an
+arbitrary threshold on an F(2,2) test, and D43 is the most volume-weighted
+response of all, so it leans hardest on the large-droplet tail that Phase 2
+measured as +17% over-sized and Phase 3 showed carries 29-33% of the volume from
+3% of the droplets. Span is noise either way — its gas contribution swings
+34.5% -> 1.2% with p of 0.6-0.98.
+
+**"Only gas flow matters" is NOT an artefact of the detection floor.**
+
+(An earlier draft of the conclusions asserted no verdicts flipped while the
+code had already found two. The conclusion text is now generated from the
+`changed` list rather than written by hand — do not reintroduce a hardcoded
+claim about an outcome the code computes.)
+
+#### S/N ratios carry no information here
+
+With n = 1 per run they reduce to a monotone rescaling of the response
+(larger-better `20 log10 y`, smaller-better `-20 log10 y`), so they cannot
+reorder anything. Computed because the method expects them; stated as a
+restatement, never as corroboration.
+
+---
+
+### CONSOLIDATED REPORT — `analysis/output/report.md`, 2026-10-02
+
+The original brief asked for one `analysis/output/report.md` with methods,
+assumptions, results, figures and a plain-language summary. Until now only the
+four per-phase reports existed. **That gap is closed.**
+
+Generated by `analysis/make_report.py` **from the phase outputs and the cache at
+run time** — every number in every worked example is computed, never typed, so
+the explanations cannot drift from the results. Re-run it after any phase
+re-runs.
+
+512 lines, structured for someone who knows the rig but not the statistics, and
+to be cut into slides:
+
+- **Part 1 — primer with worked examples.** What a Taguchi array is and why
+  these nine runs (worked main effect); droplet metrics with five real droplets
+  showing mean < D50 < D32 < D43 and why; confidence intervals and why frames
+  are the resampling unit; **ANOVA worked end to end** — the nine atomised
+  values, level means, deviations, SS_gas = 243.637, SS_total = 259.458,
+  contribution 93.9%, matching the published figure; S/N and why it is empty
+  here; IoU/recall with the 5-pixel-vs-80-pixel argument; the pixel lattice.
+- **Part 2** — the chain, the settings table, the two responses.
+- **Part 3** — all results consolidated.
+- **Part 4** — solid vs not solid, and the floor question answered.
+- **Part 5** — limitations ordered by how much they constrain conclusions.
+- **Part 6** — next steps.
+- **Appendix** — file map, all 13 figures annotated with what each is for, and a
+  suggested 10-slide order.
+
+Ben intends to build a PowerPoint from it.
+
+---
+
+### WHERE THIS LEAVES THE CAMPAIGN
+
+All four phases done. Nothing further to extract from this array by analysis —
+the remaining work is experimental or the deferred measurement improvements.
+
+**In priority order:**
+
+1. **Replicate 2-3 conditions.** The binding constraint on everything. Every
+   marginal result is marginal because the error term is 2 dof with no
+   repeatability estimate, and no analysis can fix that.
+2. **The MAX TEST run** (`120606_9000sccm_900rpm_8000sps`) as a confirmation
+   run — predict from the additive model, then measure. It holds only its cine.
+3. **Hand-label frames at 6000 and 9000 sccm**, turning the size floor's
+   transfer assumption into a measurement at the gas flows that matter.
+4. **The deferred measurement work**, in the agreed order, each validated
+   against the benchmark before adoption: classical focus rejection, then
+   classical sizing for D32.
+
+**On periodicity (Ben asked 2026-10-02):** a full stride-1 runthrough would
+**not** resolve the 0.5-2 Hz pulsation the traces hint at. Stride 10 at 800 fps
+already samples at 80 Hz (Nyquist 40 Hz) and every candidate peak is below 6 Hz.
+The limit is **record length, not sampling rate**: 4,961 frames at 800 fps is
+6.2 s, giving 0.16 Hz resolution and only 3-12 cycles. Stride 1 gives 10x the
+samples over the *same* 6.2 s — it raises Nyquist to 400 Hz and leaves
+resolution unchanged. Resolving the pulsation needs a **longer recording**
+(~30-60 s for 20+ cycles), which means trading frame rate or resolution against
+camera memory. Stride 1 is only worth it for structure **above 40 Hz**.
+
+---
+
+### Code map
+
+    analysis/config.yaml                 every path, threshold, pixel scale, bins,
+                                         bootstrap and figure setting
+    analysis/taguchi_lib/config.py       loads it; the only place paths are made
+    analysis/taguchi_lib/validation.py   the benchmark, two ways -- continuous GT
+                                         sizes vs rasterised masks, and why
+    analysis/taguchi_lib/extract.py      the cache builder; measure_run's
+                                         arithmetic, plus the verification gate
+    analysis/taguchi_lib/matching.py     IoU matching to the benchmark; Wilson
+                                         and frame-bootstrap intervals
+    analysis/taguchi_lib/metrics.py      D10/D50/Dv10-90/span/D32/D43, block
+                                         bootstrap, decorrelation lag
+    analysis/taguchi_lib/distributions.py log bins, Rosin-Rammler + log-normal
+    analysis/taguchi_lib/taguchi.py      main effects, S/N, ANOVA, derived 4th column
+    analysis/taguchi_lib/plotting.py     one figure style; PNG + SVG
+    analysis/phase1_inspect.py           -> output/01_inspection/
+    analysis/phase1_5_build_cache.py     -> output/00_cache/ + output/01b_cache_build/
+    analysis/phase2_size_floor.py        -> output/02_size_floor/
+    analysis/phase3_metrics.py           -> output/03_metrics/
+    analysis/phase4_taguchi.py           -> output/04_taguchi/
+    analysis/make_report.py              -> output/report.md   (run LAST)
+
+Every script is idempotent and deletes its own stale CSVs first, so a re-run
+cannot leave superseded numbers lying about. `phase1_5` reuses the cache unless
+`--force`. Order: 1 -> 1.5 -> 2 -> 3 -> 4 -> make_report.
+
+### The original Phase 3-4 plan — superseded by the results above
+
+Kept out of the way deliberately: Phases 3 and 4 are done and their actual
+findings are recorded above. The planned design is preserved in
+`analysis/output/01_inspection/report.md` section 8 if the reasoning is ever
+needed. Two things in it changed during execution and the change is what matters:
+the floor was applied **by scope** rather than blanket, and the independent-frame
+bootstrap was replaced by a **block bootstrap** at the measured decorrelation
+length.
+
+### LATER — the focus-rejection pass, explicitly deferred
+
+Ben's instruction was to analyse **as-is** first and add focus rejection
+afterwards, classically, so that focus is rejected on the classical side too.
+The cache already carries continuous `t_min` for this. When it happens: add a
+per-droplet classical rejection (edge gradient across the boundary, and/or core
+contrast against background), then **rerun every metric with and without it** to
+test whether out-of-focus droplets are inflating D32. Nothing needs
+restructuring — `focus.extra_rejection` in the config is the slot, and the
+placeholder knobs (`min_edge_gradient`, `min_core_contrast`) are already there.
+
+The t_min distribution above is the reason to expect this to matter.
+
+### Still open from the morning's session
+
+Unchanged and still worth doing: enforce the 200 um droplet ceiling in
+`measure_run.py` (items below), repeat 2-3 conditions for run-to-run variation,
+check whether the atomised bias depends on gas flow, and the MAX TEST
+(`120606_9000sccm_900rpm_8000sps`) as a confirmation run — it holds only its
+cine, no frames and no predictions. `101035_4500sccm_500rpm_6000sps_or1.2_nobh`
+is a different configuration and is excluded from the array.
+
+---
+
+## 2026-10-02 (morning) — FIRST TAGUCHI ARRAY (L9) ANALYSED
 
 Home PC (BENS-PC: RTX 5060 Ti, i7-9700K 8 cores, 32 GB), LaCie on `D:`.
 Everything is in **`<LaCie>/Experiments/2026/10/01/taguchi_L9_analysis/`**:
