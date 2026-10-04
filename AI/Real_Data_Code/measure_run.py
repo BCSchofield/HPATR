@@ -53,7 +53,7 @@ import csv
 import json
 import sys
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -123,6 +123,156 @@ def det_crop(d):
     w, h = int(np.ceil(w)), int(np.ceil(h))
     full = mask_util.decode(d["segmentation"])
     return full[y:y + h, x:x + w].astype(bool), x, y, h, w
+
+
+# ============================================================================
+# THE ONE PLACE A DROPLET'S FOCUS VERDICT AND ITS SIZE ARE DECIDED
+#
+# This test used to be written out three times -- here, and twice in
+# classical_liquid.py -- and the copies had already drifted: the two scripts
+# reported 85.58 and 85.57 um for the same run. Adding the classical sizer to
+# three places would have turned that into real divergence, so everything now
+# goes through `measure_droplet` and classical_liquid imports it.
+# ============================================================================
+
+SIZER_VERSION = "2.0.0"      # bump on ANY change to the three functions below
+SPLIT_UM = 40.0              # classical sizing acts at/above this diameter
+DILATE_PX = 5                # search region beyond the model mask
+CORE_MIN_PX = 3              # floor for the robust core, see droplet_core
+CORE_FRAC = 0.05
+
+
+def droplet_core(T_crop, mask, estimator="robust"):
+    """The droplet's core transmission -- what `t_min` used to be.
+
+    `estimator="min"` is the historical single darkest pixel. That is the
+    noisiest statistic available AND it is biased one way: noise can drag a
+    minimum down, never up. Measured over 233 droplets it sits 0.010 below the
+    mean of the darkest few, and that bias propagates twice --
+
+      * `edge = (core + 1)/2`, so a dark-biased core gives a darker threshold,
+        keeps fewer pixels, and reads every diameter 1.6-2.6% SMALL;
+      * the focus gate becomes permissive: 2.6% of droplets are in-focus on the
+        strength of one pixel, all of them sitting at 0.677-0.699 against a
+        0.70 cut.
+
+    `estimator="robust"` averages the darkest max(CORE_MIN_PX, 5%) of the mask's
+    INTERIOR pixels -- the mask eroded by one, i.e. pixels fully covered by the
+    droplet.
+
+    THE INTERIOR RESTRICTION IS THE WHOLE POINT, and a first attempt without it
+    was wrong. Measured on 7,965 Trial_1 droplets, the share with NO interior
+    pixel at all is:
+
+        < 25 um   100.0%        40-50 um    0.7%
+        25-30     99.9%         50-60       0.0%
+        30-40     71.8%         > 80        0.0%
+
+    A 4-6 px mask eroded by one is EMPTY: every pixel straddles the boundary and
+    is part droplet, part background. Averaging those is not noise suppression,
+    it is partial-volume dilution, and it penalises a droplet for being small --
+    exactly backwards. Without the restriction the gate lost 30% of droplets
+    under 25 um and 15% of the whole in-focus population; with it, droplets
+    under 25 um are completely unaffected (0.00 pp) and the overall change is
+    -2.1 pp, falling only where there is a real core to average.
+
+    This also protects the design's central asymmetry: a SMALL out-of-focus
+    droplet blurs and loses contrast, so it fails the gate on its own. A small
+    droplet that IS dark is therefore in focus, and must be counted.
+
+    With no interior there is nothing to average and the single minimum is the
+    only estimate available, so that is what is returned.
+
+    NOTE `focus_max` 0.70 was calibrated against the single-pixel minimum, so
+    this makes the gate slightly stricter for droplets that HAVE a core. That is
+    a deliberate, recorded change -- see SIZER_VERSION.
+    """
+    v = np.sort(np.asarray(T_crop[mask], dtype=np.float32), axis=None)
+    if v.size == 0:
+        return float("nan")
+    if estimator == "min":
+        return float(v[0])
+    inner = cv2.erode(mask.astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool)
+    if not inner.any():
+        return float(v[0])
+    iv = np.sort(np.asarray(T_crop[inner], dtype=np.float32), axis=None)
+    k = max(CORE_MIN_PX, int(round(CORE_FRAC * iv.size)))
+    return float(iv[:min(k, iv.size)].mean())
+
+
+def halfmax_area(T_pad, mask_pad, core_t, dilate_px=DILATE_PX):
+    """Half-max area in px for one droplet, and whether anything was measured.
+
+    The edge is the project-wide `(core + 1)/2`, grown inside a DILATED SEARCH
+    REGION -- never inside the candidate mask itself. refine_labels.py:322-332
+    records that thresholding within the candidate clips every object with
+    t_min > 0.40: median true area 1.5x larger, worst case 14x.
+
+    Returns (area_px, degenerate). `degenerate` means the half-max component
+    came out exactly equal to the model's mask, so the measurement reproduced
+    its own input. Such a droplet is still counted and still sized -- only the
+    provenance differs, and it carries ~2% of the d^3 weight.
+    """
+    k = np.ones((2 * dilate_px + 1,) * 2, np.uint8)
+    search = cv2.dilate(mask_pad.astype(np.uint8), k).astype(bool)
+    grown = search & (T_pad < (core_t + 1.0) / 2.0)
+    n, lab = cv2.connectedComponents(grown.astype(np.uint8), 8)
+    masked = np.where(mask_pad, T_pad, np.inf)
+    cy, cx = np.unravel_index(np.argmin(masked), masked.shape)
+    comp_id = lab[cy, cx]
+    if comp_id <= 0:
+        return 0, False
+    area = int((lab == comp_id).sum())
+    return area, area == int(mask_pad.sum())
+
+
+def measure_droplet(T, d, focus_max, split_um=SPLIT_UM, core_estimator="robust",
+                    sizer=True, crop=None):
+    """Focus verdict and sized area for ONE droplet detection.
+
+    Returns None for an empty mask, else a dict:
+        in_focus  bool   -- drives D32 membership AND the green/magenta colour
+        area_px   float  -- what D32 is built from
+        method    str    -- halfmax | model_degenerate | model_below_split
+                            | model_out_of_focus | model_no_sizer
+        core_t    float
+
+    NOTHING IS EVER DROPPED HERE. An out-of-focus droplet keeps its area and
+    still counts toward the atomised fraction; only its SIZE is withheld from
+    D32. The sizer changes a number, never membership.
+    """
+    mb, bx, by, bh, bw = crop if crop is not None else det_crop(d)
+    if not mb.any():
+        return None
+    H, W = T.shape
+    pad = DILATE_PX + 2
+    y0, y1 = max(0, by - pad), min(H, by + bh + pad)
+    x0, x1 = max(0, bx - pad), min(W, bx + bw + pad)
+    T_pad = T[y0:y1, x0:x1]
+    m_pad = np.zeros(T_pad.shape, bool)
+    m_pad[by - y0:by - y0 + bh, bx - x0:bx - x0 + bw] = mb
+    if not m_pad.any():
+        return None
+
+    core_t = droplet_core(T_pad, m_pad, core_estimator)
+    in_focus = bool(core_t <= focus_max)
+    area = float(d["area"])
+    method = "model_no_sizer"
+    if not sizer:
+        pass
+    elif not in_focus:
+        method = "model_out_of_focus"
+    elif equiv_um(area) < split_um:
+        method = "model_below_split"
+    else:
+        a_half, degenerate = halfmax_area(T_pad, m_pad, core_t)
+        if a_half >= 4:
+            area = float(a_half)
+            method = "model_degenerate" if degenerate else "halfmax"
+        else:
+            method = "model_no_component"
+    return {"in_focus": in_focus, "area_px": area, "method": method,
+            "core_t": core_t}
 
 
 def union_area(rles):
@@ -361,6 +511,15 @@ def main():
     ap.add_argument("--sixteen-bit-dir", type=Path, default=None,
                     help="default: <val-dir>/frames/16bit")
     ap.add_argument("--score-thresh", type=float, default=0.30)
+    ap.add_argument("--split-um", type=float, default=SPLIT_UM,
+                    help="classical half-max sizing acts at/above this diameter; "
+                         "below it the model's mask area is used unchanged")
+    ap.add_argument("--core-estimator", choices=["robust", "min"], default="robust",
+                    help="'robust' = mean of the darkest max(3, 5%%) mask pixels; "
+                         "'min' = the historical single darkest pixel")
+    ap.add_argument("--no-sizer", action="store_true",
+                    help="skip classical sizing entirely and use the model's mask "
+                         "area, as before SIZER_VERSION 2.0.0")
     ap.add_argument("--focus-max", type=float, default=0.70,
                     help="must match extract_candidates.py")
     ap.add_argument("--out-dir", type=Path, default=None,
@@ -429,6 +588,7 @@ def main():
           f"not truncated: {len(kept)} of {len(preds)}\n")
 
     rows = []
+    methods = Counter()          # how each in-focus diameter was actually obtained
     per_frame_focus_areas = {}   # for the run-level bootstrap over frames
     per_frame_atom_parts = {}
     per_frame_oof_areas = {}     # size distributions only, never D32
@@ -457,8 +617,18 @@ def main():
                 continue
             cid = d["category_id"]
             if cid == DROPLET:
-                sharp = bool(T[by:by + bh, bx:bx + bw][mb].min() <= args.focus_max)
-                (focus_a if sharp else oof_a).append(d["area"])
+                md = measure_droplet(T, d, args.focus_max, split_um=args.split_um,
+                                     core_estimator=args.core_estimator,
+                                     sizer=not args.no_sizer,
+                                     crop=(mb, bx, by, bh, bw))
+                if md is None:
+                    continue
+                sharp = md["in_focus"]
+                # the SIZED area, not the model's, when the sizer ran
+                (focus_a if sharp else oof_a).append(md["area_px"])
+                methods[md["method"]] += 1
+                # rle_drop is unconditional: an out-of-focus droplet is still
+                # atomised liquid, so the atomised fraction never sees focus.
                 rle_drop.append(d["segmentation"])
                 colour = GREEN if sharp else MAGENTA
             elif cid == FILAMENT:
@@ -684,12 +854,32 @@ def main():
             "score_threshold": args.score_thresh,
             "focus_max": args.focus_max,
             "um_per_px": UM_PER_PX,
+            # SIZING METHOD -- compare_runs.py guards on these. A run measured
+            # with a different sizer_version is NOT comparable with one measured
+            # before it, and without this field that difference is invisible.
+            "sizer_version": SIZER_VERSION,
+            "sizer_enabled": not args.no_sizer,
+            "split_um": args.split_um,
+            "core_estimator": args.core_estimator,
+            "diameter_method_counts": dict(methods),
             "ci_stride": args.ci_stride,
             "frames_used_for_ci": len(ci_stems),
             "ci_assumes_independence": args.ci_stride == 1,
         },
         "definitions": {
-            "d32": "in-focus droplets only (t_min <= focus_max); pooled Sum(d^3)/Sum(d^2)",
+            "d32": "in-focus droplets only (core transmission <= focus_max); "
+                   "pooled Sum(d^3)/Sum(d^2)",
+            "diameter": "classical half-max area at/above split_um, (core+1)/2 grown "
+                        "inside a 5 px dilated search region; the model's mask area "
+                        "below it. `diameter_method_counts` says which applied. "
+                        "'model_degenerate' = the half-max component equalled the "
+                        "mask, so the droplet is counted and sized but its diameter "
+                        "is not an independent measurement.",
+            "core_transmission": "mean of the darkest max(3, 5%) mask pixels "
+                                 "('robust'), or the single darkest pixel ('min'). "
+                                 "The single-pixel minimum is biased dark by noise, "
+                                 "which reads diameters ~2% small and makes the "
+                                 "focus gate permissive.",
             "atomised_pct": "ALL droplet area / (droplet + filament + blob) area, "
                             "per-class union within a frame, summed across frames",
             "caveat": "D32 is 'D32 of confidently-sized droplets', not the spray's "

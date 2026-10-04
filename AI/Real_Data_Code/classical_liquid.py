@@ -82,6 +82,7 @@ sys.path.insert(0, str(HERE))
 from pycocotools import mask as mask_util  # noqa: E402
 from measure_run import (  # noqa: E402
     det_crop, px_to_mm2, equiv_um, d32, annotate, ring_contours,
+    measure_droplet, SIZER_VERSION, SPLIT_UM,
     DROPLET, UM_PER_PX, DROPLET_BIN_UM,
     GREEN, MAGENTA, ORANGE,
     PLOT_GREEN, PLOT_MAGENTA, PLOT_ORANGE,
@@ -129,15 +130,27 @@ def hysteresis(T, seed_thr=SEED_THR, ceiling=CEILING_THR, min_area=MIN_AREA):
     `ceiling` only bounds the region growing; it is never an edge itself.
     """
     grow = (T < ceiling).astype(np.uint8)
-    n, lab, _, _ = cv2.connectedComponentsWithStats(grow, 8)
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(grow, 8)
     seeded = {i for i in np.unique(lab[T < seed_thr]) if i != 0}
     if not seeded:
         return np.zeros(T.shape, bool), 0
 
+    # Work inside each component's BOUNDING BOX, which
+    # connectedComponentsWithStats already gives us. `lab == i` over the whole
+    # frame builds a 2.4 M-element boolean per component, and there are hundreds
+    # of components per frame -- that one line was 56% of the classical pass
+    # (0.30 s/frame). A component lies entirely within its own bbox by
+    # definition, so this is the same computation on a smaller array and the
+    # result is bit-identical.
     out = np.zeros(T.shape, bool)
     for i in seeded:
-        comp = lab == i
-        out |= comp & (T < (T[comp].min() + 1.0) / 2.0)
+        x0 = stats[i, cv2.CC_STAT_LEFT]
+        y0 = stats[i, cv2.CC_STAT_TOP]
+        sl = (slice(y0, y0 + stats[i, cv2.CC_STAT_HEIGHT]),
+              slice(x0, x0 + stats[i, cv2.CC_STAT_WIDTH]))
+        comp = lab[sl] == i
+        Tc = T[sl]
+        out[sl] |= comp & (Tc < (Tc[comp].min() + 1.0) / 2.0)
 
     n2, lab2, stats2, _ = cv2.connectedComponentsWithStats(out.astype(np.uint8), 8)
     big = [j for j in range(1, n2) if stats2[j, cv2.CC_STAT_AREA] >= min_area]
@@ -165,15 +178,25 @@ def drop_droplet_components(liquid, droplet_mask,
     kept = np.zeros_like(liquid)
     dropped = np.zeros_like(liquid)
     n_kept = n_drop = 0
+    # Per bounding box, for the same reason as hysteresis(): `lab == i` and the
+    # coverage test over the whole frame cost 84 ms/frame across hundreds of
+    # components. A component lies entirely inside its own bbox, so this is the
+    # identical computation on a smaller array.
     for i in range(1, n):
-        comp = lab == i
+        x0 = stats[i, cv2.CC_STAT_LEFT]
+        y0 = stats[i, cv2.CC_STAT_TOP]
+        w = stats[i, cv2.CC_STAT_WIDTH]
+        h = stats[i, cv2.CC_STAT_HEIGHT]
+        sl = (slice(y0, y0 + h), slice(x0, x0 + w))
+        comp = lab[sl] == i
         area = stats[i, cv2.CC_STAT_AREA]
-        extent = max(stats[i, cv2.CC_STAT_WIDTH], stats[i, cv2.CC_STAT_HEIGHT])
-        if area and (comp & droplet_mask).sum() / area >= cover_thr and extent <= max_extent:
-            dropped |= comp
+        extent = max(w, h)
+        if (area and (comp & droplet_mask[sl]).sum() / area >= cover_thr
+                and extent <= max_extent):
+            dropped[sl] |= comp
             n_drop += 1
         else:
-            kept |= comp
+            kept[sl] |= comp
             n_kept += 1
     return kept, dropped, n_kept, n_drop
 
@@ -237,19 +260,21 @@ def measure_frame(T, dets, args):
     n, lab, stats, _ = cv2.connectedComponentsWithStats(kept.astype(np.uint8), 8)
     comp_areas = [int(stats[i, cv2.CC_STAT_AREA]) for i in range(1, n)]
 
-    # Droplet sizing is UNCHANGED -- it comes from the model, which measures
-    # droplets well. Only the un-atomised denominator is re-derived classically.
+    # Droplet focus AND sizing come from measure_run.measure_droplet -- the one
+    # shared implementation. This file used to recompute the focus test itself,
+    # twice, and the copies drifted: 85.58 um here against 85.57 um there for the
+    # same run. Only the un-atomised denominator is re-derived classically.
     focus_a, oof_a = [], []
     for d in dets:
         if d["category_id"] != DROPLET:
             continue
-        mb, bx, by, bh, bw = det_crop(d)
-        if not mb.any():
+        md = measure_droplet(T, d, args.focus_max,
+                             split_um=getattr(args, "split_um", SPLIT_UM),
+                             core_estimator=getattr(args, "core_estimator", "robust"),
+                             sizer=not getattr(args, "no_sizer", False))
+        if md is None:
             continue
-        if T[by:by + bh, bx:bx + bw][mb].min() <= args.focus_max:
-            focus_a.append(d["area"])
-        else:
-            oof_a.append(d["area"])
+        (focus_a if md["in_focus"] else oof_a).append(md["area_px"])
 
     row = {
         "total_liquid_px": total_px,
@@ -283,7 +308,14 @@ def draw_frame(view8, dets, T, unatom, row, args):
         mb, bx, by, bh, bw = det_crop(d)
         if not mb.any():
             continue
-        sharp = T[by:by + bh, bx:bx + bw][mb].min() <= args.focus_max
+        # same shared decision as the numbers, so the picture cannot contradict
+        # the table: a droplet re-sized or re-classified is drawn accordingly
+        md = measure_droplet(T, d, args.focus_max,
+                             split_um=getattr(args, "split_um", SPLIT_UM),
+                             core_estimator=getattr(args, "core_estimator", "robust"),
+                             sizer=not getattr(args, "no_sizer", False),
+                             crop=(mb, bx, by, bh, bw))
+        sharp = bool(md["in_focus"]) if md else False
         full = np.zeros(canvas.shape[:2], np.uint8)
         full[by:by + bh, bx:bx + bw] = mb
         # Ring, not outline: a 9 px droplet's own contour is invisible at full

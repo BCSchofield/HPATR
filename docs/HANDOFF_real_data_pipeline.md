@@ -21,7 +21,631 @@ file is the operational summary of it.
 
 ---
 
-## 2026-10-02 (afternoon) — TAGUCHI RE-ANALYSIS SET UP ON THE MAC. READ THIS FIRST
+## 2026-10-03 — SIZER AND CORE ESTIMATOR IMPLEMENTED IN measure_run.py
+
+Three duplicated focus tests collapsed into one shared function, the classical
+half-max sizer wired in behind it, and the `t_min` single-pixel estimator
+replaced. **Not committed.** Trial_1 re-measured four ways to attribute every
+change; the nine L9 runs are untouched.
+
+### What now exists
+
+`measure_run.py` gained, above `union_area`:
+
+| function | what it decides |
+|---|---|
+| `droplet_core(T_crop, mask, estimator)` | the droplet's core transmission — what `t_min` was |
+| `halfmax_area(T_pad, mask_pad, core_t)` | half-max area in px, and whether it was degenerate |
+| `measure_droplet(T, d, focus_max, ...)` | **the one place** focus and size are decided |
+
+`classical_liquid.py` imports `measure_droplet` at both of its former call sites
+(`:249` sizing, `:286` image colour). The 85.58 / 85.57 drift between the two
+scripts is gone by construction, not by coincidence.
+
+New flags, so every change is reversible and attributable:
+`--no-sizer`, `--core-estimator {robust,min}`, `--split-um`.
+
+**Split = 40 um**, settled from degeneracy rather than from the Phase 2
+mask-agreement evidence that set 50. See the split section below.
+
+### THE BUG WORTH READING: the first core estimator penalised small droplets
+
+The single darkest pixel is biased dark — noise can drag a minimum down, never
+up — so it reads diameters small and makes the gate permissive. The first fix
+averaged the darkest `max(3, 5%)` of the **whole mask**. That was wrong, and
+Ben caught it from the physics before the numbers were in.
+
+Share of Trial_1 droplets with **no interior pixel** (mask eroded by 1):
+
+| diameter | mask px | no interior |
+|---|---|---|
+| < 25 um | 4 | **100.0%** |
+| 25-30 | 6 | 99.9% |
+| 30-40 | 9 | 71.8% |
+| 40-50 | 16 | 0.7% |
+| > 80 | 80 | 0.0% |
+
+A 4-6 px mask eroded by one is EMPTY. Every pixel straddles the boundary, part
+droplet and part background, so averaging them measures **partial-volume
+dilution, not noise** — it penalises a droplet for being small. It cost 30% of
+droplets under 25 um and 15% of the whole in-focus population.
+
+This also broke the design's central asymmetry: a small OUT-OF-FOCUS droplet
+blurs and loses contrast, so it fails the gate unaided. **A small droplet that
+IS dark is therefore in focus and must be counted.** Ben's words: *"if we have a
+dark speck, it IS a small droplet in focus."* Correct, and the estimator has to
+respect it.
+
+**Fix: average the darkest `max(3, 5%)` of INTERIOR pixels only; fall back to
+the plain minimum when there is no interior.** Gate change by size afterwards:
+`<25 um 0.00 pp`, `25-30 -0.07`, `30-40 -1.22`, `40-50 -3.80`, `>80 -3.95`.
+Small droplets untouched; the gate tightens only where a real core exists, which
+is the only place the noise argument ever applied.
+
+### Trial_1, 276 frames, 26 s per variant
+
+| variant | D32 um | in focus | out of focus | atomised % |
+|---|---|---|---|---|
+| OLD baseline (`--no-sizer --core-estimator min`) | **85.58** | 28,768 | 28,891 | 7.785 |
+| ~~whole-mask robust~~ (the bug) | 86.56 | 24,462 | 33,197 | 7.785 |
+| interior robust, no sizer | 85.80 (+0.3%) | 27,513 | 30,146 | 7.785 |
+| **interior robust + sizer** | **81.59 (-4.7%)** | 27,513 | 30,146 | **7.785** |
+
+The OLD row reproduces the published 85.57 um, so the refactor is faithful.
+
+**Invariants held, by design and in fact:** total droplets 57,659 in every
+variant, and the atomised fraction identical to three decimals. Nothing is ever
+dropped — the sizer changes a NUMBER, never membership; the focus verdict moves
+a droplet between buckets that both already existed.
+
+Method tally at the 40 um split: `halfmax` 11,812 · `model_below_split` 14,114 ·
+`model_degenerate` 1,587 · `model_out_of_focus` 30,146.
+
+### Why the split is 40 um, and what `model_degenerate` means
+
+"Degenerate" = the half-max component came out exactly equal to the model's
+mask, so the measurement reproduced its own input. **It is not a failure and the
+droplet is not excluded** — it is counted, in focus, and feeds D32 as before.
+Measured over 6,023 droplets at a 40 um split, degenerate droplets are 8.5% of
+those the sizer acts on but only **2.09% of the d^3 weight D32 is built from**.
+The flag exists so the provenance is honest, not to change the number.
+
+Degeneracy by size is what sets the split: 44% below 25 um, 37% at 30-35,
+21% at 40-50, 8.5% at 50-60, under 2% above 60.
+
+**Below ~50 um the sizer changes the answer but cannot be said to improve it.**
+At 30-40 um the half-max area moves by about 1 px and one pixel is 5.4% of the
+diameter; 604 droplets produce only 52 distinct values. It is not escaping
+quantisation, only moving to a different lattice of the same coarseness. Above
+80 um it is a real measurement: 17 px of movement, 76% distinct values.
+**Small-droplet sizing needs magnification, not a better algorithm.**
+
+D32 effect by split: 30 um -4.9%, 40 um -5.7%, 50 um -7.2%, 60 um -8.6%. The
+choice is low-stakes for the headline; 40 was picked to include the 30-50 band
+where it may help, with the flag making clear which diameters are measured.
+
+### Provenance and the comparison guard
+
+`summary.json` provenance now carries `sizer_version` (**2.0.0**),
+`sizer_enabled`, `split_um`, `core_estimator` and `diameter_method_counts`, and
+all four are in the `keys` tuple at `compare_runs.py`. Before this a change of
+sizing METHOD was invisible to that guard — an 8% D32 difference would have
+compared silently. A run predating the field reads `None`, which differs from
+`"2.0.0"`, so old and new runs correctly refuse to compare.
+
+### Next
+
+1. **Profile before re-measuring** (Ben's request) — 26 s per 276-frame run is
+   fine, but the sizer adds a dilate + connectedComponents per large droplet and
+   nine runs x 497 frames has not been profiled.
+2. **Validate against the 20-frame benchmark** before the L9 goes anywhere.
+3. **Re-measure the nine runs** — `batch_runs.py --reuse`, ~1.9 h, CPU-only on
+   the Mac. No re-inference: `predictions.json`, the 16-bit frames and the
+   backgrounds are all on the LaCie.
+4. **Freeze before Monday's 18 captures**, or all 27 runs straddle two sizing
+   methods.
+5. **Calibration target** (reticle / graticule / glass beads) — still the one
+   piece of evidence that would turn "half-max is the convention" into a
+   measurement on this rig. Nothing else settles the edge question.
+
+---
+
+## 2026-10-02 (late) — THE FIRST INDEPENDENT DIAMETERS. THE SIZER'S DIRECTION IS NOW IN QUESTION
+
+51 droplets across two L9 frames (one 6000 sccm, one 9000), hand-drawn free-hand
+in LabelMe from POINT seeds only — no outline was ever shown, and nothing was
+refined. These are **the first diameters in the project independent of half-max**.
+
+`Real_Data/07_validation_taguchi/` · scored by
+`Classical Droplet Sizing Testing/code/score_freehand.py`
+
+### The result reverses Phase 2's sign
+
+| GT used | model mask | classical half-max sizer |
+|---|---|---|
+| refined `06_validation` labels | **+21.5%** (over-sizes) | +1.6% (92% exact zeros — circular) |
+| **free-hand, this set** | **-15.3%** (UNDER-sizes) | **-20.6%** (worse) |
+
+Zero exact-zero errors here, so the independence is real.
+
+Both readings are correct; they measure against different edges. Ben's eye draws
+roughly **30-35% larger in diameter than half-max**, which is the same gap found
+in the label-provenance audit (refinement shrank his free-hand radii a median
+-28% above 100 um).
+
+D32 over the 51: free-hand **70.8 um**, model mask 60.6 (-14.4%), half-max
+sizer 57.2 (-19.2%). Per run: 6000 sccm -13.0%/-17.1%, 9000 sccm -17.8%/-24.7%.
+
+### What this means for the sizer
+
+**The sizer moves D32 AWAY from the free-hand standard**, because it moves
+further toward half-max, and half-max is the smaller convention. Against the
+refined benchmark it looked near-perfect; against the eye it is worse than
+doing nothing.
+
+So the sizer is not wrong — it is **correctly implementing a convention whose
+correctness is now the open question**. Nothing about the sizer can be settled
+until the project decides which edge is truth. That is an optics question, not a
+data question:
+
+- **half-max** `(t_min+1)/2` is principled, deterministic, blur-robust, and
+  already wired through the whole pipeline;
+- **the eye** includes the diffraction/blur halo, which for a transparent
+  sphere in shadowgraph is not obviously part of the droplet.
+
+**Do not ship the sizer until this is decided.** Shipping it silently changes
+every absolute diameter by ~8% in a direction nobody has justified.
+
+### Caveats
+
+- n = 51, two frames, one labeller, one sitting. Direction is clear, magnitude
+  is not.
+- Only droplets >= 40 um were seeded, so nothing here speaks to small droplets.
+- Ben added only 1 droplet beyond the 51, and it was below the 40 um tile cut —
+  so this set found **no model misses and no wrongly-rejected droplets**. Weak
+  evidence either way: he was outlining seeds, not sweeping the frame.
+
+### Also settled: the gas-flow gradient is the RULE's artefact, not physics
+
+106 blind verdicts, 53 per run (`verdicts_taguchi_106.csv`):
+
+| | eye says measurable | rule rejects |
+|---|---|---|
+| 6000 sccm | 50.9% | 30.2% |
+| 9000 sccm | 45.3% | 37.7% |
+
+Fisher **p = 0.698** — no real difference in measurability. But at matched size
+in the 60-80 um band the rule's rejection rate goes 30.8% -> 58.8% while the eye
+goes 30.8% -> 11.8%. The rule tracks spray density, not focus.
+
+And the rule mis-calibrates in the opposite direction here: of 106, **1 false
+reject and 20 false keeps** — it UNDER-catches on L9 frames, having
+OVER-rejected on the benchmark frames. Same rule, opposite error, different gas
+flow. That alone disqualifies it from the nine runs.
+
+---
+
+## 2026-10-02 (night) — STEP 6 DONE. THE RECLASSIFICATION RULE IS VALIDATED, WITH ONE CONFOUND STILL OPEN
+
+Three things happened: the rule was run against the 20-frame benchmark, a
+**second blind eye-labelling round (197 droplets)** settled what the benchmark
+could not, and a **cross-day transfer check** found the one thing that still
+blocks applying any of this to the L9.
+
+Code: `Classical Droplet Sizing Testing/code/{validate_criterion.py,
+transfer_check.py, make_tiles_benchmark.py}`. Reports:
+`output/{step6_report.md, step2_transfer_report.md}`.
+
+### Bottom line
+
+**The rule is sound and the Trial_1 result stands.** It is noisy — ~17% false
+rejects — so **-34.5% is a little too large, but directionally right**, and the
+large-droplet rejection that carries most of the d^3 effect is confirmed correct
+by eye, 30 for 30.
+
+**It still must not be applied to the nine Taguchi runs.** One unresolved
+confound, pointed straight at the dominant factor. See "The gas-flow gradient".
+
+### Three arguments against the rule that were raised and are now DEAD
+
+Recorded so they are not re-derived. All three were mine, in this session,
+before the 197 labels came back.
+
+1. **"The metrics track size, not focus."** `fill_ratio` and
+   `extinction_conc` correlate with diameter at rho ~ -0.59 and with `t_min` at
+   only -0.05. This was presented as the Step-0 "size measure wearing a
+   sharpness label" defect reappearing. **It is not.** Measurability genuinely
+   collapses with size — Ben's own eye, with the rule hidden:
+
+   | model diameter | % he called `sharp` |
+   |---|---|
+   | 50-60 um | 70.2% |
+   | 60-70 | 47.5% |
+   | 70-80 | 21.4% |
+   | 80-100 | 25.0% |
+   | 100-125 | 7.1% |
+   | >125 | **0.0%** |
+
+   A correct focus criterion for this data MUST correlate with size, because the
+   plan's own asymmetry says so: a small out-of-focus droplet loses contrast and
+   fails the `t_min` gate, so the population that wrongly passes is large by
+   construction. Correlation with diameter is the signal, not the artefact.
+
+2. **"It rejects 100% of droplets >= 125 um, so it is a size ceiling."**
+   Ben called **0 of 30** such droplets sharp (22 fuzzy, 8 not-a-droplet).
+   Perfect agreement with the rule. There is no ceiling artefact.
+
+3. **"Applying it overshoots ground truth"** — reported D32 went from +21.5% to
+   -15.6% against the hand labels. The comparison was wrong: GT D32 was computed
+   over ALL matched droplets, including the ones Ben says cannot be measured.
+   The right target is GT D32 over the droplets he called `sharp`, reweighted for
+   the group sampling fractions. **Not yet computed — do this.**
+
+### The 197-droplet blind round — and why the control group is the whole design
+
+`make_tiles_benchmark.py` built a sheet from the 20 benchmark frames (recordings
+125917 and 101947, so no overlap with the 502 Trial_1 droplets). Four groups,
+shuffled, with **the image and the id as the only things the artifact received** —
+every metric, the group, and the rule's verdict stayed on disk in
+`output/tiles_bench_key.csv`.
+
+| group | what it is | n | % `sharp` [95% Wilson] |
+|---|---|---|---|
+| **B** | kept by rule, model sized it within 10% — **CONTROL** | 50 | **68.0%** [54, 79] |
+| **A** | rejected by rule, model sized it within 10% | 67 | **35.8%** [25, 48] |
+| **C** | rejected by rule, model sized it badly | 50 | 20.0% [11, 33] |
+| **D** | >= 125 um, rule rejects 100% | 30 | **0.0%** [0, 11] |
+
+**Group B is what makes the round interpretable, and leaving it out would have
+wasted the sitting.** A sheet of only rule-rejected droplets cannot distinguish
+"the rule over-rejects" from "everything large looks fuzzy at 8x". B came back
+68% sharp, so Ben is not uniformly strict, so A's 35.8% means something.
+
+**A vs B, both well-sized, Fisher p = 0.0007, OR 0.26.** At matched sizing
+quality the rule still halves the odds a droplet is measurable. It is not
+re-reading size and it is not random.
+
+Overall agreement with the eye, all 197: **74.6%** — **34 false rejects**
+(eye `sharp`, rule throws it out) and **16 false keeps** (eye `fuzzy`, rule sizes
+it anyway). It is noisy in BOTH directions; under-catching is as real as
+over-catching.
+
+### The gas-flow gradient — the one thing still blocking the L9
+
+`transfer_check.py`, 35 frames per run, one run per gas-flow level, no labelling.
+
+Good news: the metric distributions barely move between 2026-09-28 (where the
+rule was fitted) and 2026-10-01. Median `fill_ratio` 0.974 vs 0.973/0.936/0.895,
+`extinction_conc` 0.688 vs 0.671/0.657/0.645. The optics are stable day to day.
+
+The problem is **within** the L9. Flag rate, controlling for model diameter:
+
+| diameter | 3000 sccm | 6000 | 9000 |
+|---|---|---|---|
+| 50-60 um | 14.4% | 22.2% | **30.0%** |
+| 60-70 | 36.4 | 43.3 | **53.4** |
+| 70-80 | 66.7 | 68.4 | **77.6** |
+| 80-100 | 71.4 | 76.0 | **84.8** |
+| 100-125 | 85.3 | 92.7 | **96.1** |
+| >125 | 88.2 | 95.6 | **99.0** |
+
+Roughly double the rejection rate at 9000 vs 3000 sccm **at matched droplet
+size**, in every bin. Two candidate causes and they cannot be separated from
+this data:
+
+- **real** — more gas, wider cone, more liquid off the focal plane;
+- **artefact** — 3x the droplets per frame, so masks overlap, so `fill_ratio`
+  reads "not round".
+
+Against the real explanation: `t_min` is flat across the three (median 0.55 /
+0.55 / 0.57) and the `t_min`-based out-of-focus share moves only 32.9 -> 41.0%,
+against the rule's 46 -> 59%. The contrast gate does not corroborate a focus
+change of that size.
+
+**Gas flow is the factor the L9 exists to measure** (93.9% contribution on
+atomised fraction). Apply the rule and any D32-vs-gas-flow result is
+uninterpretable — D32 is currently flat, so a crowding artefact would surface as
+a new finding.
+
+**The fix is a hand-labelled 9000 sccm run.** Ben offered this and it was
+initially waved off; that was wrong. It is the only way to settle the gradient,
+because no 9000 sccm frame currently has a ground-truth diameter.
+
+### The benchmark cannot adjudicate the SIZER — a ground-truth provenance trap
+
+Ben asked whether the benchmark labels had been grown to half-max by
+`refine_labels.py`. They had, and it matters more than expected.
+
+| label stage | droplets | radii on the pixel lattice |
+|---|---|---|
+| `.original.json` | 3,084 | **0.0%** — genuinely free-hand |
+| `.prerefine.json` | 3,097 | 7.4% |
+| current `.json` | 3,097 | **46.7%** |
+
+Refinement moved **39.8%** of radii, shrinking them a median **-30%**, worst on
+the large droplets (60.2% of the 100-150 um bin moved, median -26.9%).
+
+Consequences:
+
+- **For the RULE, this is fine.** Refinement is a deterministic script applied to
+  every label, so it is a consistent yardstick. Half-max on both sides fairly
+  answers "does the model's mask disagree with the project's edge definition".
+- **For the SIZER, it is fatal to the comparison.** The half-max sizer scores
+  **+1.6%** against refined GT versus the model's +21.5% — but **92% of matched
+  droplets have an EXACTLY ZERO error**, because the sizer repeats
+  `refine_labels.py`'s own arithmetic. Against the free-hand `.original.json`
+  radii the sign flips: model **-17.4%**, half-max sizer **-22.9%**.
+- So the benchmark holds two internally-consistent readings that disagree by
+  **12-28% on diameter** — larger than the effect being measured. **It cannot
+  certify the sizer's absolute accuracy.** More labelling of the same kind will
+  not fix it; it needs a decision about which edge convention is truth.
+
+**`.prerefine.json` is NOT the free-hand original** — it is one snapshot in the
+chain `original -> predust -> prerefine -> dust_removed -> current`, and 90% of
+its radii are already on the lattice. Use `.original.json` for any
+provenance-independent check. Shape ORDER is preserved through the chain
+(median centre offset 0.000 px, 18 of 20 frames have equal counts), so an index
+join is sound; nearest-centre matching at 3 px is NOT, because the median
+droplet radius is 2.85 px and neighbours cross-match.
+
+### Artefacts
+
+- `output/eye_labels_bench_197.csv` — the 197 verdicts as clicked.
+- `output/step7_bench_labels_unblinded.csv` — joined to group, metrics, hand
+  diameter and the rule's verdict.
+- `output/tiles_bench_key.csv` — the blinding key. **Never publish this into a
+  labelling artifact.**
+- `output/step6_matched_pairs.csv`, `step6_sized_population.csv`,
+  `step6_vs_freehand.csv`, `step6_label_refinement_audit.csv`,
+  `step2_transfer_metrics.csv`.
+- Labelling artifact: `https://claude.ai/artifact/RqDfuqByVQcVH4aLDqntur`
+  (verdicts also written to `db` doc `labels/edge_panel_round4`).
+
+### Next, in order
+
+1. **Get `code/`, the 502 and the 197 into git.** Still not done, still the
+   highest value per minute here.
+2. **Hand-label a 9000 sccm run** — the only way to settle the gas-flow
+   gradient, and the gate on all nine-run application.
+3. **Compute the reweighted D32 target** over eye-`sharp` droplets, correcting
+   for the A/B/C/D sampling fractions, and score the rule against that instead
+   of against GT-over-everything.
+4. **Try to cut the 34 false rejects** without giving back the 16 false keeps.
+   `area_sensitivity` (AUC 0.910 out-of-sample) is the obvious candidate and is
+   still not in the fitted rule.
+5. **Then** implement in `measure_run.py` per the evening section — one shared
+   `droplet_in_focus`, magenta images, `sizer_version` provenance.
+6. **The 9 Taguchi runs need no re-inference.** Everything the rule reads is on
+   the LaCie: `predictions.json`, `raw/frames/16bit/`, `background_median.tiff`.
+   Phase 1.5 already did this exact frame pass in **29-32 s per run, ~4.5 min
+   for all nine**, CPU-only on the Mac. A full `measure_run` + `classical`
+   re-run is ~1.8 h, also no GPU. Inference stays done.
+
+---
+
+## 2026-10-02 (evening) — CLASSICAL DROPLET SIZING. A -34.5% D32 RESULT, AND A TRAP
+
+> **Read the 2026-10-02 (night) section above first.** It validated the rule
+> against the benchmark and a second blind labelling round, and it revises two
+> things here: the -34.5% is a little too large (~17% false rejects), and the
+> benchmark cannot certify the SIZER at all. Everything else below stands.
+
+Work lives in **`<LaCie>/Experiments/2026/09/28/Trial_1/shadowgraph/analysis/
+Classical Droplet Sizing Testing/`** (`code/`, `output/`, `figures/`).
+**NOT in git.** The 502 hand verdicts in particular are three sittings of Ben's
+time and exist only there and in the artifact's db. Get them into the repo.
+
+Full design: `~/.claude/plans/serene-toasting-goose.md` (session-local, copy it
+out). **Half the plan is done; `measure_run.py` is UNCHANGED.** Everything below
+came from throwaway scripts; nothing is in the production chain yet.
+
+### The headline
+
+Applying a rejection rule to all 276 Trial_1 frames moves
+**D32 85.58 -> 56.05 um (-34.5%)**, 274/276 frames falling, median -33.5%.
+That is a far bigger lever than the mask-edge bias the work set out to fix
+(+4 to +17%), so **reclassification comes before the sizer**, reversing the
+plan's original Step 4/5 order.
+
+### How it was established — three label rounds, 502 droplets
+
+Ben labelled every droplet >=50 um in a contact-sheet artifact (fixed 8x
+magnification, no overlay drawn -- an outline at the half-max pre-judges the
+question). Verdicts: `sharp` / `fuzzy` / `not_a_droplet`.
+
+| round | frames | selection | untrustworthy among gate-passing |
+|---|---|---|---|
+| 1 | 4 | hand-picked, 2 for looking bad | 50/130 = **38.5%** |
+| 2 | 10 | **random** frames, random droplets | 43/107 = **40.2%** |
+| 3 | 5 | the **highest-D32** frames (median 128 um vs run 82) | 28/61 = **45.9%** |
+
+Round 1's rate was expected to be inflated by the hand-picking. **It was not** —
+round 2 matches it. So **~40% of droplets passing the `t_min <= 0.70` focus gate
+today are not measurable**, and that is a properly sampled figure.
+
+The problem scales hard with size (round 2, random): 50-65 um **4%**,
+65-85 um **44%**, 85-300 um **83%**.
+
+### The criterion, and why these two metrics
+
+```
+reclassify an in-focus droplet >= 50 um as OUT OF FOCUS when
+    fill_ratio      < 0.85     (not round -- blobs, merged pairs)
+ OR extinction_conc < 0.60     (blurred -- optical depth leaks past its own edge)
+```
+
+`fill_ratio` = half-max mask area / min-enclosing-circle area.
+`extinction_conc` = sum(1-T) inside the half-max mask / sum(1-T) over the
+dilated search region.
+
+**They detect Ben's two failure modes separately**, which is why combining them
+works and why neither alone suffices:
+
+| metric | fuzzy vs sharp | not-a-droplet vs sharp |
+|---|---|---|
+| extinction concentration | **AUC 0.121** | 0.551 (blind to it) |
+| fill ratio | 0.202 | **AUC 0.055** (near-perfect) |
+
+Neither is contrast in disguise -- correlation with contrast **0.14 and 0.20**,
+against the **0.70-0.75** that killed every earlier candidate (max gradient,
+edge width, edge width / radius; see the afternoon section's Step 0).
+
+**Fitted on round 1 only, then applied unchanged:**
+
+| round | caught | false alarms |
+|---|---|---|
+| 1 (fitted) | 46/50 = 92% | 17/80 = 21% |
+| 2 (unseen, random) | 38/43 = **88%** | 10/64 = **16%** |
+| 3 (unseen, high-D32) | 21/28 = **75%** | 5/33 = 15% |
+
+**`n_pieces` failed completely** — exactly 1 for all 502 droplets, AUC 0.500.
+The repo calls the fragmentation gate "the strongest out-of-focus signal found"
+(`extract_candidates.py:442-455`) but that was calibrated on **filaments**;
+compact droplets never fragment. Do not reach for it again on droplets.
+
+### It is a RECLASSIFICATION, not a deletion
+
+A flagged droplet moves to the **out-of-focus** bucket. It is not removed.
+Ben caught this and was right; an earlier note in this session wrongly warned
+the atomised fraction would move.
+
+| | before | after |
+|---|---|---|
+| droplet detections | 57,659 | **57,659** |
+| in focus (feeds D32) | 28,768 | 24,224 (-4,544) |
+| out of focus (counted, unsized) | 28,891 | 33,435 (+4,544) |
+| **atomised numerator** | 57,659 | **unchanged** |
+| **droplets per frame** | 208.9 | **unchanged** |
+| D32 | 85.58 um | **56.05 um** |
+
+The atomised fraction **cannot** change: its numerator is `union(ALL droplet
+masks)` and the focus flag is never consulted for droplets —
+`measure_run.py:462` appends to `rle_drop` unconditionally,
+`classical_liquid.py:211` ORs every `category_id == DROPLET` regardless of focus.
+Call it `reclassify_as_oof`, never `reject`, so nobody implements a deletion and
+silently breaks the atomised fraction and the Taguchi count response.
+
+So the Taguchi re-run is cheap: atomised fraction and droplets-per-frame
+conclusions carry over untouched; only the D32 row moves, and Phase 4 already
+found no significant factors there.
+
+### THE TRAP — the classical sizer is UNUSABLE without guards
+
+Measured on 4,706 in-focus droplets >=50 um over 120 frames. The ray-based
+half-max sizer, run naively:
+
+| | |
+|---|---|
+| median ratio classical/model | **0.91** — sensible, matches what the hand labels demand |
+| p95 | 0.99 |
+| **p99** | **4.42** |
+| max | **12.41** |
+
+**2.8% of droplets measure >1.5x the model's diameter, and they carry 74% of the
+d^3 weight.** Pooled D32 from the classical edge comes out **211.9 um against
+the model's 98.9** — +114%, the opposite direction from the per-bin medians.
+
+| guard | classical D32 | keeps |
+|---|---|---|
+| none | 211.9 um | 100% |
+| drop ratio > 5 | 116.1 | 99.1% |
+| drop ratio > 3 | 94.8 | 98.4% |
+| drop ratio > 2 | 89.3 | 97.7% |
+| drop ratio > 1.5 | 86.0 | 97.2% |
+
+These are the half-max grow leaking into a touching neighbour or an attached
+ligament — the failure the design review predicted and sized: droplet-attached-
+to-ligament is **7-11%** of detections and rises with size, against only
+**0.3-2%** for droplet-droplet merging. **Measure the median, never the pooled
+d^3 statistic, when judging a sizer.** A median that looks right can sit on a
+tail that destroys D32.
+
+So the guards in Step 5 (`filament_like` via `true_aspect >= 1.5`,
+`merged`, `grew_too_much`) are **not optional polish** — without them the sizer
+is worse than the model it replaces.
+
+### Where it goes, and what it costs
+
+**Not `classical_liquid.py`** — it does not size droplets at all (`:240-241`
+"Droplet sizing is UNCHANGED -- it comes from the model").
+
+The droplet focus test is currently **duplicated in three places** and all three
+must agree or the summaries drift (they already differ: 85.58 vs 85.57):
+`measure_run.py:460`, `classical_liquid.py:249`, `classical_liquid.py:286`.
+Put ONE `droplet_in_focus(...)` in `measure_run.py` and have
+`classical_liquid.py` import it, as it already imports `det_crop`, `equiv_um`
+and `d32` from there (`:84`).
+
+**Images follow for free** if the rule is applied where `sharp` is decided —
+both renderers pick colour from that same boolean
+(`GREEN if sharp else MAGENTA`, `measure_run.py:463`, `classical_liquid.py:286`).
+A reclassified droplet must draw **magenta**, or the extremes images will
+contradict the numbers.
+
+**Cost: ~1 second per run.** Measured at 0.05 ms per droplet, because the
+transmission image and mask crop are already in hand when the focus test runs.
+Against a 316-445 s measurement stage that is ~0.3%. A standalone pass that
+re-reads the frames costs ~25 s instead — another reason to put it inside
+`measure_run.py`.
+
+### Honest limits on the -34.5%
+
+- **The rule under-catches where it matters most.** On the highest-D32 frames it
+  caught 75% and recovered only -34.3% of the -54% Ben's labels demand.
+  **-34.5% is a FLOOR on the effect, not the full effect.**
+- **Validated against the eye, not the benchmark.** The eye is the right ground
+  truth for "is this measurable"; it does not certify a diameter.
+  **SUPERSEDED — Step 6 ran the same night; see the 2026-10-02 (night) section.**
+  The rule survived it, but the benchmark turned out unable to certify a
+  DIAMETER at all (its refined and free-hand labels disagree by 12-28%), and a
+  second blind round of 197 droplets put the false-reject rate at ~17%. So
+  **-34.5% is directionally right but a little too large**, and D32 ~ 56 um is
+  still not quotable — now for a different reason than this bullet assumed.
+- **`area_sensitivity` scored better out-of-sample** (AUC 0.910) than either
+  shipped metric. It was not in the fitted rule, so adding it means re-fitting on
+  data already inspected — a separate, deliberate decision.
+- The 50 um split is settled from data (Phase 0): classical/model agrees with
+  what the hand labels demand to within **0.8%** at 50-60 um and 1.4% above,
+  but over-corrects by 2.7% below 50. Split = the existing volume floor, so no
+  volume-weighted metric ever mixes two edge definitions.
+
+### Artefacts
+
+- `figures/compare_frame_0003_n29.png` — two-panel before/after on a full frame:
+  green in-focus / magenta out-of-focus, then red rings on everything the rule
+  discounts. D32 78.5 -> 54.5 um on that frame.
+- `output/all_frames_rejection.csv.gz` — per-droplet verdicts, all 276 frames.
+- `output/phase0_estimators.csv` — model vs classical diameter, 8,368 droplets.
+- **`output/eye_labels_502.csv`** — the 502 verdicts as clicked, and
+  **`output/eye_labels_with_metrics.csv`** — the same joined to every metric,
+  with a `round` column. `output/README_labels.md` carries the provenance and
+  the warning that the three rounds are NOT interchangeable (round 1 fits,
+  round 2 measures the rate, round 3 is adversarial).
+  **These were nearly lost.** For most of 2026-10-02 the verdicts existed only
+  in the labelling artifact's cloud `db` and in an ephemeral session scratchpad
+  — `tiles_meta.csv` has a `verdict` column but it is EMPTY, written before
+  labelling. They are now on the LaCie. **They are still not in git.**
+
+### Next, in order
+
+1. **Export the 502 labels and the `code/` folder into git.** Highest value per
+   minute of anything here.
+2. **Implement the reclassification** in `measure_run.py` (one shared
+   `droplet_in_focus`), with the `sizer_version` provenance field and the
+   `compare_runs.py:73` guard extension from plan Step 7.
+3. ~~**Validate against the 20 benchmark frames** (plan Step 6)~~ — **DONE
+   2026-10-02 night.** Replaced by: hand-label a 9000 sccm run, which is now the
+   gate on applying any of this to the L9. See the night section.
+4. **Only then** the sizer itself — and only with the Step 5 guards, per the
+   trap above.
+5. **Freeze before Monday's captures.** Either implement + re-measure the 9
+   existing runs first, or leave `measure_run.py` untouched, capture, and
+   re-measure all 27 afterwards. Half-and-half is the one unrecoverable mistake,
+   and `compare_runs.py` cannot currently detect it.
+
+---
+
+## 2026-10-02 (afternoon) — TAGUCHI RE-ANALYSIS SET UP ON THE MAC
 
 A reproducible re-analysis of the L9 array, built from scratch in a campaign
 folder on the Mac, with the raw data read-only throughout. **ALL FOUR PHASES

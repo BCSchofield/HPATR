@@ -70,7 +70,14 @@ def main():
 
     # Refuse to compare incomparable runs. A different threshold, focus cutoff or
     # model changes what the number MEANS, and the bias no longer cancels.
-    keys = ("score_threshold", "focus_max", "um_per_px", "ci_stride")
+    # sizer_version et al. added 2026-10-03: before that a change of SIZING
+    # METHOD was invisible to this guard, so a run measured with the classical
+    # half-max sizer would have compared silently against one measured from the
+    # model's mask area -- an 8% difference in D32 with nothing to flag it.
+    # A run predating the field reads None, which differs from "2.0.0", so old
+    # and new runs correctly refuse to compare.
+    keys = ("score_threshold", "focus_max", "um_per_px", "ci_stride",
+            "sizer_version", "sizer_enabled", "split_um", "core_estimator")
     base = {k: runs[0]["provenance"].get(k) for k in keys}
     mismatched = []
     for lab, r in zip(labels, runs):

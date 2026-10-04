@@ -311,6 +311,11 @@ def main():
             "extracted_utc": datetime.now(timezone.utc).isoformat(),
             "stride": args.stride,
             "frame_count": len(nums),
+            # A --limit run extracts only the first N frames but otherwise looks
+            # exactly like a complete extraction, so process_capture.can_reuse
+            # would skip extraction and leave the next full run with only those
+            # N frames. Record it so reuse can refuse.
+            "limited": bool(getattr(args, "limit", None)),
             "frame_numbers": nums,
             "first_frame_number": first,
             "last_frame_number": last,

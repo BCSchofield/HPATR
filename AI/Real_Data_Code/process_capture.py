@@ -137,6 +137,10 @@ def can_reuse(run_dir: Path, stride: int, model_dir: Path = None) -> bool:
     meta = previous_analysis(run_dir)
     if not meta or meta.get("stride") != stride:
         return False
+    if meta.get("limited"):
+        # A --limit extraction holds only the first N frames while looking
+        # complete. Reusing it silently caps a full run at N.
+        return False
     n = meta.get("frame_count")
     if not n:
         return False
@@ -331,6 +335,16 @@ def process_capture(cine: Path, run_dir: Path, *, stride=DEFAULT_STRIDE,
         _run(cmd, log)
 
     summary = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
+    # Surface the sizing method in the log and the GUI. A run measured with a
+    # different sizer_version is NOT comparable with one measured before it, and
+    # compare_runs.py refuses to mix them -- so it must be visible here rather
+    # than buried in summary.json.
+    _p = summary.get("provenance", {})
+    log(f"    sizer {_p.get('sizer_version', 'pre-2.0.0 (model mask area)')}"
+        f"  split {_p.get('split_um', '-')} um  core {_p.get('core_estimator', 'min')}")
+    _mc = _p.get("diameter_method_counts")
+    if _mc:
+        log(f"    diameters: " + ", ".join(f"{k} {v:,}" for k, v in sorted(_mc.items())))
     summary["_elapsed_total_s"] = round(time.time() - t0, 1)
     summary["_run_dir"] = str(run_dir)
     summary["_frames"] = n_frames

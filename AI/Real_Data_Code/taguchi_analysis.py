@@ -72,6 +72,88 @@ def parse_levels(name):
     return dict(zip(FACTORS, map(int, m.groups())))
 
 
+# ============================================================================
+# RESPONSES
+#
+# D32 alone is not enough and never was. It is Sum(d^3)/Sum(d^2), so it is set
+# by the largest few droplets and is nearly blind to the population: a change
+# that makes many more small droplets while leaving the big ones alone does not
+# move it. Measured on this very campaign, gas flow is significant on droplets
+# per frame (p = 0.011), on D90 (p = 0.025) and on mean diameter, while D32
+# reads p = 0.064 and looks flat.
+#
+# An orthogonal array constrains which RUNS you do, not how many things you
+# measure from them, so every response below gets its own independent ANOVA on
+# the same nine runs.
+#
+# MULTIPLE COMPARISONS: six responses x three factors is eighteen tests. At
+# p < 0.05 you expect roughly one false positive by chance alone. A borderline p
+# on one response among many is weaker evidence than a single pre-registered
+# test, and the report says so.
+#
+#   key         label                                    direction  quantised?
+RESPONSES = [
+    ("d32",       "D32 in-focus (um)",                   "smaller", False),
+    ("atom",      "Atomised fraction, classical (%)",    "larger",  False),
+    ("d_mean",    "Mean diameter, in-focus (um)",        "smaller", False),
+    ("d_median",  "Median diameter, in-focus (um)",      "smaller", True),
+    ("d90",       "D90 by count, in-focus (um)",         "smaller", True),
+    ("per_frame", "In-focus droplets per frame",         "larger",  False),
+    # ---- FLOW CONSISTENCY -------------------------------------------------
+    # Everything above is a time-AVERAGE: pool every frame, report one number.
+    # A spray that pulses and a spray that runs steadily can give identical
+    # averages, so none of the responses above can see steadiness at all. These
+    # three measure the frame-to-frame behaviour instead, which is what you see
+    # by eye at the atomiser.
+    #   cv_droplets  droplet count per frame, std/mean -- spray pulsing
+    #   cv_liquid    total liquid px per frame, std/mean -- delivery steadiness,
+    #                independent of the model (classical pixels only)
+    #   intermit_pct % of frames carrying under 5% of the run's mean droplet
+    #                count: outright gaps, not just variation
+    # Smaller is better for all three: steadier is better.
+    ("cv_droplets", "Droplet-count CV per frame (steadiness)", "smaller", False),
+    ("cv_liquid",   "Liquid-area CV per frame (steadiness)",   "smaller", False),
+    ("intermit_pct", "Frames near-empty of droplets (%)",      "smaller", False),
+]
+RESP_KEYS = [k for k, _, _, _ in RESPONSES]
+SN_SIGN = {k: (-1 if d == "smaller" else 1) for k, _, d, _ in RESPONSES}
+# A response taking fewer than this many distinct values across the nine runs is
+# sitting on the integer-pixel lattice rather than on a continuous measurement.
+# D10 is the extreme case: 22.568 um on every run, zero variance, so its ANOVA
+# would read p = 0.000 while meaning nothing at all.
+MIN_DISTINCT = 4
+
+
+EMPTY_FRAC = 0.05       # "near-empty" = under this fraction of the run's mean
+
+
+def pooled_responses(dia_by_frame, frames, S3, S2, DP, TP):
+    """Every response from one set of frames. Used for both the point estimate
+    and each bootstrap replicate, so they cannot drift apart."""
+    v = np.concatenate([dia_by_frame[f] for f in frames]) if frames else np.empty(0)
+    n_fr = max(len(frames), 1)
+    counts = np.array([len(dia_by_frame[f]) for f in frames], dtype=float)
+    out = {
+        "d32": S3.sum() / S2.sum() if S2.sum() else float("nan"),
+        "atom": 100.0 * DP.sum() / TP.sum() if TP.sum() else float("nan"),
+        "per_frame": len(v) / n_fr,
+    }
+    # ---- consistency: spread ACROSS frames, not pooled over them ----
+    cmean = counts.mean() if counts.size else 0.0
+    out["cv_droplets"] = float(counts.std() / cmean) if cmean > 0 else float("nan")
+    out["intermit_pct"] = (100.0 * float((counts < EMPTY_FRAC * cmean).mean())
+                           if cmean > 0 else float("nan"))
+    tp = np.asarray(TP, dtype=float)
+    out["cv_liquid"] = float(tp.std() / tp.mean()) if tp.size and tp.mean() > 0 else float("nan")
+    if len(v):
+        out["d_mean"] = float(v.mean())
+        out["d_median"] = float(np.median(v))
+        out["d90"] = float(np.percentile(v, 90))
+    else:
+        out["d_mean"] = out["d_median"] = out["d90"] = float("nan")
+    return out
+
+
 def load_run(run: Path, thr: str):
     an = run / "shadowgraph" / "analysis"
     meas = an / f"measurement_{thr}"
@@ -80,6 +162,9 @@ def load_run(run: Path, thr: str):
     csumm = json.loads((cl / "classical_summary.json").read_text(encoding="utf-8"))
 
     s3, s2, nfocus = defaultdict(float), defaultdict(float), defaultdict(int)
+    # the diameters themselves, per frame -- a median or a percentile cannot be
+    # rebuilt from sums, and the bootstrap has to recompute them per replicate
+    dia = defaultdict(list)
     with open(meas / "droplet_sizes.csv", encoding="utf-8") as f:
         for r in csv.DictReader(f):
             if r["in_focus"] == "1":
@@ -87,6 +172,7 @@ def load_run(run: Path, thr: str):
                 s3[r["frame"]] += d ** 3
                 s2[r["frame"]] += d ** 2
                 nfocus[r["frame"]] += 1
+                dia[r["frame"]].append(d)
     cpf = {}
     with open(cl / "classical_per_frame.csv", encoding="utf-8") as f:
         for r in csv.DictReader(f):
@@ -107,30 +193,38 @@ def load_run(run: Path, thr: str):
                  f"classical summary {csumm['atomised_pct_pooled']}")
 
     ci_stride = int(summ.get("provenance", {}).get("ci_stride") or 1)
-    return {
+    dia_by_frame = {fr: np.asarray(dia.get(fr, []), dtype=float) for fr in frames}
+    rec = {
         "run": run.name, "dir": run, "levels": parse_levels(run.name), "frames": frames,
         "S3": S3, "S2": S2, "DP": DP, "TP": TP, "nfocus": nfocus, "cpf": cpf,
-        "d32": d32, "atom": atom, "model_atom": summ.get("atomised_pct"),
+        "dia": dia_by_frame,
+        "model_atom": summ.get("atomised_pct"),
         "d32_ci_summary": summ.get("d32_ci95"), "ci_stride": ci_stride,
         "meas_dir": meas, "cl_dir": cl,
+        "sizer_version": summ.get("provenance", {}).get("sizer_version"),
     }
+    rec.update(pooled_responses(dia_by_frame, frames, S3, S2, DP, TP))
+    return rec
 
 
 def bootstrap(r, rng):
     idx_pool = np.arange(len(r["frames"]))[::max(1, r["ci_stride"])]
     n = len(idx_pool)
-    d_ci = r["S3"][idx_pool].sum() / r["S2"][idx_pool].sum()
-    a_ci = 100.0 * r["DP"][idx_pool].sum() / r["TP"][idx_pool].sum()
-    D, A = np.empty(N_BOOT), np.empty(N_BOOT)
+    fr = [r["frames"][i] for i in idx_pool]
+    base = pooled_responses(r["dia"], fr, r["S3"][idx_pool], r["S2"][idx_pool],
+                            r["DP"][idx_pool], r["TP"][idx_pool])
+    acc = {k: np.empty(N_BOOT) for k in RESP_KEYS}
     for b in range(N_BOOT):
         i = idx_pool[rng.integers(0, n, n)]
-        D[b] = r["S3"][i].sum() / r["S2"][i].sum()
-        A[b] = 100.0 * r["DP"][i].sum() / r["TP"][i].sum()
-    # centre on the all-frame point estimate
-    r["boot_d32"] = D - d_ci + r["d32"]
-    r["boot_atom"] = A - a_ci + r["atom"]
-    r["d32_ci"] = np.percentile(r["boot_d32"], [2.5, 97.5])
-    r["atom_ci"] = np.percentile(r["boot_atom"], [2.5, 97.5])
+        fb = [r["frames"][j] for j in i]
+        rep = pooled_responses(r["dia"], fb, r["S3"][i], r["S2"][i],
+                               r["DP"][i], r["TP"][i])
+        for k in RESP_KEYS:
+            acc[k][b] = rep[k]
+    # centre each replicate distribution on the all-frame point estimate
+    for k in RESP_KEYS:
+        r[f"boot_{k}"] = acc[k] - base[k] + r[k]
+        r[f"{k}_ci"] = np.percentile(r[f"boot_{k}"], [2.5, 97.5])
     r["n_ci_frames"] = n
 
 
@@ -342,14 +436,38 @@ def main():
         bootstrap(r, rng)
 
     res = {}
-    for key, kb in (("d32", "boot_d32"), ("atom", "boot_atom")):
+    degenerate = []
+    for key, label, direction, _flag in RESPONSES:
         vals = [r[key] for r in runs]
-        res[key] = {"anova": anova(runs, vals), "noise_test": noise_test(runs, key, kb)}
-    sn = {"d32": [-20 * math.log10(r["d32"]) for r in runs],
-          "atom": [20 * math.log10(r["atom"]) for r in runs]}
-    for key in sn:
-        res[key]["sn_level_means"] = {f: dict(zip(*level_table(runs, sn[key], f)))
-                                      for f in FACTORS}
+        n_distinct = len({round(v, 9) for v in vals if np.isfinite(v)})
+        if n_distinct < 2:
+            # Zero between-run variance: SS_total is 0, F is infinite and the
+            # p-value would print as 0.000 while carrying no information. D10
+            # behaves exactly this way -- 22.568 um on all nine runs -- so a
+            # degenerate response is reported as degenerate, never as
+            # significant.
+            degenerate.append((key, label, vals[0] if vals else float("nan")))
+            res[key] = {"degenerate": True, "value": vals[0] if vals else None,
+                        "n_distinct": n_distinct}
+            continue
+        res[key] = {"anova": anova(runs, vals),
+                    "noise_test": noise_test(runs, key, f"boot_{key}"),
+                    "n_distinct": n_distinct,
+                    "quantisation_warning": n_distinct < MIN_DISTINCT}
+        # S/N is a log, so it is undefined at zero or below. `intermit_pct` is
+        # legitimately 0 on a perfectly steady run -- the IDEAL value -- so the
+        # ratio is simply not computed there rather than being faked with an
+        # epsilon that would invent a number. With one observation per run S/N
+        # is a monotone transform of the response anyway and cannot change a
+        # ranking; it is reported for completeness only.
+        if all(v > 0 for v in vals):
+            sn_vals = [SN_SIGN[key] * 20 * math.log10(v) for v in vals]
+            res[key]["sn_level_means"] = {f: dict(zip(*level_table(runs, sn_vals, f)))
+                                          for f in FACTORS}
+        else:
+            res[key]["sn_level_means"] = None
+            res[key]["sn_note"] = ("not defined: the response reaches 0, which is "
+                                   "its ideal value")
 
     timings = load_timings(args.timings)
     n_odd = flag_odd(runs, timings, args.out)
@@ -366,8 +484,26 @@ def main():
                  f"| {r['d32']:.2f} [{r['d32_ci'][0]:.2f}, {r['d32_ci'][1]:.2f}] "
                  f"| {r['atom']:.2f} [{r['atom_ci'][0]:.2f}, {r['atom_ci'][1]:.2f}] "
                  f"| {r['model_atom']} |")
-    for key, name in (("d32", "D32 (um)"), ("atom", "Atomised fraction, classical (%)")):
-        L.append(f"\n## {name}\n")
+    if degenerate:
+        L.append("\n> **Degenerate responses, excluded from the ANOVA.** These take "
+                 "the SAME value on all nine runs, so there is nothing to "
+                 "analyse; reporting a p-value for them would be arithmetic on "
+                 "zero variance. This is the integer-pixel quantisation the "
+                 "size floor work predicted.\n")
+        for key, label, v in degenerate:
+            L.append(f">  - `{key}` ({label}): {v:.3f} on every run")
+        L.append("")
+    for key, name, direction, _flag in RESPONSES:
+        if res[key].get("degenerate"):
+            continue
+        better = "smaller is better" if direction == "smaller" else "larger is better"
+        L.append(f"\n## {name}  [{better}]\n")
+        if res[key].get("quantisation_warning"):
+            L.append(f"> **Only {res[key]['n_distinct']} distinct values across the "
+                     f"nine runs.** This response is sitting on the integer-pixel "
+                     f"lattice, not on a continuous measurement: one run moving by a "
+                     f"single quantisation step would change the p-value. Indicative "
+                     f"only.\n")
         L.append("| factor | level means | range | ANOVA F | ANOVA p | % contribution | p vs measurement noise |")
         L.append("|---|---|---|---|---|---|---|")
         an, nt = res[key]["anova"], res[key]["noise_test"]
@@ -380,6 +516,20 @@ def main():
     L.append("\nANOVA: error from the L9's unassigned column, 2 dof -> F(2,2), p = 1/(1+F). "
              "'vs measurement noise': bootstrap over frames; does NOT include run-to-run "
              "repeatability (no replicate runs).")
+    n_live = sum(1 for k in RESP_KEYS if not res[k].get("degenerate"))
+    L.append(f"\n**Multiple comparisons.** {n_live} responses x {len(FACTORS)} factors "
+             f"= {n_live * len(FACTORS)} tests. At p < 0.05 roughly "
+             f"{0.05 * n_live * len(FACTORS):.1f} false positives are expected by "
+             f"chance alone, so a borderline p on one response among many is weaker "
+             f"evidence than a single pre-chosen test. A factor significant on "
+             f"SEVERAL independent responses is the strong case; one marginal p "
+             f"standing alone is not.")
+    L.append("\n**Why more than one response.** D32 is Sum(d^3)/Sum(d^2), so it is set "
+             "by the largest few droplets and is nearly blind to the population: a "
+             "change producing many more small droplets, leaving the big ones alone, "
+             "does not move it. The count-based responses can see that; D32 cannot. "
+             "Reading D32 alone is what made gas flow look insignificant on droplet "
+             "size when it is significant on droplets per frame and on D90.")
     if timings:
         L.append("\n## Timings (s)\n")
         stages = sorted({k for t in timings.values() for k in t})
@@ -396,8 +546,15 @@ def main():
                       "ci_stride": r["ci_stride"], "n_ci_frames": r["n_ci_frames"],
                       "d32_um": r["d32"], "d32_ci95": list(r["d32_ci"]),
                       "atomised_pct_classical": r["atom"], "atomised_ci95": list(r["atom_ci"]),
-                      "atomised_pct_model_only": r["model_atom"]} for r in runs],
-            "results": res, "n_boot": N_BOOT, "seed": SEED, "odd_flags": n_odd}
+                      "atomised_pct_model_only": r["model_atom"],
+                      "sizer_version": r.get("sizer_version"),
+                      # every response, with its bootstrap CI
+                      "responses": {k: {"value": r[k], "ci95": list(r[f"{k}_ci"])}
+                                    for k in RESP_KEYS}} for r in runs],
+            "results": res, "n_boot": N_BOOT, "seed": SEED, "odd_flags": n_odd,
+            "responses_analysed": RESP_KEYS,
+            "n_tests": sum(1 for k in RESP_KEYS if not res[k].get("degenerate"))
+                       * len(FACTORS)}
     (args.out / "taguchi_results.json").write_text(json.dumps(dump, indent=2, default=float))
     print("\n".join(L))
     print(f"\nwritten to {args.out}")
