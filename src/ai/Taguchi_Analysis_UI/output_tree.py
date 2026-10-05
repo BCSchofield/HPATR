@@ -131,7 +131,7 @@ def build_tree(ticks: set[str], *, run_name: str | None = None, thr: float | Non
 
     shown = run_name or "<HHMMSS>_<flow>sccm_<rpm>rpm_<sps>sps_or<x>_bh<n>"
     where = (f"created identically in each of {n_runs} run folders" if n_runs > 1
-             else "created in the run folder" if n_runs == 1 else "select runs to see how many")
+             else "created in the run folder" if n_runs == 1 else "no runs to process yet")
     run_root = Node("root:run", f"ONE RUN FOLDER  —  {shown}", where, GROUP,
                     children=[raw, an])
 

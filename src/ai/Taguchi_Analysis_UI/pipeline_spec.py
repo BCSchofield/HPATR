@@ -495,10 +495,24 @@ def _count_ok(spec: str, n: int, n_frames: int | None) -> bool:
     return lo <= n <= hi
 
 
+# Stages that run again on EVERY analysis, even when extraction and inference are reused.
+# Their outputs are checked for freshness; the reused stages' outputs (frames, predictions)
+# are legitimately older than the run and are not.
+RERUN_STAGES = ("measurement", "classical")
+MTIME_SLACK_S = 2.0         # FAT-family file systems store modification times to 2 s
+
+
 def verify_run_outputs(run_dir: Path, settings: RunSettings, options: dict[str, Any],
-                       n_frames: int | None = None) -> list[Violation]:
-    """Every output the contract promises for these options must exist, with
-    the declared count. Run by the worker after each run."""
+                       n_frames: int | None = None, since: float | None = None) -> list[Violation]:
+    """Every output the contract promises for these options must exist, with the declared
+    count. Run by the worker after each run.
+
+    RE-ANALYSIS: the pipeline does not clear old results before re-measuring, so a folder
+    analysed before can hold files from the PREVIOUS analysis -- e.g. 497 per-frame PNGs from
+    an "every frame" run when this run drew only the extremes. Pass `since` (the run's start
+    time, epoch seconds) and the measurement/classical outputs are judged on what THIS run
+    wrote: a stale file does not count towards a glob, and does not satisfy a required file.
+    Nothing is deleted. Without `since`, existence and counts only (as before)."""
     list_files = rdc_module("_fsutil").list_files
     run_dir = Path(run_dir)
     s = effective(settings)
@@ -507,19 +521,37 @@ def verify_run_outputs(run_dir: Path, settings: RunSettings, options: dict[str, 
         n_frames = meta.get("frame_count")
     names = {"meas": MEAS_DIR.format(thr=s.score_thresh),
              "clas": CLAS_DIR.format(thr=s.score_thresh)}
+    cutoff = None if since is None else since - MTIME_SLACK_S
+
+    def fresh(path: Path, out: Output) -> bool:
+        if cutoff is None or out.stage not in RERUN_STAGES:
+            return True
+        try:
+            return path.stat().st_mtime >= cutoff
+        except OSError:
+            return False
+
     problems = []
     for out in active_outputs(options, scope="run"):
         rel = out.path.format(**names)
         target = run_dir / rel
         if out.kind == "glob":
-            n = len(list_files(target.parent, target.name))
+            found = list_files(target.parent, target.name)
+            n = sum(fresh(f, out) for f in found)
             if not _count_ok(out.count, n, n_frames):
                 want = f"{n_frames} (n_frames)" if out.count == "n_frames" else out.count
-                problems.append(Violation("error", rel, f"found {n} files, expected {want}",
+                stale = len(found) - n
+                extra = f" ({stale} older file(s) from a previous analysis ignored)" if stale else ""
+                problems.append(Violation("error", rel, f"found {n} files, expected {want}{extra}",
                                           f"Output '{out.id}' in pipeline_spec.py"))
         elif not target.exists():
             problems.append(Violation("error", rel, "missing",
                                       f"Output '{out.id}' in pipeline_spec.py"))
+        elif not fresh(target, out):
+            problems.append(Violation(
+                "error", rel, "was not rewritten by this run (it is left over from an earlier "
+                              "analysis, so this run did not produce it)",
+                f"Output '{out.id}' in pipeline_spec.py"))
     return problems
 
 

@@ -317,24 +317,28 @@ class BatchController(QObject):
         self.tick()
 
 
-def confirm_text(runs, options: dict, settings: spec.RunSettings, output_dir: Path) -> str:
-    """What the user is asked to confirm before a batch starts."""
+def confirm_text(plan, options: dict, settings: spec.RunSettings, output_dir: Path) -> str:
+    """What the user is asked to confirm before a batch starts. `plan` is a
+    reanalysis.Plan: it says which runs are processed, kept as they are, or redone."""
     from . import output_tree as ot
-    measured = sum(1 for r in runs if r.analysis.measured or r.analysis.droplets_only)
+    from . import reanalysis
+    runs = plan.process
     days = len({r.date for r in runs if r.date})
-    lines = [f"Run the full analysis on {len(runs)} run(s)"
+    lines = [f"Run the analysis on {len(runs)} run(s)"
              + (f" from {days} days" if days > 1 else "") + "?", ""]
+    lines += reanalysis.describe(plan)
+    lines.append("")
     if options.get("images") == "all":
         lines.append("Images: EVERY frame drawn (slow, ~4 GB extra per run).")
     else:
         lines.append("Images: extreme frames only.")
     lines.append(ot.cost_note(options, len(runs)).splitlines()[0])
-    if measured:
-        lines.append(f"{measured} of these already have results: they will be measured again "
-                     "(finished extraction + inference is reused where still valid).")
-    if sys.platform == "darwin" and settings.device in (None, "cpu"):
-        lines.append("This Mac runs inference on the CPU: expect it to be several times slower "
-                     "than the GPU PC. The time estimate becomes real after the first run.")
+    if plan.remeasured:
+        lines.append("Results being re-measured are overwritten in place: the older droplets_ / "
+                     "liquid_ results of those runs are replaced (nothing else is touched).")
+    if sys.platform == "darwin" and (plan.new or plan.redo_ai) and settings.device in (None, "cpu"):
+        lines.append("This Mac runs the AI on the CPU: expect it to be several times slower than the "
+                     "GPU PC. The time estimate becomes real after the first run.")
     lines += ["", f"Reports go to: {output_dir}",
               "The batch runs in the background and keeps going if you close this window."]
     return "\n".join(lines)

@@ -246,13 +246,14 @@ def test_errors_are_coloured_in_the_console(app, tmp):
 
 
 def test_confirmation_spells_out_what_will_happen(tmp):
-    from src.ai.Taguchi_Analysis_UI import run_discovery as rd
+    from src.ai.Taguchi_Analysis_UI import reanalysis, run_discovery as rd
     measured = rd.load_run_info(fakes.make_run(tmp, fakes.REAL_10_05[0][0], analysis="current"))
     fresh = rd.load_run_info(fakes.make_run(tmp, fakes.REAL_10_05[1][0]))
-    text = confirm_text([measured, fresh], dict(spec.default_options(), images="all"),
-                        spec.RunSettings(), tmp / "out")
+    plan = reanalysis.plan_runs([measured, fresh], reanalysis.REMEASURE)
+    text = confirm_text(plan, dict(spec.default_options(), images="all"), spec.RunSettings(), tmp / "out")
     assert "2 run(s)" in text and "EVERY frame" in text
-    assert "1 of these already have results" in text
+    assert "no complete results" in text and "re-measured" in text
+    assert "overwritten in place" in text
     assert "keeps going if you close this window" in text
     import sys
     if sys.platform == "darwin":

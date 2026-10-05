@@ -19,10 +19,12 @@ from PySide6.QtWidgets import (
 
 from . import pipeline_spec as spec
 from . import theme
+from . import reanalysis
 from .batch_controller import LIVE, BatchController, confirm_text
 from .console import ConsolePane
 from .pane_outputs import OutputsPane
 from .pane_runs import RunsPane
+from .tab_taguchi import TaguchiTab
 
 
 class BatchTab(QWidget):
@@ -50,6 +52,7 @@ class BatchTab(QWidget):
         self.runs_pane.log = self.console.log
         self.runs_pane.selection_changed.connect(self.update_outputs_context)
         self.runs_pane.output_changed.connect(self.update_outputs_context)
+        self.runs_pane.mode_changed.connect(self.update_outputs_context)
         main_split.addWidget(self.console)
         main_split.setStretchFactor(0, 3)
         main_split.setStretchFactor(1, 1)
@@ -67,6 +70,7 @@ class BatchTab(QWidget):
         self.runs_pane.output_changed.connect(
             lambda: self.controller.attach(self.runs_pane.output_folder()))
         self.runs_pane.selection_changed.connect(self.refresh_buttons)
+        self.runs_pane.mode_changed.connect(self.refresh_buttons)
         self.runs_pane.run_btn.clicked.connect(self._on_run)
         self.runs_pane.aux_btn.clicked.connect(self._on_aux)
         self.runs_pane.stop_btn.clicked.connect(self._on_stop_now)
@@ -81,8 +85,12 @@ class BatchTab(QWidget):
         self.preflight_report = report
         self.refresh_buttons()
 
+    def plan(self) -> reanalysis.Plan:
+        """What Run batch would do with the current selection and the existing-results setting."""
+        return reanalysis.plan_runs(self.runs_pane.included_runs(), self.runs_pane.existing_mode())
+
     def runnable_runs(self):
-        return [r for r in self.runs_pane.included_runs() if r.runnable]
+        return self.plan().process
 
     def ready_for_new(self) -> tuple[bool, str]:
         if self.preflight_report is None:
@@ -91,10 +99,18 @@ class BatchTab(QWidget):
             return False, "Disabled: the pipeline no longer matches pipeline_spec.py (see console)"
         if self.runs_pane.output_folder() is None:
             return False, "Choose an output folder first"
-        if not self.runnable_runs():
+        plan = self.plan()
+        if not plan.process:
+            if plan.skipped or plan.cannot:
+                n = len(plan.skipped) + len(plan.cannot)
+                return False, (f"Nothing to run: all {n} selected run(s) already have results and "
+                               f"'{reanalysis.MODE_LABEL[reanalysis.SKIP]}' is chosen. Choose "
+                               f"Re-measure or Redo everything to run them again; the statistics "
+                               f"use the existing results either way.")
             return False, "Tick at least one run that has a .cine to analyse"
-        n = len(self.runnable_runs())
-        return True, f"Analyse {n} run{'s' if n != 1 else ''} in the background"
+        n = len(plan.process)
+        extra = f"; {len(plan.skipped)} left as they are" if plan.skipped else ""
+        return True, f"Analyse {n} run{'s' if n != 1 else ''} in the background{extra}"
 
     def refresh_buttons(self) -> None:
         c, rp = self.controller, self.runs_pane
@@ -146,9 +162,10 @@ class BatchTab(QWidget):
         return QMessageBox.question(self, title, text) == QMessageBox.StandardButton.Yes
 
     def _settings(self):
-        # reuse=True: re-running a run keeps finished extraction + inference when
-        # can_reuse() says it is still valid (same stride, complete, newer than the model).
-        return replace(self.runs_pane.settings, reuse=True)
+        # reuse (everything except "redo"): re-running keeps finished extraction + inference
+        # when process_capture.can_reuse() says they are still valid (same stride, complete,
+        # newer than the model). "Redo everything" turns it off.
+        return reanalysis.settings_for(self.runs_pane.existing_mode(), self.runs_pane.settings)
 
     def _on_run(self) -> None:
         role = getattr(self, "_run_role", None)
@@ -171,9 +188,10 @@ class BatchTab(QWidget):
         if not ready:
             self.console.log(why, "warn")
             return
-        runs, out = self.runnable_runs(), self.runs_pane.output_folder()
+        plan, out = self.plan(), self.runs_pane.output_folder()
+        runs = plan.process
         options, settings = self.outputs_pane.options(), self._settings()
-        text = confirm_text(runs, options, settings, out)
+        text = confirm_text(plan, options, settings, out)
         if self.controller.live is not None and self.controller.live.resumable:
             text += ("\n\nThe unfinished batch already in this folder will be archived "
                      "(moved to _job_archive, not deleted) and cannot then be resumed.")
@@ -188,14 +206,18 @@ class BatchTab(QWidget):
             self.controller.stop_now()
 
     def update_outputs_context(self) -> None:
-        """Describe the first selected run (the tree shows ONE example) and the chosen
-        output folder. Never changes a tick."""
+        """Describe the first run the batch will PROCESS (the tree shows ONE example) and how
+        many there are. Runs left as they are (already have results) are not counted: the tree
+        and the disk estimate describe what Run batch will do, not what is merely selected.
+        Never changes a tick."""
         runs = self.runs_pane.included_runs()
+        plan = reanalysis.plan_runs(runs, self.runs_pane.existing_mode())
+        shown = plan.process or runs
         out = self.runs_pane.output_folder()
         self.outputs_pane.set_context(
-            run_name=runs[0].name if runs else None,
+            run_name=shown[0].name if shown else None,
             thr=spec.effective(self.runs_pane.settings).score_thresh,
-            n_runs=len(runs), output_dir=str(out) if out else None)
+            n_runs=len(plan.process), output_dir=str(out) if out else None)
 
 
 class PlaceholderTab(QWidget):
@@ -228,12 +250,9 @@ class MainWindow(QMainWindow):
         tabs = QTabWidget()
         self.batch_tab = BatchTab()
         tabs.addTab(self.batch_tab, "  Batch  ")
-        tabs.addTab(
-            PlaceholderTab(
-                "Taguchi design table + analysis\n(Phase 7: auto-detect, editable factors/levels)"
-            ),
-            "  Taguchi  ",
-        )
+        self.taguchi_tab = TaguchiTab(self.batch_tab.runs_pane)
+        self.taguchi_tab.log = self.batch_tab.console.log
+        tabs.addTab(self.taguchi_tab, "  Taguchi  ")
         tabs.addTab(
             PlaceholderTab(
                 "Auto-populated settings\n(Phase 10: score threshold, stride, device, model dir, bin width)"

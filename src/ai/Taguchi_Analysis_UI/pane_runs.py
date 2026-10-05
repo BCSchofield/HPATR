@@ -15,12 +15,13 @@ from typing import Callable
 from PySide6.QtCore import QObject, QSettings, Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QAbstractItemView, QFileDialog, QHBoxLayout, QLabel, QListView, QListWidget,
+    QAbstractItemView, QComboBox, QFileDialog, QHBoxLayout, QLabel, QListView, QListWidget,
     QListWidgetItem, QPushButton, QTreeView, QVBoxLayout, QWidget,
 )
 
 from . import paths, theme
 from . import pipeline_spec as spec
+from . import reanalysis
 from . import run_discovery as rd
 
 PICK_TITLE = ("Select run folders -- or a day / month / year folder to add every run inside "
@@ -116,6 +117,7 @@ class _Bridge(QObject):
 class RunsPane(QWidget):
     selection_changed = Signal()
     output_changed = Signal()
+    mode_changed = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -201,6 +203,29 @@ class RunsPane(QWidget):
         oc.addLayout(out_row)
         layout.addWidget(out_card)
 
+        # What to do with runs that already have results. Shown only when the selection
+        # contains some, so a first-time batch is not cluttered with a choice that cannot apply.
+        self.existing_row = QWidget()
+        er = QVBoxLayout(self.existing_row)
+        er.setContentsMargins(0, 0, 0, 0)
+        er.setSpacing(4)
+        self.existing_label = QLabel("")
+        self.existing_label.setWordWrap(True)
+        self.existing_label.setStyleSheet(f"color: {theme.CLR_TEXT_SEC}; font-size: 12px;")
+        self.existing_combo = QComboBox()
+        for key, text in reanalysis.MODES:
+            self.existing_combo.addItem(text, key)
+        self.existing_combo.setToolTip(
+            "Selecting runs never starts anything; only Run batch does.\n"
+            "Use existing: nothing is re-run for runs that already have results (they are still analysed).\n"
+            "Re-measure: new measurement code; keeps the extracted frames and AI predictions.\n"
+            "Redo everything: a new model or changed inference script; re-extracts and re-runs the AI.")
+        self.existing_combo.currentIndexChanged.connect(lambda _=None: self.mode_changed.emit())
+        er.addWidget(self.existing_label)
+        er.addWidget(self.existing_combo)
+        self.existing_row.hide()
+        layout.addWidget(self.existing_row)
+
         actions = QHBoxLayout()
         self.run_btn = theme.accent_button("Run batch")      # text/role set by BatchTab
         self.run_btn.setEnabled(False)
@@ -226,6 +251,12 @@ class RunsPane(QWidget):
     def included_runs(self) -> list[rd.RunInfo]:
         """The ticked, usable runs, in chronological order."""
         return [r for r in self._sorted() if self._included.get(r.path) and r.usable]
+
+    def existing_mode(self) -> str:
+        return self.existing_combo.currentData()
+
+    def set_existing_mode(self, mode: str) -> None:
+        self.existing_combo.setCurrentIndex(self.existing_combo.findData(mode))
 
     def output_folder(self) -> Path | None:
         text = self.output_label.text()
@@ -373,6 +404,12 @@ class RunsPane(QWidget):
         if total != s.n_runs:
             text += f"   ({total - s.n_runs} of {total} not ticked or unusable)"
         self.summary_label.setText(text)
+        n_have = sum(1 for r in inc if reanalysis.has_results(r))
+        self.existing_row.setVisible(n_have > 0)
+        if n_have:
+            self.existing_label.setText(
+                f"{n_have} of the {len(inc)} selected runs already have results. "
+                f"For those, Run batch will:")
         versions = rd.sizer_versions(inc)
         if len(versions) > 1:
             self.warn_label.setText(

@@ -120,7 +120,7 @@ def test_leaves_sit_under_the_folder_their_path_says():
 
 def test_run_and_output_headings_describe_the_selection():
     none = ot.build_tree(spec.default_ticks())
-    assert "select runs" in none[0].detail and "(choose an output folder)" in none[1].label
+    assert "no runs to process yet" in none[0].detail and "(choose an output folder)" in none[1].label
     one = ot.build_tree(spec.default_ticks(), run_name="090432_x", n_runs=1)
     assert "090432_x" in one[0].label and "in the run folder" in one[0].detail
     many = ot.build_tree(spec.default_ticks(), run_name="090432_x", n_runs=27,

@@ -5,7 +5,7 @@ Approved 2026-10-05. Working copy lives at
 versioned) — THIS file in docs/ is the durable copy. If the plan changes
 during implementation, update this file too.
 
-Status: Phases 1-6 complete. Phases 7-11 outstanding. See the
+Status: Phases 1-8 complete. Phases 9-11 outstanding. See the
 "Implementation phases" table for the per-phase model guidance, and the
 "Implementation log" at the END of this file for decisions made while
 building that refine or deviate from the plan text.
@@ -852,3 +852,120 @@ real. Most of it is the user running commands on the lab PC; Claude interprets a
 5. **Windows process checks, live:** no console window appears; the worker survives closing the
    app; killing the worker takes its pipeline stage with it (kill-on-close Job object); the PC does
    not sleep mid-batch; `Stop now` uses `taskkill /T`; reattach after reopening the app.
+
+### Phase 7 — the Taguchi tab: detected, editable design (2026-10-05)
+
+- **`design.py` (model, no Qt) + `tab_taguchi.py` (view).** `detect()` proposes the factors
+  (sccm / rpm / sps, or any built-in whose levels actually vary; constants are listed as
+  addable, not forced in) and every part is editable: rename factors (stable internal key, label is
+  free text), add a factor from ANY run_summary.xlsx field (string numerics, en-dash ranges with a
+  max/min/mean choice, or plain text as a categorical factor), remove factors, override a run's
+  level, leave a run out. Saved atomically to `<output>/taguchi_design.json` and restored on
+  reopening; edits survive changes to the selection; runs are matched by path.
+- **Replicates are detected two independent ways and cross-checked** (Notes vs factor levels).
+  Real 10/05: 27 runs = 9 conditions x 3 replicates, all 27 agree. The Notes on the older 10/01 runs
+  are just `Taguchi N` with **no "Repeat" number** (and one run says `MAX TEST`, one is blank), so
+  the repeat is optional and the trial is read from several wordings. Replicates are numbered from
+  the Notes where usable, else from time order. Grouping is always by levels, never by folder order
+  (111625 is ReRun 5 and precedes 112253, ReRun 4: a test pins this).
+- **Two bugs found by the tests, both fixed:** an UNASSIGNED run (levels unknown) used to make its
+  perfectly good siblings look conflicted; and a wrong trial in the Notes was reported as its
+  symptom (a repeat number used twice) instead of its cause (trial and levels disagree).
+- **Diagnostics say what each finding means for the statistics:** balance per factor, pairwise
+  orthogonality (an empty cell is reported as ALIASED, "the report will refuse to give numbers for
+  them"), replication (pure-error degrees of freedom, or "no replicates: tests against interactions
+  rather than noise"), several days, using the achieved flow as a factor, too many levels. On the
+  real 10/01 data the two side runs (`MAX TEST`, and the blank-note `101035`) made three factor
+  pairs read as aliased; the tab now names them and offers **Leave out runs with no trial**. Without
+  them 10/01 is a clean 9-condition L9 with no replicates.
+- **Both days together** share the same nine conditions (4 runs each, 36 agree): flagged as two days.
+- **Mutation-tested:** eight behaviours (conflict detection, the sibling bug, aliasing, override
+  revert, rebuild-inside-handler crash, edits lost on re-selection, saved flags ignored, repeat made
+  mandatory) broken on purpose and all caught.
+
+#### Re-analysing folders that were already analysed (asked mid-phase; found a real hazard)
+
+- **The hazard:** the pipeline does NOT clear old per-frame PNGs before re-measuring. Re-analysing
+  a folder previously run with "every frame" and now with extremes left 30 old images, my output
+  check read that as a contract violation and **halted the whole batch**. Now outputs of the stages
+  that always re-run (measurement, classical) are judged on what THIS run wrote (`since=` the run's
+  start, 2 s FAT slack); old files are ignored (and reported), a stale file never satisfies a required
+  output, and nothing is deleted. Frames and predictions are exempt: reusing them is legitimate.
+- **A setting for runs that already have results** (shown only when the selection has some;
+  default is the safe one; never persisted between launches):
+  `Use their existing results` (nothing re-run; they are still analysed) / `Re-measure only` (keep
+  frames + AI predictions) / `Redo everything, including the AI` (reuse off). Selecting runs never
+  starts anything; only Run batch does. The selection is what the analysis covers; the mode is only
+  what compute is needed. The confirmation states how many runs are new, re-measured with the AI
+  reused, re-measured with the AI redone (and why), or left alone; the output tree and disk estimate
+  now count the runs the batch will PROCESS, not merely the ones selected.
+- **Honest limits:** "Re-measure" silently becomes a full re-run for any run whose frames or
+  predictions are missing, partial, from a different stride or older than the model (that is
+  `can_reuse`'s decision), and the confirmation says which. The app notices a newer MODEL by itself
+  but cannot tell that `tiled_inference.py` changed: use "Redo everything" for that. Re-measured results
+  overwrite the previous `droplets_`/`liquid_` in place (no backup of the old numbers; a runs'
+  legacy `measurement_`/`classical_` folders are left beside them). The real pipeline's reuse path is
+  verified only against a stub that mirrors `can_reuse`'s checks (the 40-frame real runs are
+  `limited`, which `can_reuse` correctly refuses); it must be confirmed on a real full run (Phase 11).
+- The test stub now also mirrors the real extractor (`--overwrite` clears old frames) and
+  `can_reuse` (same stride, not limited, complete).
+- Tests: 392 pass.
+
+### Phase 8 — the statistics, size spread and GLR (2026-10-05)
+
+- **`stats.py` (no Qt) generalises `taguchi_analysis.py`** to any number of factors, levels and
+  replicates. SS is Type II, from least squares on a sum-to-zero coded main-effects model, so a
+  balanced design gives exactly the classic `n·Σ(ȳ_level − ȳ)²` (asserted) and an unbalanced one is
+  still right (checked against an independent treatment-coded computation). Error term, in order:
+  **pure error** from replicates (df = N − conditions; 18 for the 9×3), else the **residual** (the
+  old unassigned-column trick, df 2 for an unreplicated L9), else **none** (saturated: effects shown,
+  no p-values). With replicates, **lack of fit** is tested against pure error: significant means
+  interactions matter. p-values from the F distribution for any dofs (scipy; a pure-Python
+  incomplete beta fallback agrees to 1e-10). Contribution % raw and pooled (`SS − df·MS_e`).
+  Benjamini–Hochberg q-values across every test. S/N with replicates uses the Taguchi forms
+  (`−10log10 mean y²`, `−10log10 mean 1/y²`); one value per condition reduces to the old ±20log10.
+  Undefined (a value ≤ 0) is said, not computed. Effects carry a pure-error SE and, when the runs
+  were bootstrapped, the reused frame-bootstrap CI. Replicate outliers: standardised distance from
+  their own condition mean beyond 3.
+- **Reading runs reuses `taguchi_analysis.load_run`, including its refusals.** Its `sys.exit`
+  self-consistency gates become a per-run skip with the original reason; its folder-name parser
+  (which rejects `nobh`) is swapped out only for the duration of the call and always restored. Mixed
+  sizer versions refuse the whole analysis (unchanged rule). Unmeasured, left-out and
+  incompletely-levelled runs are skipped and listed.
+- **Verified against the published L9:** fed the nine published values, every SS, F, p,
+  contribution, level mean and S/N in `results_2026-10-01/taguchi_results.json` is reproduced
+  (worst difference 6e-11). End to end from the real 10/01 folders (discovery → design with the side
+  runs left out → `load_run` → ANOVA): per-run D32 identical, all published numbers again to 1e-9.
+- **Aliasing corrected (supersedes the Phase 7 note).** Phase 7 called any empty cross-tab cell
+  "aliased"; that was wrong — a missing combination makes a design non-orthogonal, not
+  inestimable. `stats.estimability` now measures the rank each factor actually contributes:
+  *aliased* (0 dof, refused), *partly aliased* (k of L−1 dof, analysed with the reduced df, warned),
+  or *not orthogonal* (estimable, warned). Real 10/01 with its side runs: gas flow and RPM partly
+  aliased (2 of 3) because of the 4500/500 side run.
+- **`size_bins.py`:** 25 µm bins to 200 µm plus an open bin (width and max editable), % by count
+  and % by volume (Σd³), in-focus droplets from `load_run`'s per-frame arrays. Conditions pool their
+  replicates' droplets (one population), not average percentages. Real check: T1 of 10/01 bins
+  exactly its summary's 17,480 in-focus droplets.
+- **GLR (asked mid-phase) — `covariates.py`.** GLR is analysed as a **covariate, not a factor**:
+  it is made from the gas and liquid flows, so as a factor it would be aliased with them (the nine
+  L9 conditions give only seven distinct GLRs). Per run: the GLR recorded in `run_summary.xlsx`;
+  else the capture GUI's own formula (`GUI_Clean.AtomisationApp._glr_working`, called, not copied —
+  a test proves a change there flows through) from gas flow, motor speed and the workbook's
+  densities; else *missing* with the reason (the 10/01 runs record neither GLR nor densities, so
+  nothing is guessed). Also an achieved-flow GLR, fluid, gas, densities, peak pressure. Each response
+  gets a correlation with GLR (r, p) and a log-log power-law exponent with 95% CI; the report must
+  carry the caveat that this cannot separate GLR from the factors it is built from. The GUI formula
+  reproduces the recorded GLR of all 27 runs of 10/05 to 4 dp.
+- **Test fakes:** GLR now varies by condition (it was constant, which hid a crash in the trend on
+  zero spread); `write_results` / `make_measured_l9x3` fabricate self-consistent analysed runs with
+  controllable effects, interaction and replicate noise.
+- **An editing accident, recovered:** a slice-replace on `design.py` matched an anchor that also
+  occurred earlier, and wrote a 61 MB file. Restored from the verified post-Phase-7 backup and
+  re-edited with exact, unique replacements only.
+- **Mutation-tested:** 16 rules broken on purpose (pure-error SS and df, lack-of-fit df and F dofs,
+  factor F dofs, pooled contribution, replicates ignored, a 0.1% SS error, both S/N forms, BH
+  monotonicity, the fallback F tail, the outlier scale, volume by d², the trend's dof, computed GLR
+  overriding recorded) — all 16 caught, each by the test aimed at it. (A first pass gave misleading
+  attributions: a same-size mutant restored within the same second left a stale `.pyc`; the mutation
+  runner now uses `python -B`.)
+- Tests: 455 pass.

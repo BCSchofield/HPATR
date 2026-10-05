@@ -110,7 +110,10 @@ def metadata_rows(name: str, *, day=("2026", "10", "05"), notes="", fps=390,
         "Bubbler Height (mm)": p["bh"],
         "Bubbler RPM": str(p["rpm"]),
         "Flow Range (sccm)": f"0{EN_DASH}{round(p['sccm'] * 1.03)} sccm",   # achieved ~ +3%
-        "GLR": 0.2819,
+        # computed here INDEPENDENTLY of the app (bore 20.27 mm, 6800 steps/mm, the workbook's
+        # densities), exactly as the capture GUI records it: varies by condition like the real runs
+        "GLR": round((p["sccm"] * 1.145) /
+                     (3.141592653589793 * (20.27 / 2) ** 2 * p["sps"] / 6800 / 1000 * 60 * 1070), 4),
         "Fluid": "EcoFlex 00-30",
         "Liquid density (kg/m3)": "1070",
         "Gas": "Nitrogen Gas",
@@ -179,3 +182,75 @@ def make_l9x3(root: Path, day=("2026", "10", "05"), analysis: str | None = None)
     return [make_run(root, name, day=day, analysis=analysis,
                      notes=f"Taguchi ReRun {trial} - Repeat {rep}\nWITH NOZZLE ADAPTER")
             for name, trial, rep in REAL_10_05]
+
+
+# ---- measured results that taguchi_analysis.load_run() accepts ------------------------------
+# Written self-consistently: summary.json's D32 IS sum(d^3)/sum(d^2) of the in-focus droplets in
+# droplet_sizes.csv, and classical_summary.json's atomised fraction IS the pooled per-frame ratio,
+# so load_run's own re-derivation gates genuinely pass (they are not bypassed).
+
+def write_results(run: Path, rng, d_median: float, atom_frac: float, *, n_frames: int = 12,
+                  per_frame: int = 50, thr: float = 0.30, sizer_version: str | None = "2.1.0",
+                  in_focus: float = 0.6, legacy: bool = False) -> dict:
+    import csv
+    import numpy as np
+    an = run / "shadowgraph" / "analysis"
+    meas = an / (f"measurement_{thr:.2f}" if legacy else f"droplets_{thr:.2f}")
+    clas = an / (f"classical_{thr:.2f}" if legacy else f"liquid_{thr:.2f}")
+    meas.mkdir(parents=True, exist_ok=True)
+    clas.mkdir(parents=True, exist_ok=True)
+    frames = [f"frame_{i:04d}_n{i * 10 - 1}" for i in range(n_frames)]
+    s3 = s2 = 0.0
+    with open(meas / "droplet_sizes.csv", "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["frame", "diameter_um", "in_focus"])
+        for fr in frames:
+            for d in rng.lognormal(np.log(d_median), 0.45, per_frame):
+                d = round(float(d), 4)
+                focus = rng.random() < in_focus
+                w.writerow([fr, d, "1" if focus else "0"])
+                if focus:
+                    s3, s2 = s3 + d ** 3, s2 + d ** 2
+    prov = {"ci_stride": 1, "stub": True}
+    if sizer_version:
+        prov["sizer_version"] = sizer_version
+    summary = {"d32_in_focus_um": s3 / s2, "d32_ci95": [0, 0], "atomised_pct": 100 * atom_frac,
+               "provenance": prov}
+    (meas / "summary.json").write_text(json.dumps(summary))
+    dp = tp = 0.0
+    with open(clas / "classical_per_frame.csv", "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["frame", "total_liquid_px", "droplet_px", "unatomised_px", "atomised_pct"])
+        for fr in frames:
+            total = float(rng.integers(20000, 40000))
+            drop = round(total * float(np.clip(atom_frac * rng.normal(1, 0.15), 0.001, 0.99)))
+            w.writerow([fr, total, drop, total - drop, 100 * drop / total])
+            dp, tp = dp + drop, tp + total
+    (clas / "classical_summary.json").write_text(json.dumps({"atomised_pct_pooled": 100 * dp / tp}))
+    return {"d32": s3 / s2, "atom": 100 * dp / tp}
+
+
+# the three factors' effects in the synthetic campaign (level index 0, 1, 2)
+SYNTH_LEVELS = {"sccm": (3000, 6000, 9000), "rpm": (300, 600, 900), "sps": (4000, 6000, 8000)}
+
+
+def make_measured_l9x3(root: Path, seed: int = 0, rpm_effect: float = 0.0,
+                       interaction: float = 0.0, replicate_sd: float = 0.03, **kw) -> list[Path]:
+    """The real 10/05 campaign (names, Notes, order), MEASURED, with known effects:
+    gas flow strongly raises droplet size and atomisation, silicone flow slightly, RPM by
+    `rpm_effect` (default none). `interaction` adds a gas x RPM interaction, which only a
+    replicated design can detect (as lack of fit)."""
+    import numpy as np
+    rng = np.random.default_rng(seed)
+    runs = []
+    for name, t, r in REAL_10_05:
+        p = _parse_name(name)
+        i_g = SYNTH_LEVELS["sccm"].index(p["sccm"])
+        i_r = SYNTH_LEVELS["rpm"].index(p["rpm"])
+        i_s = SYNTH_LEVELS["sps"].index(p["sps"])
+        scale = (1 + 0.15 * i_g + rpm_effect * i_r + 0.03 * i_s
+                 + interaction * (i_g - 1) * (i_r - 1)) * float(np.exp(rng.normal(0, replicate_sd)))
+        run = make_run(root, name, notes=f"Taguchi ReRun {t} - Repeat {r}")
+        write_results(run, rng, 50 * scale, 0.05 + 0.05 * i_g + 0.01 * i_s, **kw)
+        runs.append(run)
+    return runs

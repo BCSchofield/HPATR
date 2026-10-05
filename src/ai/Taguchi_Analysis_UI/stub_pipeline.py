@@ -68,8 +68,14 @@ class Stub:
         omit = self.omit.get(name, set())
         stage_s, t0 = {}, time.time()
 
-        reusing = (reuse and (raw / "extraction_metadata.json").exists()
-                   and (an / "predictions.json").exists())
+        # mirror the checks of the real process_capture.can_reuse() that a stub can: same
+        # stride, not a --limit extraction, complete frame count, predictions present
+        try:
+            prev = json.loads((raw / "extraction_metadata.json").read_text())
+        except (OSError, ValueError):
+            prev = {}
+        reusing = bool(reuse and prev.get("stride") == stride and not prev.get("limited")
+                       and prev.get("frame_count") == n and (an / "predictions.json").exists())
         if reusing:
             log(f"\n=== reusing the existing stride-{stride} analysis ({n} frames): "
                 f"extraction, background and inference skipped ===")
@@ -80,6 +86,8 @@ class Stub:
             t = time.time()
             for d in ("8bit", "16bit"):
                 (raw / "frames" / d).mkdir(parents=True, exist_ok=True)
+                for old_frame in (raw / "frames" / d).glob("frame_*"):
+                    old_frame.unlink()          # cine_extract.py --overwrite clears old frames
             for k, s in enumerate(stems, 1):
                 self._touch(raw / "frames" / "8bit" / f"{s}.png", "frames_8bit", omit)
                 self._touch(raw / "frames" / "16bit" / f"{s}.tiff", "frames_16bit", omit)

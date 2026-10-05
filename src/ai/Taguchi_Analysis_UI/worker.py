@@ -212,6 +212,7 @@ class Worker:
     # -- one run -------------------------------------------------------------------
     def process_run(self, r: dict, settings: spec.RunSettings, options: dict) -> None:
         run_dir = Path(r["path"])
+        t_started = time.time()
         r.update(status="running", stage=None, error=None, started=jobstate.now_iso(),
                  progress=None, seconds={}, timings={})
         r["attempts"] = r.get("attempts", 0) + 1
@@ -288,8 +289,10 @@ class Worker:
             cs = jobstate.read_json(spec.clas_dir(run_dir, s.score_thresh) / "classical_summary.json", {}) or {}
             r["timings"]["classical_atomised_pct"] = cs.get("atomised_pct_pooled")
 
+            # since=: judge measurement/classical outputs on what THIS run wrote, so files
+            # left by an earlier analysis of the same folder cannot cause a false halt
             self._halt_on(spec.verify_run_outputs(run_dir, run_settings, options,
-                                                  n_frames=r.get("frames")), r)
+                                                  n_frames=r.get("frames"), since=t_started), r)
 
             r["status"], r["stage"] = "done", None
             r["finished"] = jobstate.now_iso()
