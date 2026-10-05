@@ -263,3 +263,16 @@ def test_confirmation_spells_out_what_will_happen(tmp):
 def test_tests_never_write_the_users_preferences():
     from src.ai.Taguchi_Analysis_UI.pane_runs import app_settings
     assert app_settings() is None
+
+
+def test_a_worker_that_could_not_detach_on_windows_is_reported(app, tmp):
+    tab = BatchTab()
+    lines = []
+    tab.controller.log = lambda text, level="info": lines.append((level, text))
+    tab.controller.popen = type("P", (), {"pid": 1, "breakaway": False})()
+    tab.controller._warn_if_attached()
+    assert lines and lines[0][0] == "warn" and "Keep that program open" in lines[0][1]
+    lines.clear()
+    tab.controller.popen = type("P", (), {"pid": 1, "breakaway": True})()
+    tab.controller._warn_if_attached()
+    assert lines == []

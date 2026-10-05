@@ -192,6 +192,22 @@ don't stop you starting the batch. Save the output for the Mac session (end of t
 "%PY%" -m src.ai.Taguchi_Analysis_UI
 ```
 
+**Or from Cursor:** open `src\ai\Taguchi_Analysis_UI\launch_app.py` and press **Run** (the
+play button). (`app.py` itself can't be run directly.) First make sure Cursor uses the right Python:
+
+- Look at the interpreter shown at the bottom right of Cursor. It must be
+  `C:\Users\55154111\AppData\Local\Programs\Python\Python311\python.exe`.
+- If it isn't, press Ctrl+Shift+P, choose **Python: Select Interpreter**, then
+  **Enter interpreter path…**, and paste that path.
+
+The batch runs every stage with whichever Python started the app, so a wrong one (a conda env
+without torch) would fail at inference. The launcher prints which Python it's using, and warns
+if that one has no torch.
+
+If the console ever says *"Windows would not let the batch detach from the program that started
+this app"*, keep Cursor open until the batch finishes. Starting from a plain Command Prompt (the line
+above) avoids this.
+
 The window has three tabs at the top, **Batch**, **Taguchi** and **Settings**, and a
 **CONSOLE** across the bottom of the Batch tab. After a few seconds the console prints the
 pipeline check, ending in `PREFLIGHT PASSED`. If it says FAILED instead, **Run batch** stays

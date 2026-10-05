@@ -290,6 +290,7 @@ class BatchController(QObject):
         self.attach(output_dir, announce=False)
         self.log(f"batch started in the background (pid {self.popen.pid}); it keeps running "
                  f"if you close this window", "ok")
+        self._warn_if_attached()
 
     def stop_after_run(self) -> None:
         if self.jd and self.mode in LIVE:
@@ -314,7 +315,17 @@ class BatchController(QObject):
             return
         self.log(("retrying the failed runs" if retry_failed else "resuming the batch")
                  + f" (worker pid {self.popen.pid})", "ok")
+        self._warn_if_attached()
         self.tick()
+
+    def _warn_if_attached(self) -> None:
+        """Windows: if the program that started this app (a terminal, Cursor) holds its processes
+        in a Job object that forbids breaking away, the worker stays tied to it and would stop
+        when that program closes. Say so, plainly, so nobody closes it overnight."""
+        if getattr(self.popen, "breakaway", True) is False:
+            self.log("⚠ Windows would not let the batch detach from the program that started this app "
+                     "(a terminal or Cursor). Keep that program open until the batch finishes, or next "
+                     "time start the app from a plain Command Prompt.", "warn")
 
 
 def confirm_text(plan, options: dict, settings: spec.RunSettings, output_dir: Path) -> str:
