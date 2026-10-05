@@ -34,6 +34,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import fsops
+
 STAGE_ORDER = ("extract", "background", "inference", "measurement", "classical")
 REF_FRAMES = 497
 
@@ -143,7 +145,7 @@ class Calibration:
             tmp = self.path.with_suffix(".tmp")
             tmp.write_text(json.dumps({"version": 1, "rates": self.data}, indent=1),
                            encoding="utf-8")
-            os.replace(tmp, self.path)
+            fsops.replace(tmp, self.path)
         except OSError:
             pass                       # a lost calibration file only costs accuracy
 

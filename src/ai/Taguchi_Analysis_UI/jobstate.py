@@ -37,7 +37,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from . import paths
+from . import fsops, paths
 from . import pipeline_spec as spec
 from . import procs
 
@@ -75,7 +75,7 @@ def atomic_write_json(path: Path, obj: Any) -> None:
         f.write(data)
         f.flush()
         os.fsync(f.fileno())
-    os.replace(tmp, path)
+    fsops.replace(tmp, path)          # retried: the UI may be reading `path` right now (Windows)
 
 
 def read_json(path: Path, default: Any = None, retries: int = 3) -> Any:
@@ -253,10 +253,7 @@ def acquire_lock(jd: Path, pid: int, token: str) -> tuple[bool, str]:
             held = read_json(lock, {}) or {}
             if held.get("pid") and procs.is_alive(held["pid"], held.get("create_time")):
                 return False, f"another worker (pid {held['pid']}) is already running this job"
-            try:
-                lock.unlink()            # stale: its owner is gone
-            except FileNotFoundError:
-                pass
+            fsops.unlink(lock)           # stale: its owner is gone
             continue
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump({"pid": pid, "token": token, "create_time": procs.create_time(pid),
@@ -269,10 +266,7 @@ def release_lock(jd: Path, token: str) -> None:
     lock = Path(jd) / "worker.lock"
     held = read_json(lock, {}) or {}
     if held.get("token") == token:
-        try:
-            lock.unlink()
-        except FileNotFoundError:
-            pass
+        fsops.unlink(lock)
 
 
 def request_stop(jd: Path) -> None:
@@ -284,10 +278,7 @@ def stop_requested(jd: Path) -> bool:
 
 
 def clear_stop(jd: Path) -> None:
-    try:
-        (Path(jd) / "stop").unlink()
-    except FileNotFoundError:
-        pass
+    fsops.unlink(Path(jd) / "stop")
 
 
 # ---- liveness --------------------------------------------------------------------------
@@ -375,7 +366,7 @@ def write_timings(jd: Path, state: dict) -> None:
         w = csv.DictWriter(f, fieldnames=fields)
         w.writeheader()
         w.writerows(rows)
-    os.replace(tmp, Path(jd) / "timings.csv")
+    fsops.replace(tmp, Path(jd) / "timings.csv")
     atomic_write_json(Path(jd) / "timings.json", rows)
 
 

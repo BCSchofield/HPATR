@@ -28,8 +28,13 @@ from . import paths
 IS_WINDOWS = os.name == "nt"
 
 # Windows process-creation flags (winbase.h)
-DETACHED_PROCESS = 0x00000008           # no console at all (NOT CREATE_NEW_CONSOLE: that is the
-                                        # blank window the handoff says killed the batch when closed)
+CREATE_NO_WINDOW = 0x08000000           # a console of its OWN with no window. Not DETACHED_PROCESS:
+                                        # a worker with NO console makes Windows open a NEW, visible
+                                        # console window for every stage it launches (python.exe is a
+                                        # console program), and closing one of those kills that stage
+                                        # -- the handoff's "blank CMD window" trap. With CREATE_NO_WINDOW
+                                        # the stages inherit the worker's invisible console instead.
+                                        # Not CREATE_NEW_CONSOLE either: that is a visible window.
 CREATE_NEW_PROCESS_GROUP = 0x00000200   # Ctrl-C / Ctrl-Break in the launcher can't reach it
 CREATE_BREAKAWAY_FROM_JOB = 0x01000000  # survive a launcher that runs inside a Job object
 STILL_ACTIVE = 259
@@ -41,6 +46,29 @@ WORKER_MODULE = "src.ai.Taguchi_Analysis_UI.worker"
 # killing anything found by process group, so a reused pgid can never take down
 # an unrelated program.
 OURS = ("Taguchi_Analysis_UI", "Real_Data_Code")
+
+
+def _kernel32():
+    """kernel32 with every function this module calls DECLARED. Without argtypes, ctypes
+    passes Python ints as 32-bit C ints; on 64-bit Windows a HANDLE does not fit --
+    GetCurrentProcess()'s pseudo-handle comes back as 2**64-1 and passing it on raises
+    ctypes.ArgumentError ("int too long to convert"), which would kill the worker at start."""
+    import ctypes
+    from ctypes import wintypes
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    H, D, B = wintypes.HANDLE, wintypes.DWORD, wintypes.BOOL
+    for name, res, args in (
+            ("OpenProcess", H, (D, B, D)),
+            ("GetExitCodeProcess", B, (H, ctypes.POINTER(D))),
+            ("CloseHandle", B, (H,)),
+            ("GetCurrentProcess", H, ()),
+            ("CreateJobObjectW", H, (ctypes.c_void_p, wintypes.LPCWSTR)),
+            ("SetInformationJobObject", B, (H, ctypes.c_int, ctypes.c_void_p, D)),
+            ("AssignProcessToJobObject", B, (H, H)),
+            ("SetThreadExecutionState", ctypes.c_uint, (ctypes.c_uint,))):
+        fn = getattr(k32, name)
+        fn.restype, fn.argtypes = res, args
+    return k32
 
 
 def _psutil():
@@ -104,12 +132,13 @@ def is_alive(pid: int | None, created: float | None = None) -> bool:
             pass
     if IS_WINDOWS:
         import ctypes
-        k32 = ctypes.windll.kernel32
+        k32 = _kernel32()
         h = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
         if not h:
             return False
         try:
-            code = ctypes.c_ulong()
+            from ctypes import wintypes
+            code = wintypes.DWORD()
             return bool(k32.GetExitCodeProcess(h, ctypes.byref(code))) and code.value == STILL_ACTIVE
         finally:
             k32.CloseHandle(h)
@@ -129,8 +158,19 @@ def worker_command(job_dir: Path, args=(), python: str | None = None) -> list[st
     # sys.executable, so the interpreter that starts the worker decides the whole
     # chain's (the handoff records this biting on the lab PC, where torch is in the
     # system Python 3.11, not a conda env).
-    return [python or sys.executable, "-u", "-m", WORKER_MODULE, "--job", str(job_dir),
+    return [python or console_python(), "-u", "-m", WORKER_MODULE, "--job", str(job_dir),
             *[str(a) for a in args]]
+
+
+def console_python(exe: str | None = None) -> str:
+    """The console interpreter. If the app was started with pythonw.exe (no console),
+    use the python.exe beside it: CREATE_NO_WINDOW only works for a console program,
+    and a worker without a console would pop up a window for every stage."""
+    exe = exe or sys.executable
+    p = Path(exe)
+    if p.name.lower() == "pythonw.exe" and (p.parent / "python.exe").exists():
+        return str(p.parent / "python.exe")
+    return exe
 
 
 def spawn_detached(job_dir: Path, args=(), python: str | None = None) -> subprocess.Popen:
@@ -151,7 +191,7 @@ def spawn_detached(job_dir: Path, args=(), python: str | None = None) -> subproc
             si = subprocess.STARTUPINFO()
             si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             si.wShowWindow = 0                                   # SW_HIDE
-            base = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+            base = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
             try:
                 p = subprocess.Popen(cmd, creationflags=base | CREATE_BREAKAWAY_FROM_JOB,
                                      startupinfo=si, **kw)
@@ -338,9 +378,9 @@ def keep_awake() -> str:
                              stderr=subprocess.DEVNULL, start_new_session=True)
             return "caffeinate -i (macOS will not idle-sleep while the batch runs)"
         if IS_WINDOWS:
-            import ctypes
             ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
-            ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)
+            if not _kernel32().SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED):
+                return "could not prevent sleep: SetThreadExecutionState failed"
             return "SetThreadExecutionState (Windows will not sleep while the batch runs)"
     except Exception as exc:
         return f"could not prevent sleep: {exc}"
@@ -380,9 +420,7 @@ def windows_job():
 
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
     JobObjectExtendedLimitInformation = 9
-    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    k32.CreateJobObjectW.restype = wintypes.HANDLE
-    k32.GetCurrentProcess.restype = wintypes.HANDLE
+    k32 = _kernel32()
     h = k32.CreateJobObjectW(None, None)
     if not h:
         raise OSError(ctypes.get_last_error(), "CreateJobObjectW failed")

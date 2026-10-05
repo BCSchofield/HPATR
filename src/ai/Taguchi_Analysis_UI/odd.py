@@ -23,6 +23,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import fsops
 from . import pipeline_spec as spec
 
 NO_IMAGE_EXTREMES = "no image kept: this run saved extreme frames only"
@@ -73,7 +74,7 @@ def _write(csv_path: Path, rows: list[dict]) -> None:
         w.writeheader()
         for r in rows:
             w.writerow({c: r.get(c, "") for c in cols})
-    tmp.replace(csv_path)
+    fsops.replace(tmp, csv_path)
 
 
 def _timings(output_dir: Path) -> dict:

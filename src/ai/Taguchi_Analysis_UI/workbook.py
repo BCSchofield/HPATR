@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from . import tables
+from . import fsops, tables
 
 SHEETS = (                               # (sheet name <= 31 chars, table key, always written)
     ("Per-run responses", "per_run", True),
@@ -90,7 +90,7 @@ def write(path: Path, results, bins, prov, timings: list[dict] | None = None) ->
                 frame.to_excel(xw, sheet_name=name[:31], index=False)
                 _style(xw.sheets[name[:31]], frame)
         try:
-            os.replace(tmp, path)
+            fsops.replace(tmp, path)            # retried for a few seconds, then: Excel has it open
         except PermissionError:
             raise WorkbookError(f"cannot replace {path.name}: close it in Excel and analyse again") from None
     finally:

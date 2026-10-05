@@ -27,6 +27,8 @@ import numpy as np
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 
+from . import fsops
+
 DPI = 300
 HEADLINE = ("d32", "atom")                      # the two responses every figure leads with
 FACTOR_COLOURS = ("#0a84ff", "#ff9f0a", "#30d158", "#bf5af2", "#ff453a", "#64d2ff", "#ffd60a")
@@ -45,7 +47,7 @@ def _save(fig: Figure, out_dir: Path, name: str) -> list[Path]:
         path = out_dir / f"{name}.{ext}"
         tmp = out_dir / f".{name}.{ext}.tmp"
         fig.savefig(tmp, format=ext, bbox_inches="tight", facecolor="white", **kw)
-        tmp.replace(path)
+        fsops.replace(tmp, path)
         written.append(path)
     return written
 

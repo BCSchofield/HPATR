@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import design as dz
-from . import figures, jobstate, odd, provenance, report, size_bins, stats, tables, workbook
+from . import figures, fsops, jobstate, odd, provenance, report, size_bins, stats, tables, workbook
 
 REPORT_NAME = "taguchi_report.md"
 WORKBOOK_NAME = "taguchi_analysis.xlsx"
@@ -63,7 +63,7 @@ def _write_csv(path: Path, rows: list[dict]) -> None:
         w = csv.DictWriter(f, fieldnames=cols)
         w.writeheader()
         w.writerows(rows)
-    tmp.replace(path)
+    fsops.replace(tmp, path)
 
 
 def write_flat_csvs(output_dir: Path, results, bins, prov) -> Path:
@@ -135,7 +135,7 @@ def publish(design: dz.Design, output_dir: Path, *, thr: float | None = None,
             path = output_dir / REPORT_NAME
             tmp = path.with_name(f".{path.name}.tmp")
             tmp.write_text(text, encoding="utf-8")
-            tmp.replace(path)
+            fsops.replace(tmp, path)
             return path
         d.report = step("report", put_report)
 

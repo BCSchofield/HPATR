@@ -19,6 +19,12 @@ import pytest
 
 os.environ["TAGUCHI_UI_NO_SETTINGS"] = "1"
 
+# 3. Never touch this machine's real ETA memory (~/.hpatr/eta_calibration.json): every test that
+#    runs a worker gets a throwaway calibration file even if it forgets to set one itself.
+import tempfile as _tempfile
+os.environ["TAGUCHI_UI_CALIBRATION"] = os.path.join(_tempfile.mkdtemp(prefix="taguchi_calib_"),
+                                                     "calib.json")
+
 
 @pytest.fixture(autouse=True)
 def _destroy_qt_widgets_between_tests():

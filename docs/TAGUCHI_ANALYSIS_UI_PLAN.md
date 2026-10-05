@@ -1090,3 +1090,63 @@ real. Most of it is the user running commands on the lab PC; Claude interprets a
   an indentation error (a syntax error is not a real catch).
 - **Not yet verified:** Windows (Phase 11). The CPU-versus-CUDA wording off a Mac is untested on a real GPU PC.
 - Tests: 589 pass.
+
+### Phase 11 preparation — Windows hardening, `--selftest`, the run sheet (2026-10-05/06)
+
+Before the first real Windows run (the 27 runs of 2026/10/05, overnight, on the lab PC), the
+Windows-only code was desk-checked line by line. Three bugs were found that would have bitten on
+the first night; all fixed, each with a test that simulates the Windows behaviour on the Mac:
+
+- **The worker would have crashed at start.** `windows_job()` called kernel32 through ctypes with
+  no `argtypes`. On 64-bit Windows `GetCurrentProcess()`'s pseudo-handle came back as 2**64-1 and
+  passing it to `AssignProcessToJobObject` raises `ctypes.ArgumentError` ("int too long to
+  convert"). The worker only caught `OSError` there, so it would have died before run 1. Now
+  `procs._kernel32()` declares every function's types, and the worker treats any job-object failure
+  as a warning. Test: a fake kernel32 with LLP64 argument rules, which reproduces the old crash.
+- **Every pipeline stage would have opened a visible console window.** A worker started with
+  `DETACHED_PROCESS` has no console, so each console-program child (python.exe for every stage) gets
+  a NEW visible console, and closing one kills that stage (the handoff's "blank CMD window" trap).
+  The worker now starts with `CREATE_NO_WINDOW` (a console of its own, no window), which its children
+  inherit; pythonw.exe is swapped for the python.exe beside it.
+- **Runs would have failed at random overnight.** On Windows, `os.replace` over (or unlink of) a file
+  another process has open raises PermissionError. The worker rewrites state.json every ~2 s and
+  heartbeat.json every few, while the UI reads them every second (and antivirus or the indexer open
+  new files). New `fsops.py` retries with backoff (~6 s); every writer goes through it (state,
+  heartbeat, timings, lock, stop flag, ETA calibration, report, figures, odd pack, workbook). A test
+  forbids a bare `os.replace` / `Path.replace` anywhere in the app.
+- Encoding was audited too: the app's file I/O always names UTF-8, the worker's logs are UTF-8 files,
+  and the pipeline's printed text is cp1252-safe, so nothing changes there (deliberately: no
+  PYTHONUTF8, which would alter the proven pipeline's behaviour the night before a run).
+
+**`python -m src.ai.Taguchi_Analysis_UI --selftest`** (`selftest.py`, ASCII output, exit 0/1): the
+interpreter; every package the app and pipeline import, with the exact pip line for what is missing
+(numpy pinned to the installed version, never a plain `pip install torch`); CUDA proven by a tensor
+op; LaCie, model, preflight; the day's runs, disk, design and a rough time; and a LIVE test of the
+real detached worker in a temp folder with the stub pipeline (start, it spawns a stage child, hard
+kill, child must die too, resumable, resume, finish, timings) while a second thread reads the job files
+as fast as possible; sleep prevention. On this Mac against the real 10/05 day: READY, 27 runs to do,
+9x3 confirmed, 179,065 concurrent reads without a failure.
+
+**`docs/TAGUCHI_WINDOWS_RUN_SHEET.md`**: the step-by-step for the lab PC (Command Prompt only, two
+variables set once, every command one pasteable line), what to install, how to make the PC safe to
+leave, starting the batch from the app, what to check while run 1 goes through (the real smoke test,
+replacing the plan's Windows sandbox, which would have needed a 14 GB cine copy because exFAT
+supports neither symlinks nor hard links), proving the worker survives the app closing, the morning
+(status, retry/resume, Analyse, copying the calibration file for the timings), a troubleshooting
+table. Rewritten at the user's request so that (a) the batch is set up and started by hand in the app,
+with a section-by-section guide to the UI for future campaigns (no command starts a batch), and (b)
+no Claude session is needed on the PC: every failure has a do-it-yourself step, or save the output and
+bring it to the Mac.
+
+**Per-machine timings:** a REAL run's stage timings are remembered in that machine's
+`~/.hpatr/eta_calibration.json` (last 30 per stage), so every later batch on the PC starts from its own
+speeds. Stub runs (tests, the self-test) now never write that file (`worker.py` checks the pipeline is
+real; `tests/conftest.py` also points it at a temp file), so test runs cannot make the PC's future
+estimates absurdly short. Both directions are tested and mutation-checked.
+
+- Mutation-tested: 9 Windows behaviours broken on purpose; 8 caught. The survivor (leaving
+  `GetCurrentProcess` undeclared) is genuinely harmless: it then returns -1, which the declared HANDLE
+  parameter it is passed to converts correctly.
+- **Still unverified until it runs on the PC:** all of the above on real Windows; the real pipeline's
+  reuse path on a full run; the Windows timings (Phase 11 proper, from the overnight batch).
+- Tests: 613 pass.

@@ -163,7 +163,7 @@ class Worker:
             awake = procs.keep_awake()
             try:
                 self._job_handle = procs.windows_job()
-            except OSError as exc:
+            except Exception as exc:                 # never fatal: costs only orphan protection
                 self.emit("warn", detail=f"could not create the Windows job object ({exc}); "
                                          f"if this worker is killed, stop its pipeline stage by hand")
             self.emit("job_start", job_id=self.job["job_id"], pid=os.getpid(),
@@ -206,7 +206,8 @@ class Worker:
                 c = jobstate.counts(self.state)
                 self.emit("job_end", status=self.state["status"], exit_code=code, counts=c)
             jobstate.release_lock(self.jd, self.token)
-            self.calib.save()
+            if isinstance(self.pipeline, RealPipeline):
+                self.calib.save()
         return code
 
     # -- one run -------------------------------------------------------------------
@@ -297,9 +298,12 @@ class Worker:
             r["status"], r["stage"] = "done", None
             r["finished"] = jobstate.now_iso()
             r["timings"]["total_s"] = round(time.time() - t_run, 1)
-            for key, rate in eta.observations_from_run(r, self.host, options.get("images")).items():
-                self.calib.add(key, rate)
-            self.calib.save()            # after EVERY run: a later crash must not lose these timings
+            if isinstance(self.pipeline, RealPipeline):
+                # only REAL timings teach this machine's ETA: a stub run's are fake by design, and
+                # would make every future estimate on this PC absurdly short
+                for key, rate in eta.observations_from_run(r, self.host, options.get("images")).items():
+                    self.calib.add(key, rate)
+                self.calib.save()        # after EVERY run: a later crash must not lose these timings
             self.emit("run_end", i=r["index"], name=r["name"], status="done",
                       total_s=r["timings"]["total_s"], d32=summary.get("d32_in_focus_um"),
                       atomised=cs.get("atomised_pct_pooled"))

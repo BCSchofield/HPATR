@@ -449,6 +449,8 @@ def test_workbook_text_that_looks_like_a_formula_stays_text():
 def test_a_workbook_open_in_excel_gives_an_instruction_not_a_traceback(world, monkeypatch):
     def locked(src, dst):
         raise PermissionError("in use")
+    from src.ai.Taguchi_Analysis_UI import fsops
+    monkeypatch.setattr(fsops, "ATTEMPTS", 2)                # a real lock outlasts every retry
     monkeypatch.setattr(workbook.os, "replace", locked)
     with tempfile.TemporaryDirectory() as d:
         with pytest.raises(workbook.WorkbookError, match="close it in Excel"):

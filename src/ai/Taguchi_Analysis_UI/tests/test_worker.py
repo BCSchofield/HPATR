@@ -313,3 +313,34 @@ def test_jobctl_suggests_retry_for_failed_runs(tmp, monkeypatch):
     jd = new_job(out, runs)
     wait_exit(procs.spawn_detached(jd, stub_args("--stub-fail", runs[0].name)))
     assert any("--retry-failed" in l for l in jobctl.status_lines(out))
+
+
+
+def test_a_stub_run_never_teaches_the_machine_fake_timings(tmp, monkeypatch):
+    """Real timings are remembered per machine for future ETAs; a stub's must never be."""
+    out, runs = sandbox(tmp, monkeypatch, 2)
+    calib = tmp / "calib.json"
+    assert wait_exit(procs.spawn_detached(new_job(out, runs), stub_args())) == 0
+    assert not calib.exists()
+
+
+
+def test_a_real_run_does_teach_the_machine_its_timings(tmp, monkeypatch):
+    """The other half: a REAL pipeline's timings are remembered for this machine's future ETAs
+    (that is how the overnight Windows batch calibrates the lab PC). Run in-process with a stub
+    that counts as real, so no cine or GPU is needed."""
+    import json
+    from src.ai.Taguchi_Analysis_UI import eta, worker as wk
+    from src.ai.Taguchi_Analysis_UI.stub_pipeline import Stub
+
+    class RealLike(Stub, wk.RealPipeline):
+        pass
+
+    monkeypatch.setattr(procs, "keep_awake", lambda: "test")
+    out, runs = sandbox(tmp, monkeypatch, 2)
+    jd = new_job(out, runs)
+    assert wk.Worker(jd, RealLike(frames=6, stage_s=0.01), heartbeat_s=0.3).run() == 0
+    rates = json.loads((tmp / "calib.json").read_text())["rates"]
+    host = eta.host_id()
+    assert any(k.startswith(f"{host}|inference|") for k in rates)
+    assert all(len(v) == 2 for k, v in rates.items() if k.startswith(f"{host}|extract"))   # one per run

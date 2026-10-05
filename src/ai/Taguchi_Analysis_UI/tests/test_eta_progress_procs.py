@@ -234,7 +234,10 @@ def test_windows_spawn_is_detached_hidden_and_breaks_away(monkeypatch):
         p = procs.spawn_detached(Path(d), ["--impl", "stub"])
     (cmd, kw), = calls
     flags = kw["creationflags"]
-    assert flags & procs.DETACHED_PROCESS and flags & procs.CREATE_NEW_PROCESS_GROUP
+    assert flags & procs.CREATE_NO_WINDOW and flags & procs.CREATE_NEW_PROCESS_GROUP
+    # NOT DETACHED_PROCESS: a worker with no console makes every stage it starts open its own
+    # visible console window (and CREATE_NO_WINDOW is ignored when combined with it)
+    assert not flags & 0x00000008
     assert flags & procs.CREATE_BREAKAWAY_FROM_JOB
     assert not flags & 0x00000010, "must NOT use CREATE_NEW_CONSOLE (the window that killed the batch)"
     assert kw["startupinfo"].wShowWindow == 0 and kw["startupinfo"].dwFlags & 1
@@ -248,7 +251,7 @@ def test_windows_spawn_falls_back_when_breakaway_is_denied(monkeypatch):
         p = procs.spawn_detached(Path(d))
     assert len(calls) == 2
     assert not calls[1][1]["creationflags"] & procs.CREATE_BREAKAWAY_FROM_JOB
-    assert calls[1][1]["creationflags"] & procs.DETACHED_PROCESS
+    assert calls[1][1]["creationflags"] & procs.CREATE_NO_WINDOW and not calls[1][1]["creationflags"] & 0x8
     assert p.breakaway is False
 
 
@@ -365,3 +368,92 @@ def test_this_machines_only_inference_device_is_assumed_before_any_run_reports_o
     assert est.measured and est.batch_remaining_s == pytest.approx(4 * 100 + 2)
     c.add(eta.obs_key(HOST, "inference", "mps", "extremes"), 0.2)   # two devices: ambiguous
     assert not eta.estimate(fresh, "extremes", host=HOST, calib=c, now=0).measured
+
+
+
+# ---- 64-bit Windows ctypes semantics, simulated ------------------------------------------------------
+
+class _FakeFn:
+    """A kernel32 function with LLP64 argument rules: undeclared ints must fit 32 bits."""
+    def __init__(self, name, log):
+        self.name, self.log, self.argtypes, self.restype = name, log, None, "c_int"
+
+    def __call__(self, *args):
+        import ctypes
+        if self.argtypes is None:
+            for a in args:
+                if isinstance(a, int) and not (-2 ** 31 <= a < 2 ** 32):
+                    raise ctypes.ArgumentError(f"{self.name}: int too long to convert")
+        else:
+            assert len(args) == len(self.argtypes), self.name
+        self.log.append(self.name)
+        handle_typed = self.restype is not None and self.restype != "c_int" and \
+            getattr(self.restype, "__name__", "") in ("c_void_p", "HANDLE")
+        if self.name == "GetCurrentProcess":
+            return 2 ** 64 - 1 if handle_typed else -1          # the pseudo-handle (HANDLE)-1
+        if self.name == "CreateJobObjectW":
+            return 0x7FFE00001F4 if handle_typed else 0x1F4
+        return 1
+
+
+class _FakeKernel32:
+    def __init__(self):
+        self.log, self.fns = [], {}
+
+    def __getattr__(self, name):
+        if name.startswith("__"):
+            raise AttributeError(name)
+        return self.fns.setdefault(name, _FakeFn(name, self.log))
+
+
+def test_the_fake_kernel32_reproduces_the_crash_the_old_code_had():
+    """Sanity check of the simulation: the pre-fix pattern (restype set, argtypes not) fails."""
+    import ctypes
+    from ctypes import wintypes
+    k = _FakeKernel32()
+    k.GetCurrentProcess.restype = wintypes.HANDLE
+    k.CreateJobObjectW.restype = wintypes.HANDLE
+    h = k.CreateJobObjectW(None, None)
+    with pytest.raises(ctypes.ArgumentError):
+        k.AssignProcessToJobObject(h, k.GetCurrentProcess())
+
+
+def test_windows_job_declares_its_types_so_64_bit_handles_pass(monkeypatch):
+    import ctypes
+    fake = _FakeKernel32()
+    monkeypatch.setattr(procs, "IS_WINDOWS", True)
+    monkeypatch.setattr(ctypes, "WinDLL", lambda *a, **k: fake, raising=False)
+    h = procs.windows_job()
+    assert h == 0x7FFE00001F4
+    assert fake.log == ["CreateJobObjectW", "SetInformationJobObject", "GetCurrentProcess",
+                        "AssignProcessToJobObject"]
+
+
+def test_keep_awake_and_liveness_use_declared_types_on_windows(monkeypatch):
+    import ctypes
+    fake = _FakeKernel32()
+    monkeypatch.setattr(procs, "IS_WINDOWS", True)
+    monkeypatch.setattr(procs, "_psutil", lambda: None)
+    monkeypatch.setattr(procs, "_reap", lambda pid: False)
+    monkeypatch.setattr(procs.shutil, "which", lambda name: None)          # not the macOS branch
+    monkeypatch.setattr(ctypes, "WinDLL", lambda *a, **k: fake, raising=False)
+    assert procs.keep_awake().startswith("SetThreadExecutionState")
+    procs.is_alive(4242)
+    assert {"OpenProcess", "GetExitCodeProcess", "CloseHandle"} <= set(fake.log)
+    assert all(fn.argtypes is not None for fn in fake.fns.values())
+
+
+def test_a_job_object_failure_of_any_kind_does_not_stop_the_worker(monkeypatch, tmp_path):
+    """The worker treats the job object as a nicety: any exception is a warning."""
+    from src.ai.Taguchi_Analysis_UI import worker
+    src = Path(worker.__file__).read_text(encoding="utf-8")
+    block = src[src.index("self._job_handle = procs.windows_job()") - 40:][:200]
+    assert "except Exception" in block
+
+
+def test_pythonw_is_swapped_for_the_console_python_beside_it(tmp_path):
+    (tmp_path / "python.exe").write_text("")
+    (tmp_path / "pythonw.exe").write_text("")
+    assert procs.console_python(str(tmp_path / "pythonw.exe")) == str(tmp_path / "python.exe")
+    assert procs.console_python(str(tmp_path / "python.exe")) == str(tmp_path / "python.exe")
+    assert procs.console_python("/usr/bin/python3") == "/usr/bin/python3"
