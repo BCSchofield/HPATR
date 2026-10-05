@@ -12,53 +12,14 @@ import threading
 
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import (
-    QApplication, QLabel, QMainWindow, QSplitter, QTabWidget, QTreeWidget,
-    QTreeWidgetItem, QVBoxLayout, QWidget,
+    QApplication, QLabel, QMainWindow, QSplitter, QTabWidget, QVBoxLayout, QWidget,
 )
 
+from . import pipeline_spec as spec
 from . import theme
 from .console import ConsolePane
+from .pane_outputs import OutputsPane
 from .pane_runs import RunsPane
-
-
-class OutputsPane(QWidget):
-    """RIGHT: the checkbox tree of outputs that will be created.
-
-    Phase 1: a static placeholder tree so the layout and card chrome are
-    final. `output_tree.py` (Phase 4) replaces its contents with one
-    built from `pipeline_spec.py` (Phase 2) — grey locked ticks for
-    mandatory artefacts, real checkboxes for optional ones.
-    """
-
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
-
-        card = theme.card()
-        cl = card.layout()
-        cl.addWidget(theme.section_label("OUTPUTS THAT WILL BE CREATED"))
-        cl.addWidget(theme.separator())
-
-        self.tree = QTreeWidget()
-        self.tree.setHeaderHidden(True)
-        self.tree.setStyleSheet(
-            f"QTreeWidget {{ background-color: {theme.CLR_INPUT}; "
-            f"border: 1px solid {theme.CLR_BORDER}; border-radius: 8px; }}"
-        )
-        placeholder = QTreeWidgetItem(
-            ["Output tree is built in Phase 4, from the pipeline contract in Phase 2"]
-        )
-        placeholder.setForeground(0, Qt.GlobalColor.gray)
-        self.tree.addTopLevelItem(placeholder)
-        cl.addWidget(self.tree, 1)
-
-        self.cost_label = QLabel("")
-        self.cost_label.setStyleSheet(f"color: {theme.CLR_TEXT_SEC}; font-size: 11px;")
-        cl.addWidget(self.cost_label)
-
-        layout.addWidget(card)
 
 
 class BatchTab(QWidget):
@@ -76,18 +37,32 @@ class BatchTab(QWidget):
         self.outputs_pane = OutputsPane()
         panes_split.addWidget(self.runs_pane)
         panes_split.addWidget(self.outputs_pane)
-        panes_split.setStretchFactor(0, 1)
-        panes_split.setStretchFactor(1, 1)
+        panes_split.setStretchFactor(0, 4)
+        panes_split.setStretchFactor(1, 5)
+        panes_split.setSizes([560, 700])
 
         main_split = QSplitter(Qt.Orientation.Vertical)
         main_split.addWidget(panes_split)
         self.console = ConsolePane()
         self.runs_pane.log = self.console.log
+        self.runs_pane.selection_changed.connect(self.update_outputs_context)
+        self.runs_pane.output_changed.connect(self.update_outputs_context)
         main_split.addWidget(self.console)
         main_split.setStretchFactor(0, 3)
         main_split.setStretchFactor(1, 1)
 
         outer.addWidget(main_split)
+        self.update_outputs_context()
+
+    def update_outputs_context(self) -> None:
+        """Describe the first selected run (the tree shows ONE example) and the chosen
+        output folder. Never changes a tick."""
+        runs = self.runs_pane.included_runs()
+        out = self.runs_pane.output_folder()
+        self.outputs_pane.set_context(
+            run_name=runs[0].name if runs else None,
+            thr=spec.effective(self.runs_pane.settings).score_thresh,
+            n_runs=len(runs), output_dir=str(out) if out else None)
 
 
 class PlaceholderTab(QWidget):

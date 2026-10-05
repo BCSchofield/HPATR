@@ -5,7 +5,7 @@ Approved 2026-10-05. Working copy lives at
 versioned) — THIS file in docs/ is the durable copy. If the plan changes
 during implementation, update this file too.
 
-Status: Phases 1-3 complete. Phases 4-10 outstanding. See the
+Status: Phases 1-4 complete. Phases 5-10 outstanding. See the
 "Implementation phases" table for the per-phase model guidance, and the
 "Implementation log" at the END of this file for decisions made while
 building that refine or deviate from the plan text.
@@ -690,8 +690,9 @@ Decisions made while building, where they refine or deviate from the plan above.
   what `process_capture`'s own log calls it). The pane warns when selected measured runs span
   versions. On disk: the nine 10/01 L9 runs carry no `sizer_version`; only `120606` records
   `2.0.0`. The handoff's statement that the nine are 2.0.0 does not match their `summary.json`.
-- **Scan depth is 3 levels** (pick a year, month, day or run folder). Picking `Experiments/`
-  itself finds nothing, and the pane says so explicitly rather than showing an empty list.
+- **Scan depth is 3 levels, and stays 3** (decided with the user: the highest level they will
+  ever pick is a per-day folder, possibly several at once). Picking `Experiments/` itself
+  finds nothing, and the pane says so explicitly rather than showing an empty list.
 - **Fixtures mirror the real 10/05 format, and a fidelity test proves it** (`tests/fakes.py`,
   `tests/test_fakes_fidelity.py`): same tree, same 16 Metadata rows in the same order and
   types (en-dash flow range, string numerics, a newline in Notes), cine time later than folder
@@ -705,3 +706,40 @@ Decisions made while building, where they refine or deviate from the plan above.
 - Tests: pytest now installed; 142 pass (`python -m pytest src/ai/Taguchi_Analysis_UI/tests`),
   including read-only checks against the real 10/05 and 10/01 data, one of which asserts
   discovery changes nothing on disk in a real run folder.
+
+### Phase 4 — output tree, right pane (2026-10-05)
+
+- **`output_tree.py` (model, no Qt) + `pane_outputs.py` (view).** The tree is derived from
+  `pipeline_spec.OUTPUTS`; tick state reaches the pipeline only through
+  `spec.resolve_options()`. The headline test asserts, for **every** option combination, that
+  the files the tree shows as "will be created" equal `spec.active_outputs(options)`.
+- **Five node states:** group, locked_on (grey tick), `superseded` (mandatory but not made
+  under the current options), on, off. "Every frame" replaces the mandatory extreme images,
+  so those rows go to a dim empty box reading *"not made: replaced by the every-frame
+  images"* rather than keeping a tick that would be a lie.
+- **The two "every frame" boxes are one option shown twice** (`images` reaches both stages);
+  ticking either ticks both (`output_tree.toggle`). Half-linked tick sets display consistently.
+- **Rendered the real window and looked at it. That found three bugs no test had:** the only
+  clickable boxes were *invisible* (Fusion's unchecked box matches the dark field colour); the
+  Phase 3 `+` add-runs button was blank (theme padding wider than the button); detail text was
+  clipped. Fixed: a custom delegate draws every checkbox state; `+` restyled; headings span
+  both columns; first column fixed-width.
+- **A real crash, found by running the pane's tests in isolation (segfault, exit 139):**
+  ticking a box rebuilt the tree inside the delegate's `editorEvent`, freeing the item it was
+  still using. The rebuild is now deferred one event-loop turn and coalesced. It only passed
+  in the full suite by luck of memory layout.
+- **Mutation testing, not just coverage:** each bug was re-introduced and the matching test
+  confirmed to fail (invisible box, double box, clickable locked rows, the segfault, the blank
+  `+` against the *exact* original code). A first attempt at the `+` mutation was unfaithful
+  and passed; it was redone against the original code before trusting the test.
+- **Cost text is not an ETA.** It shows disk (measured on one real run: ~3.1 GB per run,
+  every-frame adds ~4.2 GB; 497 frames) and, for "every frame" only, the handoff's "10-13 min
+  per run" labelled *an estimate, not measured*. That figure came from one Windows PC and is
+  mostly PNG write speed to the LaCie, which the handoff records swinging 15x (6.8 s to
+  0.4 s per image) between sessions, so it is NOT portable to Mac. Disk is the same on any OS;
+  time is not. The text says "Not known for this Mac/PC".
+- **Deferred to Phase 5 (eta.py): time remaining learned from this session's completed runs**
+  (requested by the user). Nothing runs until Phase 5, so there is nothing to learn from yet.
+  Planned: per-stage rates keyed by (machine, stage, images mode), refined run by run, with an
+  uncertainty band that narrows, replacing the static estimate above.
+- Tests: 205 pass (`python -m pytest src/ai/Taguchi_Analysis_UI/tests`).

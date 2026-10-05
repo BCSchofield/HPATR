@@ -105,6 +105,7 @@ class _Bridge(QObject):
 
 class RunsPane(QWidget):
     selection_changed = Signal()
+    output_changed = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -131,7 +132,16 @@ class RunsPane(QWidget):
         self.clear_btn = QPushButton("Clear")
         self.clear_btn.clicked.connect(self.clear)
         self.add_btn = QPushButton("+")
-        self.add_btn.setFixedWidth(32)
+        # The theme's button padding (7px 16px) is wider than a 32px button, which
+        # clipped the "+" away entirely: the main control looked like an empty box.
+        self.add_btn.setFixedSize(34, 30)
+        self.add_btn.setStyleSheet(
+            f"QPushButton {{ background-color: {theme.CLR_ACCENT}; color: white; border: none; "
+            f"border-radius: 8px; padding: 0px; font-size: 20px; font-weight: 600; }} "
+            f"QPushButton:hover {{ background-color: {theme._darken_hex(theme.CLR_ACCENT, 0.9)}; }} "
+            f"QPushButton:pressed {{ background-color: {theme._darken_hex(theme.CLR_ACCENT)}; }} "
+            f"QPushButton:disabled {{ background-color: {theme.CLR_INPUT}; "
+            f"color: {theme.CLR_TEXT_SEC}; }}")
         self.add_btn.setToolTip("Add run folders (or a whole day / month / year of them)")
         self.add_btn.clicked.connect(self._choose_runs)
         for b in (self.remove_btn, self.clear_btn, self.add_btn):
@@ -361,5 +371,9 @@ class RunsPane(QWidget):
     def _choose_output_folder(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Choose output folder")
         if folder:
-            self.output_label.setText(folder)
-            self.output_label.setStyleSheet(f"color: {theme.CLR_TEXT};")
+            self.set_output_folder(Path(folder))
+
+    def set_output_folder(self, folder: Path) -> None:
+        self.output_label.setText(str(folder))
+        self.output_label.setStyleSheet(f"color: {theme.CLR_TEXT};")
+        self.output_changed.emit()
