@@ -24,6 +24,7 @@ from .batch_controller import LIVE, BatchController, confirm_text
 from .console import ConsolePane
 from .pane_outputs import OutputsPane
 from .pane_runs import RunsPane
+from .tab_settings import SettingsTab
 from .tab_taguchi import TaguchiTab
 
 
@@ -53,6 +54,7 @@ class BatchTab(QWidget):
         self.runs_pane.selection_changed.connect(self.update_outputs_context)
         self.runs_pane.output_changed.connect(self.update_outputs_context)
         self.runs_pane.mode_changed.connect(self.update_outputs_context)
+        self.runs_pane.settings_changed.connect(self.update_outputs_context)
         main_split.addWidget(self.console)
         main_split.setStretchFactor(0, 3)
         main_split.setStretchFactor(1, 1)
@@ -71,6 +73,7 @@ class BatchTab(QWidget):
             lambda: self.controller.attach(self.runs_pane.output_folder()))
         self.runs_pane.selection_changed.connect(self.refresh_buttons)
         self.runs_pane.mode_changed.connect(self.refresh_buttons)
+        self.runs_pane.settings_changed.connect(self.refresh_buttons)
         self.runs_pane.run_btn.clicked.connect(self._on_run)
         self.runs_pane.aux_btn.clicked.connect(self._on_aux)
         self.runs_pane.stop_btn.clicked.connect(self._on_stop_now)
@@ -220,20 +223,6 @@ class BatchTab(QWidget):
             n_runs=len(plan.process), output_dir=str(out) if out else None)
 
 
-class PlaceholderTab(QWidget):
-    """A single centred note for tabs not yet built."""
-
-    def __init__(self, text: str, parent=None) -> None:
-        super().__init__(parent)
-        layout = QVBoxLayout(self)
-        label = QLabel(text)
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        label.setStyleSheet(f"color: {theme.CLR_TEXT_SEC}; font-size: 13px;")
-        layout.addStretch(1)
-        layout.addWidget(label)
-        layout.addStretch(1)
-
-
 class _PreflightBridge(QObject):
     """Carries the preflight result from its worker thread to the main thread
     (a signal emitted off-thread is delivered queued, on the receiver's thread)."""
@@ -252,13 +241,13 @@ class MainWindow(QMainWindow):
         tabs.addTab(self.batch_tab, "  Batch  ")
         self.taguchi_tab = TaguchiTab(self.batch_tab.runs_pane)
         self.taguchi_tab.log = self.batch_tab.console.log
+        self.taguchi_tab.options_provider = self.batch_tab.outputs_pane.options
+        self.taguchi_tab.batch_busy = lambda: self.batch_tab.controller.mode in LIVE
         tabs.addTab(self.taguchi_tab, "  Taguchi  ")
-        tabs.addTab(
-            PlaceholderTab(
-                "Auto-populated settings\n(Phase 10: score threshold, stride, device, model dir, bin width)"
-            ),
-            "  Settings  ",
-        )
+        self.settings_tab = SettingsTab(self.batch_tab.runs_pane)
+        self.settings_tab.log = self.batch_tab.console.log
+        self.taguchi_tab.bins_provider = lambda: (self.settings_tab.bin_width, self.settings_tab.bin_max)
+        tabs.addTab(self.settings_tab, "  Settings  ")
         self.setCentralWidget(tabs)
 
         if theme.SOURCE == "fallback":

@@ -5,7 +5,7 @@ Approved 2026-10-05. Working copy lives at
 versioned) — THIS file in docs/ is the durable copy. If the plan changes
 during implementation, update this file too.
 
-Status: Phases 1-8 complete. Phases 9-11 outstanding. See the
+Status: Phases 1-10 complete. Phase 11 (Windows pass and timings) outstanding. See the
 "Implementation phases" table for the per-phase model guidance, and the
 "Implementation log" at the END of this file for decisions made while
 building that refine or deviate from the plan text.
@@ -969,3 +969,124 @@ real. Most of it is the user running commands on the lab PC; Claude interprets a
   attributions: a same-size mutant restored within the same second left a stale `.pyc`; the mutation
   runner now uses `python -B`.)
 - Tests: 455 pass.
+
+### Phase 9 — figures, report, workbook, odd-frame pack, Analyse button (2026-10-05)
+
+- **One call does it all: `publish.publish(design, output_dir, ...)`** (no Qt): analyse -> size bins
+  -> figures -> odd pack (if ticked) -> report -> workbook -> flat CSVs + `results.json` (if ticked).
+  Everything lands in the output folder, never in a run folder (a test snapshots every source file
+  before and after). **A refused analysis writes no report, workbook or figures**, so a good earlier
+  report is never replaced by a refusal (only the design file you just edited is saved). Each
+  optional step is isolated: if the figures fail, the report and workbook still land, and the
+  failure is shown in the console and in the report's Warnings section. Files are written under a
+  temp name and moved into place.
+- **`tables.py` is the single source of every table**; the report, the workbook and the CSVs all
+  draw from it, so they cannot disagree about a number.
+- **`figures.py`** (matplotlib object API, no pyplot, so it is safe beside Qt; PNG at 300 dpi + SVG):
+  main effects (+/- SE and bootstrap CI), contributions (a true 100% partition with lack of fit and
+  error), every run with its CI, S/N, GLR trends, and the two requested **stacked size-spread
+  charts (% by count, % by volume), runs on X grouped by condition**, one sequential ramp ordered
+  small -> large (not a categorical palette). Figures with nothing honest to draw are not written.
+- **`report.py` -> `taguchi_report.md`**: what was found in plain words (evidence, never proof; a
+  factor that fails the Benjamini-Hochberg correction is tagged; "not significant" is never worded as
+  "no effect"; a quantised response is flagged instead of trusted), design and its checks,
+  every response in full (ANOVA with pure error and lack of fit, level means, S/N, outliers), size
+  spread, GLR (caveat attached; "no run has a GLR" instead of a table when none was recorded), odd
+  runs, runs left out and why, how to read the statistics (states how many false alarms to expect from
+  the number of tests run), and provenance.
+- **`workbook.py` -> `taguchi_analysis.xlsx`**: Per-run responses, Design matrix, Main effects,
+  ANOVA (with q), S-N ratios, S-N by condition, Size bins (count/volume, per run and per condition), GLR
+  context and trends, Replicate outliers, Skipped runs, Timings (the batch's own `timings.csv`, if a
+  batch ran here), Provenance. Text that looks like a formula stays text. A workbook open in Excel gives
+  "close it in Excel and analyse again", not a traceback.
+- **`provenance.py`**: repository revision (and whether the pipeline had uncommitted edits), sizer
+  version, threshold, bootstrap size and seed, bin edges, CI stride, and -- when a batch ran in this
+  folder -- its stride, device, model directory and image mode. Unknown is "not recorded", never guessed.
+- **`odd.py` -- the odd-frame pack wraps the real `taguchi_analysis.flag_odd`** (the definition of
+  "odd" stays in one place) and fixes the hazard recorded in this plan: `flag_odd` looks only in
+  `liquid_<thr>/images/`, which does not exist in the default extremes mode, so it silently reported
+  "none found" for every frame. The record handed to it resolves `images` to `extreme_images` when
+  that is what exists, and a frame with no image is labelled with WHY ("this run saved extreme frames
+  only"). Adds the `replicate_outlier` category (needs replicates), and the batch's slow stages. A
+  previous pack is replaced, not mixed in (and a folder with foreign files is left alone). On the real
+  10/01 runs it copied 54 real images.
+- **The Analyse button** (Taguchi tab; `analysis_controller.py` runs it on a worker thread, one log line
+  per run so a stall is visible): disabled with a stated reason until there is an output folder and a
+  ticked run; analyses the design **as it was at the click** (deep copy; the table stays editable);
+  asks first if a batch is still running (runs it has not measured are left out and listed); takes the
+  threshold from the Settings value and the optional outputs from the tick tree; reports success,
+  problems or a refusal (red); Open report / Open output folder. A result belongs to the folder it was
+  written to.
+- **Found by checking real output, not by the tests, and fixed:** the per-run chart reused colours
+  (7 factor colours for 9 conditions, so two conditions looked like replicates); a campaign with no
+  GLR at all warned "trends use the other 0 runs"; skipped runs were not logged when the analysis was
+  refused (the very case where the user needs to know why).
+- **Verified on real data (read-only, output to a scratch folder):** the 9 measured 10/01 runs (legacy
+  folder names, two side runs left out, no GLR) publish end to end; the workbook's ANOVA matches the
+  published `taguchi_results.json` (p to 1e-7, F to 1e-4) and the report quotes the same p.
+- **Mutation-tested:** 22 behaviours broken on purpose (refusal still publishing, step failure aborting
+  everything, stale or foreign odd-pack files, count and volume charts swapped, runs not grouped,
+  screen-resolution PNGs, loosened threshold, inverted multiple-test tag, wrong p wording, q column
+  showing p, formulas, undisclosed dirty pipeline, analysis seeing later edits, double start, no
+  batch-running warning, result outliving its folder, hard-coded threshold) -- all 22 caught (the
+  threshold one only after its test was changed to use a non-default value).
+- **Not yet verified:** the odd pack and figures on a full 497-frame every-frame run (only extremes
+  runs and synthetic data); Windows (Phase 11). The Settings tab is still a placeholder (Phase 10): bin
+  width and maximum are parameters of `publish()` with the plan's defaults (25/200 um) but have no UI yet.
+- Tests: 524 pass.
+
+### Phase 10 — the Settings tab, auto-populated (2026-10-05)
+
+- **Every field opens with the value the pipeline would choose, asked of the pipeline, not typed
+  here** (`settings_defaults.py`, no Qt; each function returns the value *and* where it came from *and*
+  any warning, so the tab can say why a field holds what it holds). Score threshold =
+  `process_capture.DEFAULT_SCORE_THRESH`; stride = `DEFAULT_STRIDE`, with what it means at each selected
+  run's frame rate against `DECORRELATION_S` (390 fps, stride 10: frames 25.6 ms apart vs 20.5 ms, so
+  independent; a shorter stride warns and names the independent one); CI stride = `auto`, resolved PER RUN
+  by `auto_ci_stride` from that run's own fps (shown for the selected runs, e.g. "1 for 27 runs");
+  device = `tiled_inference.auto_device()`; model folder = `default_model_dir()` + `find_weights()` + the
+  checkpoint iteration and segm AP read from the same `<Name>_summary.json` / `model_best.json` the
+  pipeline's own provenance line reads (Eden, iteration 19000, AP 66.8 on this machine); size-bin
+  width/maximum = `size_bins` (this app's own feature, so no upstream value exists, and the tab says so).
+  Tests monkeypatch the pipeline's constants and assert the tab follows.
+- **The contract grew with it:** `pipeline_spec` now also checks `tiled_inference.auto_device /
+  default_model_dir / find_weights` and the constants `DECORRELATION_S` and `PRODUCTION_MODEL`
+  (preflight: 19 checks pass), so a rename upstream is reported by preflight before the tab silently breaks.
+  A test asserts everything the tab asks of the pipeline is in the contract.
+- **Behaviour:** a value typed equal to the default is stored as "let the pipeline decide" (None), so the
+  row stays "default" and nothing is pinned. An invalid entry is NOT applied (the last valid value stays
+  in force; the row says why in red). Each row has Reset; there is Reset all (which leaves `limit` and the
+  other non-tab settings alone). **Settings are deliberately not remembered between launches**: a stale
+  override must never quietly outlive the reason it was set. (If you want persistence for the model folder
+  only, it is a small addition; say so.)
+- **Device and model are resolved on a background thread** (the model lookup touches the LaCie drive, which may
+  be asleep or absent); the rows say "asking the pipeline ..." until then, and a pipeline that exits or
+  raises is shown in the row, never allowed to kill the window. Device warnings depend on the CHOSEN device:
+  CPU on a Mac quotes the measured ~5.8 s/frame (~48 min per 497-frame run) taken from the ETA priors, CPU
+  elsewhere says no CUDA GPU was found (and claims no measurement), MPS is flagged experimental, choosing cuda
+  when the pipeline found none says it will probably fail.
+- **A change re-reads the runs only when it should.** What a folder already holds (measured? reusable?)
+  depends on the threshold, the stride and the model, so changing any of those re-reads every loaded run in
+  the background (ticks kept); the device and CI stride do not. `RunsPane.set_settings` also fixed a real race
+  the tests found: a change made while the FIRST scan was still loading was silently dropped, leaving those
+  runs read under the old threshold.
+- **Wired through, verified end to end:** the Batch tab, the output tree's threshold, Run batch and the
+  detached worker's `job.json` all see the changed values (a stub batch was started from the tab and its
+  `job.json` read back: threshold 0.45, stride 6, CI stride 2, device cpu, the chosen model folder; both
+  runs wrote `droplets_0.45/`). Analyse now takes the bin width/maximum from the tab.
+- **Already in place from earlier phases, now covered here:** reattaching to a running or unfinished batch on
+  start (Phase 6, `test_reopening_reattaches_to_a_running_batch`) and the Mac slow-inference note on the batch
+  confirmation (`confirm_text`). The "every frame" choice stays an output-tree tick (the pipeline's one image
+  knob), with a note on this tab, not a duplicate control. The dead placeholder tab class was removed.
+- **Found by looking at the screen, fixed:** a style rule given to the scroll area's viewport without a
+  selector cascaded to every label (dark boxes behind all text); it is now scoped by name.
+- **Mutation-tested:** 22 behaviours broken on purpose (hard-coded threshold and stride, floor vs ceil on the
+  independent stride, CI stride ignoring the stride, inverted device and model warnings, a CPU rate claimed
+  off-Mac, threshold 0 and fractional strides accepted, "auto" no longer auto, a typed default pinned, invalid
+  entries applied, reset-all forgetting the model, a model without weights applied, the dropped-first-scan
+  race, wrong re-read triggers in both directions, ticks lost on re-read, bin settings not reaching Analyse,
+  contract no longer covering `auto_device`). All 22 caught, after fixing two defects in my own checks: one
+  test used a model folder that did not exist (so it never reached the code under test), and one mutant had
+  an indentation error (a syntax error is not a real catch).
+- **Not yet verified:** Windows (Phase 11). The CPU-versus-CUDA wording off a Mac is untested on a real GPU PC.
+- Tests: 589 pass.

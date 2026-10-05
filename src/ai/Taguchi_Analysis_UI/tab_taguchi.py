@@ -14,6 +14,9 @@ Editing:
     Add factor...             any built-in factor, or ANY run_summary.xlsx field
     Leave out runs with no trial   drops the side tests the Notes can identify
 
+Analyse runs the statistics on the runs that are measured and writes the report, workbook and
+figures to the output folder (a refused analysis writes nothing). It never starts a batch.
+
 With an output folder chosen, every change is saved to <output>/taguchi_design.json and
 reloaded next time, so edits survive reopening the app.
 """
@@ -21,8 +24,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QBrush, QColor
+from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtGui import QBrush, QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QListWidget,
     QListWidgetItem, QMenu, QMessageBox, QPushButton, QSplitter, QTableWidget,
@@ -30,7 +33,9 @@ from PySide6.QtWidgets import (
 )
 
 from . import design as dz
-from . import theme
+from . import pipeline_spec as spec
+from . import size_bins, theme
+from .analysis_controller import AnalysisController
 
 COL_USE, COL_RUN, COL_COND, COL_REP = 0, 1, 2, 3
 FIXED_COLS = 4                                    # then one column per factor, then the check
@@ -55,6 +60,12 @@ class TaguchiTab(QWidget):
         self.ask_text = self._ask_text                # tests replace these
         self.ask_yes = lambda text: QMessageBox.question(self, "Taguchi", text) == QMessageBox.StandardButton.Yes
         self.log = lambda text, level="info": None    # BatchTab wires the console in
+        self.options_provider = lambda: {}            # MainWindow: the outputs pane's ticks
+        self.batch_busy = lambda: False               # MainWindow: is a batch running?
+        self.bins_provider = lambda: (size_bins.DEFAULT_WIDTH_UM, size_bins.DEFAULT_MAX_UM)  # Settings tab
+        self.analysis = AnalysisController(self)
+        self.analysis.changed.connect(self.refresh_analyse)
+        self.analysis.finished.connect(self._analysis_finished)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(12, 12, 12, 12)
@@ -83,6 +94,22 @@ class TaguchiTab(QWidget):
         bar.addStretch(1)
         bar.addWidget(self.save_label)
         outer.addLayout(bar)
+
+        act = QHBoxLayout()
+        self.analyse_btn = theme.accent_button("Analyse")
+        self.analyse_btn.clicked.connect(self.analyse)
+        self.report_btn = theme.ghost_button("Open report")
+        self.report_btn.clicked.connect(lambda: self._open("report"))
+        self.folder_btn = theme.ghost_button("Open output folder")
+        self.folder_btn.clicked.connect(lambda: self._open("folder"))
+        self.analyse_label = QLabel("")
+        self.analyse_label.setWordWrap(True)
+        self.analyse_label.setStyleSheet(f"color: {theme.CLR_TEXT_SEC}; font-size: 12px;")
+        act.addWidget(self.analyse_btn)
+        act.addWidget(self.report_btn)
+        act.addWidget(self.folder_btn)
+        act.addWidget(self.analyse_label, 1)
+        outer.addLayout(act)
 
         split = QSplitter(Qt.Orientation.Vertical)
         self.table = QTableWidget()
@@ -116,6 +143,7 @@ class TaguchiTab(QWidget):
         runs_pane.selection_changed.connect(self.sync_runs)
         runs_pane.output_changed.connect(self.sync_output)
         self.sync_runs()
+        self.refresh_analyse()
 
     # ---- styling ---------------------------------------------------------------------
     @staticmethod
@@ -133,6 +161,7 @@ class TaguchiTab(QWidget):
     def sync_output(self) -> None:
         self.output_dir = self.runs_pane.output_folder()
         self.saved_to = None
+        self.analysis.last = None                     # a result belongs to the folder it was written to
         if self.output_dir is not None:
             saved = dz.load_saved(self.output_dir)
             if saved is not None:
@@ -148,6 +177,7 @@ class TaguchiTab(QWidget):
         text, level = dz.headline(d, a)
         self.banner.setText(f"{MARK.get(level, '')}  {text}")
         self.banner.setStyleSheet(self._banner_css(LEVEL_COLOURS[level]))
+        self.refresh_analyse()
 
         factors = d.factors
         self._building = True
@@ -379,3 +409,71 @@ class TaguchiTab(QWidget):
         except OSError as exc:
             self.save_label.setText(f"could not save the design: {exc}")
             self.log(f"design: could not save to {self.output_dir}: {exc}", "error")
+
+    # ---- analysing -------------------------------------------------------------------------------------
+    def analyse_blocker(self) -> str | None:
+        """Why Analyse cannot run right now, or None."""
+        if self.analysis.busy:
+            return "Analysing \u2026"
+        if self.output_dir is None:
+            return "Choose an output folder on the Batch tab first"
+        if not self.design.active():
+            return "Tick at least one run on the Batch tab"
+        return None
+
+    def refresh_analyse(self) -> None:
+        why = self.analyse_blocker()
+        self.analyse_btn.setEnabled(why is None)
+        self.analyse_btn.setText("Analysing \u2026" if self.analysis.busy else "Analyse")
+        self.analyse_btn.setToolTip(why or "Run the statistics on the measured runs and write the report, "
+                                           "workbook and figures to the output folder")
+        last = self.analysis.last
+        has_report = bool(last and last.report and last.report.is_file())
+        self.report_btn.setEnabled(has_report)
+        self.folder_btn.setEnabled(self.output_dir is not None)
+        neutral = f"color: {theme.CLR_TEXT_SEC}; font-size: 12px;"
+        if self.analysis.busy:
+            self.analyse_label.setText(self.analysis.status())
+            self.analyse_label.setStyleSheet(neutral)
+        elif last is None:
+            self.analyse_label.setText(why or "")
+            self.analyse_label.setStyleSheet(neutral)
+
+    def analyse(self) -> None:
+        why = self.analyse_blocker()
+        if why:
+            self.log(f"analyse: {why}", "warn")
+            return
+        if self.batch_busy() and not self.ask_yes(
+                "A batch is still running. Runs it has not measured yet will be left out of this "
+                "analysis (and listed). Analyse anyway?"):
+            return
+        thr = spec.effective(self.runs_pane.settings).score_thresh
+        self.log("analyse: started; the table can still be edited, this analysis uses the design as it "
+                 "is now", "info")
+        self.analysis.log = self.log
+        width, maximum = self.bins_provider()
+        self.analysis.start(self.design, self.output_dir, thr=thr, options=self.options_provider(),
+                            bin_width=width, bin_max=maximum)
+
+    def _analysis_finished(self, d) -> None:
+        if d.refused:
+            self.analyse_label.setText("\u2716 Refused: " + d.refused)
+            self.analyse_label.setStyleSheet(f"color: {theme.CLR_RED}; font-size: 12px;")
+        elif d.problems:
+            self.analyse_label.setText("\u26a0 Finished with problems: " + "; ".join(d.problems))
+            self.analyse_label.setStyleSheet(f"color: {theme.CLR_ORANGE}; font-size: 12px;")
+        else:
+            r = d.results
+            self.analyse_label.setText(f"\u2714 {len(r.runs)} runs analysed \u2192 {d.report.name}, "
+                                       f"{d.workbook.name if d.workbook else 'no workbook'}")
+            self.analyse_label.setStyleSheet(f"color: {theme.CLR_GREEN}; font-size: 12px;")
+        self.refresh_analyse()
+
+    def _open(self, what: str) -> None:
+        if self.output_dir is None:
+            return
+        target = (self.analysis.last.report if what == "report" and self.analysis.last
+                  and self.analysis.last.report else self.output_dir)
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(target))):
+            self.log(f"could not open {target}", "warn")

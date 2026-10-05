@@ -131,6 +131,10 @@ HELPERS = (
     ImportCall("taguchi_analysis", "flag_odd", ("runs", "timings", "out")),
     ImportCall("taguchi_analysis", "load_timings", ("paths",)),
     ImportCall("_fsutil", "list_files", ("directory", "pattern")),
+    # The Settings tab asks the pipeline for its own defaults rather than copying them.
+    ImportCall("tiled_inference", "auto_device", ()),
+    ImportCall("tiled_inference", "default_model_dir", ()),
+    ImportCall("tiled_inference", "find_weights", ("model_dir",)),
 )
 
 # Module-level values the app reads (defaults, response tables). Read LIVE --
@@ -140,6 +144,8 @@ CONSTANTS = (
     ("process_capture", "DEFAULT_SCORE_THRESH"),
     ("process_capture", "DEFAULT_STRIDE"),
     ("process_capture", "BG_FRAMES"),
+    ("process_capture", "DECORRELATION_S"),
+    ("tiled_inference", "PRODUCTION_MODEL"),
     ("taguchi_analysis", "RESPONSES"),
     ("taguchi_analysis", "RESP_KEYS"),
     ("taguchi_analysis", "SN_SIGN"),

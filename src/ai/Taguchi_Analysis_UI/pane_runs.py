@@ -112,12 +112,14 @@ class _DropList(QListWidget):
 class _Bridge(QObject):
     """Worker thread -> main thread."""
     finished = Signal(object, object)       # (list[RunInfo], ScanResult)
+    reloaded = Signal(object)               # list[RunInfo] re-read under new settings
 
 
 class RunsPane(QWidget):
     selection_changed = Signal()
     output_changed = Signal()
     mode_changed = Signal()
+    settings_changed = Signal()             # the Settings tab changed a value the batch uses
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -128,6 +130,8 @@ class RunsPane(QWidget):
         self._busy = False
         self._bridge = _Bridge()
         self._bridge.finished.connect(self._on_loaded)
+        self._bridge.reloaded.connect(self._on_reloaded)
+        self._reload_again = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -307,6 +311,57 @@ class RunsPane(QWidget):
 
         threading.Thread(target=work, name="run-discovery", daemon=True).start()
 
+    # ---- settings ------------------------------------------------------------------------
+    def fps_values(self) -> list[float]:
+        """Frame rates of the selected runs (the Settings tab shows what stride means for them)."""
+        return [r.fps for r in self.included_runs() if r.fps]
+
+    def set_settings(self, new: spec.RunSettings) -> None:
+        """Adopt new settings. What a run's folder says it has (measured? reusable?) depends on
+        the threshold, the stride and the model, so a change to any of those re-reads every
+        loaded run in the background; nothing else needs that."""
+        key = lambda s: (s.score_thresh, s.stride, s.model_dir)
+        changed = key(spec.effective(self.settings)) != key(spec.effective(new))
+        self.settings = new
+        if changed and (self._runs or self._busy):         # a scan under way will land under the OLD settings
+            self._reload_runs()
+        else:
+            self.settings_changed.emit()
+
+    def _reload_runs(self) -> None:
+        if self._busy:
+            self._reload_again = True              # re-read once the scan in progress has landed
+            return
+        self._busy = True
+        self.add_btn.setEnabled(False)
+        s = spec.effective(self.settings)
+        paths = list(self._runs)
+        self.log(f"settings changed: re-reading {len(paths)} run(s) "
+                 f"(threshold {s.score_thresh:g}, stride {s.stride}) ...")
+
+        def work() -> None:
+            try:
+                runs = rd.load_runs(paths, thr=s.score_thresh, stride=s.stride, model_dir=s.model_dir)
+            except Exception as exc:               # must reach the console, not vanish
+                self.log(f"ERROR while re-reading runs: {type(exc).__name__}: {exc}")
+                runs = []
+            self._bridge.reloaded.emit(runs)
+
+        threading.Thread(target=work, name="run-reload", daemon=True).start()
+
+    def _on_reloaded(self, runs: list[rd.RunInfo]) -> None:
+        self._busy = False
+        self.add_btn.setEnabled(True)
+        for r in runs:
+            self._runs[r.path] = r                 # ticks are kept: _included is untouched
+        self._refresh()
+        if runs:
+            self.log(rd.summarise(self._runs.values()).headline())
+        self.settings_changed.emit()
+        if self._reload_again:
+            self._reload_again = False
+            self._reload_runs()
+
     def _on_loaded(self, runs: list[rd.RunInfo], scan: rd.ScanResult) -> None:
         self._busy = False
         self.add_btn.setEnabled(True)
@@ -324,6 +379,9 @@ class RunsPane(QWidget):
                      "(not the Experiments folder itself).")
         self._refresh()
         self.log(rd.summarise(self._runs.values()).headline())
+        if self._reload_again:
+            self._reload_again = False
+            self._reload_runs()
 
     def remove_selected(self) -> None:
         for item in self.list.selectedItems():

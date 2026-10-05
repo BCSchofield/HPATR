@@ -560,7 +560,10 @@ def analyse(design: dz.Design, thr: float | None = None,
     results.trends = covariates.trends(runs, responses_table())
     no_glr = [r for r in runs if not (r.context and r.context.glr is not None)]
     if no_glr:
-        results.warnings.append(
-            f"{len(no_glr)} run(s) have no GLR ({no_glr[0].context.note if no_glr[0].context else 'no workbook'}"
-            f"), so the GLR trends use the other {len(runs) - len(no_glr)} run(s).")
+        why = no_glr[0].context.note if no_glr[0].context else "no workbook"
+        if len(no_glr) == len(runs):
+            results.warnings.append(f"no run has a GLR ({why}), so there is no GLR analysis.")
+        else:
+            results.warnings.append(f"{len(no_glr)} run(s) have no GLR ({why}), so the GLR trends use "
+                                    f"the other {len(runs) - len(no_glr)} run(s).")
     return results
