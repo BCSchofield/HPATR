@@ -3861,8 +3861,8 @@ class AtomisationApp(QMainWindow):
         self._travel_warning.setStyleSheet(f"color:{CLR_ORANGE}; font-size:10px;")
         self._travel_warning.setFixedHeight(12)
         tvl.addWidget(self._travel_warning)
-
-        hl.addWidget(travel_box, 0, Qt.AlignmentFlag.AlignVCenter)
+        # travel_box is added to the bar AFTER GLR and Volume (below), so the
+        # read-outs sit to the left and Motor Travel sits beside the controls.
 
         # GLR, immediately left of Volume and styled to match it. Both are
         # derived read-outs rather than set points, so they belong together.
@@ -3902,6 +3902,7 @@ class AtomisationApp(QMainWindow):
         vvl.addWidget(_vol_title)
         vvl.addWidget(self._vol_label)
         hl.addWidget(vol_box, 0, Qt.AlignmentFlag.AlignVCenter)
+        hl.addWidget(travel_box, 0, Qt.AlignmentFlag.AlignVCenter)
 
         _sb_sep = QFrame()
         _sb_sep.setFixedSize(1, 32)
@@ -3934,6 +3935,20 @@ class AtomisationApp(QMainWindow):
         """)
         self._start_btn.clicked.connect(self._start_experiment)
         hl.addWidget(self._start_btn)
+
+        # A second Trigger, so the camera can be fired from this screen as well
+        # as the Camera tab. Same handler, and its enabled state is driven by
+        # _set_trigger_enabled() together with the Camera tab's button, so it
+        # is live only while the camera is armed.
+        self._bar_trigger_btn = accent_button("● Trigger", CLR_RED)
+        self._bar_trigger_btn.setFixedSize(120, 40)
+        self._bar_trigger_btn.setEnabled(False)   # enabled only when armed
+        self._bar_trigger_btn.setToolTip(
+            "<b>Trigger camera</b> — same as the Camera tab's Trigger<br>"
+            "Live only while the camera is armed (Arm it in the Camera tab).<br>"
+            "Space bar also triggers, when no text box has focus.")
+        self._bar_trigger_btn.clicked.connect(self._cam_trigger)
+        hl.addWidget(self._bar_trigger_btn)
 
         self._exp_progress = QProgressBar()
         self._exp_progress.setRange(0, 0)   # indeterminate by default
@@ -4509,12 +4524,14 @@ class AtomisationApp(QMainWindow):
     # told a 2560x1600 user 6 min for a job that actually took 23.
     INFERENCE_S_PER_MEGAPIXEL = 1.25
 
-    # Canonical master_log.xlsx layout, A..N. MASTER_HEADERS is stamped onto row 1
+    # Canonical master_log.xlsx layout, A..Q. MASTER_HEADERS is stamped onto row 1
     # on every save, so a rename here reaches existing workbooks and a column added
     # by a migration cannot end up nameless or unstyled (which is how 'Mass Flow
     # Graph' ended up the only unbold, unfilled header in the file).
-    # Shadowgraph (L) is sized for the 300 px images placed there; the cone (K)
-    # and the two graph columns (M, N) are widened further from their actual
+    # _write_excel finds every column by its NAME in this tuple -- never by
+    # letter -- so adding a column here cannot misplace the images again.
+    # Shadowgraph (O) is sized for the 300 px images placed there; the cone (N)
+    # and the two graph columns (P, Q) are widened further from their actual
     # rendered image sizes when those images exist.
     MASTER_HEADERS = ('Timestamp', 'Orifice', 'Bubbler Height (mm)', 'Bubbler RPM',
                       'Flow Range (sccm)', 'GLR', 'Pressure Range (barA)',
@@ -5351,6 +5368,15 @@ class AtomisationApp(QMainWindow):
         except Exception as e:
             self._set_status(f"Camera config error: {e}", CLR_RED)
 
+    def _set_trigger_enabled(self, on: bool):
+        """Enable/disable BOTH Trigger buttons -- the Camera tab's and the copy
+        beside Start Experiment. Every state change goes through here so the
+        two can never disagree (e.g. one still live while a save is running)."""
+        for btn in (getattr(self, "_cam_trigger_btn", None),
+                    getattr(self, "_bar_trigger_btn", None)):
+            if btn is not None:
+                btn.setEnabled(on)
+
     def _set_camera_armed_indicator(self, colour: str):
         """Coloured border on the Camera header box: orange=armed, green=recording, transparent=off."""
         self._hdr_camera_box.setStyleSheet(f"""
@@ -5373,7 +5399,7 @@ class AtomisationApp(QMainWindow):
                     self._cam_arm_status_lbl.setText("Armed — buffering…"),
                     self._cam_arm_status_lbl.setStyleSheet(f"color:{CLR_GREEN}; font-size:12px;"),
                     self._cam_arm_btn.setEnabled(False),
-                    self._cam_trigger_btn.setEnabled(True),
+                    self._set_trigger_enabled(True),
                     self._set_camera_armed_indicator(CLR_ORANGE),
                 ))
             except Exception as e:
@@ -5390,7 +5416,7 @@ class AtomisationApp(QMainWindow):
         self._cam_arm_status_lbl.setText("Not armed")
         self._cam_arm_status_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
         self._cam_arm_btn.setEnabled(True)
-        self._cam_trigger_btn.setEnabled(False)
+        self._set_trigger_enabled(False)
         self._set_camera_armed_indicator("transparent")
 
     def _on_save_format_changed(self, source: str):
@@ -5426,7 +5452,7 @@ class AtomisationApp(QMainWindow):
         ts = datetime.now().strftime("%H%M%S")
 
         # Update UI immediately so the user knows the trigger was received
-        self._cam_trigger_btn.setEnabled(False)
+        self._set_trigger_enabled(False)
         self._cam_arm_btn.setEnabled(False)
         self._cam_arm_status_lbl.setText("Triggered — saving…")
         self._cam_arm_status_lbl.setStyleSheet(f"color:{CLR_ORANGE}; font-size:12px;")
@@ -7584,21 +7610,41 @@ class AtomisationApp(QMainWindow):
                           if not (hasattr(im.anchor, '_from')
                                   and im.anchor._from.row == _r0)]
 
+        # Every column below is looked up BY HEADER NAME, never by letter or
+        # index. When GLR was inserted at F, the image code here still used the
+        # pre-GLR letters M/N/O/P, so the cone's "NO DATA AVAILABLE" landed on
+        # Notes (erasing it), the shadowgraph went in the Cone column and both
+        # graphs shifted one left. Looking columns up from MASTER_HEADERS means
+        # a future column can move things only by changing that tuple.
+        _col = {h: i for i, h in enumerate(self.MASTER_HEADERS, start=1)}
+        c_notes, c_lamella = _col['Notes'], _col['Avg Lamella Thickness']
+        c_cone, c_shadow = _col['Cone Image'], _col['Shadowgraph']
+        c_press, c_flow = _col['Pressure Graph'], _col['Mass Flow Graph']
+
         center_mid = Alignment(horizontal='center', vertical='center', wrap_text=True)
         top_left   = Alignment(horizontal='left',   vertical='top',    wrap_text=True)
-        for col, val in enumerate([ts_str, orifice,
-                                   bubbler_str or 'NOT RECORDED',
-                                   rpm_str or 'NOT RECORDED',
-                                   f_range_str, glr_val, p_range_str,
-                                   speed_str, distance_str,
-                                   d32_val, atom_val, _lamella_cell_val,
-                                   notes, '', '', '', ''], start=1):
+        row_vals = {
+            'Timestamp':             ts_str,
+            'Orifice':               orifice,
+            'Bubbler Height (mm)':   bubbler_str or 'NOT RECORDED',
+            'Bubbler RPM':           rpm_str or 'NOT RECORDED',
+            'Flow Range (sccm)':     f_range_str,
+            'GLR':                   glr_val,
+            'Pressure Range (barA)': p_range_str,
+            'Speed (steps/s)':       speed_str,
+            'Motor Travel (mm)':     distance_str,
+            'D32 (um)':              d32_val,
+            'Atomised (%)':          atom_val,
+            'Avg Lamella Thickness': _lamella_cell_val,
+            'Notes':                 notes,
+        }
+        for name, col in _col.items():
             cell = ws.cell(row=row_num, column=col)
-            cell.value = val
-            cell.alignment = top_left if col == 13 else center_mid
+            cell.value = row_vals.get(name, '')     # image columns start blank
+            cell.alignment = top_left if col == c_notes else center_mid
         # Orange highlight for "Input Self" lamella cell
         if _lamella_orange:
-            _lc = ws.cell(row=row_num, column=12)
+            _lc = ws.cell(row=row_num, column=c_lamella)
             _lc.fill = PatternFill(start_color='FFA500', end_color='FFA500', fill_type='solid')
             _lc.font = Font(color='000000', bold=True)
         ws.row_dimensions[row_num].height = 125
@@ -7613,12 +7659,13 @@ class AtomisationApp(QMainWindow):
                 _cone_disp_w = max(1, int(_cw * _cone_disp_h / _ch))
                 cimg = XLImage(_cone_img_path)
                 cimg.width = _cone_disp_w; cimg.height = _cone_disp_h
-                ws.column_dimensions['M'].width = max(10, _cone_disp_w / 7.0)
-                ws.add_image(cimg, f'M{row_num}')
+                _L = get_column_letter(c_cone)
+                ws.column_dimensions[_L].width = max(10, _cone_disp_w / 7.0)
+                ws.add_image(cimg, f'{_L}{row_num}')
             else:
-                ws.cell(row=row_num, column=13).value = 'NO DATA AVAILABLE'
+                ws.cell(row=row_num, column=c_cone).value = 'NO DATA AVAILABLE'
         else:
-            ws.cell(row=row_num, column=13).value = 'NO DATA AVAILABLE'
+            ws.cell(row=row_num, column=c_cone).value = 'NO DATA AVAILABLE'
 
         # THIS run's lowest-D32 frame only. It used to take whatever the
         # preview panel showed, and the preview falls back to the newest
@@ -7630,15 +7677,17 @@ class AtomisationApp(QMainWindow):
             simg.width = self.SHADOWGRAPH_W_PX; simg.height = DISPLAY_H
             # Size the column to the image rather than leaving whatever
             # width the migration left behind (Excel width ~= px / 7)
-            ws.column_dimensions['N'].width = self.SHADOWGRAPH_W_PX / 7.0
-            ws.add_image(simg, f'N{row_num}')
+            _L = get_column_letter(c_shadow)
+            ws.column_dimensions[_L].width = self.SHADOWGRAPH_W_PX / 7.0
+            ws.add_image(simg, f'{_L}{row_num}')
         else:
-            ws.cell(row=row_num, column=14).value = 'NO DATA AVAILABLE'
+            ws.cell(row=row_num, column=c_shadow).value = 'NO DATA AVAILABLE'
 
-        # Pressure graph in O, mass flow graph immediately right of it in P
-        for _col_letter, _col_idx, _img_bytes, _img_w in (
-                ('O', 15, pressure_bytes, pressure_img_width),
-                ('P', 16, flow_bytes,     flow_img_width)):
+        # Pressure graph in its column, mass flow graph immediately right of it
+        for _col_idx, _img_bytes, _img_w in (
+                (c_press, pressure_bytes, pressure_img_width),
+                (c_flow,  flow_bytes,     flow_img_width)):
+            _col_letter = get_column_letter(_col_idx)
             if _img_bytes:
                 _gimg = XLImage(io.BytesIO(_img_bytes))
                 _gimg.width = _img_w; _gimg.height = DISPLAY_H

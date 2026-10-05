@@ -21,6 +21,81 @@ file is the operational summary of it.
 
 ---
 
+## 2026-10-05 (lab PC, later) — MASTER_LOG COLUMN BUG FIXED, SECOND TRIGGER BUTTON
+
+All in `src/gui/GUI_Clean.py`, **not committed yet**. The GUI must be restarted
+to pick either change up.
+
+### The GLR column broke every image after it in master_log
+
+Inserting GLR at F moved Notes and everything right of it one column
+(**Notes M, Cone N, Shadowgraph O, Pressure P, Mass Flow Q**). The headers and
+the text cells followed, but `_write_excel` still placed images by **hard-coded
+pre-GLR letters** `M/N/O/P` and indices `13/14`:
+
+| what | belongs in | went to | effect |
+|---|---|---|---|
+| Cone image / its "NO DATA AVAILABLE" | N | **M** | **overwrote the Notes text** |
+| Shadowgraph | O | N | sat in the Cone column |
+| Pressure graph | P | O | one column left, and O widened to fit it |
+| Mass flow graph | Q | P | one column left |
+
+Rows written BEFORE GLR were moved correctly by the migration and are fine.
+Only rows saved with the GLR code are wrong.
+
+**Fix:** every column in the row-writing code is now looked up **by header
+name** from `MASTER_HEADERS` (`_col = {name: index}`), and the row's values are
+a dict keyed by header. A future column can only move things by changing that
+tuple, so this class of bug cannot recur silently. The migrations still match by
+position on purpose, because they recognise historical layouts.
+
+**Verified** on a copy of the real master_log: two saves, one with
+cone + shadowgraph + graphs and one with no images. Notes survived in M; the cone
+went to N, the shadowgraph to O, and the graphs to P and Q. Display sizes are
+unchanged: 165 px row images, shadowgraph 300 px wide, graph columns widened to
+fit as before. The layout matches the row Ben fixed by hand (the 09:04:32 run).
+
+**Still damaged in the real file:** the newest row, saved after 09:04 with the
+bug. Its Notes read "NO DATA AVAILABLE" and its graphs sit in O/P. Its real notes
+survive in that run's `run_summary.xlsx` (Metadata → Notes). A scripted repair
+was offered (back up, restore notes, move the graphs to P/Q, NO DATA in N/O) but
+has **not been done**. Close the file in Excel first, or Excel's next save
+overwrites the repair.
+
+`E:\Experiments\Logs\` holds `DONT USE master_log copy.xlsx` (73.7 MB, 28 Sep)
+and `DONT USE 2 master_log.xlsx` (83.4 MB, 1 Oct, pre-GLR) alongside the live
+`master_log.xlsx` (22.9 MB). The live file shrank from 83 MB, so image data was
+dropped somewhere along the way, cause not investigated. The 1 Oct copy is the
+last full pre-GLR state if anything needs recovering.
+
+### Trigger button beside Start Experiment
+
+A copy of the camera **● Trigger** now sits immediately right of **START
+EXPERIMENT** in the bottom bar, so the camera can be fired without switching to
+the Camera tab. It calls the same `_cam_trigger`.
+
+- **The two buttons cannot disagree.** All three state changes (arm → enable;
+  disarm/abort → disable; trigger pressed → disable) now go through
+  `_set_trigger_enabled()`, which sets both. Pressing either disables both
+  immediately, so a double-trigger from the two screens is not possible.
+- Bottom bar order is now **GLR | Volume | Motor Travel | START | Trigger**: GLR
+  and Volume moved left of Motor Travel to make room.
+- Space still triggers when no text box has focus (unchanged).
+- Verified off-screen (status bar only; the full GUI auto-connects hardware):
+  correct order, the copy fires only while armed, and a click while disarmed
+  does nothing. **Not yet tried on the rig:** arm the camera and confirm the
+  bar's Trigger lights up.
+
+### Also checked this session
+
+- The 5 Oct GLR/Materials additions read their widgets in `_collect_save_job`
+  (GUI thread), not in the background `_write_excel`. The background save from
+  2026-10-01 is still safe.
+- The home PC is an **RTX 5060 Ti** (per the 2 Oct section), not a 5070 Ti. It ran
+  the L9 fine, so the PyTorch/Blackwell warning in the 1 Oct section did not bite.
+
+---
+
 ## 2026-10-05 (GUI) — GLR, A MATERIALS TAB, AND WHAT TO CAPTURE
 
 All in `src/gui/GUI_Clean.py`. **Not committed, and not yet on the Windows PC** —
@@ -131,7 +206,13 @@ durations in the recorded data, and expect the 27 runs to be shorter than 25 s.
 Everything above still holds; the duration advice was the softest part of it
 anyway, for the reason in the third bullet.
 
-### ⚠ NONE OF THE LAST THREE DAYS IS COMMITTED
+### ~~⚠ NONE OF THE LAST THREE DAYS IS COMMITTED~~ — RESOLVED
+
+**Checked on the lab PC, 2026-10-05:** all of it was committed and pushed
+(`bc760b1`, `c244b03`), `Testing` matched `origin/Testing`, and the working
+tree held `SIZER_VERSION = "2.1.0"`, the `droplets_`/`liquid_` folder names and
+the `limited` guard. The lab PC is on the 2.1.0 code. The original warning
+follows, for the record.
 
 `measure_run.py`, `classical_liquid.py`, `batch_runs.py`, `process_capture.py`,
 `cine_extract.py`, `taguchi_analysis.py`, `compare_runs.py`, `GUI_Clean.py` and
