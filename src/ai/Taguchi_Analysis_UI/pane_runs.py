@@ -7,6 +7,7 @@ window never freezes and the console shows progress.
 """
 from __future__ import annotations
 
+import os
 import threading
 from pathlib import Path
 from typing import Callable
@@ -28,10 +29,19 @@ SETTINGS_ORG, SETTINGS_APP = "HPATR", "TaguchiAnalysisUI"
 ROLE_PATH = Qt.ItemDataRole.UserRole
 
 
+def app_settings():
+    """QSettings for remembered folders, or None while tests run (they must never
+    write into the user's real preferences)."""
+    if os.environ.get("TAGUCHI_UI_NO_SETTINGS"):
+        return None
+    return QSettings(SETTINGS_ORG, SETTINGS_APP)
+
+
 def default_start_dir() -> Path:
     """Last folder used, else <LaCie>/Experiments/<this year>, else home."""
     try:
-        last = QSettings(SETTINGS_ORG, SETTINGS_APP).value("last_run_dir", "", type=str)
+        s = app_settings()
+        last = s.value("last_run_dir", "", type=str) if s else ""
         if last and Path(last).is_dir():
             return Path(last)
     except Exception:
@@ -192,14 +202,19 @@ class RunsPane(QWidget):
         layout.addWidget(out_card)
 
         actions = QHBoxLayout()
-        self.run_btn = theme.accent_button("Run batch")
+        self.run_btn = theme.accent_button("Run batch")      # text/role set by BatchTab
         self.run_btn.setEnabled(False)
-        self.run_btn.setToolTip("Worker + pipeline wiring arrives in Phases 5-6")
+        self.run_btn.setToolTip("Checking the pipeline \u2026")
+        self.aux_btn = theme.ghost_button("")                # Retry failed / New batch
+        self.aux_btn.hide()
+        self.stop_btn = theme.accent_button("Stop now", color=theme.CLR_RED)
+        self.stop_btn.setToolTip("Stop immediately. The run in progress is redone on Resume.")
+        self.stop_btn.hide()
         self.analyse_btn = theme.ghost_button("Analyse")
         self.analyse_btn.setEnabled(False)
         self.analyse_btn.setToolTip("Statistics wiring arrives in Phases 7-8")
-        actions.addWidget(self.run_btn)
-        actions.addWidget(self.analyse_btn)
+        for b in (self.run_btn, self.aux_btn, self.stop_btn, self.analyse_btn):
+            actions.addWidget(b)
         layout.addLayout(actions)
 
         self._refresh()
@@ -223,8 +238,9 @@ class RunsPane(QWidget):
         chosen = pick_directories(self, PICK_TITLE, default_start_dir())
         if chosen:
             try:
-                QSettings(SETTINGS_ORG, SETTINGS_APP).setValue(
-                    "last_run_dir", str(chosen[0].parent))
+                s = app_settings()
+                if s:
+                    s.setValue("last_run_dir", str(chosen[0].parent))
             except Exception:
                 pass
             self.add_paths(chosen)
@@ -373,7 +389,17 @@ class RunsPane(QWidget):
         if folder:
             self.set_output_folder(Path(folder))
 
-    def set_output_folder(self, folder: Path) -> None:
+    def set_output_folder(self, folder: Path, remember: bool = True) -> None:
         self.output_label.setText(str(folder))
         self.output_label.setStyleSheet(f"color: {theme.CLR_TEXT};")
+        if remember:
+            s = app_settings()
+            if s:
+                s.setValue("last_output_dir", str(folder))
         self.output_changed.emit()
+
+    @staticmethod
+    def remembered_output_folder() -> Path | None:
+        s = app_settings()
+        last = s.value("last_output_dir", "", type=str) if s else ""
+        return Path(last) if last and Path(last).is_dir() else None

@@ -5,7 +5,7 @@ Approved 2026-10-05. Working copy lives at
 versioned) — THIS file in docs/ is the durable copy. If the plan changes
 during implementation, update this file too.
 
-Status: Phases 1-4 complete. Phases 5-10 outstanding. See the
+Status: Phases 1-6 complete. Phases 7-11 outstanding. See the
 "Implementation phases" table for the per-phase model guidance, and the
 "Implementation log" at the END of this file for decisions made while
 building that refine or deviate from the plan text.
@@ -483,6 +483,7 @@ to use for the next phase before starting it.** No phase runs on into the next.
 | 8 | `stats.py` + `size_bins.py` | **Opus** | Pure-error vs lack-of-fit df bookkeeping; wrong maths yields plausible p-values |
 | 9 | `figures.py` + `report.py` + `workbook.py` | **Sonnet** | Presentation; errors are obvious on sight |
 | 10 | Polish — Settings tab, Mac slow-inference warning, reattach-on-start | **Sonnet** | Small, low-risk |
+| 11 | **Windows pass + Windows timings (user runs this on the lab PC, at the very end)** — see *Phase 11* below | **Opus** | Exercises the Windows-only process code that cannot run on the Mac, and calibrates GPU timings |
 
 Phase 2 must be finished and tested before 3–6 begin; everything downstream reads
 `pipeline_spec`. Switch with `/model sonnet` and `/model opus`.
@@ -743,3 +744,111 @@ Decisions made while building, where they refine or deviate from the plan above.
   Planned: per-stage rates keyed by (machine, stage, images mode), refined run by run, with an
   uncertainty band that narrows, replacing the static estimate above.
 - Tests: 205 pass (`python -m pytest src/ai/Taguchi_Analysis_UI/tests`).
+
+### Phase 5 — detached resumable worker, job state, ETA (2026-10-05)
+
+- **Modules:** `progress.py` (stdout to stage/progress events), `eta.py` (time remaining),
+  `procs.py` (ALL OS-specific process code), `jobstate.py` (job folder, atomic state, events,
+  heartbeat, lock, liveness, resume, timings), `stub_pipeline.py` (test pipeline), `worker.py`
+  (the detached batch process, no Qt), `jobctl.py` (status / watch / resume / stop / kill
+  from the command line, until the UI is wired in Phase 6).
+- **Progress parsing was built against a real log** (`10/01/104852.../batch_log.txt`) and a
+  test replays it: all four stages with their true timings, every per-frame stage reaching
+  497/497, device `cuda`, and per-frame spam folded into progress (107 of 1,143 lines reach
+  the console). Not contractual: a format change degrades progress, never a run.
+- **ETA learned from this session's finished runs** (user request): per-stage seconds-per-frame,
+  keyed by (machine, stage, device) for inference and (machine, stage, images mode) for
+  measurement/classical; live frame progress inside the current stage; the range is the
+  spread of measured rates. Remembered per machine across sessions in
+  `~/.hpatr/eta_calibration.json`. Until this machine has measured a stage, the estimate uses
+  Windows-PC priors **and says so** ("not yet measured on this machine ... CPU inference is
+  much slower than CUDA"). The real log shows the priors came from the home PC (`BenSc`, CUDA).
+- **Job folder `<output>/_job/`**: job.json, state.json (atomic tmp + os.replace), events.jsonl
+  (append-only, torn lines skipped), heartbeat.json (separate thread), worker.lock, worker.log,
+  logs/NN_<run>.log, timings.csv/.json in batch_runs.py's exact schema, `stop` flag. Per-run logs
+  go in `_job/`, not the run folders, so the output tree stays truthful.
+- **Liveness distinguishes** running / stalled (alive, heartbeating, but silent; threshold adapts
+  to 4x the stage's own per-frame time so slow CPU inference is not a false alarm) /
+  unresponsive (heartbeat stale) / dead (pid gone; pid reuse defeated by process start time and
+  zombie reaping) / finished.
+- **Resume:** an interrupted run is redone *with reuse*, so finished extraction + inference on
+  disk is kept (`can_reuse` still refuses anything partial or older than the model). Failed runs
+  retry only on request; contract violations never automatically. One row per run in timings.
+- **Orphan handling:** a crash leaves the running stage subprocess alive, which could race a
+  resumed worker on the same predictions.json. On POSIX the resumed worker stops it (only
+  processes whose command line is ours, only if started after the last boot). On Windows the
+  worker puts itself in a kill-on-close Job object, so children die with it.
+- **A real safety bug found by mutation testing:** with the worker not detached, `kill` signalled
+  the worker's *recorded process group*, which was the launching shell's, and killed the test
+  harness. In real use, stopping a hand-started worker could have killed the user's shell. Rule now:
+  a process group is signalled only if the worker leads it; otherwise its actual descendants
+  are found (psutil) and stopped individually. Tests pin both cases.
+- **Mutation-tested:** eight critical behaviours (orphan cleanup, resume of the interrupted run,
+  reuse on redo, stall detection, contract halt, detachment, heartbeat, worker lock) were each
+  broken on purpose and confirmed caught. The detachment test was strengthened first: a launcher
+  merely *exiting* proves nothing, so it now SIGTERMs the launcher's whole process group.
+- **Windows code is unit-tested only** (spawn flags DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP |
+  CREATE_BREAKAWAY_FROM_JOB, SW_HIDE, never CREATE_NEW_CONSOLE, access-denied fallback, taskkill /T).
+  The Job object, SetThreadExecutionState and real detachment must be exercised on the lab PC.
+- **Open item:** one full-suite run crashed (Python fatal error) and could not be reproduced in
+  21 subsequent runs (6 full, 15 Qt-only). Recorded, not claimed fixed.
+- Tests: 273 pass.
+
+### Phase 6 — real batch through the pipeline, proven on the sandbox; UI wired (2026-10-05)
+
+- **The first REAL analysis, on the sandbox.** `tests/make_sandbox.py` builds
+  `/Volumes/LaCie/Experiments/Sandbox/TaguchiUI_Test/2026/10/05/<exact real run names>/`
+  (xlsx copied, cine symlinked; run names kept exact, not `S1_`-prefixed as the plan sketched,
+  because the name grammar would reject a prefix). Two runs, first 40 frames, real pipeline,
+  detached worker, sandbox guard on. Both finished; both pass the contract check.
+- **The real source runs were provably untouched**: every file's size and mtime in the two
+  source runs was snapshotted before and compared after: identical.
+- **Measured on this Mac (MacBook Air, CPU), first 40 frames, 3000 sccm / 300 rpm / 4000 sps:**
+  extract 0.235 s/frame, background ~2 s per run (fixed), **inference 5.8 s/frame**, measurement
+  0.11 s/frame, classical 0.043 s/frame; ~4 min per 40-frame run. Scaled to 497 frames: ~51 min per
+  run, of which inference ~48 min (the GPU PC did similar runs' inference in ~7 min).
+  **27 runs: ~23 h on this Mac** vs ~9.7 h estimated for the GPU PC. Caveats: the lightest spray
+  condition only (heavier spray is slower), and only the first 40 frames of each cine.
+- **ETA model, corrected with real data:** priors are now **per operating system** (Darwin
+  priors measured today, Windows from the handoff), so a fresh machine starts from the right kind
+  of computer; **background is a fixed cost** per run, not per frame (would have been ~12x over);
+  pending runs use their own frame count where known; this machine's only inference device is
+  assumed before a run reports one; the note names exactly which stages are still estimates.
+  Calibration is now saved after every run, not only at the end of a job.
+- **UI wired:** Run batch (with a confirmation that spells out runs, images, disk, re-measured
+  runs and the Mac CPU warning) / Stop after this run / Stop now / Resume (k/N done) / Retry
+  failed (n) / New batch. Preflight re-runs in a fresh interpreter immediately before every batch
+  and refuses to start on a mismatch. The console tails the job's events with errors in red and
+  warnings in orange; the status line shows run i/N, stage progress and the ETA, repainted the
+  moment the batch changes state. Choosing (or reopening with) an output folder re-attaches to its
+  job: recent events replayed, a live worker followed, a dead one offered Resume. `jobctl start`
+  does the same from the command line. UI batches use reuse=True so a re-run keeps valid finished
+  extraction + inference.
+- **The intermittent test-suite crash (open since Phase 5) has a cause and a fix:** it was Qt
+  widgets left in reference cycles by earlier tests, freed by Python's cycle collector in the middle
+  of a later test's Qt event dispatch. `tests/conftest.py` now destroys each test's widgets
+  deterministically between tests. Twice in ~13 full runs before; 0 in 6 since. Strong evidence,
+  not proof.
+- Sandbox builder falls back to a hard link where symlinks are refused (Windows without
+  Developer Mode), with a clear message if neither is possible.
+- Tests: 297 pass.
+
+### Phase 11 — Windows pass + Windows timings (added at the user's request; run LAST, on the lab PC)
+
+Goal: accurate time estimates on BOTH platforms, and the Windows-only process code exercised for
+real. Most of it is the user running commands on the lab PC; Claude interprets and fixes.
+
+1. **Preflight + tests on Windows**: `--self-check`, then the test suite, with the lab PC's Python
+   (the handoff: torch is in system Python 3.11, not a conda env).
+2. **Sandbox on the PC's data drive** (`make_sandbox.py --source-day D:\Experiments\2026\10\05
+   --sandbox D:\Experiments\Sandbox\TaguchiUI_Test`): symlink if Developer Mode is on, else a
+   hard link (same NTFS drive).
+3. **A real sandbox batch on CUDA** via `jobctl start ... --limit 40 --sandbox ...`, then **one
+   full-length run** (no `--limit`) for a whole-cine rate, ideally on a HEAVY condition (9000 sccm /
+   8000 sps) to bound the slow end. The PC's own calibration file records it automatically.
+4. **Fold the measured rates into `eta.PRIORS_BY_OS["Windows"]`** (replacing the handoff's home-PC
+   figures), and if possible re-measure the Mac on a heavy condition too, so both rows have a real
+   light/heavy range.
+5. **Windows process checks, live:** no console window appears; the worker survives closing the
+   app; killing the worker takes its pipeline stage with it (kill-on-close Job object); the PC does
+   not sleep mid-batch; `Stop now` uses `taskkill /T`; reattach after reopening the app.

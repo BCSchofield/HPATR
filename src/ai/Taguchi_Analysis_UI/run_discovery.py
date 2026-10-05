@@ -531,8 +531,12 @@ class Summary:
         if not self.n_runs:
             return "0 runs selected"
         counts = sorted(set(self.replicates.values()))
+
+        def plural(n: int, word: str) -> str:
+            return f"{n} {word}{'' if n == 1 else 's'}"
+
         if len(counts) == 1:
-            design = f"{self.n_conditions} conditions × {counts[0]} replicates"
+            design = f"{plural(self.n_conditions, 'condition')} × {plural(counts[0], 'replicate')}"
         elif counts:
             design = (f"{self.n_conditions} conditions, {counts[0]}–{counts[-1]} "
                       f"replicates (unbalanced)")

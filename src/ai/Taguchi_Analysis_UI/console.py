@@ -12,6 +12,7 @@ new line arrived, which is what makes a stall visible instead of silent.
 """
 from __future__ import annotations
 
+import html
 import queue
 import time
 from datetime import datetime
@@ -28,6 +29,8 @@ STATUS_INTERVAL_MS = 1000
 # distinction that matters is silence vs progress, not a single fixed
 # threshold; these are starting points, tuned against real batch runs in
 # a later phase.
+LEVEL_COLOURS = {"warn": theme.CLR_ORANGE, "error": theme.CLR_RED, "ok": "#8be9a8"}
+
 STALL_WARN_S = 90
 STALL_DANGER_S = 120
 
@@ -38,12 +41,12 @@ class LogQueue:
     calls `drain()`."""
 
     def __init__(self) -> None:
-        self._q: queue.Queue[str] = queue.Queue()
+        self._q: queue.Queue = queue.Queue()
 
-    def put(self, line: str) -> None:
-        self._q.put(line)
+    def put(self, line: str, level: str = "info") -> None:
+        self._q.put((line, level))
 
-    def drain(self) -> list[str]:
+    def drain(self) -> list:
         lines = []
         while True:
             try:
@@ -122,14 +125,15 @@ class ConsolePane(QWidget):
         self.status_provider = None  # type: ignore[assignment]
 
     # -- public API -----------------------------------------------------
-    def log(self, text: str) -> None:
-        """Thread-safe: call from any thread."""
+    def log(self, text: str, level: str = "info") -> None:
+        """Thread-safe: call from any thread. level: info | warn | error | ok.
+        Warnings and errors are coloured so a failure stands out in a long log."""
         stamp = datetime.now().strftime("%H:%M:%S")
-        self.log_queue.put(f"[{stamp}] {text}")
+        self.log_queue.put(f"[{stamp}] {text}", level)
 
     def set_status_provider(self, fn) -> None:
-        """`fn() -> str` is called every STATUS_INTERVAL_MS and its return
-        value becomes the status line. Keeping this pluggable means the
+        """`fn() -> str | (str, level)` is called every STATUS_INTERVAL_MS and its
+        return value becomes the status line (level colours it: info/warn/error). Keeping this pluggable means the
         batch worker (later phases) can report live progress without the
         console pane knowing anything about jobs."""
         self.status_provider = fn
@@ -140,15 +144,27 @@ class ConsolePane(QWidget):
         if not lines:
             return
         self._last_line_monotonic = time.monotonic()
-        for line in lines:
-            self.text.appendPlainText(line)
+        for line, level in lines:
+            colour = LEVEL_COLOURS.get(level)
+            if colour:
+                self.text.appendHtml(f'<span style="color:{colour}; white-space:pre">'
+                                     f'{html.escape(line)}</span>')
+            else:
+                self.text.appendPlainText(line)
+
+    def repaint_status(self) -> None:
+        """Repaint now (also runs every STATUS_INTERVAL_MS)."""
+        self._repaint_status()
 
     def _repaint_status(self) -> None:
         if self.status_provider is not None:
             try:
-                self.status_label.setText(self.status_provider())
+                value = self.status_provider()
+                text, level = value if isinstance(value, tuple) else (value, "info")
+                self.status_label.setText(text)
+                colour = LEVEL_COLOURS.get(level) or theme.CLR_TEXT_SEC
                 self.status_label.setStyleSheet(
-                    f"color: {theme.CLR_TEXT_SEC}; font-size: 12px; padding: 2px 2px;"
+                    f"color: {colour}; font-size: 12px; padding: 2px 2px;"
                 )
                 return
             except Exception as exc:  # status providers must never crash the UI

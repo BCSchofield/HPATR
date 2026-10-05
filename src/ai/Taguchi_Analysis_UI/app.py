@@ -11,12 +11,15 @@ import sys
 import threading
 
 from PySide6.QtCore import QObject, Qt, Signal
+from dataclasses import replace
+
 from PySide6.QtWidgets import (
-    QApplication, QLabel, QMainWindow, QSplitter, QTabWidget, QVBoxLayout, QWidget,
+    QApplication, QLabel, QMainWindow, QMessageBox, QSplitter, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from . import pipeline_spec as spec
 from . import theme
+from .batch_controller import LIVE, BatchController, confirm_text
 from .console import ConsolePane
 from .pane_outputs import OutputsPane
 from .pane_runs import RunsPane
@@ -53,6 +56,136 @@ class BatchTab(QWidget):
 
         outer.addWidget(main_split)
         self.update_outputs_context()
+
+        # ---- batch control ----
+        self.preflight_report = None
+        self.controller = BatchController(self.console.log, self)
+        self.console.set_status_provider(self.controller.status)
+        self.controller.changed.connect(self.refresh_buttons)
+        # repaint the status line the moment the batch changes state, not up to 1 s later
+        self.controller.changed.connect(self.console.repaint_status)
+        self.runs_pane.output_changed.connect(
+            lambda: self.controller.attach(self.runs_pane.output_folder()))
+        self.runs_pane.selection_changed.connect(self.refresh_buttons)
+        self.runs_pane.run_btn.clicked.connect(self._on_run)
+        self.runs_pane.aux_btn.clicked.connect(self._on_aux)
+        self.runs_pane.stop_btn.clicked.connect(self._on_stop_now)
+        self.confirm = self._ask             # tests replace this with lambda text: True
+        self.refresh_buttons()
+        remembered = self.runs_pane.remembered_output_folder()
+        if remembered:
+            self.runs_pane.set_output_folder(remembered, remember=False)
+
+    # ---- readiness + buttons ------------------------------------------------------
+    def set_preflight(self, report) -> None:
+        self.preflight_report = report
+        self.refresh_buttons()
+
+    def runnable_runs(self):
+        return [r for r in self.runs_pane.included_runs() if r.runnable]
+
+    def ready_for_new(self) -> tuple[bool, str]:
+        if self.preflight_report is None:
+            return False, "Checking the pipeline \u2026"
+        if not self.preflight_report.ok:
+            return False, "Disabled: the pipeline no longer matches pipeline_spec.py (see console)"
+        if self.runs_pane.output_folder() is None:
+            return False, "Choose an output folder first"
+        if not self.runnable_runs():
+            return False, "Tick at least one run that has a .cine to analyse"
+        n = len(self.runnable_runs())
+        return True, f"Analyse {n} run{'s' if n != 1 else ''} in the background"
+
+    def refresh_buttons(self) -> None:
+        c, rp = self.controller, self.runs_pane
+        mode = c.mode
+        rp.stop_btn.setVisible(mode in LIVE)
+        rp.aux_btn.hide()
+        self._run_role = None
+        if mode == "starting":
+            rp.run_btn.setText("Starting \u2026")
+            rp.run_btn.setEnabled(False)
+        elif mode in LIVE:
+            if c.stop_requested:
+                rp.run_btn.setText("Stopping after this run \u2026")
+                rp.run_btn.setEnabled(False)
+            else:
+                rp.run_btn.setText("Stop after this run")
+                rp.run_btn.setEnabled(True)
+                rp.run_btn.setToolTip("Finish the run in progress, then stop. Resume any time.")
+                self._run_role = "stop"
+        elif c.live is not None and c.live.resumable:
+            rp.run_btn.setText(f"Resume ({c.live.n_done}/{c.live.n_total} done)")
+            rp.run_btn.setEnabled(True)
+            rp.run_btn.setToolTip("Carry on from where the batch stopped")
+            self._run_role = "resume"
+            ready, why = self.ready_for_new()
+            rp.aux_btn.setText("New batch")
+            rp.aux_btn.setEnabled(ready)
+            rp.aux_btn.setToolTip(why if not ready else
+                                  "Start a new batch from the current selection "
+                                  "(the unfinished one is archived, not deleted)")
+            rp.aux_btn.show()
+            self._aux_role = "new"
+        else:
+            ready, why = self.ready_for_new()
+            rp.run_btn.setText("Run batch")
+            rp.run_btn.setEnabled(ready)
+            rp.run_btn.setToolTip(why)
+            self._run_role = "new" if ready else None
+            failed = c.counts().get("failed", 0)
+            if mode == "finished_with_failures" and failed:
+                rp.aux_btn.setText(f"Retry failed ({failed})")
+                rp.aux_btn.setEnabled(True)
+                rp.aux_btn.setToolTip("Run only the failed runs again, reusing finished work")
+                rp.aux_btn.show()
+                self._aux_role = "retry"
+
+    # ---- actions ----------------------------------------------------------------------
+    def _ask(self, text: str, title: str = "Start batch") -> bool:
+        return QMessageBox.question(self, title, text) == QMessageBox.StandardButton.Yes
+
+    def _settings(self):
+        # reuse=True: re-running a run keeps finished extraction + inference when
+        # can_reuse() says it is still valid (same stride, complete, newer than the model).
+        return replace(self.runs_pane.settings, reuse=True)
+
+    def _on_run(self) -> None:
+        role = getattr(self, "_run_role", None)
+        if role == "new":
+            self.start_new()
+        elif role == "stop":
+            self.controller.stop_after_run()
+        elif role == "resume":
+            self.controller.resume()
+
+    def _on_aux(self) -> None:
+        role = getattr(self, "_aux_role", None)
+        if role == "retry":
+            self.controller.resume(retry_failed=True)
+        elif role == "new":
+            self.start_new()
+
+    def start_new(self) -> None:
+        ready, why = self.ready_for_new()
+        if not ready:
+            self.console.log(why, "warn")
+            return
+        runs, out = self.runnable_runs(), self.runs_pane.output_folder()
+        options, settings = self.outputs_pane.options(), self._settings()
+        text = confirm_text(runs, options, settings, out)
+        if self.controller.live is not None and self.controller.live.resumable:
+            text += ("\n\nThe unfinished batch already in this folder will be archived "
+                     "(moved to _job_archive, not deleted) and cannot then be resumed.")
+        if not self.confirm(text):
+            return
+        self.controller.start(out, [r.path for r in runs], settings, options)
+
+    def _on_stop_now(self) -> None:
+        if self.confirm("Stop the batch now?\n\nThe run in progress is interrupted and redone "
+                        "on Resume (finished frames and inference are reused). Finished runs "
+                        "are kept.", "Stop now"):
+            self.controller.stop_now()
 
     def update_outputs_context(self) -> None:
         """Describe the first selected run (the tree shows ONE example) and the chosen
@@ -138,11 +271,7 @@ class MainWindow(QMainWindow):
 
     def _on_preflight(self, report) -> None:
         self.preflight_report = report
-        if not report.ok:
-            self.batch_tab.runs_pane.run_btn.setEnabled(False)
-            self.batch_tab.runs_pane.run_btn.setToolTip(
-                "Disabled: the pipeline no longer matches pipeline_spec.py -- see the console"
-            )
+        self.batch_tab.set_preflight(report)
 
 
 def main() -> None:
