@@ -135,7 +135,20 @@ def det_crop(d):
 # goes through `measure_droplet` and classical_liquid imports it.
 # ============================================================================
 
-SIZER_VERSION = "2.0.0"      # bump on ANY change to the three functions below
+# Bump on ANY change that moves a reported number. compare_runs.py and
+# taguchi_analysis.py refuse to mix versions, which is the whole point.
+#
+#   2.0.0  classical half-max sizing at/above the split; interior-pixel core
+#          estimator replacing the single darkest pixel.
+#   2.1.0  the atomised fraction's NUMERATOR now uses the half-max droplet mask
+#          where one exists, instead of the model's raw mask. Both sides of the
+#          ratio finally use the same edge; before this, droplets were measured
+#          generously against classically-measured un-atomised liquid, which
+#          inflated the fraction (MAX TEST: 17.598% -> 17.019%, -3.3% relative).
+#          Also: tile-truncated detections excluded from classical's D32, to
+#          match measure_run -- they stay in the area union, where a union
+#          correctly reassembles an object split across a tile seam.
+SIZER_VERSION = "2.1.0"
 SPLIT_UM = 40.0              # classical sizing acts at/above this diameter
 DILATE_PX = 5                # search region beyond the model mask
 CORE_MIN_PX = 3              # floor for the robust core, see droplet_core
@@ -208,7 +221,7 @@ def halfmax_area(T_pad, mask_pad, core_t, dilate_px=DILATE_PX):
     records that thresholding within the candidate clips every object with
     t_min > 0.40: median true area 1.5x larger, worst case 14x.
 
-    Returns (area_px, degenerate). `degenerate` means the half-max component
+    Returns (area_px, degenerate, component_mask). `degenerate` means the half-max component
     came out exactly equal to the model's mask, so the measurement reproduced
     its own input. Such a droplet is still counted and still sized -- only the
     provenance differs, and it carries ~2% of the d^3 weight.
@@ -221,13 +234,14 @@ def halfmax_area(T_pad, mask_pad, core_t, dilate_px=DILATE_PX):
     cy, cx = np.unravel_index(np.argmin(masked), masked.shape)
     comp_id = lab[cy, cx]
     if comp_id <= 0:
-        return 0, False
-    area = int((lab == comp_id).sum())
-    return area, area == int(mask_pad.sum())
+        return 0, False, None
+    comp = lab == comp_id
+    area = int(comp.sum())
+    return area, area == int(mask_pad.sum()), comp
 
 
 def measure_droplet(T, d, focus_max, split_um=SPLIT_UM, core_estimator="robust",
-                    sizer=True, crop=None):
+                    sizer=True, crop=None, want_mask=False):
     """Focus verdict and sized area for ONE droplet detection.
 
     Returns None for an empty mask, else a dict:
@@ -258,6 +272,7 @@ def measure_droplet(T, d, focus_max, split_um=SPLIT_UM, core_estimator="robust",
     in_focus = bool(core_t <= focus_max)
     area = float(d["area"])
     method = "model_no_sizer"
+    half_mask = None
     if not sizer:
         pass
     elif not in_focus:
@@ -265,14 +280,22 @@ def measure_droplet(T, d, focus_max, split_um=SPLIT_UM, core_estimator="robust",
     elif equiv_um(area) < split_um:
         method = "model_below_split"
     else:
-        a_half, degenerate = halfmax_area(T_pad, m_pad, core_t)
+        a_half, degenerate, comp = halfmax_area(T_pad, m_pad, core_t)
         if a_half >= 4:
             area = float(a_half)
             method = "model_degenerate" if degenerate else "halfmax"
+            half_mask = comp
         else:
             method = "model_no_component"
-    return {"in_focus": in_focus, "area_px": area, "method": method,
-            "core_t": core_t}
+    out = {"in_focus": in_focus, "area_px": area, "method": method,
+           "core_t": core_t}
+    if want_mask:
+        # The half-max component, placed back at its frame offset. None when no
+        # half-max measurement was made (out of focus, below the split, or no
+        # component) -- the caller then has only the model's mask to fall back on.
+        out["mask"] = half_mask
+        out["mask_xy"] = (x0, y0)
+    return out
 
 
 def union_area(rles):
@@ -551,7 +574,7 @@ def main():
     root = args.root or real_data_root()
     val = root / args.val_dir
     sb_dir = args.sixteen_bit_dir or (val / "frames" / "16bit")
-    out_dir = args.out_dir or (val / f"measurement_{args.score_thresh:.2f}")
+    out_dir = args.out_dir or (val / f"droplets_{args.score_thresh:.2f}")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if args.replot:

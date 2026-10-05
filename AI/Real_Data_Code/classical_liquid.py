@@ -201,7 +201,7 @@ def drop_droplet_components(liquid, droplet_mask,
     return kept, dropped, n_kept, n_drop
 
 
-def model_masks(dets, T, focus_max):
+def model_masks(dets, T, focus_max, args_ref=None):
     """(droplet_union, out_of_focus_unatomised_union).
 
     The second return is deliberately ONLY out-of-focus non-droplet detections.
@@ -226,14 +226,38 @@ def model_masks(dets, T, focus_max):
     """
     drop = np.zeros(T.shape, bool)
     oof = np.zeros(T.shape, bool)
+    n_half = n_model = 0
     for d in dets:
         mb, bx, by, bh, bw = det_crop(d)
         if not mb.any():
             continue
         if d["category_id"] == DROPLET:
-            drop[by:by + bh, bx:bx + bw] |= mb
+            # SAME EDGE ON BOTH SIDES OF THE RATIO. The denominator is measured
+            # classically at each component's half-max; putting the model's raw
+            # mask in the numerator gave droplets a more generous edge than
+            # filaments and blobs, which inflated the atomised fraction. Half-max
+            # droplet areas run ~0.86x the model mask, so the asymmetry was
+            # worth several percent of the headline number.
+            #
+            # Where no half-max measurement exists -- out of focus, below the
+            # size split, or no component found -- there is nothing to use but
+            # the model's mask, so that still goes in.
+            md = measure_droplet(T, d, focus_max,
+                                 split_um=getattr(args_ref, "split_um", SPLIT_UM),
+                                 core_estimator=getattr(args_ref, "core_estimator", "robust"),
+                                 sizer=not getattr(args_ref, "no_sizer", False),
+                                 crop=(mb, bx, by, bh, bw), want_mask=True)
+            hm = md.get("mask") if md else None
+            if hm is not None:
+                hx, hy = md["mask_xy"]
+                drop[hy:hy + hm.shape[0], hx:hx + hm.shape[1]] |= hm
+                n_half += 1
+            else:
+                drop[by:by + bh, bx:bx + bw] |= mb
+                n_model += 1
         elif T[by:by + bh, bx:bx + bw][mb].min() > focus_max:
             oof[by:by + bh, bx:bx + bw] |= mb
+    model_masks.last_counts = (n_half, n_model)
     return drop, oof
 
 
@@ -245,7 +269,7 @@ def measure_frame(T, dets, args):
     an isolated droplet is still liquid and must stay in the denominator.
     """
     liquid, _ = hysteresis(T, args.seed, args.ceiling, args.min_area)
-    dmask, oof_unatom = model_masks(dets, T, args.focus_max)
+    dmask, oof_unatom = model_masks(dets, T, args.focus_max, args)
 
     # True union: nothing counted twice, and droplets are a subset of total by
     # construction, so un-atomised can never go negative.
@@ -267,6 +291,13 @@ def measure_frame(T, dets, args):
     focus_a, oof_a = [], []
     for d in dets:
         if d["category_id"] != DROPLET:
+            continue
+        # Tile-truncated detections are excluded from SIZING only, matching
+        # measure_run.py:582. A mask cut by a tile seam has a clipped area and
+        # therefore a wrong diameter. They stay in the atomised NUMERATOR
+        # (model_masks above), because a union reassembles the two halves of a
+        # split object and dropping them would lose real liquid area.
+        if d.get("truncated", False):
             continue
         md = measure_droplet(T, d, args.focus_max,
                              split_um=getattr(args, "split_um", SPLIT_UM),
@@ -353,6 +384,12 @@ def main():
                     help="droplet focus gate, as measure_run (default 0.70)")
     ap.add_argument("--droplet-ring", type=int, default=10,
                     help="draw droplets as a ring of this radius, as measure_run")
+    ap.add_argument("--images-mode", choices=["extremes", "all"], default=None,
+                    help="'extremes' draws only the 4 frames at the atomised "
+                         "min/max (chosen from THIS pass's atomised %%, which is "
+                         "the real one -- measure_run picks its extremes from the "
+                         "model-only figure); 'all' draws every frame. Implies "
+                         "--images.")
     ap.add_argument("--images", action="store_true",
                     help="write a marked-up full-res PNG per frame")
     ap.add_argument("--limit", type=int, default=None, help="first N frames only")
@@ -395,9 +432,13 @@ def main():
     t0 = time.time()
     rows, all_comps = [], []
     focus_all, oof_all = [], []
-    img_dir = out_dir / "images"
-    if args.images:
+    mode = args.images_mode or ("all" if args.images else None)
+    draw_all = mode == "all"
+    draw_extremes = mode == "extremes"
+    img_dir = out_dir / ("extreme_images" if draw_extremes else "images")
+    if mode:
         img_dir.mkdir(exist_ok=True)
+    held = {}        # extremes mode: keep what drawing needs, decide afterwards
 
     for k, img_id in enumerate(ids, 1):
         stem = stem_by_id[img_id]
@@ -414,12 +455,16 @@ def main():
         focus_all.extend(fa)
         oof_all.extend(oa)
 
-        if args.images:
+        if draw_all:
             view8 = cv2.imread(str(raw / "frames" / "8bit" / f"{stem}.png"),
                                cv2.IMREAD_UNCHANGED)
             if view8 is not None:
                 cv2.imwrite(str(img_dir / f"{stem}.png"),
                             draw_frame(view8, dets, T, unatom, row, args))
+        elif draw_extremes:
+            # which frames are extreme is only known once every frame is
+            # measured, so hold the cheap inputs and draw at the end
+            held[stem] = (dets, unatom, row)
 
         if k % 25 == 0 or k == len(ids):
             el = time.time() - t0
@@ -427,6 +472,34 @@ def main():
 
     if not rows:
         sys.exit("no frames measured")
+
+    # THE ATOMISED EXTREMES BELONG TO THIS PASS. measure_run also records
+    # "atomised_extreme_frames", but it picks them from its MODEL-ONLY atomised
+    # figure (reference only, never reported), not from the classical fraction
+    # that is actually quoted. The two can disagree.
+    _val = [(r["frame"], r["atomised_pct"]) for r in rows
+            if r.get("atomised_pct") == r.get("atomised_pct")]   # drop NaN
+    extremes = None
+    if _val:
+        _val.sort(key=lambda z: z[1])
+        extremes = {"lowest": {"frame": _val[0][0], "atomised_pct": round(_val[0][1], 3)},
+                    "highest": {"frame": _val[-1][0], "atomised_pct": round(_val[-1][1], 3)}}
+        if draw_extremes:
+            for stem in {_val[0][0], _val[-1][0]}:
+                if stem not in held:
+                    continue
+                dets_e, unatom_e, row_e = held[stem]
+                view8 = cv2.imread(str(raw / "frames" / "8bit" / f"{stem}.png"),
+                                   cv2.IMREAD_UNCHANGED)
+                if view8 is None:
+                    continue
+                raw16 = cv2.imread(str(raw / "frames" / "16bit" / f"{stem}.tiff"),
+                                   cv2.IMREAD_UNCHANGED)
+                T_e = raw16.astype(np.float32) / np.maximum(bg, 1.0)
+                cv2.imwrite(str(img_dir / f"{stem}.png"),
+                            draw_frame(view8, dets_e, T_e, unatom_e, row_e, args))
+            print(f"  extreme images: {_val[0][0]} (lowest {_val[0][1]:.2f}%), "
+                  f"{_val[-1][0]} (highest {_val[-1][1]:.2f}%)")
 
     # POOLED, not averaged. The atomised fraction is a ratio of areas, so every
     # pixel in the run goes into one sum -- averaging per-frame percentages
@@ -465,6 +538,13 @@ def main():
             "droplet_cover": args.droplet_cover,
             "droplet_max_extent": args.droplet_max_extent,
             "score_threshold": args.score_thresh,
+            # The atomised fraction is this file's output, and 2.1.0 changed how
+            # its numerator is measured. Without this field a pre-2.1.0 and a
+            # post-2.1.0 atomised % look identical and would be compared
+            # silently -- a ~3% difference with nothing to flag it.
+            "sizer_version": SIZER_VERSION,
+            "atomised_numerator_edge": "half-max where measured, model mask "
+                                       "otherwise (out of focus or below split)",
             "classical_only": args.classical_only,
             "um_per_px": UM_PER_PX,
         },
@@ -489,6 +569,7 @@ def main():
         "total_liquid_px": int(tot),
         "droplet_px": int(drp),
         "unatomised_px": int(tot - drp),
+        "atomised_extreme_frames": extremes,
         "n_components": len(areas),
         "component_area_px": {
             "mean": round(float(areas.mean()), 1) if areas.size else None,

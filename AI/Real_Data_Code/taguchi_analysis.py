@@ -156,8 +156,22 @@ def pooled_responses(dia_by_frame, frames, S3, S2, DP, TP):
 
 def load_run(run: Path, thr: str):
     an = run / "shadowgraph" / "analysis"
-    meas = an / f"measurement_{thr}"
-    cl = an / f"classical_{thr}"
+
+    def _pick(*names):
+        """Accept the current folder name or the historical one.
+
+        Renamed 2026-10-05: measurement_<thr> -> droplets_<thr>, and
+        classical_<thr> -> liquid_<thr>. Every run measured before that date
+        still carries the old names, and re-measuring 20+ GB to rename a folder
+        would be absurd -- so read either and let the writers move forward.
+        """
+        for n in names:
+            if (an / n).is_dir():
+                return an / n
+        return an / names[0]
+
+    meas = _pick(f"droplets_{thr}", f"measurement_{thr}")
+    cl = _pick(f"liquid_{thr}", f"classical_{thr}")
     summ = json.loads((meas / "summary.json").read_text(encoding="utf-8"))
     csumm = json.loads((cl / "classical_summary.json").read_text(encoding="utf-8"))
 
@@ -430,6 +444,24 @@ def main():
         for b in FACTORS[i + 1:]:
             if len({(r["levels"][a], r["levels"][b]) for r in runs}) != 9:
                 sys.exit(f"not orthogonal: {a} x {b}")
+
+    # ---- refuse to analyse runs measured different ways --------------------
+    # An L9 is a comparison across nine runs, so a sizing-method change between
+    # them is fatal in a way it never is within one run. 2.1.0 moved the
+    # atomised fraction ~3% relative against 2.0.0; nothing in the NUMBERS shows
+    # that, only the provenance does.
+    vers = {}
+    for r in runs:
+        vers.setdefault(r.get("sizer_version"), []).append(r["run"][:16])
+    if len(vers) > 1:
+        lines = "\n".join(f"    {v or '(pre-2.0.0, no field)'}: "
+                           f"{', '.join(n)}" for v, n in sorted(vers.items(), key=lambda z: str(z[0])))
+        sys.exit("REFUSING: these runs were measured with different sizer "
+                 f"versions, so their numbers are not comparable.\n{lines}\n"
+                 "    Re-measure them all with one version, or analyse each "
+                 "group separately.")
+    print(f"sizer_version: {next(iter(vers)) or 'pre-2.0.0 (model mask area)'} "
+          f"-- consistent across all {len(runs)} runs\n")
 
     rng = np.random.default_rng(SEED)
     for r in runs:

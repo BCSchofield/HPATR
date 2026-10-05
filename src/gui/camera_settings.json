@@ -1,4 +1,8 @@
 {
+  "rho_liquid": "970",
+  "rho_gas": "1.293",
+  "fluid_tag": "",
+  "gas_tag": "",
   "ip": "100.100.100.1",
   "fps": "800",
   "exposure_us": "4",

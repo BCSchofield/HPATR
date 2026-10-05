@@ -81,12 +81,19 @@ def main():
             row["d32_ci95"] = summary.get("d32_ci95")
             row["model_atomised_pct"] = summary.get("atomised_pct")
 
-            cl_out = analysis / f"classical_{args.score_thresh:.2f}"
+            # liquid_<thr>: the classical whole-frame liquid segmentation that
+            # gives the atomised fraction. It holds no droplet sizes.
+            cl_out = analysis / f"liquid_{args.score_thresh:.2f}"
             cmd = [sys.executable, "-W", "ignore", str(HERE / "classical_liquid.py"),
                    "--root", str(run), "--out-dir", str(cl_out),
                    "--score-thresh", str(args.score_thresh)]
             if images:
-                cmd.append("--images")  # classical has no extremes mode: all or nothing
+                # classical now HAS an extremes mode (added with sizer 2.1.0),
+                # and it picks the atomised extremes from its own fraction --
+                # the one actually quoted -- rather than measure_run's
+                # model-only figure. It is also 4.5x faster: 2 frames instead of
+                # 497, 41 s instead of 183 s per run.
+                cmd += ["--images-mode", images]
             t1 = time.time()
             res = subprocess.run(cmd, capture_output=True, text=True)
             log(res.stdout)

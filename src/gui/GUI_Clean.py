@@ -2140,6 +2140,7 @@ class AtomisationApp(QMainWindow):
             QTabBar::tab:hover:!selected {{ color: {CLR_TEXT}; }}
         """)
         self._tabs.addTab(self._build_hardware_tab(),     "  Hardware  ")
+        self._tabs.addTab(self._build_materials_tab(),    "  Materials  ")
         self._tabs.addTab(self._build_camera_tab(),       "  Camera  ")
         self._tabs.addTab(self._build_afg_tab(),          "  AFG1062  ")
         self._tabs.addTab(self._build_calibration_tab(),  "  Calibration  ")
@@ -2180,6 +2181,118 @@ class AtomisationApp(QMainWindow):
         return self._tabs
 
     # ── Hardware tab ─────────────────────────────────────────────────────────
+
+    def _build_materials_tab(self):
+        """Fluid and gas densities -- the only inputs the GLR needs that the rig
+        does not already know.
+
+        Everything else in the ratio is a set point the GUI already holds: gas
+        flow in sccm, and liquid mL/min derived from motor speed through the
+        bore area. These two are properties of WHAT is being pumped, so they
+        live here rather than with the hardware.
+        """
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("background: transparent; border: none;")
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        w = QWidget()
+        w.setMinimumWidth(0)
+        vl = QVBoxLayout(w)
+        vl.setContentsMargins(20, 20, 20, 20)
+        vl.setSpacing(14)
+
+        c = card(w)
+        c.layout().addWidget(section_label("DENSITIES"))
+        c.layout().addWidget(separator())
+
+        self._rho_liquid_entry = QLineEdit()
+        self._rho_liquid_entry.setPlaceholderText("e.g. 970  kg/m³")
+        self._rho_liquid_entry.setValidator(QDoubleValidator(0.0, 100000.0, 4))
+        self._rho_liquid_entry.setText(f"{self.DEFAULT_RHO_LIQUID:g}")
+
+        self._rho_gas_entry = QLineEdit()
+        self._rho_gas_entry.setPlaceholderText("e.g. 1.184  kg/m³")
+        self._rho_gas_entry.setValidator(QDoubleValidator(0.0, 100000.0, 6))
+        self._rho_gas_entry.setText(f"{self.DEFAULT_RHO_GAS:g}")
+
+        # A density alone does not say WHAT was pumped. 970 kg/m3 is several
+        # different silicones, and the viscosity that distinguishes them is not
+        # in any number this GUI records. Free text, because the point is to
+        # capture whatever identifies the material to the person who used it.
+        self._fluid_tag_entry = QLineEdit()
+        self._fluid_tag_entry.setPlaceholderText("e.g. 3000cP Silicone")
+
+        self._gas_tag_entry = QLineEdit()
+        self._gas_tag_entry.setPlaceholderText("e.g. Nitrogen gas")
+
+        _fluid_wrap = QWidget()
+        _fw = QVBoxLayout(_fluid_wrap)
+        _fw.setContentsMargins(0, 0, 0, 0); _fw.setSpacing(6)
+        _fw.addWidget(input_row("Density of fluid (kg/m³)", self._rho_liquid_entry))
+        _fw.addWidget(input_row("Fluid", self._fluid_tag_entry))
+        c.layout().addWidget(_fluid_wrap)
+
+        _gas_wrap = QWidget()
+        _gw = QVBoxLayout(_gas_wrap)
+        _gw.setContentsMargins(0, 0, 0, 0); _gw.setSpacing(2)
+        _gw.addWidget(input_row("Density of gas (kg/m³)", self._rho_gas_entry))
+        # Not decoration: "sccm" means STANDARD cm³/min, and the standard state
+        # is what the gas density has to be quoted at or the mass flow is wrong.
+        # 25 °C is the Alicat default, which is the controller this rig uses.
+        _gas_note = QLabel("At 25 °C and 1 atm")
+        _gas_note.setStyleSheet(f"color: {CLR_TEXT_SEC}; font-size: 11px;")
+        _gw.addWidget(_gas_note)
+        _gw.addSpacing(4)
+        _gw.addWidget(input_row("Gas", self._gas_tag_entry))
+        c.layout().addWidget(_gas_wrap)
+        vl.addWidget(c)
+
+        c2 = card(w)
+        c2.layout().addWidget(section_label("GAS-TO-LIQUID RATIO"))
+        c2.layout().addWidget(separator())
+        self._glr_detail_lbl = QLabel("GLR –")
+        self._glr_detail_lbl.setStyleSheet(
+            f"color: {CLR_ACCENT}; font-size: 22px; font-weight: 700;")
+        c2.layout().addWidget(self._glr_detail_lbl)
+        _expl = QLabel(
+            "GLR = gas mass flow ÷ liquid mass flow, so it is dimensionless.\n"
+            "    gas mass    = gas flow (sccm) × gas density\n"
+            "    liquid mass = motor flow (mL/min) × fluid density")
+        _expl.setWordWrap(True)
+        _expl.setStyleSheet(f"color: {CLR_TEXT_SEC}; font-size: 12px;")
+        c2.layout().addWidget(_expl)
+
+        # The same arithmetic with the CURRENT inputs substituted in. Monospaced
+        # so the columns line up, and live, so a typo in a density is visible as
+        # a wrong mass flow rather than only as a wrong ratio.
+        self._glr_working_lbl = QLabel("")
+        self._glr_working_lbl.setWordWrap(False)
+        self._glr_working_lbl.setTextFormat(Qt.TextFormat.RichText)
+        self._glr_working_lbl.setStyleSheet(
+            f"color: {CLR_TEXT}; font-size: 12px; "
+            f"font-family: 'SF Mono', Menlo, Consolas, monospace; "
+            f"background: {CLR_INPUT}; border-radius: 6px; padding: 10px;")
+        c2.layout().addWidget(self._glr_working_lbl)
+
+        _caveat = QLabel(
+            "Both flows are COMMANDED set points, not measurements, so this is "
+            "the run's mean GLR. It does not depend on when in the run a video "
+            "was taken — but it also does not capture delivery steadiness, and "
+            "the L9 found droplet-count variability rising with bubbler RPM.")
+        _caveat.setWordWrap(True)
+        _caveat.setStyleSheet(f"color: {CLR_TEXT_SEC}; font-size: 12px;")
+        c2.layout().addWidget(_caveat)
+        vl.addWidget(c2)
+
+        vl.addStretch()
+        for _e in (self._rho_liquid_entry, self._rho_gas_entry):
+            _e.textChanged.connect(self._update_glr_label)
+            _e.editingFinished.connect(self._save_camera_settings)
+        for _e in (self._fluid_tag_entry, self._gas_tag_entry):
+            _e.editingFinished.connect(self._save_camera_settings)
+        scroll.setWidget(w)
+        return scroll
 
     def _build_hardware_tab(self):
         scroll = QScrollArea()
@@ -2407,6 +2520,7 @@ class AtomisationApp(QMainWindow):
         self._flow_entry.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._flow_entry.setValidator(QDoubleValidator(0.0, 12000.0, 1))
         self._flow_entry.textChanged.connect(self._update_next_save_preview)
+        self._flow_entry.textChanged.connect(self._update_glr_label)
         set_f_btn = accent_button("Set Flow", CLR_ACCENT)
         set_f_btn.setFixedHeight(36)
         set_f_btn.setToolTip(
@@ -3750,6 +3864,29 @@ class AtomisationApp(QMainWindow):
 
         hl.addWidget(travel_box, 0, Qt.AlignmentFlag.AlignVCenter)
 
+        # GLR, immediately left of Volume and styled to match it. Both are
+        # derived read-outs rather than set points, so they belong together.
+        glr_box = QWidget()
+        glr_box.setFixedSize(72, 38)
+        glr_box.setStyleSheet("background: transparent;")
+        gvl = QVBoxLayout(glr_box)
+        gvl.setContentsMargins(0, 0, 0, 0)
+        gvl.setSpacing(3)
+        _glr_title = QLabel("GLR")
+        _glr_title.setStyleSheet(f"color:{CLR_TEXT}; font-size:11px; font-weight:600;")
+        _glr_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._glr_lbl = QLabel("–")
+        self._glr_lbl.setStyleSheet(f"color:{CLR_TEXT}; font-size:13px; font-weight:700;")
+        self._glr_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        glr_box.setToolTip(
+            "<b>Gas-to-liquid mass ratio</b> (dimensionless)<br>"
+            "gas mass = flow (sccm) × gas density<br>"
+            "liquid mass = motor flow (mL/min) × fluid density<br>"
+            "Set both densities in the <b>Materials</b> tab.")
+        gvl.addWidget(_glr_title)
+        gvl.addWidget(self._glr_lbl)
+        hl.addWidget(glr_box, 0, Qt.AlignmentFlag.AlignVCenter)
+
         vol_box = QWidget()
         vol_box.setFixedSize(72, 38)
         vol_box.setStyleSheet("background: transparent;")
@@ -4380,13 +4517,14 @@ class AtomisationApp(QMainWindow):
     # and the two graph columns (M, N) are widened further from their actual
     # rendered image sizes when those images exist.
     MASTER_HEADERS = ('Timestamp', 'Orifice', 'Bubbler Height (mm)', 'Bubbler RPM',
-                      'Flow Range (sccm)', 'Pressure Range (barA)', 'Speed (steps/s)',
+                      'Flow Range (sccm)', 'GLR', 'Pressure Range (barA)',
+                      'Speed (steps/s)',
                       'Motor Travel (mm)', 'D32 (um)', 'Atomised (%)',
                       'Avg Lamella Thickness', 'Notes',
                       'Cone Image', 'Shadowgraph', 'Pressure Graph', 'Mass Flow Graph')
-    MASTER_COL_COUNT  = 16
-    MASTER_COL_LETTERS = 'ABCDEFGHIJKLMNOP'
-    MASTER_COL_WIDTHS = (20, 8, 16, 12, 18, 18, 14, 12, 11, 12, 12, 35, 36.5, 43, 56, 56)
+    MASTER_COL_COUNT  = 17
+    MASTER_COL_LETTERS = 'ABCDEFGHIJKLMNOPQ'
+    MASTER_COL_WIDTHS = (20, 8, 16, 12, 18, 10, 18, 14, 12, 11, 12, 12, 35, 36.5, 43, 56, 56)
 
     # Header row style, matched to what the existing master_log.xlsx already uses:
     # theme-1 fill at 0.15 tint (dark grey) with bold white Calibri.
@@ -4628,6 +4766,106 @@ class AtomisationApp(QMainWindow):
         except (ValueError, AttributeError):
             self._volume_lbl.setText("≈ – mL")
 
+    # Default densities. Silicone oil ~970 kg/m3; air at 25 degC and 1 atm is
+    # 1.184 kg/m3.
+    #
+    # The reference state is not a detail. "sccm" means STANDARD cm3/min, and
+    # the standard is whatever the mass flow controller says it is -- Alicat,
+    # which is what this rig uses, defaults to 25 degC / 1 atm, NOT the 0 degC
+    # that "standard conditions" means in much of the literature. Quoting the
+    # gas density at the wrong reference biases every gas mass flow by 9%
+    # (1.293 vs 1.184), and silently, because the number still looks plausible.
+    DEFAULT_RHO_LIQUID = 970.0
+    DEFAULT_RHO_GAS    = 1.184
+
+    def _densities(self):
+        """(rho_liquid, rho_gas) in kg/m3 from the Materials tab, or None."""
+        try:
+            rl = float(self._rho_liquid_entry.text())
+            rg = float(self._rho_gas_entry.text())
+            return (rl, rg) if rl > 0 and rg > 0 else (None, None)
+        except (ValueError, AttributeError):
+            return (None, None)
+
+    def _glr_working(self):
+        """Every intermediate in the GLR, so the Materials tab can show the
+        actual arithmetic rather than just the formula. None when an input is
+        missing. `_compute_glr` is the thin wrapper that returns only the ratio.
+        """
+        import math as _math
+        rho_l, rho_g = self._densities()
+        if rho_l is None:
+            return None
+        try:
+            sccm = float(self._flow_entry.text())
+            speed_steps_s = float(self._speed_entry.text())
+        except (ValueError, AttributeError):
+            return None
+        _AREA_MM2 = _math.pi * (20.27 / 2) ** 2
+        ml_per_min = (_AREA_MM2 * (speed_steps_s / 6800) / 1000.0) * 60.0
+        if ml_per_min <= 0 or sccm <= 0:
+            return None
+        # cm3/min x kg/m3 -> g/min needs x1e-6 m3/cm3 then x1e3 g/kg, i.e. x1e-3.
+        # The same factor applies to both, so it cancels in the ratio -- but it
+        # is kept here because the per-line mass flows are shown in g/min.
+        gas_g_min = sccm * rho_g * 1e-3
+        liq_g_min = ml_per_min * rho_l * 1e-3
+        return {"sccm": sccm, "rho_g": rho_g, "gas_g_min": gas_g_min,
+                "ml_per_min": ml_per_min, "rho_l": rho_l, "liq_g_min": liq_g_min,
+                "glr": gas_g_min / liq_g_min}
+
+    def _compute_glr(self):
+        """Gas-to-liquid MASS ratio, dimensionless. None when inputs are missing.
+
+            gas mass flow    = sccm [cm3/min] x rho_gas [kg/m3] x 1e-6 x 1000
+            liquid mass flow = mL/min [cm3/min] x rho_liquid [kg/m3] x 1e-6 x 1000
+
+        The unit factors are identical on both sides and cancel, so the ratio is
+        just (sccm x rho_gas) / (mL/min x rho_liquid).
+
+        Both flows are COMMANDED set points, not measurements. The gas is held to
+        ~1% of set point, but liquid delivery through the bubbler is not
+        necessarily steady -- the L9 found droplet-count CV rising with bubbler
+        RPM. So this is the run's mean GLR; the instantaneous value is not
+        guaranteed constant.
+        """
+        w = self._glr_working()
+        return None if w is None else w["glr"]
+
+    def _update_glr_label(self):
+        glr = self._compute_glr()
+        if not hasattr(self, "_glr_lbl"):
+            return
+        self._glr_lbl.setText("–" if glr is None else f"{glr:.3f}")
+        if hasattr(self, "_glr_detail_lbl"):
+            self._glr_detail_lbl.setText("GLR –" if glr is None else f"GLR {glr:.3f}")
+        if hasattr(self, "_glr_working_lbl"):
+            w = self._glr_working()
+            if w is None:
+                # say WHICH input is missing rather than just showing a dash
+                missing = []
+                if self._densities()[0] is None:
+                    missing.append("both densities above")
+                if not (self._flow_entry.text() or "").strip():
+                    missing.append("gas flow (sccm), on the Hardware tab")
+                if not (self._speed_entry.text() or "").strip():
+                    missing.append("motor speed (steps/s), on the Hardware tab")
+                need = "; ".join(missing) if missing else "valid, non-zero inputs"
+                self._glr_working_lbl.setText(
+                    f"<i>Needs {need}.</i>")
+            else:
+                self._glr_working_lbl.setText(
+                    "With your current inputs:<br>"
+                    f"&nbsp;&nbsp;gas&nbsp;&nbsp;&nbsp;&nbsp;{w['sccm']:,.0f} sccm "
+                    f"&times; {w['rho_g']:g} kg/m³ &nbsp;=&nbsp; "
+                    f"<b>{w['gas_g_min']:.3f} g/min</b><br>"
+                    f"&nbsp;&nbsp;liquid&nbsp;&nbsp;{w['ml_per_min']:.2f} mL/min "
+                    f"&times; {w['rho_l']:g} kg/m³ &nbsp;=&nbsp; "
+                    f"<b>{w['liq_g_min']:.3f} g/min</b><br>"
+                    f"&nbsp;&nbsp;GLR&nbsp;&nbsp;&nbsp;&nbsp;{w['gas_g_min']:.3f} "
+                    f"&divide; {w['liq_g_min']:.3f} &nbsp;=&nbsp; "
+                    f"<b>{w['glr']:.3f}</b>")
+
     def _update_flowrate_label(self):
         import math as _math
         _STEPS_PER_MM = 6800
@@ -4640,6 +4878,7 @@ class AtomisationApp(QMainWindow):
             self._flowrate_lbl.setText(f"≈ {ml_per_min:.2f} mL/min")
         except (ValueError, AttributeError):
             self._flowrate_lbl.setText("≈ – mL/min")
+        self._update_glr_label()
 
     def _update_next_save_preview(self):
         now = datetime.now()
@@ -6703,8 +6942,12 @@ class AtomisationApp(QMainWindow):
         analysis = os.path.join(run_dir, "shadowgraph", "analysis")
         if not os.path.isdir(analysis):
             return None
-        for mdir in sorted(_g.glob(os.path.join(analysis, "measurement_*")),
-                           key=os.path.getmtime, reverse=True):
+        # droplets_* is the current name; measurement_* is what every run
+        # measured before 2026-10-05 is called. Both are searched so older runs
+        # still open in the GUI.
+        _cands = (_g.glob(os.path.join(analysis, "droplets_*"))
+                  + _g.glob(os.path.join(analysis, "measurement_*")))
+        for mdir in sorted(_cands, key=os.path.getmtime, reverse=True):
             summary = os.path.join(mdir, "summary.json")
             if not os.path.exists(summary):
                 continue
@@ -6776,7 +7019,7 @@ class AtomisationApp(QMainWindow):
                 return
         self._shadow_label.setPixmap(QPixmap())
         self._shadow_label.setText("No result found\nClick ↻ Refresh")
-        self._result_path_label.setText("Searching: LaCie/Experiments/…/analysis/measurement_*/ for a measured run")
+        self._result_path_label.setText("Searching: LaCie/Experiments/…/analysis/droplets_*/ for a measured run")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Logic — Excel save
@@ -6901,6 +7144,19 @@ class AtomisationApp(QMainWindow):
             'last_tiff_dir': self._last_tiff_dir,
             'px_per_mm':    self._get_px_per_mm(),
             'last_cone_path': self._last_cone_path,
+            # Snapshot the GLR and the densities it came from. _write_excel runs
+            # on the save worker and must not read widgets, and recording the
+            # densities means a GLR in an old sheet can always be traced back to
+            # the numbers that produced it.
+            'glr':          self._compute_glr(),
+            'rho_liquid':   (self._rho_liquid_entry.text()
+                             if hasattr(self, "_rho_liquid_entry") else ""),
+            'rho_gas':      (self._rho_gas_entry.text()
+                             if hasattr(self, "_rho_gas_entry") else ""),
+            'fluid_tag':    (self._fluid_tag_entry.text()
+                             if hasattr(self, "_fluid_tag_entry") else ""),
+            'gas_tag':      (self._gas_tag_entry.text()
+                             if hasattr(self, "_gas_tag_entry") else ""),
         }
 
     def _write_excel(self, job: dict):
@@ -7027,13 +7283,24 @@ class AtomisationApp(QMainWindow):
             flows, 'Mass Flow (sccm)', '#30d158', f_range_str)
 
         fps_val = float(job['fps_text']) if job['fps_text'] else 1000.0
+        # 'NOT SET' rather than blank or 0: a missing density is a thing someone
+        # forgot to enter, and that must not be mistaken for a measured ratio.
+        _glr = job.get('glr')
+        glr_val = round(_glr, 4) if isinstance(_glr, (int, float)) else 'NOT SET'
         meta = {
             'Field': ['Timestamp', 'Orifice', 'Bubbler Height (mm)',
-                      'Bubbler RPM', 'Flow Range (sccm)',
+                      'Bubbler RPM', 'Flow Range (sccm)', 'GLR',
+                      'Fluid', 'Liquid density (kg/m3)',
+                      'Gas', 'Gas density (kg/m3)',
                       'Pressure Range (barA)', 'Speed (steps/s)', 'Motor Travel (mm)',
                       'FPS', 'Notes'],
             'Value': [ts_str, orifice, bubbler_str or 'NOT RECORDED',
-                      rpm_str or 'NOT RECORDED', f_range_str, p_range_str,
+                      rpm_str or 'NOT RECORDED', f_range_str, glr_val,
+                      job.get('fluid_tag') or 'NOT RECORDED',
+                      job.get('rho_liquid') or 'NOT SET',
+                      job.get('gas_tag') or 'NOT RECORDED',
+                      job.get('rho_gas') or 'NOT SET',
+                      p_range_str,
                       speed_str, distance_str, fps_val, notes],
         }
         with pd.ExcelWriter(ind_path, engine='openpyxl') as writer:
@@ -7209,6 +7476,29 @@ class AtomisationApp(QMainWindow):
                         if hasattr(_anc, 'to') and _anc.to and _anc.to.col >= 8:
                             _anc.to.col += 2
 
+            # ── Migrate to the GLR format ───────────────────────────────────
+            # LAST, deliberately: every migration above keys on a column index,
+            # and inserting a column earlier in the row would move the ones they
+            # look for. GLR goes at F, immediately right of the gas flow it is
+            # computed from, so everything from F rightwards shifts one. Once in,
+            # F reads 'GLR' and this cannot fire twice.
+            if ws.cell(row=1, column=6).value == 'Pressure Range (barA)':
+                ws.insert_cols(6)
+                ws.cell(row=1, column=6).value = 'GLR'
+                ws.column_dimensions['F'].width = 10
+                for _img in ws._images:
+                    _anc = _img.anchor
+                    if isinstance(_anc, str):
+                        _m = _re.match(r'^([A-Z]+)(\d+)$', _anc)
+                        if _m and column_index_from_string(_m.group(1)) >= 6:
+                            _new_col = get_column_letter(column_index_from_string(_m.group(1)) + 1)
+                            _img.anchor = f'{_new_col}{_m.group(2)}'
+                    elif hasattr(_anc, '_from'):
+                        if _anc._from.col >= 5:   # 0-indexed: 5 == Excel col F
+                            _anc._from.col += 1
+                        if hasattr(_anc, 'to') and _anc.to and _anc.to.col >= 5:
+                            _anc.to.col += 1
+
             _mf_col = self.MASTER_COL_COUNT
             if ws.cell(row=1, column=_mf_col).value != 'Mass Flow Graph':
                 ws.cell(row=1, column=_mf_col).value = 'Mass Flow Graph'
@@ -7299,16 +7589,16 @@ class AtomisationApp(QMainWindow):
         for col, val in enumerate([ts_str, orifice,
                                    bubbler_str or 'NOT RECORDED',
                                    rpm_str or 'NOT RECORDED',
-                                   f_range_str, p_range_str,
+                                   f_range_str, glr_val, p_range_str,
                                    speed_str, distance_str,
                                    d32_val, atom_val, _lamella_cell_val,
                                    notes, '', '', '', ''], start=1):
             cell = ws.cell(row=row_num, column=col)
             cell.value = val
-            cell.alignment = top_left if col == 12 else center_mid
+            cell.alignment = top_left if col == 13 else center_mid
         # Orange highlight for "Input Self" lamella cell
         if _lamella_orange:
-            _lc = ws.cell(row=row_num, column=11)
+            _lc = ws.cell(row=row_num, column=12)
             _lc.fill = PatternFill(start_color='FFA500', end_color='FFA500', fill_type='solid')
             _lc.font = Font(color='000000', bold=True)
         ws.row_dimensions[row_num].height = 125
@@ -7393,6 +7683,15 @@ class AtomisationApp(QMainWindow):
                 self._save_fmt_guard = False
             self._pipeline_check.setChecked(bool(s.get("run_ai_analysis", False)))
             self._ai_stride.setText(str(s.get("ai_stride", self.DEFAULT_STRIDE)))
+            if hasattr(self, "_rho_liquid_entry"):
+                self._rho_liquid_entry.setText(
+                    str(s.get("rho_liquid") or f"{self.DEFAULT_RHO_LIQUID:g}"))
+                self._rho_gas_entry.setText(
+                    str(s.get("rho_gas") or f"{self.DEFAULT_RHO_GAS:g}"))
+                # no default: an empty tag is honest, a guessed one is not
+                self._fluid_tag_entry.setText(str(s.get("fluid_tag") or ""))
+                self._gas_tag_entry.setText(str(s.get("gas_tag") or ""))
+                self._update_glr_label()
             # Orifice — only restore a value the combo actually offers, so an old
             # or hand-edited settings file can't leave it blank.
             _orifice = s.get("orifice", "")
@@ -7482,6 +7781,14 @@ class AtomisationApp(QMainWindow):
             except ValueError:
                 px_per_mm = existing.get("px_per_mm", 0.0)
             s = {
+                "rho_liquid":        self._rho_liquid_entry.text()
+                                     if hasattr(self, "_rho_liquid_entry") else "",
+                "rho_gas":           self._rho_gas_entry.text()
+                                     if hasattr(self, "_rho_gas_entry") else "",
+                "fluid_tag":         self._fluid_tag_entry.text()
+                                     if hasattr(self, "_fluid_tag_entry") else "",
+                "gas_tag":           self._gas_tag_entry.text()
+                                     if hasattr(self, "_gas_tag_entry") else "",
                 "ip":                self._cam_ip.text(),
                 "fps":               self._cam_fps.text(),
                 "exposure_us":       self._cam_exp.text(),

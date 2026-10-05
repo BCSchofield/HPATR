@@ -320,7 +320,10 @@ def process_capture(cine: Path, run_dir: Path, *, stride=DEFAULT_STRIDE,
 
     # ---- 4. measurement --------------------------------------------------
     log("\n=== 4/4  measurement ===")
-    out_dir = analysis / f"measurement_{score_thresh:.2f}"
+    # droplets_<thr>: AI DETECTION + classical half-max SIZING. Named for what
+    # it holds, not how it was made -- "measurement_" said nothing, and "AI_"
+    # would be wrong now that the diameters are measured classically.
+    out_dir = analysis / f"droplets_{score_thresh:.2f}"
     cmd = [sys.executable, HERE / "measure_run.py", "--pred", preds,
            "--root", run_dir, "--val-dir", "shadowgraph/raw",
            "--background", bg_path,

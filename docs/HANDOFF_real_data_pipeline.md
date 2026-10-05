@@ -21,6 +21,218 @@ file is the operational summary of it.
 
 ---
 
+## 2026-10-05 (GUI) — GLR, A MATERIALS TAB, AND WHAT TO CAPTURE
+
+All in `src/gui/GUI_Clean.py`. **Not committed, and not yet on the Windows PC** —
+see the warning at the end, it matters before anything is analysed there.
+
+### Gas-to-liquid ratio
+
+```
+GLR = gas mass flow / liquid mass flow          (dimensionless)
+    = (sccm x rho_gas) / (mL_per_min x rho_liquid)
+```
+
+The unit conversion (cm3/min x kg/m3 -> g/min, x1e-3) is identical on both sides
+and cancels, so the ratio is just that. mL/min is derived from motor speed
+through the bore: `pi*(20.27/2)^2 * (steps_per_s/6800) / 1000 * 60`.
+
+Shown in the **status bar, between Motor Travel and Volume**, styled to match
+Volume because both are derived read-outs rather than set points.
+
+### New Materials tab, after Hardware
+
+Density of fluid, density of gas, and a free-text tag under each — "3000cP
+Silicone", "Nitrogen gas". A density alone does not identify a material: 970
+kg/m3 is several different silicones and the viscosity that separates them is in
+no number this GUI records. All four persist in `camera_settings.json`.
+Densities fall back to defaults; **tags default to empty on purpose** — a blank
+tag is honest, a guessed one is not.
+
+The tab also shows the arithmetic with the CURRENT inputs substituted in, live:
+
+```
+With your current inputs:
+  gas     9,000 sccm x 1.184 kg/m3  =  10.656 g/min
+  liquid  22.78 mL/min x 970 kg/m3  =  22.095 g/min
+  GLR     10.656 / 22.095  =  0.482
+```
+
+The per-line MASS FLOWS are the point of showing it, not the ratio. A density
+typed as 97 instead of 970 still yields a plausible-looking GLR, but a liquid
+mass flow of 2.2 g/min instead of 22 is wrong at a glance.
+
+`_glr_working()` is the single implementation; `_compute_glr()` wraps it. Adding
+a second copy of the formula for display is exactly the duplication that gave
+the measurement pipeline 85.58 vs 85.57 um.
+
+### THE REFERENCE STATE IS 25 degC, NOT 0 degC
+
+Default gas density **1.184 kg/m3** (air, 25 degC, 1 atm), not 1.293 (0 degC).
+
+**"sccm" means whatever the mass flow controller says it means.** Alicat — the
+controller on this rig — defaults to 25 degC / 1 atm, while much of the
+literature uses 0 degC for "standard conditions". Quoting the density at the
+wrong reference biases every gas mass flow by **8.4%**, silently, because the
+resulting GLR still looks entirely reasonable. Ben caught this; the first
+version shipped 0 degC.
+
+If the Alicat's configured STP is ever changed (20 degC is another common
+setting), the density here must change to match. And **running nitrogen rather
+than air makes 1.184 wrong** — N2 at 25 degC is ~1.145 kg/m3, another 3%.
+The field is editable; nothing warns you.
+
+### Spreadsheets
+
+**`master_log.xlsx`**: new **GLR** column at **F**, immediately right of Flow
+Range (sccm). Layout is now 17 columns, A-Q. A migration inserts it into
+existing workbooks and re-anchors the embedded images.
+
+**The migration runs LAST, after every other migration, and that ordering is
+load-bearing.** Each earlier migration keys on a column INDEX — the measurement
+one looks for 'Avg Lamella Thickness' at column 9 — so inserting a column
+further left first would move what they look for and they would never fire again
+on a half-migrated file. Tested on a synthetic 16-column workbook: headers come
+out exactly canonical, existing data shifts correctly (sccm stays at E, pressure
+moves to G), and a second save does not insert a second column.
+
+**`run_summary.xlsx`** Metadata gains GLR, Fluid, Liquid density, Gas, Gas
+density — each tag beside its own density. Unset values write `NOT SET` /
+`NOT RECORDED` rather than blank or 0, which could be mistaken for a measurement.
+
+### Capture settings — the advice, and what Ben is actually doing
+
+Reasoning, for whoever picks this up:
+
+- **Exposure stays 4 us.** It is set by motion blur, not frame rate. Lowering
+  fps only adds dead time, which costs nothing because every measurement is
+  per-frame and nothing tracks droplets between frames.
+- Statistics are limited by INDEPENDENT samples. Decorrelation is ~20 ms, a
+  property of the spray, unchanged by sampling rate. So lower fps at the same
+  frame budget buys a longer span and more independent samples for free.
+- **But this is not the bottleneck.** `p vs measurement noise` already reads
+  0.0000 for gas flow on nearly every response — measurement scatter is far
+  smaller than the effects. What limits the ANOVA is 2 error dof from having no
+  replicates. Longer videos barely move those p-values; the 27 replicates move
+  them by an order of magnitude. Do not trade anything for longer videos.
+- **Do not alias with the bubbler.** At 300/600/900 rpm it runs at 5/10/15 Hz,
+  and with stride 10 the effective sample rate is fps/10. 200 fps gives 20 Hz —
+  exactly 2x and 4x the 10 and 5 Hz bubbler, so the same rotation phases get
+  sampled every time. That would corrupt the consistency responses
+  (`cv_droplets`, `cv_liquid`), which are the only place RPM shows any signal.
+  **190 fps (19 Hz effective) avoids integer ratios with all three.**
+- Syringe stroke caps duration: bore 20.27 mm x 72.5 mm = 23.4 mL, so 62 s at
+  8000 steps/s, 123 s at 4000.
+
+**BEN'S NOTE, 2026-10-05: he is NOT capturing the suggested ~25 s. The rig
+cannot sustain it at the higher flow rates as currently set up.** Shorter
+captures than suggested are deliberate, not an oversight — do not "correct" the
+durations in the recorded data, and expect the 27 runs to be shorter than 25 s.
+Everything above still holds; the duration advice was the softest part of it
+anyway, for the reason in the third bullet.
+
+### ⚠ NONE OF THE LAST THREE DAYS IS COMMITTED
+
+`measure_run.py`, `classical_liquid.py`, `batch_runs.py`, `process_capture.py`,
+`cine_extract.py`, `taguchi_analysis.py`, `compare_runs.py`, `GUI_Clean.py` and
+this handoff all have uncommitted changes, on the Mac only.
+
+**Analysis is planned on the Windows PC.** If 27 runs are measured there against
+the current repo, they get sizer 2.0.0 behaviour: no half-max atomised
+numerator, old folder names, no version guard, and a classical pass that takes
+183 s/run instead of 41 s. The runs would be silently measured the old way.
+**Commit and pull before analysing anything on Windows.**
+
+---
+
+## 2026-10-05 — SIZER 2.1.0. THE EXISTING L9 IS NO LONGER DIRECTLY COMPARABLE
+
+### ⚠ READ THIS BEFORE COMPARING ANY ATOMISED FRACTION
+
+The nine L9 runs in `FIXED First Taguchi/` and the MAX TEST run were measured at
+**sizer_version 2.0.0**. Everything measured from 2026-10-05 onward — including
+the 27 replicate runs — is **2.1.0**, and the atomised fraction moved between
+them. **Do not compare the two sets directly.** By explicit decision the nine
+were NOT re-run: re-measuring is ~41 s each now, so this is a cheap thing to
+undo later if it ever matters.
+
+`taguchi_analysis.py` now REFUSES to analyse runs with mixed `sizer_version`
+rather than averaging across them, and `classical_summary.json` carries the
+field so the atomised fraction cannot be compared blind.
+
+### What 2.1.0 changed
+
+**The atomised fraction used two different edges, one per side of the ratio.**
+The denominator (un-atomised liquid) is measured classically at each component's
+half-max. The numerator (droplets) used the model's RAW mask. Half-max droplet
+areas run ~0.86x the model mask, so droplets were being measured generously
+against classically-measured liquid, inflating the fraction.
+
+Now the numerator uses the half-max droplet mask wherever one exists. Where none
+does — out of focus, or below the 40 um split — the model mask still goes in,
+because no half-max measurement was made for those droplets.
+
+Measured on MAX TEST: **atomised 17.598% -> 17.019%** (-0.58 points, -3.3%
+relative). Smaller than the -12% a naive estimate suggested, because only
+in-focus droplets at/above the split are affected.
+
+**Tile-truncated detections** are now excluded from `classical_liquid.py`'s D32,
+matching `measure_run.py:582`. They REMAIN in the area union: sizing and area
+want opposite treatment, because a clipped mask has a wrong diameter but a union
+correctly reassembles an object split across a tile seam. This closed the last
+D32 discrepancy between the two passes — both now read 81.16 um on MAX TEST,
+against 81.34 / 81.16 before.
+
+### Folder renaming — readers accept both, nothing was migrated
+
+| was | is | what it holds |
+|---|---|---|
+| `measurement_<thr>` | **`droplets_<thr>`** | D32, `droplet_sizes.csv`, size extremes |
+| `classical_<thr>` | **`liquid_<thr>`** | atomised %, un-atomised components |
+
+Named for CONTENTS, not method, because "classical" now describes two unrelated
+things: classical half-max droplet SIZING (which lives in the droplets folder)
+and the classical whole-frame liquid SEGMENTATION (the liquid folder). "AI_" was
+rejected for the same reason — the AI only detects; the diameters are measured
+classically.
+
+**Readers accept either name** — `taguchi_analysis.py`, `GUI_Clean.py`'s run
+discovery — so ~20 GB of existing runs keep working untouched. Nothing was
+re-measured to rename a folder.
+
+A WIDESPREAD MISCONCEPTION, recorded because it nearly got baked into the folder
+names: **the droplet measurements do NOT come from the classical pass.**
+`classical_liquid.py` has never sized a droplet. It re-derives the un-atomised
+DENOMINATOR, because the model under-reads filaments (a 28x28 mask head cannot
+hold a 100:1 thread) and cuts blobs at tile seams. Droplet sizes come from
+`measure_run.py` and always have.
+
+### Atomised extremes now come from the pass that computes them
+
+`measure_run.py` records `atomised_extreme_frames`, but picks them from its
+MODEL-ONLY atomised figure — reference only, never reported. The quoted fraction
+is the classical one, and the two can disagree.
+
+`classical_liquid.py` now records and draws its own, via a new
+`--images-mode extremes`. **This is also the speed fix**: 2 frames instead of
+497, so the classical pass runs in **41 s rather than 183 s**. It had no
+extremes mode before — `batch_runs.py:89` said "classical has no extremes mode:
+all or nothing" — which is why `--images all` was so expensive.
+
+The D32 extremes still come from `measure_run`, correctly: that is where D32 is
+computed.
+
+### Also fixed: `--limit` could silently cap a full run
+
+A `--limit N` extraction wrote `extraction_metadata.json` with `frame_count: N`
+and N frames on disk — indistinguishable from a complete N-frame extraction. The
+next full run's `can_reuse()` would skip extraction and analyse N frames while
+reporting itself as complete. `cine_extract.py` now records `"limited": true`
+and `can_reuse()` refuses it. Found when a 12-frame timing probe left exactly
+that trap in the MAX TEST run folder.
+
+---
+
 ## 2026-10-03 — SIZER AND CORE ESTIMATOR IMPLEMENTED IN measure_run.py
 
 Three duplicated focus tests collapsed into one shared function, the classical
