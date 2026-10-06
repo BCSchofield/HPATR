@@ -1825,71 +1825,67 @@ class AtomisationApp(QMainWindow):
         vl.setContentsMargins(0, 0, 0, 0)
         vl.setSpacing(12)
 
-        # ── Shadowgraph preview card ──────────────────────────────────────────
-        preview_card = card()
-        preview_card.layout().setSpacing(8)
+        # ── Live camera view card ─────────────────────────────────────────────
+        # Pinned to the height the old Latest Result card rendered at (404 px)
+        # so the graphs below do not move. The image takes whatever the title
+        # and button rows leave, and its size policy is Ignored so a frame's
+        # pixmap can never push the card taller.
+        self._live_card = card()
+        self._live_card.setFixedHeight(404)
+        self._live_card.layout().setSpacing(8)
 
         top_row = QWidget()
         tr = QHBoxLayout(top_row)
         tr.setContentsMargins(0, 0, 0, 0)
-        tr.addWidget(title_label("Latest Result", 13))
+        tr.addWidget(title_label("Live Camera View", 13))
         tr.addStretch()
-        self._refresh_btn = ghost_button("↻ Refresh")
-        self._refresh_btn.setFixedHeight(28)
-        self._refresh_btn.setToolTip(
-            "<b>Refresh latest result</b><br>"
-            "1. Looks in the current run's shadowgraph/analysis/ folder<br>"
-            "2. Otherwise scans the LaCie drive for the most recently measured run<br>"
-            "3. Shows that run's LOWEST-D32 frame — the finest-atomised one — "
-            "marked up with its detections")
-        self._refresh_btn.clicked.connect(self._refresh_shadowgraph)
-        tr.addWidget(self._refresh_btn)
-        preview_card.layout().addWidget(top_row)
+        # Mirrors the Camera tab's status line, so Connect/Ping report back
+        # here without switching tabs.
+        self._live_status_lbl = QLabel("Camera: idle")
+        self._live_status_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
+        tr.addWidget(self._live_status_lbl)
+        self._live_card.layout().addWidget(top_row)
 
-        self._shadow_label = QLabel()
-        self._shadow_label.setFixedSize(370, 250)
-        self._shadow_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._shadow_label.setStyleSheet(f"""
+        self._live_view_label = QLabel()
+        self._live_view_label.setMinimumSize(1, 1)
+        self._live_view_label.setSizePolicy(QSizePolicy.Policy.Ignored,
+                                            QSizePolicy.Policy.Ignored)
+        self._live_view_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._live_view_label.setStyleSheet(f"""
             background-color: {CLR_INPUT};
             border-radius: 8px;
             color: {CLR_TEXT_SEC};
             font-size: 12px;
         """)
-        self._shadow_label.setText("No result found\nClick ↻ Refresh")
-        preview_card.layout().addWidget(self._shadow_label)
+        self._live_view_label.setText("Live feed not active")
+        self._live_card.layout().addWidget(self._live_view_label, stretch=1)
 
-        # Eliding, not wrapping: a Windows path has no spaces, so word wrap
-        # cannot break it and the filename -- the only part worth reading --
-        # was the part being cut off.
-        self._result_path_label = _ElidingLabel("")
-        self._result_path_label.setStyleSheet(f"color: {CLR_TEXT_SEC}; font-size: 10px;")
-        preview_card.layout().addWidget(self._result_path_label)
+        live_btn_row = QWidget()
+        lbr = QHBoxLayout(live_btn_row); lbr.setContentsMargins(0, 0, 0, 0); lbr.setSpacing(8)
+        self._live_connect_btn = accent_button("Connect", CLR_ACCENT)
+        self._live_connect_btn.setToolTip(self._cam_connect_tooltip())
+        self._live_connect_btn.clicked.connect(self._cam_connect)
+        self._live_ping_btn = ghost_button("Ping")
+        self._live_ping_btn.setToolTip(self._cam_ping_tooltip())
+        self._live_ping_btn.clicked.connect(self._cam_ping)
+        self._live_feed_btn = accent_button("▶ Live Feed", CLR_GREEN)
+        self._live_feed_btn.setToolTip(
+            "<b>Start / stop live feed</b><br>"
+            "Same feed as the Calibration tab — starting or stopping it here "
+            "starts or stops it there too.<br>"
+            "Connect the camera first.")
+        self._live_feed_btn.clicked.connect(self._toggle_live_feed)
+        for b in (self._live_connect_btn, self._live_ping_btn, self._live_feed_btn):
+            b.setFixedHeight(36)
+            lbr.addWidget(b, stretch=1)
+        if not self.camera_available:
+            for b in (self._live_connect_btn, self._live_ping_btn, self._live_feed_btn):
+                b.setEnabled(False)
+            self._live_view_label.setText(
+                "Live feed requires Windows + Phantom SDK")
+        self._live_card.layout().addWidget(live_btn_row)
 
-        self._pipeline_status = QLabel("")
-        self._pipeline_status.setStyleSheet(f"color: {CLR_TEXT_SEC}; font-size: 11px;")
-        self._pipeline_status.setWordWrap(True)
-        preview_card.layout().addWidget(self._pipeline_status)
-
-        # AI metrics — populated after pipeline run
-        metrics_row = QWidget()
-        mr = QHBoxLayout(metrics_row); mr.setContentsMargins(0, 0, 0, 0); mr.setSpacing(16)
-        self._ai_diameter_lbl   = QLabel("Run SMD: –")
-        self._ai_dl_lbl         = QLabel("Atomised Fraction: –")
-        for lbl in [self._ai_diameter_lbl, self._ai_dl_lbl]:
-            lbl.setStyleSheet(f"color: {CLR_TEXT}; font-size: 12px; font-weight:600;")
-            mr.addWidget(lbl)
-        mr.addStretch()
-        preview_card.layout().addWidget(metrics_row)
-
-        # The CI line gets its own full-width row: sharing a horizontal row
-        # with the two headline numbers left it about 40 characters short, so
-        # the droplet count fell off the right-hand edge.
-        self._ai_confidence_lbl = QLabel("Confidence: –")
-        self._ai_confidence_lbl.setStyleSheet(f"color: {CLR_TEXT_SEC}; font-size: 11px;")
-        self._ai_confidence_lbl.setWordWrap(True)
-        preview_card.layout().addWidget(self._ai_confidence_lbl)
-
-        vl.addWidget(preview_card)
+        vl.addWidget(self._live_card)
 
         # ── Live graph cards (mass flow above pressure) ───────────────────────
         # Both traces come from the Alicat MFC and share the Smooth toggle.
@@ -1976,9 +1972,6 @@ class AtomisationApp(QMainWindow):
         vl.addWidget(pressure_off_card)
         vl.addStretch()
 
-        # Defer the drive scan until after the window is shown — scanning
-        # the LaCie drive during __init__ blocks the window from opening.
-        QTimer.singleShot(500, self._refresh_shadowgraph)
         scroll.setWidget(panel)
         return scroll
 
@@ -2687,6 +2680,21 @@ class AtomisationApp(QMainWindow):
 
     # ── Camera tab ────────────────────────────────────────────────────────────
 
+    # Shared by the Camera tab and the Live Camera View card.
+    @staticmethod
+    def _cam_connect_tooltip():
+        return ("<b>Connect to Phantom camera</b><br>"
+                "1. Connects to the camera at the IP address in the Camera tab<br>"
+                "2. Initialises the Phantom SDK<br>"
+                "3. Enables capture and config controls")
+
+    @staticmethod
+    def _cam_ping_tooltip():
+        return ("<b>Ping camera</b><br>"
+                "1. Sends a network ping to the camera IP<br>"
+                "2. Reports whether the camera is reachable on the network<br>"
+                "Use this to check connectivity before connecting")
+
     def _build_camera_tab(self):
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
         scroll.setStyleSheet("background:transparent; border:none;")
@@ -2708,16 +2716,8 @@ class AtomisationApp(QMainWindow):
         self._cam_connect_btn = accent_button("Connect", CLR_ACCENT)
         self._cam_ping_btn    = ghost_button("Ping")
         self._cam_connect_btn.setFixedHeight(36); self._cam_ping_btn.setFixedHeight(36)
-        self._cam_connect_btn.setToolTip(
-            "<b>Connect to Phantom camera</b><br>"
-            "1. Connects to the camera at the entered IP address<br>"
-            "2. Initialises the Phantom SDK<br>"
-            "3. Enables capture and config controls")
-        self._cam_ping_btn.setToolTip(
-            "<b>Ping camera</b><br>"
-            "1. Sends a network ping to the camera IP<br>"
-            "2. Reports whether the camera is reachable on the network<br>"
-            "Use this to check connectivity before connecting")
+        self._cam_connect_btn.setToolTip(self._cam_connect_tooltip())
+        self._cam_ping_btn.setToolTip(self._cam_ping_tooltip())
         self._cam_connect_btn.clicked.connect(self._cam_connect)
         self._cam_ping_btn.clicked.connect(self._cam_ping)
         ipr.addWidget(ip_lbl); ipr.addWidget(self._cam_ip)
@@ -3390,6 +3390,36 @@ class AtomisationApp(QMainWindow):
         w = QWidget(); vl = QVBoxLayout(w)
         vl.setSpacing(16); vl.setContentsMargins(16, 16, 16, 16)
 
+        # ── Whole-run numbers ─────────────────────────────────────────────────
+        # measure_run's pooled values over every analysed frame -- not any one
+        # of the extreme frames below.
+        summary = card()
+        summary.layout().addWidget(section_label("WHOLE RUN"))
+
+        metrics_row = QWidget()
+        mr = QHBoxLayout(metrics_row); mr.setContentsMargins(0, 0, 0, 0); mr.setSpacing(16)
+        self._ai_diameter_lbl   = QLabel("Run SMD: –")
+        self._ai_dl_lbl         = QLabel("Atomised Fraction: –")
+        for lbl in [self._ai_diameter_lbl, self._ai_dl_lbl]:
+            lbl.setStyleSheet(f"color: {CLR_TEXT}; font-size: 14px; font-weight:600;")
+            mr.addWidget(lbl)
+        mr.addStretch()
+        summary.layout().addWidget(metrics_row)
+
+        # The CI line gets its own full-width row: sharing a horizontal row
+        # with the two headline numbers left it about 40 characters short, so
+        # the droplet count fell off the right-hand edge.
+        self._ai_confidence_lbl = QLabel("Confidence: –")
+        self._ai_confidence_lbl.setStyleSheet(f"color: {CLR_TEXT_SEC}; font-size: 11px;")
+        self._ai_confidence_lbl.setWordWrap(True)
+        summary.layout().addWidget(self._ai_confidence_lbl)
+
+        self._pipeline_status = QLabel("")
+        self._pipeline_status.setStyleSheet(f"color: {CLR_TEXT_SEC}; font-size: 11px;")
+        self._pipeline_status.setWordWrap(True)
+        summary.layout().addWidget(self._pipeline_status)
+        vl.addWidget(summary)
+
         self._extreme_hint = QLabel(
             "No run analysed yet — these populate when the AI chain finishes.")
         self._extreme_hint.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
@@ -3712,7 +3742,12 @@ class AtomisationApp(QMainWindow):
                  "folder. Tick Run AI analysis after capture and the chain runs on it automatically: "
                  "frames are extracted, the model detects droplets, filaments and blobs, and D32 plus "
                  "the atomised fraction are measured. Outputs land in the run's shadowgraph/analysis/ "
-                 "folder and the Latest Result panel shows the lowest-D32 frame when it finishes."),
+                 "folder, and the Extremes tab shows the whole-run numbers and extreme frames "
+                 "when it finishes."),
+                ("Live view",
+                 "The Live Camera View (top left) has its own Connect, Ping and Live Feed "
+                 "buttons. It shows the same feed as the Calibration tab — starting or "
+                 "stopping it in either place does both."),
                 ("Calibration",
                  "Go to the Calibration sub-panel to set the pixel-to-mm scale. Capture a live frame "
                  "with a known reference object in view, draw the reference line, and enter the real "
@@ -3760,10 +3795,10 @@ class AtomisationApp(QMainWindow):
                  "finishes, so use the button only to add notes written afterwards — it updates the "
                  "same row rather than creating a second one."),
                 ("Shadowgraph result",
-                 "The Latest Result panel (left) shows the LOWEST-D32 frame of the most recently "
-                 "measured run — the finest-atomised frame, outlined green (in focus), magenta (out of "
-                 "focus), orange (filament) and blue (blob). Click ↻ Refresh to look again once analysis "
-                 "has finished."),
+                 "The Extremes tab opens with the WHOLE-RUN numbers — Run SMD, atomised fraction "
+                 "and their confidence, pooled over every analysed frame — then the four extreme "
+                 "frames, outlined green (in focus), magenta (out of focus), orange (filament) and "
+                 "blue (blob). It fills in when the AI chain finishes."),
             ]),
             ("TIPS & ENVIRONMENT", [
                 ("Where the analysis output goes",
@@ -5210,23 +5245,35 @@ class AtomisationApp(QMainWindow):
             self._cam_capacity_lbl.setText("—")
             self._cam_capacity_frames_lbl.setText("")
 
+    def _set_live_status(self, text, color=CLR_TEXT_SEC):
+        """Short status in the Live Camera View title row; full text on hover."""
+        short = text if len(text) <= 32 else text[:31] + "…"
+        self._live_status_lbl.setText(short)
+        self._live_status_lbl.setToolTip(text)
+        self._live_status_lbl.setStyleSheet(f"color:{color}; font-size:11px;")
+
     def _cam_connect(self):
         if not self.phantom:
-            self._cam_status_lbl.setText("Camera SDK unavailable"); return
+            self._cam_status_lbl.setText("Camera SDK unavailable")
+            self._set_live_status("Camera SDK unavailable", CLR_ORANGE); return
         try:
             self.phantom.connect()
             self._cam_status_lbl.setText("Camera: connected")
             self._cam_status_lbl.setStyleSheet(f"color:{CLR_GREEN}; font-size:12px;")
+            self._set_live_status("Camera: connected", CLR_GREEN)
             self._hdr_camera_dot.setStyleSheet(f"color:{CLR_GREEN}; font-size:10px; background:transparent;")
             self._hdr_camera_lbl.setStyleSheet(f"color:{CLR_TEXT}; font-size:12px;")
         except Exception as e:
             self._cam_status_lbl.setText(f"Camera error: {e}")
+            self._set_live_status(f"Camera error: {e}", CLR_RED)
             self._set_status(f"Camera: {e}", CLR_RED)
 
     def _cam_ping(self):
         if not self.phantom: return
         ok = self.phantom.ping()
         self._cam_status_lbl.setText("Camera: connected ✓" if ok else "Camera: not responding")
+        self._set_live_status("Camera: reachable ✓" if ok else "Camera: not responding",
+                              CLR_GREEN if ok else CLR_RED)
 
     def _get_ai_stride(self) -> int:
         """Stride from the field, falling back to the default if unusable."""
@@ -5753,28 +5800,12 @@ class AtomisationApp(QMainWindow):
                 self._log(f"    {name:16s}{self._fmt_eta(secs):>10}  {share}")
             self._log(f"    {'TOTAL':16s}{self._fmt_eta(total):>10}")
 
+        # The marked-up extreme frames, lowest-D32 included, live in the
+        # Extremes tab alongside the whole-run numbers above.
         self._update_extremes_tab(results)
-
-        # Show the lowest-D32 frame's marked-up image.
         ext = (results.get("d32_extreme_frames") or {}).get("lowest") or {}
-        stem = ext.get("frame")
-        mdir = results.get("_measurement_dir")
-        if stem and mdir:
-            path = os.path.join(mdir, f"{stem}.png")
-            self._log(f"  lowest-D32 frame: {stem} ({ext.get('d32_um')} µm)")
-            if os.path.exists(path):
-                img = QImage(path)
-                if not img.isNull():
-                    pix = QPixmap.fromImage(img).scaled(
-                        390, 265,
-                        Qt.AspectRatioMode.KeepAspectRatio,
-                        Qt.TransformationMode.SmoothTransformation)
-                    self._shadow_label.setPixmap(pix)
-                    self._shadow_label.setText("")
-                    self._result_path_label.setText(path)
-                    self._autosave_after_ai(to_log)
-                    return
-        self._refresh_shadowgraph()
+        if ext.get("frame"):
+            self._log(f"  lowest-D32 frame: {ext['frame']} ({ext.get('d32_um')} µm)")
         self._autosave_after_ai(to_log)
 
     def _autosave_after_ai(self, to_log=True):
@@ -6078,6 +6109,8 @@ class AtomisationApp(QMainWindow):
         self._cal_feed_start_btn.setEnabled(False)
         self._cal_feed_stop_btn.setEnabled(True)
         self._cal_feed_label.setText("")
+        self._live_view_label.setText("")
+        self._live_feed_btn.setText("■ Stop Feed")
 
     def _cal_stop_feed(self):
         self._live_feed_timer.stop()
@@ -6085,6 +6118,8 @@ class AtomisationApp(QMainWindow):
         self._cal_feed_start_btn.setEnabled(True)
         self._cal_feed_stop_btn.setEnabled(False)
         self._cal_feed_label.setText("Live feed not active")
+        self._live_view_label.setText("Live feed not active")
+        self._live_feed_btn.setText("▶ Live Feed")
         # Clear live-feed lamella state — overlay pauses but checkbox stays as-is
         self._lamella_result = None
         self._lamella_pending_frame = None
@@ -6442,6 +6477,13 @@ class AtomisationApp(QMainWindow):
 
     # ─────────────────────────────────────────────────────────────────────────
 
+    def _toggle_live_feed(self):
+        """Live Camera View button — one control for the shared feed."""
+        if self._live_feed_timer.isActive():
+            self._cal_stop_feed()
+        else:
+            self._cal_start_feed()
+
     def _live_feed_tick(self):
         """Timer callback — grab one frame in a background thread."""
         if self._live_feed_pending:
@@ -6466,18 +6508,25 @@ class AtomisationApp(QMainWindow):
         threading.Thread(target=_grab, daemon=True).start()
 
     def _live_feed_update(self, frame):
-        """Main-thread callback — paint the latest frame into the feed label."""
+        """Main-thread callback — paint the latest frame into both feed labels.
+
+        The Live Camera View is always on screen; the Calibration tab's copy is
+        only repainted while that tab is showing.
+        """
+        if not self._live_feed_timer.isActive():
+            return      # a grab that landed after Stop must not repaint
         display = frame
         if self._lamella_on and self._lamella_result is not None:
             from ai.lamella.overlay import draw_overlay
             display = draw_overlay(frame, self._lamella_result)
         pix = self._phantom_frame_to_pixmap(display)
-        pix = pix.scaled(
-            self._cal_feed_label.width(), self._cal_feed_label.height(),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.FastTransformation,
-        )
-        self._cal_feed_label.setPixmap(pix)
+        for lbl in (self._live_view_label, self._cal_feed_label):
+            if lbl.isVisible():
+                lbl.setPixmap(pix.scaled(
+                    lbl.width(), lbl.height(),
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.FastTransformation,
+                ))
 
     def _cal_load_photo(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -6988,64 +7037,6 @@ class AtomisationApp(QMainWindow):
                 if os.path.exists(f):
                     return f
         return None
-
-    def _find_latest_result(self):
-        """Newest available lowest-D32 preview: this run first, else most recent.
-
-        Previously this looked for `ai_result.png` / `FINAL_OPTIMIZED_RESULT.png`,
-        filenames from the retired CV pipeline that the current chain never
-        writes -- so it silently found nothing and the preview stayed empty.
-        """
-        try:
-            if self._run_folder:
-                f = self._lowest_d32_image(self._run_folder)
-                if f:
-                    return f
-
-            lacie = find_lacie_drive()
-            base  = os.path.join(lacie, "Experiments") if lacie else None
-            if not base or not os.path.exists(base): return None
-
-            def latest_subdir(path):
-                items = [(os.path.join(path, i), os.path.getmtime(os.path.join(path, i)))
-                         for i in os.listdir(path) if os.path.isdir(os.path.join(path, i))]
-                items.sort(key=lambda x: x[1], reverse=True)
-                return [x[0] for x in items]
-
-            for year in latest_subdir(base):
-                for month in latest_subdir(year):
-                    for day in latest_subdir(month):
-                        for run in latest_subdir(day):
-                            f = self._lowest_d32_image(run)
-                            if f:
-                                return f
-        except Exception as e:
-            print(f"Error finding result: {e}")
-        return None
-
-    def _refresh_shadowgraph(self):
-        # Run the drive scan in a background thread so the main thread stays responsive.
-        def _scan():
-            path = self._find_latest_result()
-            QTimer.singleShot(0, self, lambda: self._apply_shadowgraph_result(path))
-        threading.Thread(target=_scan, daemon=True).start()
-
-    def _apply_shadowgraph_result(self, path):
-        if path and os.path.exists(path):
-            img = QImage(path)
-            if not img.isNull():
-                pix = QPixmap.fromImage(img).scaled(
-                    390, 265,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation
-                )
-                self._shadow_label.setPixmap(pix)
-                self._shadow_label.setText("")
-                self._result_path_label.setText(path)
-                return
-        self._shadow_label.setPixmap(QPixmap())
-        self._shadow_label.setText("No result found\nClick ↻ Refresh")
-        self._result_path_label.setText("Searching: LaCie/Experiments/…/analysis/droplets_*/ for a measured run")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Logic — Excel save
