@@ -4,7 +4,7 @@ extract_candidates.py -- Step 2 of the real-data pipeline.
 
 Threshold + connected components over the training-pool frames, producing
 one candidate object per detected region. See
-docs/HANDOFF_real_data_pipeline.md.
+docs/archive/HANDOFF_real_data_pipeline_LEGACY.md.
 
 NOTHING THIS SCRIPT PRODUCES IS TRAINING DATA. These are unreviewed first
 drafts. Step 3 is where a human deletes the rubbish, fixes the class, and

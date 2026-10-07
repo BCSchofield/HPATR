@@ -1,5 +1,8 @@
 # Handoff — real-data droplet detection pipeline
 
+> **FROZEN 2026-10-07. Read-only history.** Current state lives in `docs/STATUS.md`.
+> Sections below are newest-first; cite them by section heading, not line number.
+
 Continuation brief for Claude Code. Written 20 September 2026 at the end of a
 planning session. Read this fully before writing anything.
 

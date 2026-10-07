@@ -162,7 +162,7 @@ def created_ids(roots: list[Node]) -> set[str]:
 _REF_FRAMES = 497
 BASE_GB_PER_RUN = 3.1
 EVERY_FRAME_EXTRA_GB_PER_RUN = 4.2
-# NOT measured, and NOT portable. docs/HANDOFF_real_data_pipeline.md (line 1716):
+# NOT measured, and NOT portable. docs/archive/HANDOFF_real_data_pipeline_LEGACY.md ("2026-10-02 (morning)" section):
 # "Drawing all images is ~70-80% of the measure and classical stages (estimated from
 # earlier no-image timings, not measured here) -- ~10-13 min per run", recorded on the
 # Windows PC. It is dominated by writing ~1,000 PNGs to the LaCie, and the same

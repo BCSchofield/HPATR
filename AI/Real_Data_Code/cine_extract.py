@@ -2,7 +2,7 @@
 """
 cine_extract.py -- Phantom .cine -> per-run folder of frames.
 
-Step 0 of the real-data pipeline (see docs/HANDOFF_real_data_pipeline.md).
+Step 0 of the real-data pipeline (see docs/archive/HANDOFF_real_data_pipeline_LEGACY.md).
 Everything downstream reads the folder this produces; nothing else opens a
 .cine.
 

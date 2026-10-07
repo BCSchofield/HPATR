@@ -58,7 +58,7 @@ PACKAGES = (
     ("pyqtgraph", "pyqtgraph", "__version__", "the capture GUI's GLR formula, only if a run has no GLR (optional)", False),
     ("pytest", "pytest", "__version__", "running the test suite (optional)", False),
 )
-NO_PIP = {"torch": "install the CUDA build of PyTorch (see docs/HANDOFF_real_data_pipeline.md); "
+NO_PIP = {"torch": "install the CUDA build of PyTorch (see docs/archive/HANDOFF_real_data_pipeline_LEGACY.md); "
                    "never plain `pip install torch`, which is CPU-only on Windows",
           "detectron2": "build detectron2 0.6 against the installed torch (see the handoff)"}
 GB_PER_RUN = 3.1            # output_tree.BASE_GB_PER_RUN, written into each run folder

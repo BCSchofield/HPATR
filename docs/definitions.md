@@ -9,8 +9,9 @@ Where a definition is pinned to code, the file and function are named. If this
 document and the code ever disagree, **the code is right and this is stale** —
 fix it here.
 
-Companion documents: `HANDOFF_real_data_pipeline.md` (operational state and
-results), `CLAUDE_Understanding.md` (codebase structure).
+Companion documents: `STATUS.md` (current operational state; history in
+`archive/HANDOFF_real_data_pipeline_LEGACY.md`) and
+`CLAUDE_Understanding.md` (codebase structure).
 
 ---
 

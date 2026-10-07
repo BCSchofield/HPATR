@@ -3,7 +3,7 @@
 composite.py -- Step 5: build the training set by compositing real objects
 onto real backgrounds.
 
-See docs/HANDOFF_real_data_pipeline.md decisions 4, 5 and 6.
+See docs/archive/HANDOFF_real_data_pipeline_LEGACY.md decisions 4, 5 and 6.
 
 THE PHYSICS, AND WHY IT IS NOT ALPHA BLENDING
 ---------------------------------------------

@@ -116,7 +116,7 @@ BATCH_SIZE = 2
 BASE_LEARNING_RATE = 0.0025
 # FPN anchor sizes, one list per level (P2..P6). Detectron2 requires the same number of
 # sizes on every level, so each gets two. Covers the measured 5-800 px object range of
-# Real_Data/05_dataset; see docs/HANDOFF_real_data_pipeline.md (Step 7).
+# Real_Data/05_dataset; see docs/archive/HANDOFF_real_data_pipeline_LEGACY.md (Step 7).
 ANCHOR_SIZES = [[8, 12], [20, 32], [50, 80], [125, 200], [320, 500]]
 # h/w ratios; 4:1 both ways covers filaments to ~p95 (measured 3.40)
 ANCHOR_ASPECT_RATIOS = [[0.25, 0.5, 1.0, 2.0, 4.0]]

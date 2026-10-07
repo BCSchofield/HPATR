@@ -46,7 +46,7 @@ REF_FRAMES = 497
 # (lo, typical, hi). `background` is a FIXED cost (a median over up to 40 frames,
 # however long the run), so its figures are seconds per run, not per 497 frames.
 _WINDOWS = {
-    # docs/HANDOFF_real_data_pipeline.md timing table: nine L9 runs on the home PC
+    # docs/archive/HANDOFF_real_data_pipeline_LEGACY.md timing table: nine L9 runs on the home PC
     # (C:\Users\BenSc, CUDA), --images all. Classical extremes: batch_runs.py:91-95.
     ("extract", None): (190, 215, 226),
     ("background", None): (2, 3, 7),
