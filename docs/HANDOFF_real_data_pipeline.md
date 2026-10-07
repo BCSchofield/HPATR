@@ -21,6 +21,158 @@ file is the operational summary of it.
 
 ---
 
+## 2026-10-06 (home PC) — ALL 27 REPLICATE RUNS MEASURED. THE LACIE KEEPS DROPPING OFF USB
+
+Run on the **home PC (BENS-PC, RTX 5060 Ti)**, not the lab PC the run sheet was
+written for. **27/27 runs done, all at sizer_version 2.1.0.** Analyse has NOT
+been run yet: that is the next step, on the Mac.
+
+### Where everything is
+
+| what | where |
+|---|---|
+| run results | inside each run folder, `Experiments/2026/10/05/<run>/shadowgraph/analysis/{droplets_0.30,liquid_0.30}` |
+| output folder | **`Experiments/Taguchi/9x3 Taguchi Repeats/`**. Not `Taguchi_ReRun_2026-10-05` as the run sheet says; Ben named it |
+| finished job | `.../_job/` (job `2026-10-06T10-37-52_6d62`, 24 runs, finished 20:03:55, exit 0). Runs 1-3 were reused from the first job, not re-run |
+| first job | `.../_job_archive/` (started 00:43, 3 done, then crashed on run 4) |
+| Windows timings | `.../_job/eta_calibration.json`, copied there for the Phase 11 fold-in: *"fold in the Windows timings from 9x3 Taguchi Repeats"* |
+
+### What the 2.1.0 measurement does and does not include
+
+**In:** the shared `measure_droplet()`, half-max sizing at/above 40 um, the
+robust interior-pixel core estimator, the `t_min <= 0.70` focus gate (D32 =
+in-focus only, atomised = all droplets), and the 2.1.0 half-max atomised
+numerator.
+
+**Not in: the fill_ratio / extinction_conc reclassification rule** (2026-10-02
+sections). It was never implemented in `measure_run.py`. It was also disqualified
+for Taguchi frames because it tracks spray density, so it would manufacture a
+gas-flow effect on D32. The 9000 sccm hand-labelling that was meant to settle
+that has not been done.
+
+**Ben's plan:** analyse the 2.1.0 results first. Then implement the rule behind
+a flag with a new `SIZER_VERSION` (e.g. 2.2.0), re-measure all 27 with
+"Re-measure only", analyse into a **separate** output folder, and compare which
+D32 factors are significant and how they rank. Only D32 can move: the atomised
+fraction and droplets per frame are unchanged by construction. Treat a gas-flow
+effect that appears only under the rule as suspect. Before re-measuring:
+
+- **Re-measure overwrites `droplets_0.30/` and `liquid_0.30/` in place**, and the
+  old numbers are not kept anywhere. Back up both folders per run first (~30 MB
+  per run).
+- **Old extreme-frame PNGs are not deleted.** They are named by frame, so if the
+  new extremes differ, stale images sit beside the new ones.
+- Re-measure cost, measured: **~1.5 / 2 / 2.5 min per run** at 3000 / 6000 / 9000
+  sccm (measurement + classical stages), so **~1 h for all 27**.
+
+Two atomised figures exist per run: `summary.json` `atomised_pct` (model-only,
+reference) and `classical_summary.json` `atomised_pct_pooled` (the quoted one).
+For example, run `101038`: 10.0% vs 14.3%.
+
+### Run times on the 5060 Ti (full chain, stride 10, extremes only)
+
+| condition | per run | of which inference |
+|---|---|---|
+| 3000 sccm, 300 rpm | 14 min | 8.5 min |
+| 6000 sccm, 300 rpm | 23-28 min | 17-22 min |
+| 9000 sccm, 300 rpm | 35-36 min | 29 min |
+| 3000 sccm, 600 rpm | 14 min | — |
+| 6000 sccm, 600 rpm | 24-28 min | — |
+| 9000 sccm, 600 rpm | 24-26 min | — |
+| 900 rpm (all 9) | ~18 min average | — |
+
+Extraction takes ~4 min per run regardless of condition. Inference scales with
+droplets per frame, and `predictions.json` reached 49 MB at 6000 sccm, against the
+app's ~15 MB estimate. The self-test's prior of 9.7 h for the batch was about
+right; the crashes added hours on top.
+
+### The LaCie dropped off USB three times — hardware, not code
+
+| time | run in progress | stage |
+|---|---|---|
+| 2026-10-06 01:30 | `101038` 6000 sccm / 300 rpm | inference, 5 min in |
+| 15:51 | `114108` 9000 / 600 | inference, 8 min in |
+| 17:04 | `115534` 9000 / 600 | inference, 15 min in |
+
+Evidence: each one is an exFAT event 50 "Delayed Write Failed" on a `_job` file,
+plus `Microsoft-Windows-Partition/Diagnostic` event 1006 showing the disk
+re-appearing at the same minute. Ben heard the Windows disconnect sound at 15:51.
+After each drop the volume was **dirty / "Full Repair Needed"**. Explorer → D: →
+Properties → Tools → Check → Scan and repair fixed it every time, with no
+`FOUND.000` folder, so nothing was lost. Each crash cost only the run in
+progress, and that run was redone from scratch. **Every result comes from a
+clean, complete run.**
+
+- Drive: **LaCie Rugged USB-C 5 TB**, a bus-powered 2.5" HDD, on a back-panel
+  **USB-A** port of an ASUS PRIME Z390-P (one Intel xHCI controller, 0.9 A per
+  USB 3 port).
+- **Not load-correlated:** the three heaviest runs (9000 / 300 rpm, about 1 h 47 min
+  back to back) never dropped. Power starvation, the cable and the drive's USB
+  bridge are all still suspects.
+- Done: USB selective suspend and "turn off hard disk" were turned **off** (AC)
+  on the home PC at ~15:55. One more drop happened after that, so this was not
+  the cause on its own.
+- **Next:** Ben is buying a **powered USB 3 hub**. It is also the diagnostic: if
+  the drive still drops on the hub, the cause is the cable or the drive.
+- exFAT has no journal, so any interrupted write leaves the volume dirty.
+  **Eject before unplugging.** After any disconnect sound, run Scan and repair
+  before using the drive.
+
+### App bugs this exposed — NOT fixed
+
+1. **One failed log write kills the whole worker.** `worker.py:229`
+   `logf.flush()` raised `OSError: [Errno 22]`, which failed the run and then
+   the worker. With a USB drop the reads fail too, so the run is lost anyway.
+   But the worker should survive the write, wait for the drive to come back, and
+   retry the run once, instead of dying overnight.
+2. **A worker crash is reported as a contract violation.** The crash wrote
+   `job_end status: halted`. `batch_controller.py:243` labels every `halted`
+   state as "the pipeline output did not match the contract", and offers no
+   Resume. The workaround was Run batch with "Use their existing results". The
+   15:51 and 17:04 crashes died before writing `job_end`, so they read as `dead`
+   and did offer Resume.
+3. The **SELECTED RUNS summary** ("N already measured") does not update while a
+   batch runs.
+4. On reopening after the first crash, the **"already have results" dropdown
+   showed "Re-measure only"**. Check whether that is the default; the run sheet
+   says the default is "Use their existing results".
+
+### Home PC setup (for the next Windows batch)
+
+- **Only the Detectron conda env can run a batch here:**
+  `C:\Users\BenSc\anaconda3\envs\Detectron\python.exe` (Python 3.9.25, torch
+  2.8.0+cu128, detectron2 0.6). PySide6, scipy, psutil, pytest and pyserial were
+  added on 2026-10-06, with numpy kept at 2.0.2.
+- The system Python 3.11 (`AppData\Local\Programs\Python\Python311`, the same
+  path as the lab PC) has **torch 2.5.1+cu121, which cannot run on the 5060 Ti
+  (sm_120)**, and has no detectron2 or cine_reader.
+- The run sheet's lab-PC paths don't apply here: `PY=` the Detectron python,
+  `LACIE=D:`. C: has only ~55 GB free, and nothing in the batch writes there.
+
+### Code changes this session (uncommitted at the time of writing)
+
+- `selftest.py`: the Python gate is now **3.9** (nothing needs 3.10; the app ran
+  fully on 3.9). The conda warning fires only when `LAB_PYTHON` exists, i.e. on
+  the lab PC. The live-worker reader retries like `jobstate.read_json`, so it only
+  warns on reads that fail after the UI's retries (it had been flagging ~18
+  harmless Windows lock clashes per run).
+- `launch_app.py`: the play button now **probes its interpreter**: PySide6,
+  torch, detectron2, cine_reader, and that torch supports this GPU's arch. If the
+  probe fails, it re-launches under the first working one of `TAGUCHI_PYTHON`,
+  the Detectron env, or the lab Python 3.11. This was needed because Cursor's
+  default interpreter here is the unusable 3.11.
+- Tests: `test_selftest.py` (conda rule both ways; the runs check now fakes disk
+  space, because it failed on C:'s real 58 GB) and `test_launch_app.py` (probe
+  and candidate order). Both files pass.
+- **Not fixed: 17 Windows-only test failures**, all test-side: Qt `/` vs `\`
+  paths, `os.getpgid`, symlinks needing admin (`ScriptMutationTests`,
+  `make_sandbox`), `?` in a fake run name, and one GLR test. The self-test says
+  READY regardless.
+- `origin/Testing` has `04f0da8` (capture GUI live feed), which this PC has not
+  pulled.
+
+---
+
 ## 2026-10-05 (lab PC, later) — MASTER_LOG COLUMN BUG FIXED, SECOND TRIGGER BUTTON
 
 All in `src/gui/GUI_Clean.py`, **not committed yet**. The GUI must be restarted

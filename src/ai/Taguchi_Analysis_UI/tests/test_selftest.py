@@ -52,11 +52,22 @@ def test_nothing_missing_means_no_install_line():
         assert not any("pip install" in l for l in out)
 
 
-def test_a_conda_interpreter_on_windows_is_flagged(monkeypatch):
+def test_a_conda_interpreter_on_the_lab_pc_is_flagged(tmp_path, monkeypatch):
+    lab = tmp_path / "python.exe"
+    lab.write_text("")
+    monkeypatch.setattr(selftest, "LAB_PYTHON", lab)
     monkeypatch.setattr(selftest.platform, "system", lambda: "Windows")
     monkeypatch.setattr(selftest.sys, "executable", r"C:\Users\x\anaconda3\python.exe")
     r, out, _ = lines_of(selftest.check_python)
     assert r.warns and "SYSTEM Python 3.11" in "\n".join(out)
+
+
+def test_a_conda_interpreter_elsewhere_is_not_flagged(tmp_path, monkeypatch):
+    monkeypatch.setattr(selftest, "LAB_PYTHON", tmp_path / "no_such_python.exe")
+    monkeypatch.setattr(selftest.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(selftest.sys, "executable", r"C:\Users\x\anaconda3\envs\Detectron\python.exe")
+    r, out, _ = lines_of(selftest.check_python)
+    assert not r.warns and not r.fails
 
 
 def test_no_cuda_on_windows_is_a_failure_but_on_a_mac_only_a_warning(monkeypatch):
@@ -74,6 +85,8 @@ def test_the_runs_check_counts_what_is_left_and_the_disk_needed(tmp_path, monkey
     from src.ai.Taguchi_Analysis_UI.tests import fakes
     fakes.make_l9x3(tmp_path)
     day = tmp_path / "2026" / "10" / "05"
+    # The temp folder's real drive may be nearly full: give it plenty, then too little.
+    monkeypatch.setattr(selftest.shutil, "disk_usage", lambda p: type("U", (), {"free": 4e12})())
     r, out, _ = lines_of(selftest.check_runs, day, "cuda")
     text = "\n".join(out)
     assert "27 runs, 27 with one .cine, 0 already measured, 27 to do" in text

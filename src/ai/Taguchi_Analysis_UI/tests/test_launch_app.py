@@ -34,14 +34,25 @@ def test_the_package_folder_is_not_left_on_the_import_path(tmp_path):
     assert out[0] == "False" and Path(out[1]) == paths.REPO_ROOT
 
 
-def test_a_missing_torch_is_warned_about_with_the_fix(monkeypatch):
-    import builtins
-    real = builtins.__import__
+def test_the_probe_says_ok_or_why_not(tmp_path):
+    assert launch_app.probe(sys.executable).startswith(("OK", "missing ", "torch "))
+    assert launch_app.probe(tmp_path / "no_such_python.exe").startswith("could not start it")
 
-    def no_torch(name, *a, **k):
-        if name == "torch":
-            raise ImportError("no torch")
-        return real(name, *a, **k)
-    monkeypatch.setattr(builtins, "__import__", no_torch)
-    note = launch_app.interpreter_note()
-    assert "no torch" in note and "Select Interpreter" in note and "Python311" in note
+
+def test_a_bad_interpreter_restarts_with_the_first_candidate_that_works(tmp_path, monkeypatch):
+    bad, good = tmp_path / "bad.exe", tmp_path / "good.exe"
+    for p in (bad, good):
+        p.write_text("")
+    monkeypatch.delenv("TAGUCHI_PYTHON", raising=False)
+    monkeypatch.setattr(launch_app, "CANDIDATES", (tmp_path / "absent.exe", bad, good))
+    monkeypatch.setattr(launch_app, "probe", lambda p: "OK" if Path(p) == good else "missing detectron2")
+    assert launch_app.better_interpreter() == good
+    monkeypatch.setenv("TAGUCHI_PYTHON", str(bad))
+    monkeypatch.setattr(launch_app, "probe", lambda p: "OK")
+    assert launch_app.better_interpreter() == bad            # TAGUCHI_PYTHON is tried first
+
+
+def test_no_working_candidate_means_no_restart(tmp_path, monkeypatch):
+    monkeypatch.delenv("TAGUCHI_PYTHON", raising=False)
+    monkeypatch.setattr(launch_app, "CANDIDATES", (tmp_path / "absent.exe",))
+    assert launch_app.better_interpreter() is None

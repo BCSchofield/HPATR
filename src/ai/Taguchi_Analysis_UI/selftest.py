@@ -36,6 +36,9 @@ from pathlib import Path
 
 from . import paths
 
+# The lab PC's system Python, which holds its CUDA torch. Its presence is how the self-test knows it is on the lab PC.
+LAB_PYTHON = Path(r"C:\Users\55154111\AppData\Local\Programs\Python\Python311\python.exe")
+
 # (import name, pip name, version attribute, needed by, required?)
 PACKAGES = (
     ("PySide6", "PySide6", "__version__", "the app window", True),
@@ -95,11 +98,13 @@ class Report:
 def check_python(r: Report) -> None:
     r.head("1. Python (the batch runs every stage with THIS interpreter)")
     r.ok(f"{sys.executable}  (Python {platform.python_version()}, {platform.architecture()[0]})")
-    if sys.version_info < (3, 10):
-        r.fail("Python 3.10 or newer is needed", "use the system Python 3.11")
-    if platform.system() == "Windows" and ("conda" in sys.executable.lower()):
+    if sys.version_info < (3, 9):
+        r.fail("Python 3.9 or newer is needed", "use the system Python 3.11")
+    if platform.system() == "Windows" and "conda" in sys.executable.lower() and LAB_PYTHON.exists():
+        # Only on the lab PC, where torch lives in the system Python. On the home PC (RTX 5060 Ti) the
+        # Detectron conda env is the one with a Blackwell-capable torch and detectron2.
         r.warn("this is a conda interpreter; on the lab PC torch lives in the SYSTEM Python 3.11",
-               r"use C:\Users\55154111\AppData\Local\Programs\Python\Python311\python.exe")
+               f"use {LAB_PYTHON}")
 
 
 def check_packages(r: Report) -> dict:
@@ -265,20 +270,28 @@ def check_worker_live(r: Report) -> None:
     saved = {k: os.environ.get(k) for k in ("TAGUCHI_UI_SANDBOX_ROOT", "TAGUCHI_UI_CALIBRATION")}
     tmp = Path(tempfile.mkdtemp(prefix="taguchi_selftest_"))
     stop_reader = threading.Event()
-    reads = {"n": 0, "errors": 0}
+    reads = {"n": 0, "clashes": 0, "errors": 0}
 
     def reader(jd: Path) -> None:
-        """Read the job files the way the UI does, as fast as possible."""
+        """Read the job files the way the UI does (jobstate.read_json: 3 tries, 50 ms apart), as fast as
+        possible. On Windows a read can land while the worker swaps a file in and be briefly refused; those
+        clashes are counted, but only a read that still fails after the UI's retries is a problem."""
         while not stop_reader.is_set():
             for name in ("state.json", "heartbeat.json", "worker.lock"):
-                try:
-                    with open(jd / name, "rb") as f:
-                        f.read()
-                    reads["n"] += 1
-                except FileNotFoundError:
-                    pass
-                except OSError:
-                    reads["errors"] += 1
+                for attempt in range(3):
+                    try:
+                        with open(jd / name, "rb") as f:
+                            f.read()
+                        reads["n"] += 1
+                        break
+                    except FileNotFoundError:
+                        break
+                    except OSError:
+                        reads["clashes"] += 1
+                        if attempt == 2:
+                            reads["errors"] += 1
+                        else:
+                            time.sleep(0.05)
 
     worker = child = None
     try:
@@ -335,9 +348,12 @@ def check_worker_live(r: Report) -> None:
             r.fail(f"timings.csv has {max(0, len(rows) - 1)} rows, expected 2")
         stop_reader.set()
         if reads["errors"] == 0:
-            r.ok(f"job files read {reads['n']} times while the worker rewrote them: no failures")
+            clashes = (f" ({reads['clashes']} momentary lock clash(es), all cleared by the UI's retry)"
+                       if reads["clashes"] else "")
+            r.ok(f"job files read {reads['n']} times while the worker rewrote them: no failures{clashes}")
         else:
-            r.warn(f"{reads['errors']} of {reads['n']} reads of the job files failed (the UI retries these)")
+            r.warn(f"{reads['errors']} reads of the job files still failed after the UI's retries "
+                   f"({reads['n']} succeeded)")
         failed = [e for e in jobstate.EventTail(jd, from_start=True).poll() if e.get("k") == "error"]
         if failed:
             r.fail(f"the worker logged {len(failed)} error(s): {failed[0].get('detail')}")
