@@ -148,7 +148,15 @@ def det_crop(d):
 #          Also: tile-truncated detections excluded from classical's D32, to
 #          match measure_run -- they stay in the area union, where a union
 #          correctly reassembles an object split across a tile seam.
+#   2.2.0  2.1.0 plus the SHARPNESS RULE (opt-in, `--sharpness-rule`): an in-focus
+#          droplet >= 50 um is reclassified OUT OF FOCUS when its half-max mask
+#          is not round (fill_ratio < 0.85) or its extinction leaks past its own
+#          edge (extinction_conc < 0.60). Fitted on Ben's sharp/fuzzy eye labels
+#          (2026-10-02). It is a reclassification, never a deletion: counts, the
+#          sized area and the atomised numerator are untouched; only D32
+#          membership moves. Off, a run is 2.1.0 and bit-identical to before.
 SIZER_VERSION = "2.1.0"
+SIZER_VERSION_SHARPNESS = "2.2.0"
 SPLIT_UM = 40.0              # classical sizing acts at/above this diameter
 DILATE_PX = 5                # search region beyond the model mask
 CORE_MIN_PX = 3              # floor for the robust core, see droplet_core
@@ -240,8 +248,49 @@ def halfmax_area(T_pad, mask_pad, core_t, dilate_px=DILATE_PX):
     return area, area == int(mask_pad.sum()), comp
 
 
+# The sharpness rule, exactly as validated in "Classical Droplet Sizing
+# Testing/code/run_all_frames.py" + inspect_droplets.measure (2026-10-02): its
+# own split on the MODEL diameter, and its metrics on a half-max component grown
+# from the single darkest mask pixel -- NOT the sizer's robust core. The two
+# thresholds were fitted on that definition; computing them on the sizer's
+# component would quietly move them.
+SHARPNESS_SPLIT_UM = 50.0
+FILL_RATIO_MIN = 0.85        # below: not round (blobs, merged pairs)
+EXTINCTION_CONC_MIN = 0.60   # below: blurred, optical depth leaks past the edge
+
+
+def sizer_version(sharpness_rule: bool) -> str:
+    return SIZER_VERSION_SHARPNESS if sharpness_rule else SIZER_VERSION
+
+
+def sharpness_metrics(T_pad, m_pad, dilate_px=DILATE_PX):
+    """(fill_ratio, extinction_conc) for one droplet; NaN where undefined.
+
+    fill_ratio      = half-max area / area of its minimum enclosing circle
+    extinction_conc = sum(1-T) inside the half-max mask / sum(1-T) over the
+                      model mask dilated by `dilate_px` (the search region)
+    """
+    k = np.ones((2 * dilate_px + 1,) * 2, np.uint8)
+    search = cv2.dilate(m_pad.astype(np.uint8), k).astype(bool)
+    _, _, comp = halfmax_area(T_pad, m_pad, float(T_pad[m_pad].min()), dilate_px)
+    if comp is None:
+        return float("nan"), float("nan")
+    area = int(comp.sum())
+    ext_total = float((1.0 - T_pad)[search].sum())
+    conc = float((1.0 - T_pad)[comp].sum()) / ext_total if ext_total > 0 else float("nan")
+    fill = float("nan")
+    if area >= 4:
+        cnts, _ = cv2.findContours(comp.astype(np.uint8), cv2.RETR_EXTERNAL,
+                                   cv2.CHAIN_APPROX_SIMPLE)
+        if cnts:
+            _, r_enc = cv2.minEnclosingCircle(max(cnts, key=cv2.contourArea))
+            if r_enc > 0:
+                fill = area / (np.pi * r_enc ** 2)
+    return fill, conc
+
+
 def measure_droplet(T, d, focus_max, split_um=SPLIT_UM, core_estimator="robust",
-                    sizer=True, crop=None, want_mask=False):
+                    sizer=True, crop=None, want_mask=False, sharpness_rule=False):
     """Focus verdict and sized area for ONE droplet detection.
 
     Returns None for an empty mask, else a dict:
@@ -250,6 +299,7 @@ def measure_droplet(T, d, focus_max, split_um=SPLIT_UM, core_estimator="robust",
         method    str    -- halfmax | model_degenerate | model_below_split
                             | model_out_of_focus | model_no_sizer
         core_t    float
+        reclassified bool -- the sharpness rule moved it out of focus (2.2.0)
 
     NOTHING IS EVER DROPPED HERE. An out-of-focus droplet keeps its area and
     still counts toward the atomised fraction; only its SIZE is withheld from
@@ -287,8 +337,18 @@ def measure_droplet(T, d, focus_max, split_um=SPLIT_UM, core_estimator="robust",
             half_mask = comp
         else:
             method = "model_no_component"
+
+    # The sharpness rule only ever moves a droplet OUT of focus. Its sized area
+    # and half-max mask are kept, so the atomised numerator and every count are
+    # identical with the rule on or off; only D32 membership changes.
+    reclassified = False
+    if sharpness_rule and in_focus and equiv_um(float(d["area"])) >= SHARPNESS_SPLIT_UM:
+        fill, conc = sharpness_metrics(T_pad, m_pad)
+        if (np.isfinite(fill) and fill < FILL_RATIO_MIN) or \
+                (np.isfinite(conc) and conc < EXTINCTION_CONC_MIN):
+            in_focus, reclassified = False, True
     out = {"in_focus": in_focus, "area_px": area, "method": method,
-           "core_t": core_t}
+           "core_t": core_t, "reclassified": reclassified}
     if want_mask:
         # The half-max component, placed back at its frame offset. None when no
         # half-max measurement was made (out of focus, below the split, or no
@@ -545,6 +605,10 @@ def main():
                          "area, as before SIZER_VERSION 2.0.0")
     ap.add_argument("--focus-max", type=float, default=0.70,
                     help="must match extract_candidates.py")
+    ap.add_argument("--sharpness-rule", action="store_true",
+                    help="sizer 2.2.0: reclassify in-focus droplets >= 50 um as out of "
+                         "focus when not round (fill_ratio < 0.85) or blurred "
+                         "(extinction_conc < 0.60). Moves D32 only")
     ap.add_argument("--out-dir", type=Path, default=None,
                     help="default: <val-dir>/measurement_<thresh>")
     ap.add_argument("--images", nargs="?", const="all", default=None,
@@ -612,6 +676,7 @@ def main():
 
     rows = []
     methods = Counter()          # how each in-focus diameter was actually obtained
+    n_reclassified = 0           # moved out of focus by the sharpness rule (2.2.0)
     per_frame_focus_areas = {}   # for the run-level bootstrap over frames
     per_frame_atom_parts = {}
     per_frame_oof_areas = {}     # size distributions only, never D32
@@ -643,10 +708,12 @@ def main():
                 md = measure_droplet(T, d, args.focus_max, split_um=args.split_um,
                                      core_estimator=args.core_estimator,
                                      sizer=not args.no_sizer,
-                                     crop=(mb, bx, by, bh, bw))
+                                     crop=(mb, bx, by, bh, bw),
+                                     sharpness_rule=args.sharpness_rule)
                 if md is None:
                     continue
                 sharp = md["in_focus"]
+                n_reclassified += md["reclassified"]
                 # the SIZED area, not the model's, when the sizer ran
                 (focus_a if sharp else oof_a).append(md["area_px"])
                 methods[md["method"]] += 1
@@ -880,8 +947,10 @@ def main():
             # SIZING METHOD -- compare_runs.py guards on these. A run measured
             # with a different sizer_version is NOT comparable with one measured
             # before it, and without this field that difference is invisible.
-            "sizer_version": SIZER_VERSION,
+            "sizer_version": sizer_version(args.sharpness_rule),
             "sizer_enabled": not args.no_sizer,
+            "sharpness_rule": args.sharpness_rule,
+            "sharpness_reclassified": n_reclassified,
             "split_um": args.split_um,
             "core_estimator": args.core_estimator,
             "diameter_method_counts": dict(methods),

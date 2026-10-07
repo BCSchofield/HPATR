@@ -82,7 +82,7 @@ sys.path.insert(0, str(HERE))
 from pycocotools import mask as mask_util  # noqa: E402
 from measure_run import (  # noqa: E402
     det_crop, px_to_mm2, equiv_um, d32, annotate, ring_contours,
-    measure_droplet, SIZER_VERSION, SPLIT_UM,
+    measure_droplet, sizer_version, SPLIT_UM,
     DROPLET, UM_PER_PX, DROPLET_BIN_UM,
     GREEN, MAGENTA, ORANGE,
     PLOT_GREEN, PLOT_MAGENTA, PLOT_ORANGE,
@@ -246,7 +246,8 @@ def model_masks(dets, T, focus_max, args_ref=None):
                                  split_um=getattr(args_ref, "split_um", SPLIT_UM),
                                  core_estimator=getattr(args_ref, "core_estimator", "robust"),
                                  sizer=not getattr(args_ref, "no_sizer", False),
-                                 crop=(mb, bx, by, bh, bw), want_mask=True)
+                                 crop=(mb, bx, by, bh, bw), want_mask=True,
+                                 sharpness_rule=getattr(args_ref, "sharpness_rule", False))
             hm = md.get("mask") if md else None
             if hm is not None:
                 hx, hy = md["mask_xy"]
@@ -302,7 +303,8 @@ def measure_frame(T, dets, args):
         md = measure_droplet(T, d, args.focus_max,
                              split_um=getattr(args, "split_um", SPLIT_UM),
                              core_estimator=getattr(args, "core_estimator", "robust"),
-                             sizer=not getattr(args, "no_sizer", False))
+                             sizer=not getattr(args, "no_sizer", False),
+                             sharpness_rule=getattr(args, "sharpness_rule", False))
         if md is None:
             continue
         (focus_a if md["in_focus"] else oof_a).append(md["area_px"])
@@ -345,7 +347,8 @@ def draw_frame(view8, dets, T, unatom, row, args):
                              split_um=getattr(args, "split_um", SPLIT_UM),
                              core_estimator=getattr(args, "core_estimator", "robust"),
                              sizer=not getattr(args, "no_sizer", False),
-                             crop=(mb, bx, by, bh, bw))
+                             crop=(mb, bx, by, bh, bw),
+                             sharpness_rule=getattr(args, "sharpness_rule", False))
         sharp = bool(md["in_focus"]) if md else False
         full = np.zeros(canvas.shape[:2], np.uint8)
         full[by:by + bh, bx:bx + bw] = mb
@@ -380,6 +383,9 @@ def main():
     ap.add_argument("--classical-only", action="store_true",
                     help="leave out-of-focus filaments/blobs unmeasured too. For "
                          "comparison; biases the fraction up by ~1.6%%.")
+    ap.add_argument("--sharpness-rule", action="store_true",
+                    help="sizer 2.2.0, as measure_run.py --sharpness-rule: moves D32 "
+                         "membership and drawing colour only, never the atomised fraction")
     ap.add_argument("--focus-max", type=float, default=0.70,
                     help="droplet focus gate, as measure_run (default 0.70)")
     ap.add_argument("--droplet-ring", type=int, default=10,
@@ -542,7 +548,8 @@ def main():
             # its numerator is measured. Without this field a pre-2.1.0 and a
             # post-2.1.0 atomised % look identical and would be compared
             # silently -- a ~3% difference with nothing to flag it.
-            "sizer_version": SIZER_VERSION,
+            "sizer_version": sizer_version(args.sharpness_rule),
+            "sharpness_rule": args.sharpness_rule,
             "atomised_numerator_edge": "half-max where measured, model mask "
                                        "otherwise (out of focus or below split)",
             "classical_only": args.classical_only,
