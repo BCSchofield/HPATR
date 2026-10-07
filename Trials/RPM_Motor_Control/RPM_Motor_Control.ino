@@ -31,7 +31,7 @@
 // Select your stepper driver type
 TMC5160Stepper driver = TMC5160Stepper(CS_PIN, R_SENSE);
 
-constexpr uint32_t steps_per_mm = ((200 * 16) / 2) * 4.25; // ((200*16)/2)*4.25  (((Steps per rotation of motor * MicroSteps)/Lead of screw)*GearBox). = 13,600
+constexpr uint32_t steps_per_mm = ((200 * 16) / 2) * 4.25; // ((200*16)/2)*4.25  (((Steps per rotation of motor * MicroSteps)/Lead of screw)*GearBox). = 6,800
 const long MAX_TRAVEL_MM = 73; // Normal movement limit
 const long MAX_TRAVEL_STEPS = MAX_TRAVEL_MM * steps_per_mm;
 const long CLEAN_TRAVEL_MM = 78; // Cleaning absolute target

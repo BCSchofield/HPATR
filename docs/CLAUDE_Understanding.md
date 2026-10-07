@@ -20,7 +20,7 @@ Additionally, there is a **cone angle detection** subsystem (Cone_3) for measuri
 
 ### Hardware
 - **Phantom high-speed camera**: Records at up to 1000+ fps; controlled via `pyphantom` SDK. IP: `100.100.100.1`, typical config: 1000 fps, 500µs exposure, 640×480.
-- **Arduino Portenta H7** with **TMC5160 stepper driver**: Controls a motor (lead screw drive) and reads/sets pressure via a PWM/ADC interface to an **AliCat** pressure controller. Steps per mm = 13,600 (200 steps/rev × 16 microsteps / 2mm lead × 4.25 gearbox).
+- **Arduino Portenta H7** with **TMC5160 stepper driver**: Controls a motor (lead screw drive) and reads/sets pressure via a PWM/ADC interface to an **AliCat** pressure controller. Steps per mm = 6,800 (200 steps/rev × 16 microsteps / 2 mm lead × 4.25 gearbox; an older note said 13,600, an arithmetic slip).
 - **Pressure system**: 0–26.4 BAR range, 20–68% PWM duty cycle mapped to pressure, 12-bit PWM at 1 kHz.
 - **Optical switches**: Front and back limit switches on the motor rail for homing.
 - **LaCie external drive**: Primary storage for all captured data (videos, images, experiment logs).
@@ -136,7 +136,7 @@ Main CustomTkinter GUI (dark theme). Key components:
 
 ### 4.3 `src/gui/Pressure_Motor_Portenta.cpp`
 Arduino firmware for Portenta H7. Uses TMC5160 stepper (SPI) + AccelStepper. Key:
-- Steps per mm: `((200 × 16) / 2) × 4.25 = 13,600`
+- Steps per mm: `((200 × 16) / 2) × 4.25 = 6,800`
 - Pressure: 12-bit PWM on pin 13, ADC reading on A0; maps 0–26.4 BAR to 20–68% duty cycle via LLC (logic level converter: 3.3V ↔ 5V).
 - Homes on startup using front/back optical switches.
 - Serial commands: `SPEED:N;DIST:M` for motor movement, `PRESSURE:X` to set target, `PRESSURE_OFF` to disable.

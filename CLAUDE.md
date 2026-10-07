@@ -23,6 +23,8 @@ Never edit it.
 - `docs/TAGUCHI_ANALYSIS_UI_PLAN.md`: the app's design and per-phase build record.
 - `docs/TAGUCHI_WINDOWS_RUN_SHEET.md`: running a batch on Windows.
 - `docs/definitions.md`: definitions of every reported quantity.
+- `docs/IMAGING_PIPELINE_REFERENCE.md`: exactly how the imaging pipeline works, camera to report, with maths, constants, limitations and next steps.
+- `docs/DROPLET_MEASUREMENT_METHOD.md`: the plan for calibrated droplet sizing (reticle, DOF, shape classes).
 - `docs/VALIDATION_LABELLING_PROTOCOL.md`: how the hand-labelled frames are made.
 - `docs/CLAUDE_Understanding.md`: older whole-codebase notes (pre-dates the real-data pipeline).
 

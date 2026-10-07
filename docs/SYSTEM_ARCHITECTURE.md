@@ -499,9 +499,9 @@ SAVED (_experiment_saved=True)
 | Microstepping | 16× |
 | Lead screw pitch | 2 mm |
 | Gearbox ratio | 4.25× |
-| **Steps/mm** | **13,600 steps/mm** |
-| Acceleration | 1,000 mm/s² (= 13,600,000 steps/s²) |
-| Travel limit | 0–72.5 mm (0–986,000 steps) |
+| **Steps/mm** | **6,800 steps/mm** = (200 × 16) / 2 × 4.25 (`Pressure_Motor_Portenta.cpp:30`; an older note said 13,600, which is an arithmetic slip) |
+| Acceleration | 1,000 mm/s² (= 6,800,000 steps/s²) |
+| Travel limit | 0–72.5 mm = 0–493,000 steps. ⚠ The firmware checks against 986,000 steps (`:520`), which is 145 mm at 6,800 steps/mm; the GUI's own 72.5 mm limit (`MAX_MOTOR_MM`) is what currently protects the syringe |
 
 **Homing sequence:**
 1. Move toward back optical switch at −10,000 steps/s
@@ -538,7 +538,7 @@ PWM = (Duty% / 100) × 4095   (clamped 819–2785)
 ### 3.4 Key Firmware Variables
 
 ```cpp
-constexpr uint32_t steps_per_mm = 13600;
+constexpr uint32_t steps_per_mm = ((200 * 16) / 2) * 4.25;   // = 6800
 AccelStepper stepper(DRIVER, STEP_PIN, DIR_PIN);
 
 int  moveFinished = 1;          // 1 = idle, 0 = moving

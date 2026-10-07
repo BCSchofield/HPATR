@@ -9,6 +9,9 @@ Where a definition is pinned to code, the file and function are named. If this
 document and the code ever disagree, **the code is right and this is stale** —
 fix it here.
 
+**Partly stale (2026-10-07):** the current, exact step-by-step description of the pipeline is
+`IMAGING_PIPELINE_REFERENCE.md`; its §14 lists which statements below are out of date.
+
 Companion documents: `STATUS.md` (current operational state; history in
 `archive/HANDOFF_real_data_pipeline_LEGACY.md`) and
 `CLAUDE_Understanding.md` (codebase structure).

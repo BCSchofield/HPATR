@@ -1,6 +1,6 @@
 # STATUS — real-data droplet pipeline and Taguchi study
 
-**Last updated: 2026-10-07 (Mac, after the 9x3 analysis).** This is the live state of the work. Claude keeps it current
+**Last updated: 2026-10-07 (Mac, after the 2.1.0 vs 2.2.0 comparison).** This is the live state of the work. Claude keeps it current
 (see "How this file is maintained" at the bottom). History, evidence and full reasoning are in
 `docs/archive/HANDOFF_real_data_pipeline_LEGACY.md` (frozen 2026-10-07, newest section first).
 
@@ -33,8 +33,52 @@ process diagnosis or model-building for its own sake.
   steps at the RPM changes, not as a gradual drift, and within the 300 rpm block (1 h 40) it tracks
   gas only. So RPM is now the likeliest explanation, but only a randomised test can rule out
   mechanical drift.
-- Report provenance reads "0a75845 + uncommitted edits to the pipeline": those are the comment-only
-  path edits of 2026-10-07. Commit, then press Analyse again for a clean provenance line.
+- **Sizer 2.2.0 (sharpness rule) built and compared** (commit `7ebaa1a`, opt-in `--sharpness-rule`,
+  default OFF). All 27 re-measured with it; their 2.1.0 results were MOVED intact to
+  `<run>/shadowgraph/analysis/_sizer2.1.0/`, so the run folders now hold 2.2.0. Analysis:
+  `Taguchi/9x3 Taguchi Repeats (sizer 2.2.0)/` with `comparison_2.1.0_vs_2.2.0.md` and
+  `sharpness_review/` (old-vs-new frames, zoomed tiles, size-matched random sheets per gas flow).
+  - Atomised fraction identical (0 difference), as designed. D32 -31% (to 55-64 um), mean -18%,
+    median -12%, D90 -24%; droplets >= 100 um almost all moved out of focus.
+  - **The D32 factor picture flips:** 2.1.0 RPM 47.5% / gas 21%; 2.2.0 gas 70% / RPM 13% /
+    silicone 13%. Same for mean and D90.
+  - **That is the predicted warning sign.** The share moved rises with gas flow: 15.7 / 17.9 /
+    20.5% of in-focus droplets, and 36 / 42 / 53% of those >= 50 um, at 3000 / 6000 / 9000 sccm.
+    The rule removes more at higher gas, which manufactures much of the new gas effect on D32.
+  - Ben's review of the sheets (2026-10-07): the rule "looks like it's doing a decent job".
+  - **Gradient diagnosed (2026-10-07, read-only, 7,955 droplets >= 50 um, 10 frames/run):**
+    - Real at matched size: 50-60 um moved 16 / 22 / 29%, 60-70 um 23 / 36 / 41%; flat >= 100 um.
+    - **Not crowding:** neighbours in the search ring (5-7%) and merged components (3-4%) are rare
+      and don't rise with gas; removing neighbour pixels from extinction_conc changes nothing.
+    - **It is shape:** at matched size droplets are less round at higher gas (elongation >= 1.3:
+      17 / 28 / 32% at 50-70 um). Long axes are mostly randomly oriented, with a weak vertical
+      excess rising with gas (32 -> 37%), so motion blur is at most a minor part. Mainly
+      deformed, unrelaxed fragments: a real image property, so the rule is doing what it was built
+      to do.
+    - **But ~2/3 of the 2.2.0 gas effect on D32 is selection:** applying the 3000 sccm keep-rates
+      to every gas level, the 9000 - 3000 difference shrinks from -5.6 um to -1.8 um (2.1.0: -2.5).
+      2.2.0 D32 is "D32 of the round, sharp droplets", and that subset shrinks faster than the
+      population as gas rises.
+- **Spray pulsing (2026-10-07, read-only, per-frame series at stride 10 = 39 Hz, all 27 runs):**
+  - Strong **slow pulsing at 3000 sccm** (period ~3 s, ~0.35 Hz): 43% of droplet-count variance
+    below 2 Hz vs 13-16% at 6000 / 9000 (white noise ~10%); 28% vs ~10% for atomised fraction.
+    Tracks GLR (r = -0.7 with log GLR); strongest at T7 / T4 (GLR 0.14 / 0.19). RPM adds a
+    little (p = 0.004); silicone flow none for droplet count.
+  - Upstream pressure oscillates at ~0.2-0.6 Hz (CV 2-9%) in EVERY run while gas flow holds to
+    ~1%, but only the low-GLR spray follows it (droplets vs pressure r = 0.80 at T7, 0.33 at T6).
+    Origin of the pressure swing unknown (atomiser / liquid line); low-GLR sprays are sensitive to
+    it. Consistent with slug-like internal flow at low GLR; not proven.
+  - Written up in `Taguchi/9x3 Taguchi Repeats/pulsing/` (`pulsing_report.md`, two figures, CSVs,
+    the script); a summary section was appended to both 9x3 `taguchi_report.md` files (re-running
+    Analyse rewrites those and drops the section; the pulsing folder stays).
+  - No sign of the bubbler rotation frequency (5 / 10 / 15 Hz) in 0.1-19.5 Hz. Liquid area is very
+    bursty (CV > 1) but uncorrelated frame to frame: individual slugs pass in < 25 ms. Anything
+    above 19.5 Hz needs full-rate (390 fps) analysis of the cines.
+  - **Consequence:** stride-10 frames are NOT independent at low GLR (droplet-count lag-1 r = 0.62
+    at 3000 sccm, 0.29 at 6000, 0.18 at 9000; still ~0.15 at 410 ms at 3000). Per-run bootstrap CIs
+    (ci_stride 1) are too narrow there. The Taguchi ANOVA uses repeat scatter, so it is unaffected.
+- To analyse 2.1.0 again, the `_sizer2.1.0` folders must be moved back first (the app reads only
+  `droplets_0.30` / `liquid_0.30`).
 - Launch the app on the Mac:
   `cd /Users/benschofield/Documents/GitHub/HPATR && /Users/benschofield/anaconda3/envs/phantom/bin/python3 -m src.ai.Taguchi_Analysis_UI`
 
@@ -42,12 +86,10 @@ process diagnosis or model-building for its own sake.
 
 1. **RPM confirmation test** (Ben, lower urgency now): one gas/silicone setting, RPM alternated
    300/900/300/900... in one session (4-6 runs). Randomise run order in every future campaign.
-2. **2.2.0 comparison** (Ben's plan): implement the fill_ratio / extinction_conc reclassification
-   rule behind a flag with `SIZER_VERSION = "2.2.0"`, re-measure all 27 ("Re-measure only",
-   ~1 h), analyse into a **separate** output folder, compare D32 factor significance and ranking.
-   Only D32 can move. A gas-flow effect that appears only under the rule is suspect (the rule
-   tracks spray density). **Before re-measuring:** back up `droplets_0.30/` and `liquid_0.30/`
-   per run (~30 MB each; re-measure overwrites them in place) and expect stale extreme-frame PNGs.
+2. **Ben to decide the default** given the diagnosis: 2.2.0 D32 answers a narrower question
+   (round, sharp droplets) and its gas effect is ~2/3 selection. Options: keep 2.1.0 for D32 and
+   report 2.2.0 as a sensitivity; and/or add the moved share ("non-round or blurred fraction") as
+   its own response, since it rises cleanly with gas.
 3. **Fix the app bugs below before the next overnight batch** (1 and 2 at least).
 4. **Fold in the Windows timings**: `9x3 Taguchi Repeats/_job/eta_calibration.json` +
    `_job/timings.csv` -> replace `eta.PRIORS_BY_OS["Windows"]` in `eta.py` with measured
@@ -56,6 +98,17 @@ process diagnosis or model-building for its own sake.
    on the hub -> cable or drive).
 
 ## Open questions that block or bias results
+
+- **How the pipeline works, exactly:** `docs/IMAGING_PIPELINE_REFERENCE.md` (2026-10-07): camera to
+  report, maths, every constant, limitations, and the 16-step list to publication grade.
+- **Syringe steps/mm = 6800, confirmed in firmware** (`Pressure_Motor_Portenta.cpp:30`), matching
+  the GUI, so recorded liquid flows and GLRs stand. Older docs saying 13,600 were an arithmetic slip
+  (fixed 2026-10-07). **Firmware bug found:** the travel check allows 986,000 steps (= 145 mm, not
+  72.5 mm); the GUI's 72.5 mm limit is what currently protects the syringe. Not yet fixed/reflashed.
+- **Measurement method (longer term):** `docs/DROPLET_MEASUREMENT_METHOD.md` (2026-10-07) is the
+  plan to make sizes defensible: dot-reticle + glass-bead calibration of edge, focus and depth of
+  field, size-dependent DOF weighting, shape classification instead of rejection, volume-based
+  sizing, Dv50 beside D32. Not started; includes what to buy and how to run the calibration.
 
 - **RPM vs time of day** (see "Where we are"). Also worth knowing: whether the EcoFlex 00-30 was
   mixed (curing, so viscosity rises through its pot life) or a single part, and lab temperature.
