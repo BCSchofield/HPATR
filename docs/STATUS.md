@@ -82,6 +82,20 @@ process diagnosis or model-building for its own sake.
 - Launch the app on the Mac:
   `cd /Users/benschofield/Documents/GitHub/HPATR && /Users/benschofield/anaconda3/envs/phantom/bin/python3 -m src.ai.Taguchi_Analysis_UI`
 
+## Lab captures from 2026-10-08 (GUI changed)
+
+- **The GUI's AI chain now measures at sizer 2.2.0 and runs the classical liquid stage**, so each
+  capture finishes with `droplets_0.30/` + `liquid_0.30/` (both 2.2.0), ready for the app's
+  Analyse with "Use their existing results". The Extremes tab shows the classical renders (un-atomised
+  liquid filled orange) for the D32 and atomised extremes; the headline and master-log atomised
+  fraction are the classical one.
+- **Standard capture settings** (390 fps, 4 us, 2048x1152, 0 / 13 s, AI stride 10, AI on) are the GUI
+  defaults and are checked at Start Experiment.
+- These match the 10/05 run folders as they stand (2.2.0) and `9x3 Taguchi Repeats (sizer 2.2.0)/`.
+  **Do not "Re-measure" them in the app**: its batch still runs 2.1.0 and the analysis would then
+  refuse the mix. Making the app's batch 2.2.0 too is a small change, not done yet.
+- A new day is a new block: include 1-2 repeats of 10/05 conditions to measure the day offset.
+
 ## Next steps, in order
 
 1. **RPM confirmation test** (Ben, lower urgency now): one gas/silicone setting, RPM alternated

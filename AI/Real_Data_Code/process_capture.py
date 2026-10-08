@@ -191,7 +191,7 @@ def process_capture(cine: Path, run_dir: Path, *, stride=DEFAULT_STRIDE,
                     score_thresh=DEFAULT_SCORE_THRESH, device=None,
                     model_dir: Path = None, images="extremes", ci_stride=None,
                     bg_frames=BG_FRAMES, limit=None, reuse=False,
-                    log=print) -> dict:
+                    log=print, sharpness_rule=False) -> dict:
     """
     Run the whole chain. Returns measure_run's summary dict.
 
@@ -209,6 +209,10 @@ def process_capture(cine: Path, run_dir: Path, *, stride=DEFAULT_STRIDE,
 
     `log` takes one string; the GUI passes something that appends to its log
     panel, the CLI passes print.
+
+    `sharpness_rule=True` measures at sizer 2.2.0 (measure_run --sharpness-rule).
+    Off by default, so every other caller keeps 2.1.0. Pair it with
+    run_classical(..., sharpness_rule=True) or the two folders disagree.
     """
     if images is True:
         images = "all"
@@ -334,6 +338,8 @@ def process_capture(cine: Path, run_dir: Path, *, stride=DEFAULT_STRIDE,
         cmd += ["--images", images]
     if ci_stride:
         cmd += ["--ci-stride", ci_stride]
+    if sharpness_rule:
+        cmd += ["--sharpness-rule"]
     with _Stage("measurement"):
         _run(cmd, log)
 
@@ -376,6 +382,49 @@ def process_capture(cine: Path, run_dir: Path, *, stride=DEFAULT_STRIDE,
         log(f"  lowest-D32 frame  {ext['lowest']['frame']}  "
             f"({ext['lowest']['d32_um']} um)")
     return summary
+
+
+def run_classical(run_dir: Path, *, score_thresh=DEFAULT_SCORE_THRESH, images="extremes",
+                  sharpness_rule=False, ci_stride=1, n_boot=2000, log=print) -> dict:
+    """Stage 5: classical_liquid.py into liquid_<thr>/, invoked exactly as
+    batch_runs.py and the Taguchi app do (--root and --out-dir always passed).
+    Returns classical_summary.json plus `atomised_ci95`: a frame bootstrap of the
+    pooled classical fraction at `ci_stride`, the same arithmetic as the Taguchi
+    app's per-run CI. The GUI calls this after process_capture so a capture comes
+    out with both folders, ready for the app's Analyse."""
+    import csv
+    from measure_run import boot_ci
+
+    run_dir = Path(run_dir)
+    out_dir = run_dir / "shadowgraph" / "analysis" / f"liquid_{score_thresh:.2f}"
+    cmd = [sys.executable, "-W", "ignore", HERE / "classical_liquid.py",
+           "--root", run_dir, "--out-dir", out_dir, "--score-thresh", score_thresh]
+    if images:
+        cmd += ["--images-mode", images]
+    if sharpness_rule:
+        cmd += ["--sharpness-rule"]
+    log("\n=== classical liquid (atomised fraction) ===")
+    t0 = time.time()
+    _run(cmd, log)
+    cs = json.loads((out_dir / "classical_summary.json").read_text(encoding="utf-8"))
+
+    with open(out_dir / "classical_per_frame.csv", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    parts = {r["frame"]: (float(r["droplet_px"]), float(r["total_liquid_px"])) for r in rows}
+
+    def _atom(frames):
+        d = sum(parts[s][0] for s in frames)
+        t = sum(parts[s][1] for s in frames)
+        return 100.0 * d / t if t else float("nan")
+
+    stems = sorted(parts)[::max(1, int(ci_stride or 1))]
+    lo, hi = boot_ci(_atom, stems, n_boot) if len(stems) >= 2 else (float("nan"),) * 2
+    cs["atomised_ci95"] = [round(float(lo), 3), round(float(hi), 3)]
+    cs["_liquid_dir"] = str(out_dir)
+    cs["_seconds"] = round(time.time() - t0, 1)
+    log(f"  atomised fraction (classical) {cs['atomised_pct_pooled']} %   "
+        f"95% CI {cs['atomised_ci95']}   [{_fmt_dur(cs['_seconds'])}]")
+    return cs
 
 
 def next_trial_dir(base: Path) -> Path:

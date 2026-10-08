@@ -108,6 +108,20 @@ Example, T1 (3000 sccm, 4000 steps/s): 3000 × 1.145 / (11.39 × 1070) = 3435 / 
    densities, notes; sheet *Pressure*: `timestamps, pressures, flows_sccm, cam_start_1, cam_end_1`,
    ~4.6 Hz) and appends a row to `Experiments/Logs/master_log.xlsx`.
 
+6. **AI chain** (if "Run AI analysis" is ticked; `_run_ai_chain`): `process_capture(stride from the
+   AI-stride box, score 0.30, images "extremes", sharpness_rule=True)` then
+   `process_capture.run_classical(..., sharpness_rule=True)`. **Since 2026-10-08 the GUI measures at
+   sizer 2.2.0 and runs the classical stage**, so a capture comes out with `droplets_0.30/` and
+   `liquid_0.30/`, both 2.2.0, ready for the app's Analyse. The headline atomised fraction and the
+   master log's `Atomised (%)` are the classical figure (earlier rows hold the model-only one), and
+   the Extremes tab shows the classical renders (§7). The app's own batch still runs 2.1.0 unless
+   changed: do not "Re-measure" GUI-captured runs there.
+
+**Campaign standard capture** (`GUI_Clean.STANDARD_CAPTURE`, 2026-10-08): 390 fps, 4 µs,
+2048 × 1152, pre-trigger 0 s, post-trigger 13 s, AI stride 10, AI analysis on. These are the widget
+defaults, and **Start Experiment checks the screen against them** and offers "Use standard
+settings / Keep mine / Cancel" if anything differs.
+
 The `.cine` is the **only irreplaceable file**; everything in stages 1–7 can be regenerated from it.
 
 ---
@@ -379,8 +393,14 @@ pooled = 5000 / 70,000 = **7.14%**; the mean of the per-frame ratios would be 15
 the sparse frame. Run `090432` (T1) reads 7.412%.
 
 It also writes `classical_components.csv` (each un-atomised component's area, after removing
-components ≥ 50% covered by a detected droplet and ≤ 100 px across) and extreme-frame images
-(orange = un-atomised liquid, green/magenta droplet rings).
+components ≥ 50% covered by a detected droplet and ≤ 100 px across) and, in extremes mode, up to
+**4 extreme-frame images** in `extreme_images/`: the lowest/highest classical atomised fraction and
+(since 2026-10-08) the lowest/highest per-frame D32, picked by the same rule as `measure_run`
+(raw extremes among frames with an in-focus droplet, so the same frames). Rendering: un-atomised
+liquid filled orange, droplets ringed green (in focus) or magenta (out of focus, including droplets
+moved by the 2.2.0 rule). `classical_summary.json` records both `atomised_extreme_frames` (with
+droplet count, un-atomised px and pieces) and `d32_extreme_frames`. The raw lowest-D32 frame is
+often a sparse frame (e.g. 4 droplets): read the droplet count in the caption.
 
 This fraction is **projected area**, at one axial position, of an instantaneous snapshot (not
 volume, not flux): see §13.
@@ -392,6 +412,9 @@ volume, not flux): see §13.
 - `process_capture.process_capture()` runs stages 1–4 for one cine (subprocesses, so each stage's
   CLI is the only interface). `reuse=True` skips 1–3 when `can_reuse()` finds a complete analysis
   at the same stride made after the newest model weights.
+- `process_capture.run_classical()` runs Stage 5 exactly as the batch does (`--root`, `--out-dir`,
+  `--score-thresh`, `--images-mode`, optional `--sharpness-rule`) and adds a frame-bootstrap CI of the
+  pooled classical fraction at the run's `ci_stride`. The GUI uses it.
 - `batch_runs.py` loops runs: `process_capture` then `classical_liquid.py --images-mode extremes`.
 - **Taguchi_Analysis_UI** (`src/ai/Taguchi_Analysis_UI/`) is the production front end: a
   detached, resumable worker (`worker.py`) runs the same chain over a selection of runs and

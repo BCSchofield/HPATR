@@ -2743,13 +2743,14 @@ class AtomisationApp(QMainWindow):
         grid = QGridLayout(grid_w); grid.setSpacing(10)
 
         _W = 80  # uniform input width
-        self._cam_fps      = QLineEdit("1000"); self._cam_fps.setFixedWidth(_W)
-        self._cam_exp      = QLineEdit("500");  self._cam_exp.setFixedWidth(_W)
-        self._cam_exp_idx  = QLineEdit("0");    self._cam_exp_idx.setFixedWidth(_W)
-        self._cam_width    = QLineEdit("2560"); self._cam_width.setFixedWidth(_W)
-        self._cam_height   = QLineEdit("1600"); self._cam_height.setFixedWidth(_W)
-        self._cam_pre_s    = QLineEdit("0.5");  self._cam_pre_s.setFixedWidth(_W)
-        self._cam_post_s   = QLineEdit("0.5");  self._cam_post_s.setFixedWidth(_W)
+        _std = {k: v for k, _l, v in self.STANDARD_CAPTURE}
+        self._cam_fps      = QLineEdit(_std["fps"]);            self._cam_fps.setFixedWidth(_W)
+        self._cam_exp      = QLineEdit(_std["exposure_us"]);    self._cam_exp.setFixedWidth(_W)
+        self._cam_exp_idx  = QLineEdit("0");                    self._cam_exp_idx.setFixedWidth(_W)
+        self._cam_width    = QLineEdit(_std["width"]);          self._cam_width.setFixedWidth(_W)
+        self._cam_height   = QLineEdit(_std["height"]);         self._cam_height.setFixedWidth(_W)
+        self._cam_pre_s    = QLineEdit(_std["pre_trigger_s"]);  self._cam_pre_s.setFixedWidth(_W)
+        self._cam_post_s   = QLineEdit(_std["post_trigger_s"]); self._cam_post_s.setFixedWidth(_W)
 
         self._cam_fps.setValidator(QDoubleValidator(1.0, 100000.0, 0))
         self._cam_exp.setValidator(QDoubleValidator(1.0, 1000000.0, 0))
@@ -3369,8 +3370,8 @@ class AtomisationApp(QMainWindow):
          "The coarsest. The lowest/highest ratio is the frame-to-frame swing."),
         ("atomised_extreme_frames", "highest",
          "HIGHEST atomised fraction",
-         "Often degenerate: a frame with no filaments reads 100% by "
-         "construction. Check the filament count before believing it."),
+         "Often degenerate: a frame with no un-atomised liquid reads 100% by "
+         "construction. Check the un-atomised area before believing it."),
         ("atomised_extreme_frames", "lowest",
          "LOWEST atomised fraction",
          "Mostly unbroken liquid — threads and lamellae, little droplet area."),
@@ -3462,12 +3463,26 @@ class AtomisationApp(QMainWindow):
         return scroll
 
     def _update_extremes_tab(self, results: dict):
-        """Fill the Extremes tab from a finished measure_run summary."""
-        mdir = results.get("_measurement_dir")
+        """Fill the Extremes tab from a finished run.
+
+        Prefers the CLASSICAL pass (liquid_<thr>/extreme_images/): un-atomised
+        liquid filled orange, droplets ringed green (in focus) or magenta (out
+        of focus, including those the 2.2.0 sharpness rule moved), and its
+        extremes are picked from the quoted classical atomised fraction. Falls
+        back to measure_run's images for runs without a classical pass.
+        """
+        cls = results.get("_classical") or {}
+        cdir = cls.get("_liquid_dir")
+        if cdir and (cls.get("d32_extreme_frames") or cls.get("atomised_extreme_frames")):
+            src, img_dir = cls, os.path.join(cdir, "extreme_images")
+            source = "classical pass"
+        else:
+            src, img_dir = results, results.get("_measurement_dir")
+            source = "measure_run (no classical pass for this run)"
         found = 0
         for key, sub, _heading, _why in self.EXTREME_PANELS:
             cap, img, path_lbl = self._extreme_labels[(key, sub)]
-            ext = (results.get(key) or {}).get(sub) or {}
+            ext = (src.get(key) or {}).get(sub) or {}
             stem = ext.get("frame")
             if not stem:
                 cap.setText("– (not reported for this run)")
@@ -3478,16 +3493,26 @@ class AtomisationApp(QMainWindow):
             if "d32_um" in ext:
                 bits = [f"D32 {ext['d32_um']} µm",
                         f"{ext.get('droplets_in_focus', '?')} in-focus droplets"]
-            else:
-                fil = ext.get("filaments")
+                if "atomised_pct" in ext:
+                    bits.append(f"atomised {ext['atomised_pct']} %")
+            elif "unatomised_px" in ext:                       # classical entry
+                un_mm2 = ext["unatomised_px"] * 1e-4           # 10 um/px -> 1e-4 mm^2/px
                 bits = [f"atomised {ext['atomised_pct']} %",
+                        f"{ext.get('droplets', '?')} droplets",
+                        f"un-atomised liquid {un_mm2:.2f} mm² in "
+                        f"{ext.get('n_components', '?')} piece(s)"]
+                if ext["unatomised_px"] == 0:
+                    bits.append("⚠ no un-atomised liquid — 100% by construction")
+            else:                                              # measure_run entry
+                fil = ext.get("filaments")
+                bits = [f"atomised {ext['atomised_pct']} % (model-only)",
                         f"{ext.get('droplets', '?')} droplets",
                         f"{fil} filaments"]
                 if fil == 0:
                     bits.append("⚠ zero filaments — ratio is 1 by construction")
             cap.setText(f"{stem}   ·   " + "   ·   ".join(str(b) for b in bits))
 
-            path = os.path.join(mdir, f"{stem}.png") if mdir else None
+            path = os.path.join(img_dir, f"{stem}.png") if img_dir else None
             if path and os.path.exists(path):
                 pix = QPixmap(path)
                 if not pix.isNull():
@@ -3498,11 +3523,14 @@ class AtomisationApp(QMainWindow):
             img.clearImage(f"image not found: {path}")
             path_lbl.setText(path or "")
 
+        legend = ("orange = un-atomised liquid, green = in-focus droplet, magenta = out of "
+                  "focus" if source == "classical pass" else
+                  "green = in-focus droplet, magenta = out of focus")
         if found:
             self._extreme_hint.setText(
                 f"From {os.path.basename(results.get('_run_dir', '') or '')} — "
                 f"{results.get('_frames', '?')} frames at stride "
-                f"{results.get('_stride', '?')}. Shown at full resolution; scroll to pan.")
+                f"{results.get('_stride', '?')}. Images from the {source}: {legend}.")
         else:
             self._extreme_hint.setText(
                 "Run finished but no marked-up images were found — "
@@ -4547,6 +4575,26 @@ class AtomisationApp(QMainWindow):
     # properly by correlating frame n against n+k on a real capture.
     DECORRELATION_MS = 20.5
     DEFAULT_STRIDE = 10
+
+    # THE CAMPAIGN STANDARD (set 2026-10-08). Every Taguchi capture uses these so
+    # runs on different days are measured identically to the 2026-10-05 9x3.
+    # They are the widget defaults, and Start Experiment offers to restore them
+    # if anything on screen differs (see _check_standard_capture).
+    STANDARD_CAPTURE = (
+        # (settings key, label, value)
+        ("fps",            "Frame rate (fps)",   "390"),
+        ("exposure_us",    "Exposure (us)",      "4"),
+        ("width",          "Width (px)",         "2048"),
+        ("height",         "Height (px)",        "1152"),
+        ("pre_trigger_s",  "Pre-trigger (s)",    "0"),
+        ("post_trigger_s", "Post-trigger (s)",   "13"),
+        ("ai_stride",      "AI stride",          "10"),
+    )
+    # The AI chain measures at sizer 2.2.0 (the sharpness rule) and runs the
+    # classical liquid stage, so a capture comes out with droplets_0.30/ AND
+    # liquid_0.30/, both 2.2.0, ready for the Taguchi app's Analyse. The app's
+    # own batch still defaults to 2.1.0: do not "Re-measure" these runs there.
+    SHARPNESS_RULE = True
 
     # Inference cost scales with frame AREA, not frame count, so the estimate
     # has to know the resolution.  Measured 2026-09-28 on the RTX 4070 Ti SUPER
@@ -5722,8 +5770,15 @@ class AtomisationApp(QMainWindow):
 
         d32 = results.get("d32_in_focus_um")
         ci = results.get("d32_ci95") or [None, None]
-        atom = results.get("atomised_pct")
-        aci = results.get("atomised_ci95") or [None, None]
+        # The quoted atomised fraction is the CLASSICAL one. measure_run's
+        # model-only figure is shown only if the classical stage did not run.
+        cls = results.get("_classical") or {}
+        if cls.get("atomised_pct_pooled") is not None:
+            atom, aci, atom_src = (cls["atomised_pct_pooled"],
+                                   cls.get("atomised_ci95") or [None, None], "classical")
+        else:
+            atom, aci, atom_src = (results.get("atomised_pct"),
+                                   results.get("atomised_ci95") or [None, None], "model-only")
         n_focus = results.get("droplets_in_focus")
 
         # The two headline numbers carry the value only; both confidence
@@ -5732,7 +5787,7 @@ class AtomisationApp(QMainWindow):
         self._ai_diameter_lbl.setText(
             f"Run SMD: {d32:.1f} µm" if d32 is not None else "Run SMD: –")
         self._ai_dl_lbl.setText(
-            f"Atomised Fraction: {atom:.2f} %" if atom is not None
+            f"Atomised Fraction ({atom_src}): {atom:.2f} %" if atom is not None
             else "Atomised Fraction: –")
 
         # Line 1 — precision of the two run numbers.
@@ -5788,7 +5843,12 @@ class AtomisationApp(QMainWindow):
         self._ai_confidence_lbl.setText("\n".join(lines) if lines else "Confidence: –")
 
         self._log(f"  D32 {d32} µm   95% CI {ci}")
-        self._log(f"  atomised {atom} %   95% CI {aci}")
+        self._log(f"  atomised ({atom_src}) {atom} %   95% CI {aci}")
+        _sv = (results.get("provenance") or {}).get("sizer_version")
+        if _sv:
+            self._log(f"  sizer {_sv}")
+        if results.get("_classical_error"):
+            self._log(f"  ⚠ classical stage failed: {results['_classical_error']}")
 
         # Stage breakdown, so a slow run says WHICH stage was slow.
         stages = results.get("_stage_seconds") or {}
@@ -6047,7 +6107,22 @@ class AtomisationApp(QMainWindow):
                     log=_InferenceProgressFilter(
                         lambda s: self._log_queue.put(s + "\n"),
                         every=self.INFERENCE_LOG_EVERY),
+                    sharpness_rule=self.SHARPNESS_RULE,
                 )
+                # Stage 5, the classical liquid pass: the quoted atomised
+                # fraction and the extreme-frame images the Extremes tab shows.
+                # A failure here keeps the droplet results; it is reported, and
+                # the run can be finished later by the Taguchi app's batch.
+                try:
+                    from process_capture import run_classical
+                    ci_stride = (summary.get("provenance") or {}).get("ci_stride") or 1
+                    summary["_classical"] = run_classical(
+                        target, score_thresh=0.30, images=images,
+                        sharpness_rule=self.SHARPNESS_RULE, ci_stride=ci_stride,
+                        log=lambda s: self._log_queue.put(s + "\n"))
+                except Exception as e:
+                    summary["_classical_error"] = str(e)
+                    self._log_queue.put(f"classical liquid stage FAILED: {e}\n")
                 summary["_save_to_log"] = save_to_log
                 self._log_queue.put(
                     f"── AI chain finished in {self._fmt_eta(time.time() - _t_chain)} ──\n")
@@ -6883,8 +6958,64 @@ class AtomisationApp(QMainWindow):
     # Logic — Experiment
     # ─────────────────────────────────────────────────────────────────────────
 
+    def _standard_capture_diffs(self):
+        """[(label, on screen, standard)] for every capture field that differs from
+        STANDARD_CAPTURE, plus the AI-analysis box if it is off."""
+        fields = {"fps": self._cam_fps, "exposure_us": self._cam_exp,
+                  "width": self._cam_width, "height": self._cam_height,
+                  "pre_trigger_s": self._cam_pre_s, "post_trigger_s": self._cam_post_s,
+                  "ai_stride": self._ai_stride}
+        diffs = []
+        for key, label, std in self.STANDARD_CAPTURE:
+            cur = fields[key].text().strip()
+            try:
+                same = abs(float(cur) - float(std)) < 1e-9
+            except ValueError:
+                same = False
+            if not same:
+                diffs.append((label, cur or "(blank)", std))
+        if not self._pipeline_check.isChecked():
+            diffs.append(("Run AI analysis", "off", "on"))
+        return diffs
+
+    def _check_standard_capture(self) -> bool:
+        """Before a run: offer to restore the campaign standard if anything differs.
+        Returns False only if the user cancels the run."""
+        diffs = self._standard_capture_diffs()
+        if not diffs:
+            return True
+        lines = "\n".join(f"  • {label}: {cur}  (standard {std})" for label, cur, std in diffs)
+        dlg = QMessageBox(self)
+        dlg.setWindowTitle("Capture settings differ from the standard")
+        dlg.setText("These settings differ from the Taguchi campaign standard:\n\n"
+                    f"{lines}\n\n"
+                    "Runs captured differently are not directly comparable with the "
+                    "2026-10-05 campaign.")
+        dlg.setIcon(QMessageBox.Icon.Warning)
+        use_btn  = dlg.addButton("Use standard settings", QMessageBox.ButtonRole.AcceptRole)
+        keep_btn = dlg.addButton("Keep mine", QMessageBox.ButtonRole.DestructiveRole)
+        dlg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        dlg.exec()
+        clicked = dlg.clickedButton()
+        if clicked == use_btn:
+            fields = {"fps": self._cam_fps, "exposure_us": self._cam_exp,
+                      "width": self._cam_width, "height": self._cam_height,
+                      "pre_trigger_s": self._cam_pre_s, "post_trigger_s": self._cam_post_s,
+                      "ai_stride": self._ai_stride}
+            for key, _label, std in self.STANDARD_CAPTURE:
+                fields[key].setText(std)
+            self._pipeline_check.setChecked(True)
+            if self.phantom:
+                self._cam_configure()          # push to the camera; also saves settings
+            else:
+                self._save_camera_settings()
+            self._log("Capture settings reset to the campaign standard.")
+            return True
+        return clicked == keep_btn
+
     def _start_experiment(self):
         if not self._require_arduino(): return
+        if not self._check_standard_capture(): return
 
         # Warn if previous experiment data hasn't been saved yet
         if not self._experiment_saved and self.pressure_data['experiment_data']['timestamps']:
@@ -7017,6 +7148,20 @@ class AtomisationApp(QMainWindow):
         analysis = os.path.join(run_dir, "shadowgraph", "analysis")
         if not os.path.isdir(analysis):
             return None
+        # The classical pass's rendering first (un-atomised liquid filled), from
+        # its own summary; then measure_run's, for runs without a classical pass.
+        for ldir in sorted(_g.glob(os.path.join(analysis, "liquid_*")),
+                           key=os.path.getmtime, reverse=True):
+            try:
+                with open(os.path.join(ldir, "classical_summary.json"), encoding="utf-8") as fh:
+                    stem = (((json.load(fh).get("d32_extreme_frames") or {})
+                             .get("lowest") or {}).get("frame"))
+            except (OSError, ValueError):
+                continue
+            if stem:
+                f = os.path.join(ldir, "extreme_images", f"{stem}.png")
+                if os.path.exists(f):
+                    return f
         # droplets_* is the current name; measurement_* is what every run
         # measured before 2026-10-05 is called. Both are searched so older runs
         # still open in the GUI.
@@ -7204,7 +7349,10 @@ class AtomisationApp(QMainWindow):
         # never a stale value from a previous run (cleared at run start).
         _ai = job['ai']
         d32_val  = _ai.get('d32_in_focus_um', '')
-        atom_val = _ai.get('atomised_pct', '')
+        # Classical (the quoted figure) since 2026-10-08; earlier rows hold
+        # measure_run's model-only fraction.
+        atom_val = (_ai.get('_classical') or {}).get('atomised_pct_pooled',
+                                                      _ai.get('atomised_pct', ''))
 
         snap = job['snap']
         camera_windows = snap.get('camera_windows', [])
@@ -7703,12 +7851,13 @@ class AtomisationApp(QMainWindow):
             with open(self._settings_path()) as f:
                 s = json.load(f)
             self._cam_ip.setText(s.get("ip", "100.100.100.1"))
-            self._cam_fps.setText(str(s.get("fps", "1000")))
-            self._cam_exp.setText(str(s.get("exposure_us", "500")))
-            self._cam_width.setText(str(s.get("width", "640")))
-            self._cam_height.setText(str(s.get("height", "480")))
-            self._cam_pre_s.setText(str(s.get("pre_trigger_s", "0.5")))
-            self._cam_post_s.setText(str(s.get("post_trigger_s", "0.5")))
+            _std = {k: v for k, _l, v in self.STANDARD_CAPTURE}
+            self._cam_fps.setText(str(s.get("fps", _std["fps"])))
+            self._cam_exp.setText(str(s.get("exposure_us", _std["exposure_us"])))
+            self._cam_width.setText(str(s.get("width", _std["width"])))
+            self._cam_height.setText(str(s.get("height", _std["height"])))
+            self._cam_pre_s.setText(str(s.get("pre_trigger_s", _std["pre_trigger_s"])))
+            self._cam_post_s.setText(str(s.get("post_trigger_s", _std["post_trigger_s"])))
             # Restore both save-format boxes with signals blocked, then repair the
             # pair in case the file somehow holds "neither".
             _saved_cine  = bool(s.get("save_video", True))
@@ -7721,7 +7870,7 @@ class AtomisationApp(QMainWindow):
                 self._cam_save_tiffs_chk.setChecked(_saved_tiffs)
             finally:
                 self._save_fmt_guard = False
-            self._pipeline_check.setChecked(bool(s.get("run_ai_analysis", False)))
+            self._pipeline_check.setChecked(bool(s.get("run_ai_analysis", True)))
             self._ai_stride.setText(str(s.get("ai_stride", self.DEFAULT_STRIDE)))
             if hasattr(self, "_rho_liquid_entry"):
                 self._rho_liquid_entry.setText(

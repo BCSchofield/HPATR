@@ -19,7 +19,8 @@ Every fact below was checked against the source, not the docstrings. Two
 docstrings in the pipeline were found to be stale while writing this:
 process_capture.py's header still says `measurement_<thr>` (the code writes
 `droplets_<thr>`, line 326), and classical_liquid.py's --images-mode help
-says extremes draws "4 frames" (the code draws 1-2, line 487).
+said extremes draws "4 frames" when the code drew 1-2 (both now say up to 4:
+atomised and D32 extremes, since 2026-10-08).
 
 stdout TEXT is deliberately NOT part of this contract. Progress parsing is
 best-effort: a format change degrades a progress bar, it never fails a run.
@@ -279,12 +280,13 @@ OUTPUTS = (
            f"{_AN}/{{clas}}/classical_components.csv", "run", "classical", True),
     Output("clas_hist", "size_histograms.png", f"{_AN}/{{clas}}/size_histograms.png", "run",
            "classical", True, note="always written"),
-    # classical_liquid.py:438/487 -- extreme_images/ holds atomised lo/hi from
-    # the CLASSICAL fraction (the one quoted): 2 PNGs, 1 if the same frame.
+    # classical_liquid.py -- extreme_images/ holds the atomised lo/hi from the
+    # CLASSICAL fraction (the one quoted) and, since 2026-10-08, the D32 lo/hi
+    # drawn the classical way: up to 4 PNGs, fewer when frames coincide.
     Output("clas_extremes", "extreme_images/*.png",
            f"{_AN}/{{clas}}/extreme_images/*.png", "run", "classical", True,
-           kind="glob", count="1-2", only_when=("images", ("extremes",)),
-           note="1-2 PNGs: classical atomised extremes (replaced by images/ if 'every frame' is ticked)"),
+           kind="glob", count="1-4", only_when=("images", ("extremes",)),
+           note="1-4 PNGs: classical atomised + D32 extremes (replaced by images/ if 'every frame' is ticked)"),
     Output("clas_all", "images/*.png  EVERY frame",
            f"{_AN}/{{clas}}/images/*.png", "run", "classical", False, default_on=False,
            kind="glob", count="n_frames", option="images", option_value="all",

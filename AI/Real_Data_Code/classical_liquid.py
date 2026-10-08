@@ -391,11 +391,11 @@ def main():
     ap.add_argument("--droplet-ring", type=int, default=10,
                     help="draw droplets as a ring of this radius, as measure_run")
     ap.add_argument("--images-mode", choices=["extremes", "all"], default=None,
-                    help="'extremes' draws only the 4 frames at the atomised "
+                    help="'extremes' draws only the extreme frames: atomised "
                          "min/max (chosen from THIS pass's atomised %%, which is "
                          "the real one -- measure_run picks its extremes from the "
-                         "model-only figure); 'all' draws every frame. Implies "
-                         "--images.")
+                         "model-only figure) and D32 min/max, up to 4 PNGs; 'all' "
+                         "draws every frame. Implies --images.")
     ap.add_argument("--images", action="store_true",
                     help="write a marked-up full-res PNG per frame")
     ap.add_argument("--limit", type=int, default=None, help="first N frames only")
@@ -483,29 +483,56 @@ def main():
     # "atomised_extreme_frames", but it picks them from its MODEL-ONLY atomised
     # figure (reference only, never reported), not from the classical fraction
     # that is actually quoted. The two can disagree.
-    _val = [(r["frame"], r["atomised_pct"]) for r in rows
-            if r.get("atomised_pct") == r.get("atomised_pct")]   # drop NaN
-    extremes = None
-    if _val:
-        _val.sort(key=lambda z: z[1])
-        extremes = {"lowest": {"frame": _val[0][0], "atomised_pct": round(_val[0][1], 3)},
-                    "highest": {"frame": _val[-1][0], "atomised_pct": round(_val[-1][1], 3)}}
-        if draw_extremes:
-            for stem in {_val[0][0], _val[-1][0]}:
-                if stem not in held:
-                    continue
-                dets_e, unatom_e, row_e = held[stem]
-                view8 = cv2.imread(str(raw / "frames" / "8bit" / f"{stem}.png"),
-                                   cv2.IMREAD_UNCHANGED)
-                if view8 is None:
-                    continue
-                raw16 = cv2.imread(str(raw / "frames" / "16bit" / f"{stem}.tiff"),
-                                   cv2.IMREAD_UNCHANGED)
-                T_e = raw16.astype(np.float32) / np.maximum(bg, 1.0)
-                cv2.imwrite(str(img_dir / f"{stem}.png"),
-                            draw_frame(view8, dets_e, T_e, unatom_e, row_e, args))
-            print(f"  extreme images: {_val[0][0]} (lowest {_val[0][1]:.2f}%), "
-                  f"{_val[-1][0]} (highest {_val[-1][1]:.2f}%)")
+    #
+    # The D32 extremes are drawn here too (added 2026-10-08), so every extreme
+    # frame the GUI shows is rendered the classical way: un-atomised liquid
+    # filled orange, droplets ringed. They are picked by the same rule as
+    # measure_run (raw lowest / highest per-frame D32 among frames with an
+    # in-focus droplet), and this pass's per-frame D32 comes from the same
+    # shared measure_droplet, so they are the same frames.
+    def _atom_entry(r):
+        return {"frame": r["frame"], "atomised_pct": round(r["atomised_pct"], 3),
+                "droplets": r["droplets_in_focus"] + r["droplets_out_of_focus"],
+                "unatomised_px": r["unatomised_px"], "n_components": r["n_components"]}
+
+    def _d32_entry(r):
+        return {"frame": r["frame"], "d32_um": r["d32_in_focus_um"],
+                "droplets_in_focus": r["droplets_in_focus"],
+                "atomised_pct": round(r["atomised_pct"], 3)}
+
+    by_atom = sorted((r for r in rows if r.get("atomised_pct") == r.get("atomised_pct")),
+                     key=lambda r: r["atomised_pct"])                 # drop NaN
+    by_d32 = sorted((r for r in rows if r["droplets_in_focus"] > 0
+                     and r["d32_in_focus_um"] == r["d32_in_focus_um"]),
+                    key=lambda r: r["d32_in_focus_um"])
+    extremes = ({"lowest": _atom_entry(by_atom[0]), "highest": _atom_entry(by_atom[-1])}
+                if by_atom else None)
+    d32_extremes = ({"lowest": _d32_entry(by_d32[0]), "highest": _d32_entry(by_d32[-1])}
+                    if len(by_d32) >= 2 else None)
+    if draw_extremes:
+        to_draw = {e["frame"] for grp in (extremes, d32_extremes) if grp
+                   for e in (grp["lowest"], grp["highest"])}
+        for stem in sorted(to_draw):
+            if stem not in held:
+                continue
+            dets_e, unatom_e, row_e = held[stem]
+            view8 = cv2.imread(str(raw / "frames" / "8bit" / f"{stem}.png"),
+                               cv2.IMREAD_UNCHANGED)
+            if view8 is None:
+                continue
+            raw16 = cv2.imread(str(raw / "frames" / "16bit" / f"{stem}.tiff"),
+                               cv2.IMREAD_UNCHANGED)
+            T_e = raw16.astype(np.float32) / np.maximum(bg, 1.0)
+            cv2.imwrite(str(img_dir / f"{stem}.png"),
+                        draw_frame(view8, dets_e, T_e, unatom_e, row_e, args))
+        if extremes:
+            print(f"  atomised extremes: {extremes['lowest']['frame']} "
+                  f"(lowest {extremes['lowest']['atomised_pct']:.2f}%), "
+                  f"{extremes['highest']['frame']} (highest {extremes['highest']['atomised_pct']:.2f}%)")
+        if d32_extremes:
+            print(f"  D32 extremes: {d32_extremes['lowest']['frame']} "
+                  f"(lowest {d32_extremes['lowest']['d32_um']} um), "
+                  f"{d32_extremes['highest']['frame']} (highest {d32_extremes['highest']['d32_um']} um)")
 
     # POOLED, not averaged. The atomised fraction is a ratio of areas, so every
     # pixel in the run goes into one sum -- averaging per-frame percentages
@@ -577,6 +604,7 @@ def main():
         "droplet_px": int(drp),
         "unatomised_px": int(tot - drp),
         "atomised_extreme_frames": extremes,
+        "d32_extreme_frames": d32_extremes,
         "n_components": len(areas),
         "component_area_px": {
             "mean": round(float(areas.mean()), 1) if areas.size else None,
