@@ -57,7 +57,7 @@ class Stub:
     # ---- process_capture.process_capture -------------------------------------------
     def process_capture(self, cine, run_dir, *, stride=10, score_thresh=0.30, device=None,
                         model_dir=None, images="extremes", ci_stride=None, bg_frames=40,
-                        limit=None, reuse=False, log=print) -> dict:
+                        limit=None, reuse=False, log=print, sharpness_rule=False) -> dict:
         run_dir = Path(run_dir)
         check_sandbox(run_dir)
         name = run_dir.name
@@ -143,7 +143,8 @@ class Stub:
         for s in drawn:
             self._touch(out / f"{s}.png", "meas_all" if images == "all" else "meas_extremes", omit)
         summary = {"d32_in_focus_um": 90.0, "d32_ci95": [88.0, 92.0], "atomised_pct": 8.0,
-                   "atomised_ci95": [7.0, 9.0], "provenance": {"sizer_version": "2.1.0", "stub": True}}
+                   "atomised_ci95": [7.0, 9.0],
+                   "provenance": {"sizer_version": "2.2.0" if sharpness_rule else "2.1.0", "stub": True}}
         if "meas_summary" not in omit:
             (out / "summary.json").write_text(json.dumps(summary))
         stage_s["measurement"] = round(time.time() - t, 3)

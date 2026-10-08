@@ -137,18 +137,19 @@ def test_a_run_measured_under_the_legacy_folder_names_is_remeasured_alongside(tm
     an = run / "shadowgraph" / "analysis"
     assert (an / "droplets_0.30").is_dir() and (an / "measurement_0.30").is_dir()   # old kept
     after = rd.load_run_info(run).analysis
-    assert after.measured and not after.legacy_names and after.sizer_version == "2.1.0"
-    assert after.label == "measured v2.1.0"          # readers now prefer the new folders
+    # the batch measures at 2.2.0 (sharpness rule) by default since 2026-10-08
+    assert after.measured and not after.legacy_names and after.sizer_version == "2.2.0"
+    assert after.label == "measured v2.2.0"          # readers now prefer the new folders
 
 
 def test_the_left_pane_would_flag_a_mix_of_old_and_new_results(tmp, monkeypatch):
     old = fakes.make_run(tmp, fakes.REAL_10_05[0][0], analysis="legacy", sizer_version=None)
-    new = fakes.make_run(tmp, fakes.REAL_10_05[1][0], analysis="current", sizer_version="2.1.0")
+    new = fakes.make_run(tmp, fakes.REAL_10_05[1][0], analysis="current", sizer_version="2.2.0")
     runs = [rd.load_run_info(old), rd.load_run_info(new)]
-    assert rd.sizer_versions(runs) == {"pre-2.0.0", "2.1.0"}
+    assert rd.sizer_versions(runs) == {"pre-2.0.0", "2.2.0"}
     batch(tmp, monkeypatch, [old])                    # re-analyse only the old one
     runs = [rd.load_run_info(old), rd.load_run_info(new)]
-    assert rd.sizer_versions(runs) == {"2.1.0"}       # the mix is resolved
+    assert rd.sizer_versions(runs) == {"2.2.0"}       # the mix is resolved (batch default 2.2.0)
 
 
 def test_a_stale_extraction_is_not_reused_when_the_stride_differs(tmp, monkeypatch):

@@ -99,7 +99,7 @@ class ScriptCall:
 PROCESS_CAPTURE = ImportCall(
     "process_capture", "process_capture",
     ("cine", "run_dir", "stride", "score_thresh", "device", "model_dir",
-     "images", "ci_stride", "bg_frames", "limit", "reuse", "log"),
+     "images", "ci_stride", "bg_frames", "limit", "reuse", "log", "sharpness_rule"),
 )
 
 # Stage 5. Invoked exactly as the canonical caller does (batch_runs.py:87-96).
@@ -109,7 +109,7 @@ PROCESS_CAPTURE = ImportCall(
 # and tests/test_pipeline_spec.py asserts it.
 CLASSICAL = ScriptCall(
     "classical_liquid.py",
-    ("--root", "--out-dir", "--score-thresh", "--images-mode"),
+    ("--root", "--out-dir", "--score-thresh", "--images-mode", "--sharpness-rule"),
     (("--images-mode", ("extremes", "all")),),
 )
 
@@ -377,6 +377,10 @@ class RunSettings:
     bg_frames: int | None = None
     limit: int | None = None
     reuse: bool = False
+    # Sizer 2.2.0 (the sharpness rule) for BOTH the measurement and the classical
+    # stage. On by default since 2026-10-08, matching the capture GUI, so runs
+    # measured here and runs measured in the lab are one sizer version.
+    sharpness_rule: bool = True
 
 
 def rdc_module(name: str):
@@ -434,6 +438,7 @@ def process_capture_kwargs(run_dir: Path, settings: RunSettings, options: dict[s
         "images": options.get("images"),
         "reuse": s.reuse,
         "log": log,
+        "sharpness_rule": s.sharpness_rule,
     }
     for key in ("device", "model_dir", "ci_stride", "bg_frames", "limit"):
         value = getattr(s, key)
@@ -455,6 +460,8 @@ def classical_cmd(run_dir: Path, settings: RunSettings, options: dict[str, Any])
     images = options.get("images")
     if images:
         cmd += ["--images-mode", images]
+    if s.sharpness_rule:
+        cmd += ["--sharpness-rule"]
     _check_declared((c for c in cmd if c.startswith("--")), CLASSICAL.flags, "classical_cmd")
     return cmd
 

@@ -137,7 +137,7 @@ class ImportMutationTests(unittest.TestCase):
     def test_matching_signature_passes(self):
         def process_capture(cine, run_dir, *, stride=10, score_thresh=0.3, device=None,
                             model_dir=None, images="extremes", ci_stride=None, bg_frames=40,
-                            limit=None, reuse=False, log=print):
+                            limit=None, reuse=False, log=print, sharpness_rule=False):
             pass
         problems, ok = spec.check_import(spec.PROCESS_CAPTURE, self._mod(process_capture))
         self.assertEqual(problems, [])

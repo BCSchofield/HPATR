@@ -99,6 +99,9 @@ def _settings_dict(settings: spec.RunSettings) -> dict:
 
 def settings_from(d: dict) -> spec.RunSettings:
     d = dict(d or {})
+    # A job written before the sharpness rule existed was measured at 2.1.0:
+    # resuming it must stay 2.1.0, or its runs would straddle two sizer versions.
+    d.setdefault("sharpness_rule", False)
     if d.get("model_dir"):
         d["model_dir"] = Path(d["model_dir"])
     return spec.RunSettings(**d)

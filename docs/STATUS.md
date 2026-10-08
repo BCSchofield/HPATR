@@ -92,8 +92,10 @@ process diagnosis or model-building for its own sake.
 - **Standard capture settings** (390 fps, 4 us, 2048x1152, 0 / 13 s, AI stride 10, AI on) are the GUI
   defaults and are checked at Start Experiment.
 - These match the 10/05 run folders as they stand (2.2.0) and `9x3 Taguchi Repeats (sizer 2.2.0)/`.
-  **Do not "Re-measure" them in the app**: its batch still runs 2.1.0 and the analysis would then
-  refuse the mix. Making the app's batch 2.2.0 too is a small change, not done yet.
+- **The Taguchi app's batch also measures at 2.2.0 by default now** (`RunSettings.sharpness_rule`,
+  passed to both stages; a job saved before 2026-10-08 resumes at 2.1.0). So GUI captures and app
+  batches agree. **2.2.0 is now the project default everywhere except a bare `measure_run.py` /
+  `classical_liquid.py` / `process_capture.py` call**, whose own CLI default is still 2.1.0.
 - A new day is a new block: include 1-2 repeats of 10/05 conditions to measure the day offset.
 
 ## Next steps, in order

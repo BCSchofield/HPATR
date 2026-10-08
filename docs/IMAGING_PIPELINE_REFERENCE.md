@@ -114,8 +114,8 @@ Example, T1 (3000 sccm, 4000 steps/s): 3000 × 1.145 / (11.39 × 1070) = 3435 / 
    sizer 2.2.0 and runs the classical stage**, so a capture comes out with `droplets_0.30/` and
    `liquid_0.30/`, both 2.2.0, ready for the app's Analyse. The headline atomised fraction and the
    master log's `Atomised (%)` are the classical figure (earlier rows hold the model-only one), and
-   the Extremes tab shows the classical renders (§7). The app's own batch still runs 2.1.0 unless
-   changed: do not "Re-measure" GUI-captured runs there.
+   the Extremes tab shows the classical renders (§7). The Taguchi app's batch also defaults to
+   2.2.0 (`RunSettings.sharpness_rule = True`), so the two agree.
 
 **Campaign standard capture** (`GUI_Clean.STANDARD_CAPTURE`, 2026-10-08): 390 fps, 4 µs,
 2048 × 1152, pre-trigger 0 s, post-trigger 13 s, AI stride 10, AI analysis on. These are the widget
@@ -416,6 +416,10 @@ volume, not flux): see §13.
   `--score-thresh`, `--images-mode`, optional `--sharpness-rule`) and adds a frame-bootstrap CI of the
   pooled classical fraction at the run's `ci_stride`. The GUI uses it.
 - `batch_runs.py` loops runs: `process_capture` then `classical_liquid.py --images-mode extremes`.
+- **Sizer version by entry point (2026-10-08):** the capture GUI and the Taguchi app's batch run
+  **2.2.0**; the command-line scripts (`measure_run.py`, `classical_liquid.py`,
+  `process_capture.py`, `batch_runs.py`) default to 2.1.0 unless given `--sharpness-rule` /
+  `sharpness_rule=True`.
 - **Taguchi_Analysis_UI** (`src/ai/Taguchi_Analysis_UI/`) is the production front end: a
   detached, resumable worker (`worker.py`) runs the same chain over a selection of runs and
   records timings; the Taguchi tab runs Stage 6. Plan and build record:
