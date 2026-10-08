@@ -413,13 +413,15 @@ volume, not flux): see §13.
   CLI is the only interface). `reuse=True` skips 1–3 when `can_reuse()` finds a complete analysis
   at the same stride made after the newest model weights.
 - `process_capture.run_classical()` runs Stage 5 exactly as the batch does (`--root`, `--out-dir`,
-  `--score-thresh`, `--images-mode`, optional `--sharpness-rule`) and adds a frame-bootstrap CI of the
+  `--score-thresh`, `--images-mode`, and `--sharpness-rule` / `--no-sharpness-rule`, always
+  explicit) and adds a frame-bootstrap CI of the
   pooled classical fraction at the run's `ci_stride`. The GUI uses it.
 - `batch_runs.py` loops runs: `process_capture` then `classical_liquid.py --images-mode extremes`.
-- **Sizer version by entry point (2026-10-08):** the capture GUI and the Taguchi app's batch run
-  **2.2.0**; the command-line scripts (`measure_run.py`, `classical_liquid.py`,
-  `process_capture.py`, `batch_runs.py`) default to 2.1.0 unless given `--sharpness-rule` /
-  `sharpness_rule=True`.
+- **Sizer version (2026-10-08): 2.2.0 everywhere**, by Ben's decision. The capture GUI, the
+  Taguchi app's batch and the command-line scripts (`measure_run.py`, `classical_liquid.py`,
+  `process_capture.py`, `batch_runs.py`) all default to it; `--no-sharpness-rule` /
+  `sharpness_rule=False` gives 2.1.0. Callers pass the flag explicitly both ways, so a Taguchi app
+  job saved before 2026-10-08 still resumes at 2.1.0.
 - **Taguchi_Analysis_UI** (`src/ai/Taguchi_Analysis_UI/`) is the production front end: a
   detached, resumable worker (`worker.py`) runs the same chain over a selection of runs and
   records timings; the Taguchi tab runs Stage 6. Plan and build record:
@@ -504,7 +506,7 @@ contributions, per run, S/N, GLR, size spread by count and volume), optional `cs
 | Taguchi analysis, rule on | `Experiments/Taguchi/9x3 Taguchi Repeats (sizer 2.2.0)/` | 2.2.0 |
 | first L9 (2026-10-01) | `Experiments/Taguchi/First Taguchi Trial (RPM, SCCM, Silicone Flow)/` | 2.0.0 |
 
-The default is still 2.1.0. To re-run the 2.1.0 analysis, the `_sizer2.1.0` folders must be moved
+The default is 2.2.0 everywhere since 2026-10-08. To re-run the 2.1.0 analysis, the `_sizer2.1.0` folders must be moved
 back first (the app reads only `droplets_0.30` / `liquid_0.30`).
 
 ---

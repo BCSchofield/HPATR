@@ -148,7 +148,8 @@ def det_crop(d):
 #          Also: tile-truncated detections excluded from classical's D32, to
 #          match measure_run -- they stay in the area union, where a union
 #          correctly reassembles an object split across a tile seam.
-#   2.2.0  2.1.0 plus the SHARPNESS RULE (opt-in, `--sharpness-rule`): an in-focus
+#   2.2.0  2.1.0 plus the SHARPNESS RULE (the DEFAULT since 2026-10-08, Ben's
+#          decision: "using 2.2 for good now"; `--no-sharpness-rule` for 2.1.0): an in-focus
 #          droplet >= 50 um is reclassified OUT OF FOCUS when its half-max mask
 #          is not round (fill_ratio < 0.85) or its extinction leaks past its own
 #          edge (extinction_conc < 0.60). Fitted on Ben's sharp/fuzzy eye labels
@@ -605,10 +606,11 @@ def main():
                          "area, as before SIZER_VERSION 2.0.0")
     ap.add_argument("--focus-max", type=float, default=0.70,
                     help="must match extract_candidates.py")
-    ap.add_argument("--sharpness-rule", action="store_true",
-                    help="sizer 2.2.0: reclassify in-focus droplets >= 50 um as out of "
-                         "focus when not round (fill_ratio < 0.85) or blurred "
-                         "(extinction_conc < 0.60). Moves D32 only")
+    ap.add_argument("--sharpness-rule", action=argparse.BooleanOptionalAction, default=True,
+                    help="sizer 2.2.0 (DEFAULT since 2026-10-08): reclassify in-focus "
+                         "droplets >= 50 um as out of focus when not round (fill_ratio "
+                         "< 0.85) or blurred (extinction_conc < 0.60). Moves D32 only. "
+                         "--no-sharpness-rule measures at 2.1.0, bit-identical to before")
     ap.add_argument("--out-dir", type=Path, default=None,
                     help="default: <val-dir>/measurement_<thresh>")
     ap.add_argument("--images", nargs="?", const="all", default=None,

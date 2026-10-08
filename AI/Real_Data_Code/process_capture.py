@@ -191,7 +191,7 @@ def process_capture(cine: Path, run_dir: Path, *, stride=DEFAULT_STRIDE,
                     score_thresh=DEFAULT_SCORE_THRESH, device=None,
                     model_dir: Path = None, images="extremes", ci_stride=None,
                     bg_frames=BG_FRAMES, limit=None, reuse=False,
-                    log=print, sharpness_rule=False) -> dict:
+                    log=print, sharpness_rule=True) -> dict:
     """
     Run the whole chain. Returns measure_run's summary dict.
 
@@ -210,9 +210,11 @@ def process_capture(cine: Path, run_dir: Path, *, stride=DEFAULT_STRIDE,
     `log` takes one string; the GUI passes something that appends to its log
     panel, the CLI passes print.
 
-    `sharpness_rule=True` measures at sizer 2.2.0 (measure_run --sharpness-rule).
-    Off by default, so every other caller keeps 2.1.0. Pair it with
-    run_classical(..., sharpness_rule=True) or the two folders disagree.
+    `sharpness_rule` (default True since 2026-10-08) measures at sizer 2.2.0;
+    False measures at 2.1.0. It is passed to measure_run EXPLICITLY either way
+    (--sharpness-rule / --no-sharpness-rule), so this function's argument --
+    not the script's own default -- decides the version. Pair it with the same
+    value in run_classical(...) or the two folders disagree.
     """
     if images is True:
         images = "all"
@@ -338,8 +340,9 @@ def process_capture(cine: Path, run_dir: Path, *, stride=DEFAULT_STRIDE,
         cmd += ["--images", images]
     if ci_stride:
         cmd += ["--ci-stride", ci_stride]
-    if sharpness_rule:
-        cmd += ["--sharpness-rule"]
+    # Explicit both ways: a caller asking for 2.1.0 must get 2.1.0 even though
+    # the script now defaults to 2.2.0 (the Taguchi app resumes old jobs at 2.1.0).
+    cmd += ["--sharpness-rule" if sharpness_rule else "--no-sharpness-rule"]
     with _Stage("measurement"):
         _run(cmd, log)
 
@@ -385,7 +388,7 @@ def process_capture(cine: Path, run_dir: Path, *, stride=DEFAULT_STRIDE,
 
 
 def run_classical(run_dir: Path, *, score_thresh=DEFAULT_SCORE_THRESH, images="extremes",
-                  sharpness_rule=False, ci_stride=1, n_boot=2000, log=print) -> dict:
+                  sharpness_rule=True, ci_stride=1, n_boot=2000, log=print) -> dict:
     """Stage 5: classical_liquid.py into liquid_<thr>/, invoked exactly as
     batch_runs.py and the Taguchi app do (--root and --out-dir always passed).
     Returns classical_summary.json plus `atomised_ci95`: a frame bootstrap of the
@@ -401,8 +404,7 @@ def run_classical(run_dir: Path, *, score_thresh=DEFAULT_SCORE_THRESH, images="e
            "--root", run_dir, "--out-dir", out_dir, "--score-thresh", score_thresh]
     if images:
         cmd += ["--images-mode", images]
-    if sharpness_rule:
-        cmd += ["--sharpness-rule"]
+    cmd += ["--sharpness-rule" if sharpness_rule else "--no-sharpness-rule"]
     log("\n=== classical liquid (atomised fraction) ===")
     t0 = time.time()
     _run(cmd, log)
@@ -461,6 +463,8 @@ def main():
                          "stride, skip extraction/background/inference and only measure")
     ap.add_argument("--limit", type=int, default=None,
                     help="stop after N frames -- use for a quick smoke test")
+    ap.add_argument("--sharpness-rule", action=argparse.BooleanOptionalAction, default=True,
+                    help="sizer 2.2.0 (default); --no-sharpness-rule for 2.1.0")
     args = ap.parse_args()
 
     run_dir = args.run_dir
@@ -476,7 +480,8 @@ def main():
                     score_thresh=args.score_thresh, device=args.device,
                     model_dir=args.model_dir,
                     images=None if args.no_images else args.images,
-                    ci_stride=args.ci_stride, limit=args.limit, reuse=args.reuse)
+                    ci_stride=args.ci_stride, limit=args.limit, reuse=args.reuse,
+                    sharpness_rule=args.sharpness_rule)
 
 
 if __name__ == "__main__":

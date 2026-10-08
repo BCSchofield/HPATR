@@ -109,7 +109,8 @@ PROCESS_CAPTURE = ImportCall(
 # and tests/test_pipeline_spec.py asserts it.
 CLASSICAL = ScriptCall(
     "classical_liquid.py",
-    ("--root", "--out-dir", "--score-thresh", "--images-mode", "--sharpness-rule"),
+    ("--root", "--out-dir", "--score-thresh", "--images-mode", "--sharpness-rule",
+     "--no-sharpness-rule"),
     (("--images-mode", ("extremes", "all")),),
 )
 
@@ -460,8 +461,11 @@ def classical_cmd(run_dir: Path, settings: RunSettings, options: dict[str, Any])
     images = options.get("images")
     if images:
         cmd += ["--images-mode", images]
-    if s.sharpness_rule:
-        cmd += ["--sharpness-rule"]
+    # Explicit BOTH ways. classical_liquid.py defaults to 2.2.0 since
+    # 2026-10-08, so leaving the flag off would no longer mean 2.1.0 -- and a
+    # job saved before 2026-10-08 resumes with sharpness_rule False and must
+    # stay 2.1.0, or its runs straddle two sizer versions.
+    cmd += ["--sharpness-rule" if s.sharpness_rule else "--no-sharpness-rule"]
     _check_declared((c for c in cmd if c.startswith("--")), CLASSICAL.flags, "classical_cmd")
     return cmd
 

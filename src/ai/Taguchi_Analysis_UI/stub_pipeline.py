@@ -57,7 +57,7 @@ class Stub:
     # ---- process_capture.process_capture -------------------------------------------
     def process_capture(self, cine, run_dir, *, stride=10, score_thresh=0.30, device=None,
                         model_dir=None, images="extremes", ci_stride=None, bg_frames=40,
-                        limit=None, reuse=False, log=print, sharpness_rule=False) -> dict:
+                        limit=None, reuse=False, log=print, sharpness_rule=True) -> dict:
         run_dir = Path(run_dir)
         check_sandbox(run_dir)
         name = run_dir.name

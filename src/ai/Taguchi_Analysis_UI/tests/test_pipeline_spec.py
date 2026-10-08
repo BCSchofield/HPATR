@@ -205,6 +205,20 @@ class BuilderTests(unittest.TestCase):
             else:
                 self.assertNotIn("--images-mode", cmd)
 
+    def test_sizer_version_is_explicit_both_ways(self):
+        # classical_liquid.py defaults to 2.2.0 since 2026-10-08, so omitting the
+        # flag no longer means 2.1.0. A job resumed at 2.1.0 must pass
+        # --no-sharpness-rule, or its runs straddle two sizer versions.
+        for rule, flag, other in ((True, "--sharpness-rule", "--no-sharpness-rule"),
+                                  (False, "--no-sharpness-rule", "--sharpness-rule")):
+            s = spec.RunSettings(sharpness_rule=rule)
+            cmd = spec.classical_cmd(self.RUN, s, spec.default_options())
+            self.assertIn(flag, cmd)
+            self.assertNotIn(other, cmd)
+            kw = spec.process_capture_kwargs(self.RUN, s, spec.default_options(), print,
+                                             cine=self.RUN / "a.cine")
+            self.assertIs(kw["sharpness_rule"], rule)
+
     def test_unset_settings_are_omitted_so_pipeline_defaults_apply(self):
         kw = spec.process_capture_kwargs(self.RUN, spec.RunSettings(), spec.default_options(),
                                          print, cine=self.RUN / "a.cine")

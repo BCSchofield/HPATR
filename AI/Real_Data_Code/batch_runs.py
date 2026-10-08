@@ -48,6 +48,9 @@ def main():
                     help="runs that already hold a complete analysis at this stride skip "
                          "extraction/background/inference and are only re-measured "
                          "(process_capture.can_reuse decides); others run in full")
+    ap.add_argument("--sharpness-rule", action=argparse.BooleanOptionalAction, default=True,
+                    help="sizer 2.2.0 (default) for BOTH stages; --no-sharpness-rule "
+                         "for 2.1.0. Passed explicitly to each, so they always agree")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     images = None if args.images == "none" else args.images
@@ -71,7 +74,7 @@ def main():
             t0 = time.time()
             summary = process_capture(cines[0], run, stride=args.stride,
                                       score_thresh=args.score_thresh, images=images, log=log,
-                                      reuse=args.reuse)
+                                      reuse=args.reuse, sharpness_rule=args.sharpness_rule)
             row["process_capture_s"] = round(time.time() - t0, 1)
             row["reused_analysis"] = summary.get("_reused_analysis", False)
             for name, secs in summary.get("_stage_seconds", {}).items():
@@ -86,7 +89,8 @@ def main():
             cl_out = analysis / f"liquid_{args.score_thresh:.2f}"
             cmd = [sys.executable, "-W", "ignore", str(HERE / "classical_liquid.py"),
                    "--root", str(run), "--out-dir", str(cl_out),
-                   "--score-thresh", str(args.score_thresh)]
+                   "--score-thresh", str(args.score_thresh),
+                   "--sharpness-rule" if args.sharpness_rule else "--no-sharpness-rule"]
             if images:
                 # classical now HAS an extremes mode (added with sizer 2.1.0),
                 # and it picks the atomised extremes from its own fraction --

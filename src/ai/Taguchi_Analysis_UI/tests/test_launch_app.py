@@ -39,6 +39,25 @@ def test_the_probe_says_ok_or_why_not(tmp_path):
     assert launch_app.probe(tmp_path / "no_such_python.exe").startswith("could not start it")
 
 
+LAB_TORCH_ARCHS = ['sm_50', 'sm_60', 'sm_61', 'sm_70', 'sm_75', 'sm_80', 'sm_86', 'sm_90']  # 2.6.0+cu124
+
+
+def test_gpu_support_follows_cuda_compatibility_not_exact_match():
+    s = launch_app.gpu_supported
+    assert s(8, 9, LAB_TORCH_ARCHS)              # lab RTX 4070 Ti SUPER: runs the sm_86 code
+    assert s(8, 6, LAB_TORCH_ARCHS) and s(9, 0, LAB_TORCH_ARCHS)
+    assert not s(12, 0, LAB_TORCH_ARCHS)         # Blackwell (home 5060 Ti) on that build: no
+    assert s(12, 0, LAB_TORCH_ARCHS + ['sm_120'])
+    assert not s(8, 5, ['sm_86'])                # cubins never run on a LOWER minor
+    assert s(8, 9, ['compute_80'])               # PTX JIT-compiles upward
+    assert not s(8, 0, ['compute_86'])
+    assert not s(9, 0, ['sm_90a'])               # arch-specific builds are not portable
+
+
+def test_the_probe_carries_the_same_rule():
+    assert launch_app._SUPPORTS_SRC in launch_app.PROBE and "gpu_supported(" in launch_app.PROBE
+
+
 def test_a_bad_interpreter_restarts_with_the_first_candidate_that_works(tmp_path, monkeypatch):
     bad, good = tmp_path / "bad.exe", tmp_path / "good.exe"
     for p in (bad, good):

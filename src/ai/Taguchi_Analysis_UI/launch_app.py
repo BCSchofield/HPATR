@@ -32,8 +32,30 @@ CANDIDATES = (
     Path(r"C:\Users\55154111\AppData\Local\Programs\Python\Python311\python.exe"),       # lab PC
 )
 
+# Can a torch build with this arch list run on a GPU of compute capability major.minor?
+# NOT an exact-match test: CUDA cubins run on any GPU of the SAME major version and an equal
+# or higher minor (sm_86 code runs on an sm_89 card), and PTX (compute_XY) JIT-compiles for any
+# GPU at or above XY. The lab PC's RTX 4070 Ti SUPER is sm_89 and its torch 2.6.0+cu124 lists
+# sm_86 and sm_90 but not sm_89 -- an exact match wrongly called that card unsupported
+# (2026-10-08). A Blackwell sm_120 card still fails against that list, correctly: no sm_12x
+# cubin and no PTX. Defined once, as source, so the probe below and the tests use the same code.
+_SUPPORTS_SRC = r"""
+def gpu_supported(major, minor, archs):
+    for a in archs:
+        kind, _, num = a.partition("_")
+        if not num.isdigit() or len(num) < 2:
+            continue                      # e.g. sm_90a: arch-specific, not portable
+        a_major, a_minor = int(num[:-1]), int(num[-1])
+        if kind == "sm" and a_major == major and a_minor <= minor:
+            return True
+        if kind == "compute" and (a_major, a_minor) <= (major, minor):
+            return True
+    return False
+"""
+exec(_SUPPORTS_SRC)        # defines gpu_supported() in this module, for the tests
+
 # Run in a fresh interpreter: prints OK, or why that interpreter cannot run a batch.
-PROBE = r"""
+PROBE = _SUPPORTS_SRC + r"""
 import sys
 missing = []
 for m in ("PySide6", "torch", "detectron2", "cine_reader"):
@@ -47,7 +69,7 @@ import torch
 if torch.cuda.is_available():
     major, minor = torch.cuda.get_device_capability(0)
     archs = torch.cuda.get_arch_list()
-    if f"sm_{major}{minor}" not in archs and f"compute_{major}{minor}" not in archs:
+    if not gpu_supported(major, minor, archs):
         print(f"torch {torch.__version__} does not support the {torch.cuda.get_device_name(0)} "
               f"(sm_{major}{minor})"); sys.exit(1)
 print("OK")
@@ -88,6 +110,11 @@ def better_interpreter() -> Path | None:
 
 def main() -> None:
     if not os.environ.get(REEXEC_FLAG):
+        # The probe imports torch + detectron2 in a fresh process: ~5 s warm, but the first
+        # start after a reboot (Defender scanning every file) can take a minute or more.
+        # Say so, or the silent wait looks like a hang (2026-10-08: it was Ctrl+C'd).
+        print("Taguchi Analysis: checking this Python can run a batch "
+              "(first start after a reboot can take a minute)...", flush=True)
         why = probe(sys.executable)
         if why != "OK":
             print(f"Taguchi Analysis: {sys.executable} cannot run a batch: {why}", flush=True)

@@ -1,6 +1,6 @@
 # STATUS — real-data droplet pipeline and Taguchi study
 
-**Last updated: 2026-10-07 (Mac, after the 2.1.0 vs 2.2.0 comparison).** This is the live state of the work. Claude keeps it current
+**Last updated: 2026-10-08 (lab PC: 2.2.0 adopted for good, CLI defaults flipped, 390 fps settled).** This is the live state of the work. Claude keeps it current
 (see "How this file is maintained" at the bottom). History, evidence and full reasoning are in
 `docs/archive/HANDOFF_real_data_pipeline_LEGACY.md` (frozen 2026-10-07, newest section first).
 
@@ -33,8 +33,8 @@ process diagnosis or model-building for its own sake.
   steps at the RPM changes, not as a gradual drift, and within the 300 rpm block (1 h 40) it tracks
   gas only. So RPM is now the likeliest explanation, but only a randomised test can rule out
   mechanical drift.
-- **Sizer 2.2.0 (sharpness rule) built and compared** (commit `7ebaa1a`, opt-in `--sharpness-rule`,
-  default OFF). All 27 re-measured with it; their 2.1.0 results were MOVED intact to
+- **Sizer 2.2.0 (sharpness rule) built and compared** (commit `7ebaa1a`; opt-in at first, the
+  default everywhere since 2026-10-08). All 27 re-measured with it; their 2.1.0 results were MOVED intact to
   `<run>/shadowgraph/analysis/_sizer2.1.0/`, so the run folders now hold 2.2.0. Analysis:
   `Taguchi/9x3 Taguchi Repeats (sizer 2.2.0)/` with `comparison_2.1.0_vs_2.2.0.md` and
   `sharpness_review/` (old-vs-new frames, zoomed tiles, size-matched random sheets per gas flow).
@@ -94,18 +94,27 @@ process diagnosis or model-building for its own sake.
 - These match the 10/05 run folders as they stand (2.2.0) and `9x3 Taguchi Repeats (sizer 2.2.0)/`.
 - **The Taguchi app's batch also measures at 2.2.0 by default now** (`RunSettings.sharpness_rule`,
   passed to both stages; a job saved before 2026-10-08 resumes at 2.1.0). So GUI captures and app
-  batches agree. **2.2.0 is now the project default everywhere except a bare `measure_run.py` /
-  `classical_liquid.py` / `process_capture.py` call**, whose own CLI default is still 2.1.0.
+  batches agree.
+- **2.2.0 is the default EVERYWHERE since 2026-10-08, including a bare `measure_run.py` /
+  `classical_liquid.py` / `process_capture.py` / `batch_runs.py` call** (Ben: "using 2.2 for good
+  now, might go back"). Every script takes `--no-sharpness-rule` for 2.1.0, bit-identical to
+  before. Callers pass the flag **explicitly both ways** (`process_capture` -> both child scripts,
+  `batch_runs`, the app's `classical_cmd`), so a resumed pre-10-08 app job still runs at 2.1.0;
+  `test_sizer_version_is_explicit_both_ways` guards that. Verified on Trial_CINE: default -> 2.2.0,
+  D32 56.19 um; `--no-sharpness-rule` -> 2.1.0, 81.58 um (matches the recorded 81.59); 57,654
+  droplets both ways.
 - A new day is a new block: include 1-2 repeats of 10/05 conditions to measure the day offset.
 
 ## Next steps, in order
 
 1. **RPM confirmation test** (Ben, lower urgency now): one gas/silicone setting, RPM alternated
    300/900/300/900... in one session (4-6 runs). Randomise run order in every future campaign.
-2. **Ben to decide the default** given the diagnosis: 2.2.0 D32 answers a narrower question
-   (round, sharp droplets) and its gas effect is ~2/3 selection. Options: keep 2.1.0 for D32 and
-   report 2.2.0 as a sensitivity; and/or add the moved share ("non-round or blurred fraction") as
-   its own response, since it rises cleanly with gas.
+2. ~~Ben to decide the default~~ **DECIDED 2026-10-08: 2.2.0, for good** (may revisit). What
+   still follows from the diagnosis: every 2.2.0 D32 gas effect is ~2/3 selection, so it must be
+   reported as "D32 of the round, sharp droplets" with that caveat. Still worth considering: the
+   moved share ("non-round or blurred fraction") as its own response, since it rises cleanly with
+   gas. The first L9 (10/01) is still 2.0.0; re-measuring it at 2.2.0 is ~41 s/run with `--reuse`
+   if it is ever to be compared (not done).
 3. **Fix the app bugs below before the next overnight batch** (1 and 2 at least).
 4. **Fold in the Windows timings**: `9x3 Taguchi Repeats/_job/eta_calibration.json` +
    `_job/timings.csv` -> replace `eta.PRIORS_BY_OS["Windows"]` in `eta.py` with measured
@@ -134,9 +143,11 @@ process diagnosis or model-building for its own sake.
   implementation of a convention whose correctness is unsettled. Only a **calibration target**
   (reticle / graticule / glass beads) on this rig settles it. Relative ranking across Taguchi runs
   is unaffected; absolute diameters are.
-- **Reclassification rule** is disqualified for Taguchi frames (tracks density, not focus:
-  1 false reject / 20 false keeps on L9 frames, opposite error on the benchmark). The 9000 sccm
-  hand-labelling that would settle it has not been done.
+- **The reclassification rule is now in force as 2.2.0** despite the earlier verdict that it was
+  unfit for Taguchi frames (1 false reject / 20 false keeps on L9 frames; opposite error on the
+  benchmark). The 2026-10-07 diagnosis explained its gas gradient as real shape change (less round
+  fragments at high gas), not crowding, but ~2/3 of the resulting D32 gas effect is selection. The
+  9000 sccm hand-labelling that would measure its error rate there has still not been done.
 - **Decorrelation time (~20 ms) is inferred, not measured**, and the stride default rests on it.
   Measurable from any stride-1 capture (adjacent-frame cross-correlation).
 - **Old L9 (10/01) is sizer 2.0.0** and not directly comparable to the 27 runs on atomised
@@ -173,13 +184,17 @@ Elsewhere:
 - Several `__pycache__/*.pyc` files are tracked in git despite `.gitignore`; they churn across
   machines.
 
-## The measurement currently in force (sizer 2.1.0)
+## The measurement currently in force (sizer 2.2.0, since 2026-10-08)
 
 - Model: v3 "Eden" (`training_2026_09_25_15_20_37`, iter 19000), tiled inference at native scale,
   score threshold 0.30, stride 10, extremes-only images.
 - **D32** = in-focus droplets only (`t_min <= 0.70` focus gate, interior-pixel robust core
-  estimator), half-max sizing at/above the **40 um** split, model mask below it. From
-  `measure_run.py` -> `droplets_0.30/summary.json`.
+  estimator), half-max sizing at/above the **40 um** split, model mask below it, **then the
+  sharpness rule**: an in-focus droplet >= 50 um is reclassified out of focus when
+  `fill_ratio < 0.85` or `extinction_conc < 0.60`. A reclassification, never a deletion: counts and
+  the atomised fraction are unchanged. So D32 is "D32 of the round, sharp droplets"; its gas effect
+  is ~2/3 selection (see Where we are). From `measure_run.py` -> `droplets_0.30/summary.json`.
+  `--no-sharpness-rule` gives 2.1.0.
 - **Atomised fraction (quoted)** = `liquid_0.30/classical_summary.json` `atomised_pct_pooled`:
   half-max droplet numerator over a classically segmented whole-frame liquid denominator
   (`classical_liquid.py`). `summary.json` `atomised_pct` is model-only, reference only.
@@ -226,9 +241,13 @@ made", "Bit depth", and the dated sections).
 - Training data by compositing real objects, multiplicatively in transmission. 800x800 crops,
   tiled inference, never resize at inference.
 - Gas density default 1.184 kg/m3 (air at 25 degC, matching the Alicat's STP), not 1.293.
-- Capture: exposure 4 us; 190 fps avoids aliasing with the bubbler at stride 10. Shorter captures
-  than the suggested 25 s are deliberate (the rig can't sustain it at high flow): don't "correct".
-- Focus rejection beyond the t_min gate is deliberately deferred: analyse as-is first.
+- Capture: **390 fps** (Ben, 2026-10-08; the GUI standard), exposure 4 us, 2048x1152, 13 s
+  post-trigger. Shorter videos than at 190 fps, so **two runs fit one syringe refill**. At stride
+  10 the effective rate is 39 Hz, which has no integer ratio with the bubbler's 5 / 10 / 15 Hz, so
+  no aliasing (190 fps was the earlier suggestion for the same reason). Shorter captures than the
+  suggested 25 s are deliberate: don't "correct" them.
+- Sizer **2.2.0** (sharpness rule) is the project's measurement, for good unless Ben says
+  otherwise. Supersedes "focus rejection deferred".
 
 ## Standing rules
 
@@ -238,6 +257,16 @@ made", "Bit depth", and the dated sections).
 - Give Ben exact paste-able commands with absolute paths and the real interpreter.
 
 ## Recent changes (newest first; trim to ~10 entries, older ones live in git history)
+
+- 2026-10-08 (lab PC): `launch_app.py` probe fixed. It required an EXACT `sm_XY` match, so the lab's
+  RTX 4070 Ti SUPER (sm_89) on torch 2.6.0+cu124 (lists sm_86, sm_90) was wrongly called
+  unsupported and the launcher warned no Python could run a batch. Now follows CUDA compatibility
+  (same-major cubin with lower-or-equal minor, or PTX at or below); new tests. It also prints
+  "checking this Python..." first: the probe imports torch (~5 s warm, much longer on a cold start),
+  and the silent wait looked like a hang.
+- 2026-10-08 (lab PC): 2.2.0 adopted for good. `measure_run.py`, `classical_liquid.py`,
+  `process_capture.py`, `batch_runs.py` default to it (`--no-sharpness-rule` for 2.1.0); every
+  caller passes the flag explicitly; new test guards resumed 2.1.0 jobs. 390 fps settled.
 
 - 2026-10-07: 9x3 analysed (see "Where we are"). Replicate outliers: 124030 (T9) high D32, 120201 (T7)
   high count CV. Odd pack: 94 flags (78 atomised_100pct), 33 images.

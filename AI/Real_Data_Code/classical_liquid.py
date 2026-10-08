@@ -383,9 +383,10 @@ def main():
     ap.add_argument("--classical-only", action="store_true",
                     help="leave out-of-focus filaments/blobs unmeasured too. For "
                          "comparison; biases the fraction up by ~1.6%%.")
-    ap.add_argument("--sharpness-rule", action="store_true",
-                    help="sizer 2.2.0, as measure_run.py --sharpness-rule: moves D32 "
-                         "membership and drawing colour only, never the atomised fraction")
+    ap.add_argument("--sharpness-rule", action=argparse.BooleanOptionalAction, default=True,
+                    help="sizer 2.2.0 (DEFAULT since 2026-10-08), as measure_run.py: "
+                         "moves D32 membership and drawing colour only, never the atomised "
+                         "fraction. --no-sharpness-rule measures at 2.1.0")
     ap.add_argument("--focus-max", type=float, default=0.70,
                     help="droplet focus gate, as measure_run (default 0.70)")
     ap.add_argument("--droplet-ring", type=int, default=10,
