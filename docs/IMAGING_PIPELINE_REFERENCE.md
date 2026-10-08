@@ -289,7 +289,7 @@ at the true edge as focus changes. That holds only if the core reaches its true 
 fails for small objects; hence the 40 µm split, below which the model mask is used. **Whether
 half-max is the true edge for these transparent droplets has never been measured** (§13).
 
-**(d) Sizer 2.2.0 sharpness rule** (only with `--sharpness-rule`; **off by default**). For an
+**(d) Sizer 2.2.0 sharpness rule** (**on by default since 2026-10-08**; `--no-sharpness-rule` gives 2.1.0). For an
 in-focus droplet with `d_model >= 50 um`, compute on a half-max component grown from the *single
 darkest pixel* (`sharpness_metrics`, `:266`):
 
