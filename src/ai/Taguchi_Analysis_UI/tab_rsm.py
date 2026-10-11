@@ -67,6 +67,40 @@ def _table_css() -> str:
             f"border: none; border-bottom: 1px solid {theme.CLR_BORDER}; padding: 6px; font-weight: 600; }}")
 
 
+def goal_for_fit(g: dict) -> dict:
+    """A Model-page goal {key, aim, worst, best, importance} as rsm_responses.resolve_goals takes it.
+    "worst" scores 0 and "best" scores 1 whatever the aim: maximise ramps up from worst to best,
+    minimise down from worst to best (so its low end is best), and a target scores 1 at best, falling
+    to 0 at the same distance on either side as worst is. A blank end is the range seen in the runs
+    (a blank target: the middle of the ramp). Saved files from before 2026-10-11 used low/high for
+    the same two columns."""
+    aim = g.get("aim", "max")
+    worst = g.get("worst", g.get("low"))
+    best = g.get("best", g.get("high"))
+    if worst is not None and best is not None and (
+            (aim == "max" and worst >= best) or (aim == "min" and worst <= best)):
+        raise ValueError(f"goal on {g.get('label') or g['key']}: to {'maximise' if aim == 'max' else 'minimise'}, "
+                         f"worst ({worst:g}) must be {'below' if aim == 'max' else 'above'} best ({best:g})")
+    out = {"key": g["key"], "direction": aim, "importance": g.get("importance") or 1.0}
+    if aim == "min":
+        out.update(low=best, high=worst)
+    elif aim == "target":
+        out["target"] = best
+        if best is not None and worst is not None and worst != best:
+            d = abs(best - worst)
+            out.update(low=best - d, high=best + d)
+        else:
+            out.update(low=None, high=None)
+    else:
+        out.update(low=worst, high=best)
+    return out
+
+
+def _list_css() -> str:
+    return (f"QListWidget {{ background-color: {theme.CLR_PANEL}; border: 1px solid {theme.CLR_BORDER}; "
+            f"border-radius: 8px; padding: 4px; }} QListWidget::item {{ padding: 3px 4px; }}")
+
+
 def _banner_css(colour: str) -> str:
     return (f"color: {colour}; font-size: 13px; font-weight: 600; padding: 8px 10px; "
             f"background-color: {theme.CLR_PANEL}; border: 1px solid {theme.CLR_BORDER}; border-radius: 8px;")
@@ -220,7 +254,9 @@ class RsmTab(QWidget):
         split.addWidget(self.table)
         self.findings = QListWidget()
         self.findings.setWordWrap(True)
+        self.findings.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.findings.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.findings.setStyleSheet(_list_css())
         split.addWidget(self.findings)
         split.setStretchFactor(0, 4)
         split.setStretchFactor(1, 2)
@@ -247,8 +283,11 @@ class RsmTab(QWidget):
             opts.addWidget(c)
         opts.addStretch(1)
         lay.addLayout(opts)
-        lay.addWidget(_note("Goals for the best setting (desirability): each scored 0 to 1 between the two ends, "
-                            "combined. Blank ends = the range seen in the data."))
+        lay.addWidget(_note("Goals for the best setting (desirability): each response scores 0 at its worst value and "
+                            "1 at its best (Maximise: worst below best; Minimise: worst above best; Hit a target: "
+                            "best is the target, and the score falls to 0 as far either side as worst is). Blank = "
+                            "the range seen in the runs. Importance weights each goal (1 = equal). Goals only steer "
+                            "the best setting and the next runs; set them any time and press Analyse again."))
         self.goals_table = QTableWidget(0, 5)
         self.goals_table.setHorizontalHeaderLabels(["Response", "Aim", "0 at (worst)", "1 at (best)", "Importance"])
         self.goals_table.verticalHeader().setVisible(False)
@@ -280,7 +319,9 @@ class RsmTab(QWidget):
                             "their predictions, are in next_runs.xlsx):"))
         self.recs = QListWidget()
         self.recs.setWordWrap(True)
+        self.recs.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.recs.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.recs.setStyleSheet(_list_css())
         lay.addWidget(self.recs, 1)
         return w
 
@@ -565,7 +606,7 @@ class RsmTab(QWidget):
             if f.key == "orifice":
                 vals = sorted(set(f.levels) | {v for v, kind in f.special.items() if kind == rdet.CHECK})
                 discrete[f.key] = ", ".join(f"{v:g}" for v in vals)
-        goals = [{"key": k, "aim": d, "low": None, "high": None, "importance": 1.0} for k, d in rr.DEFAULT_GOALS]
+        goals = [{"key": k, "aim": d, "worst": None, "best": None, "importance": 1.0} for k, d in rr.DEFAULT_GOALS]
         return {"roles": roles, "discrete": discrete, "compare": compare, "time": False, "goals": goals}
 
     def _fill_model(self, det) -> None:
@@ -618,8 +659,9 @@ class RsmTab(QWidget):
                 aim.setCurrentIndex(aim.findData(g["aim"] if g else "ignore"))
                 aim.currentIndexChanged.connect(self._save_model)
                 self.goals_table.setCellWidget(i, 1, aim)
-                for col, field in ((2, "low"), (3, "high"), (4, "importance")):
-                    v = g.get(field) if g else (1.0 if field == "importance" else None)
+                for col, field in ((2, "worst"), (3, "best"), (4, "importance")):
+                    v = (g.get(field, g.get({"worst": "low", "best": "high"}.get(field, field))) if g
+                         else (1.0 if field == "importance" else None))
                     self.goals_table.setItem(i, col, QTableWidgetItem("" if v is None else f"{v:g}"))
             self.goals_table.blockSignals(False)
         finally:
@@ -641,13 +683,14 @@ class RsmTab(QWidget):
             if aim is None or aim.currentData() == "ignore":
                 continue
             vals = {}
-            for col, field in ((2, "low"), (3, "high"), (4, "importance")):
+            for col, field in ((2, "worst"), (3, "best"), (4, "importance")):
                 item = self.goals_table.item(i, col)
                 try:
                     vals[field] = _num(item.text() if item else "")
                 except ValueError:
                     vals[field] = None
-            goals.append({"key": self.goals_table.item(i, 0).data(ROLE_PATH), "aim": aim.currentData(), **vals})
+            goals.append({"key": self.goals_table.item(i, 0).data(ROLE_PATH), "aim": aim.currentData(),
+                          "label": self.goals_table.item(i, 0).text(), **vals})
         return {"roles": roles, "discrete": discrete, "compare": self.compare_check.isChecked(),
                 "time": self.time_check.isChecked(), "goals": goals}
 
@@ -679,8 +722,7 @@ class RsmTab(QWidget):
         discrete = {}
         for k, text in m["discrete"].items():
             discrete[k] = [float(x) for x in text.replace(";", ",").split(",") if x.strip()]
-        goals = [{"key": g["key"], "direction": g["aim"], "low": g.get("low"), "high": g.get("high"),
-                  "importance": g.get("importance") or 1.0} for g in m["goals"]]
+        goals = [goal_for_fit(g) for g in m["goals"]]
         return models, {"goals": goals or None, "discrete": discrete or None}
 
     # ---- the Analyse page --------------------------------------------------------------------------------------

@@ -238,9 +238,21 @@ def apply_fusion_style(app) -> None:
     app.setStyle("Fusion")
     app.setStyleSheet(BASE_STYLE)
 
-    pal = app.palette()
-    pal.setColor(QPalette.ColorRole.ToolTipBase, QColor(44, 44, 46))
-    pal.setColor(QPalette.ColorRole.ToolTipText, QColor(242, 242, 247))
+    # A full dark palette, not just the tooltip: Fusion otherwise follows the OS light/dark setting, so on
+    # a Mac in light mode Qt-drawn widgets the stylesheet does not cover (the non-native folder picker's
+    # views, lists, scroll bars) got white backgrounds under the stylesheet's light text.
+    R, G = QPalette.ColorRole, QPalette.ColorGroup
+    pal = QPalette()
+    for role, colour in ((R.Window, CLR_BG), (R.WindowText, CLR_TEXT), (R.Base, CLR_INPUT),
+                         (R.AlternateBase, CLR_PANEL), (R.Text, CLR_TEXT), (R.Button, CLR_INPUT),
+                         (R.ButtonText, CLR_TEXT), (R.BrightText, "#ffffff"), (R.Highlight, CLR_ACCENT),
+                         (R.HighlightedText, "#ffffff"), (R.PlaceholderText, CLR_TEXT_SEC),
+                         (R.Link, CLR_ACCENT), (R.ToolTipBase, "#2c2c2e"), (R.ToolTipText, CLR_TEXT),
+                         (R.Light, "#4a4a4e"), (R.Midlight, CLR_BORDER), (R.Mid, "#2a2a2c"),
+                         (R.Dark, "#0c0c0d"), (R.Shadow, "#000000")):
+        pal.setColor(role, QColor(colour))
+    for role in (R.WindowText, R.Text, R.ButtonText):
+        pal.setColor(G.Disabled, role, QColor(CLR_TEXT_SEC))
     app.setPalette(pal)
 
     font = QFont(FONT_FAMILY)
@@ -252,7 +264,7 @@ def restyle_inputs(window) -> None:
     """Belt-and-suspenders per-widget restyle, run AFTER the window is
     built (findChildren needs the widgets to exist). Call once, right
     before showing the window."""
-    from PySide6.QtWidgets import QComboBox, QLineEdit
+    from PySide6.QtWidgets import QAbstractSpinBox, QComboBox, QLineEdit
 
     le_ss = (
         f"QLineEdit {{ background-color: {CLR_INPUT}; color: {CLR_TEXT}; "
@@ -265,7 +277,15 @@ def restyle_inputs(window) -> None:
         f"QComboBox:focus {{ border: 1px solid {CLR_ACCENT}; }} "
         f"QComboBox::drop-down {{ border: none; padding-right: 8px; }}"
     )
+    sb_ss = (
+        f"QAbstractSpinBox {{ background-color: {CLR_INPUT}; color: {CLR_TEXT}; "
+        f"border: 1px solid #606064; border-radius: 8px; padding: 6px 10px; }} "
+        f"QAbstractSpinBox:focus {{ border: 1px solid {CLR_ACCENT}; }}"
+    )
     for le in window.findChildren(QLineEdit):
-        le.setStyleSheet(le_ss)
+        if not isinstance(le.parent(), QAbstractSpinBox):     # a spin box's own editor: styled with the box
+            le.setStyleSheet(le_ss)
+    for sb in window.findChildren(QAbstractSpinBox):
+        sb.setStyleSheet(sb_ss)
     for cb in window.findChildren(QComboBox):
         cb.setStyleSheet(cb_ss)

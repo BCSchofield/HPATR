@@ -20,7 +20,7 @@ from src.ai.Taguchi_Analysis_UI import rsm_design as rb
 from src.ai.Taguchi_Analysis_UI import rsm_detect as rdet
 from src.ai.Taguchi_Analysis_UI import theme
 from src.ai.Taguchi_Analysis_UI.app import BatchTab, MainWindow
-from src.ai.Taguchi_Analysis_UI.tab_rsm import RsmTab
+from src.ai.Taguchi_Analysis_UI.tab_rsm import ROLE_PATH, RsmTab, goal_for_fit
 from src.ai.Taguchi_Analysis_UI.tests import fakes
 from src.ai.Taguchi_Analysis_UI.tests.test_rsm_design import ben_plan
 
@@ -164,3 +164,50 @@ def test_the_guide_is_shown(app):
     tab = RsmTab(bt.runs_pane)
     guide = tab.tabs.widget(tab.tabs.count() - 1)
     assert "Step 1: build the run sheet" in guide.toPlainText()
+
+
+# ---- the goals table: worst scores 0, best scores 1, whatever the aim --------------------------------------------
+
+def _goal_row(tab, key):
+    return next(i for i in range(tab.goals_table.rowCount()) if tab.goals_table.item(i, 0).data(ROLE_PATH) == key)
+
+
+def _scores(g, ys, observed=(0.0, 100.0)):
+    from src.ai.Taguchi_Analysis_UI import rsm_stats as rs
+    lo = g["low"] if g["low"] is not None else observed[0]
+    hi = g["high"] if g["high"] is not None else observed[1]
+    return [round(float(v), 3) for v in rs.Goal(g["key"], g["direction"], lo, hi, g.get("target")).d(ys)]
+
+
+def test_goal_ends_mean_worst_and_best_for_every_aim():
+    """Found 2026-10-11: typed ends on a Minimise goal went in unswapped, so the ramp was empty and the
+    goal scored 1 everywhere (silently ignored); a target had nowhere to go."""
+    mx = goal_for_fit({"key": "atom", "aim": "max", "worst": 10.0, "best": 25.0})
+    mn = goal_for_fit({"key": "d32", "aim": "min", "worst": 60.0, "best": 30.0})
+    tg = goal_for_fit({"key": "d32", "aim": "target", "worst": 35.0, "best": 40.0})
+    assert _scores(mx, [5, 10, 17.5, 25, 40]) == [0, 0, 0.5, 1, 1]
+    assert _scores(mn, [70, 60, 45, 30, 20]) == [0, 0, 0.5, 1, 1]
+    assert _scores(tg, [30, 35, 37.5, 40, 42.5, 45, 50]) == [0, 0, 0.5, 1, 0.5, 0, 0]
+    assert goal_for_fit({"key": "d32", "aim": "min", "worst": None, "best": None})["low"] is None   # observed range
+    old = goal_for_fit({"key": "d32", "aim": "min", "low": 60.0, "high": 30.0})     # a file saved before the fix
+    assert (old["low"], old["high"]) == (30.0, 60.0)
+    for aim, worst, best in (("max", 25.0, 10.0), ("min", 30.0, 60.0)):
+        with pytest.raises(ValueError, match="worst"):
+            goal_for_fit({"key": "d32", "aim": aim, "worst": worst, "best": best})
+
+
+def test_the_goals_table_reaches_the_analysis_and_a_backwards_ramp_is_refused(app, ccd):
+    i = _goal_row(ccd, "d32")
+    ccd.goals_table.item(i, 2).setText("60")
+    ccd.goals_table.item(i, 3).setText("30")
+    ccd.goals_table.item(i, 4).setText("2")
+    g = next(x for x in ccd.models_and_options()[1]["goals"] if x["key"] == "d32")
+    assert (g["direction"], g["low"], g["high"], g["importance"]) == ("min", 30.0, 60.0, 2.0)
+    saved = json.loads((ccd.root / "out" / "rsm_model.json").read_text())
+    assert next(x for x in saved["goals"] if x["key"] == "d32")["worst"] == 60.0
+    ccd.goals_table.item(i, 2).setText("20")                     # worst below best on a Minimise goal
+    ccd.analyse()
+    assert "must be above best" in ccd.analyse_label.text() and "D32" in ccd.analyse_label.text()
+    ccd.goals_table.item(i, 2).setText("")                        # put it back for the other tests
+    ccd.goals_table.item(i, 3).setText("")
+    ccd.goals_table.item(i, 4).setText("1")

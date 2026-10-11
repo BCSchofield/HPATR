@@ -1,6 +1,6 @@
 # STATUS — real-data droplet pipeline and Taguchi study
 
-**Last updated: 2026-10-11 (Mac: CCD plan complete, Phase 7 committed 2ebc9f0; next is the 33-run CCD day).** This is the live state of the work. Claude keeps it current
+**Last updated: 2026-10-11 (Mac: CCD plan complete, Phase 7 committed 2ebc9f0; Mac light-mode theme fix; batch bugs 1-2 and the goal-ramp bug fixed, all committed; next is the 33-run CCD day).** This is the live state of the work. Claude keeps it current
 (see "How this file is maintained" at the bottom). History, evidence and full reasoning are in
 `docs/archive/HANDOFF_real_data_pipeline_LEGACY.md` (frozen 2026-10-07, newest section first).
 
@@ -334,8 +334,7 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
    orifice 0.5/1.2/1.8; orifice blocks, 5 centres, block repeats, 0 rpm control, 0.8 mm check).
    Before it: Ben practises the Response surface tab on the 9x3 copy (`docs/RSM_GUIDE.md`, "Using
    the app"); delete `self._pipeline_check.setChecked(True)` (~line 7006, GUI_Clean.py, "Use standard
-   settings"); pull `Testing` + install python-pptx on the lab PC (item 5); fix app bugs 1-2 (item 3)
-   since the day's batch runs overnight; build + export the run sheet in the app, type each run's
+   settings"); pull `Testing` + install python-pptx on the lab PC (item 5); (app bugs 1-2 now fixed); build + export the run sheet in the app, type each run's
    "CCD run N <point type>" in Notes. After it: batch on Windows, then the Response surface tab.
 1. **RPM confirmation test** (Ben, lower urgency now): one gas/silicone setting, RPM alternated
    300/900/300/900... in one session (4-6 runs). Randomise run order in every future campaign.
@@ -345,7 +344,8 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
    moved share ("non-round or blurred fraction") as its own response, since it rises cleanly with
    gas. The first L9 (10/01) is still 2.0.0; re-measuring it at 2.2.0 is ~41 s/run with `--reuse`
    if it is ever to be compared (not done).
-3. **Fix the app bugs below before the next overnight batch** (1 and 2 at least).
+3. ~~Fix the app bugs below before the next overnight batch (1 and 2 at least)~~ 1 and 2 fixed
+   2026-10-11; 3-5 remain (minor).
 4. **Fold in the Windows timings**: `9x3 Taguchi Repeats/_job/eta_calibration.json` +
    `_job/timings.csv` -> replace `eta.PRIORS_BY_OS["Windows"]` in `eta.py` with measured
    lo/typ/hi per stage. ~10 min, any time.
@@ -391,15 +391,35 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
 ## Known bugs, not fixed
 
 Taguchi_Analysis_UI (found in the 2026-10-06 batch):
-1. One failed log write (`worker.py:229`, `OSError: [Errno 22]` on a USB drop) kills the worker.
-   It should survive, wait for the drive, retry the run once.
-2. A worker crash writes `job_end status: halted`, which `batch_controller.py:243` reports as a
-   contract violation with no Resume. Workaround: Run batch with "Use their existing results".
+1. ~~One failed log write kills the worker~~ **FIXED 2026-10-11** (Mac, uncommitted): writes to the
+   run log, events and state never fail a run or the worker (kept and retried); a run that fails with
+   an OS error or with its folder / the job folder unreachable waits up to 30 min for the drive and is
+   redone once (reusing finished work); if the drive does not return the worker stops as
+   **drive_lost** (exit 6), that run pending, Resume offered. `tests/test_worker_drive.py` (7,
+   mutation-checked). Not yet run on Windows with a real unplug.
+2. ~~A crash is reported as a contract violation with no Resume~~ **FIXED 2026-10-11**: a crash is now
+   status **crashed** (exit 7), resumable, with its own message; old jobs written "halted" with no
+   contract-violation run also read as crashed. Only a real contract violation reads "halted".
 3. The SELECTED RUNS summary ("N already measured") does not update while a batch runs.
 4. After a crash the "already have results" dropdown showed "Re-measure only"; check the default
    (run sheet says "Use their existing results").
 5. 17 Windows-only test failures, all test-side (path separators, `os.getpgid`, symlinks needing
    admin, `?` in a fake run name, one GLR test). Self-test says READY regardless.
+
+Response surface tab, found 2026-10-11 (tested on fakes: the 9x3 + 4 next-session runs on another day):
+- **Loading a next session with the original runs is not handled properly yet.** (a) Confirmation runs
+  are swept INTO the fit (8,700 sccm becomes a 4th gas level, "edge" points), so they no longer test the
+  model unless Validation is ticked by hand; (b) the design is re-detected as "irregular" and the
+  original point types are relabelled (face centres -> "other"); (c) the fit has NO day/session offset
+  term, so a day-to-day shift in D-optimal runs added to the fit is absorbed into the surface (the centre
+  anchor is recommended to measure it, but nothing uses it yet). Proposed fix (not started): Notes
+  "CCD next run N confirm" -> validation automatically; keep the first session's design and classify
+  the new runs as added; a session offset term when runs span days, estimated via the anchor.
+
+- ~~Model page goals: Minimise ramp unswapped; no target for Hit a target~~ **FIXED 2026-10-11**
+  (`tab_rsm.goal_for_fit`): worst scores 0 and best 1 for every aim, a target is the best column
+  (symmetric ramp out to worst), a backwards ramp is refused with the response named; older saved
+  rsm_model.json (low/high keys) still read. Tests in test_tab_rsm.py, mutation-checked.
 
 Elsewhere:
 - **Static specks detected as droplets.** The same ~5 places (e.g. x1824 y648, x336 y852,
@@ -493,6 +513,13 @@ made", "Bit depth", and the dated sections).
 
 ## Recent changes (newest first; trim to ~10 entries, older ones live in git history)
 
+- 2026-10-11 (Mac): batch worker survives a USB drop (bugs 1-2 of the 10-06 batch): see Known bugs.
+  New statuses `crashed` and `drive_lost`, both resumable; `worker.RunLog`, `Worker._wait_for_drive`.
+- 2026-10-11 (Mac): dark theme made OS-independent. `theme.apply_fusion_style` now sets a full dark
+  palette; before, Fusion followed the OS light/dark setting, so on a Mac in light mode the run-folder
+  picker (non-native, for multi-select), list widgets and scroll bars were light text on white (Windows
+  in dark mode looked fine). Also: the Response surface tab's findings/recommendation lists styled like
+  the Taguchi tab's; `restyle_inputs` no longer restyles a spin box's inner editor (it drew a white box).
 - 2026-10-08 (lab PC): `launch_app.py` probe fixed. It required an EXACT `sm_XY` match, so the lab's
   RTX 4070 Ti SUPER (sm_89) on torch 2.6.0+cu124 (lists sm_86, sm_90) was wrongly called
   unsupported and the launcher warned no Python could run a batch. Now follows CUDA compatibility

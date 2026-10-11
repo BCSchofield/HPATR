@@ -28,6 +28,11 @@ cd /Users/benschofield/Documents/GitHub/HPATR && /Users/benschofield/anaconda3/e
 3. **Model**: each factor's role (surface factor = mapped; nuisance = kept in the model, not mapped; left
    out), the levels that can actually be set (orifice inserts), the goals for the best setting, and
    whether to also fit without the nuisance factors to compare.
+   **Goals** steer only the best setting and the next runs (not the fits or maps). Each response scores 0
+   at **worst** and 1 at **best** (Maximise: worst below best; Minimise: worst above best; Hit a target:
+   best is the target and the score falls to 0 as far either side as worst is); blank = the range seen in
+   the runs. **Importance** weights the goals (all 1 = equal; e.g. atomised fraction 3, D32 2). Set them
+   before the first Analyse or change them later and press Analyse again; they are saved with the output.
 4. **Analyse and next runs**: press **Analyse**; then **Open deck**, **Open report**, **Open next runs**.
    The recommendations for the next session are listed with their reasons.
 5. **Build a run sheet** (before a new experiment): type the factors and levels (or **Load the 33-run
