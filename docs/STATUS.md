@@ -1,6 +1,6 @@
 # STATUS — real-data droplet pipeline and Taguchi study
 
-**Last updated: 2026-10-11 (Mac: CCD plan Phase 2 built, awaiting review; Dv percentile fix).** This is the live state of the work. Claude keeps it current
+**Last updated: 2026-10-11 (Mac: CCD plan Phase 2 committed; Phase 3a built, awaiting review).** This is the live state of the work. Claude keeps it current
 (see "How this file is maintained" at the bottom). History, evidence and full reasoning are in
 `docs/archive/HANDOFF_real_data_pipeline_LEGACY.md` (frozen 2026-10-07, newest section first).
 
@@ -170,6 +170,28 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
   - **Data-quality finding:** 113007, 124030 (and mildly 120201) have a large defocused dark spot
     in the median background (~1700 px, left of centre): most likely a silicone splash on the
     window for most of that capture.
+
+- **Phase 2 committed (5649800).**
+- **Phase 3a done (2026-10-11), uncommitted, awaiting review:** `rsm_detect.py` detects the
+  response-surface design from the run folders alone (no sheet): varying factors + held-fixed list;
+  design levels (uneven allowed: DESIGN coding classifies, REAL coding fits, 1.2 mm -> +0.08); special
+  values that only occur with every other factor at centre (symmetric pair beyond the levels = axial,
+  alpha estimated; lone inside = off-grid CHECK, e.g. 0.8 mm; lone outside = OUTSIDE, e.g. 0 rpm);
+  point types; repeats; type match (CCF / CCD-alpha with rotatable/spherical / Box-Behnken / 3^k /
+  two-level + centres / regular fractions / orthogonal array / irregular) with missing and extra
+  points; hard-to-change (block) factor = few value changes in time order, confounded with time;
+  day blocks; within-block repeats as drift pairs; Notes ("CCD run 7 centre") vs point type and
+  vs capture order; quadratic estimability (separately estimable terms, pure-error and LOF df,
+  largest estimable hierarchical model with aliases). Editable `RsmDesign` (design.Design +
+  validation runs + block factor), saved as `rsm_design.json`. Tests `test_rsm_detect.py` (14),
+  including Ben's 33-run day (FAKE folders built from his run sheet; that day has not been run),
+  a 3-factor CCF day with orifice blocks (future 3-factor sessions), and the real 10/05 (read-only:
+  -> L9, Taguchi tab, RPM confounded with time). Priority: the 4-factor 33-run design, then 3-factor.
+  **Ben's CCD plan is now 4 factors / 33 runs** (gas 7000-11000, feed 3000-5000, RPM 100-900,
+  orifice 0.5/1.2/1.8, + 0 rpm control + 0.8 mm check; doc dated 2026-10-09), not the 3-factor
+  22-run day the plan file assumed; detection is any-k so nothing changed, the tests use the 33.
+  Comparing the detected design with a BUILT sheet moves to 3b (the sheet format is defined
+  there; the built sheet gets its own file, not `rsm_design.json`).
 
 ## Next steps, in order
 

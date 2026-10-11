@@ -488,9 +488,9 @@ def tw_size_distribution(results):
     return (f"Dv50 runs from {lo['Dv50 (um)']:.1f} µm ({lo['condition']}) to {hi['Dv50 (um)']:.1f} µm "
             f"({hi['condition']})",
             f"Number and volume distributions per condition (replicates pooled) and cumulative volume. Coarsest: "
-            f"{_with_driver(results, per, hi['condition'])}, {hi.get(big, 0):.0f}% of its liquid above "
-            f"{run_metrics.LARGE_UM:g} µm. Finest: {_with_driver(results, per, lo['condition'])}, "
-            f"{lo.get(big, 0):.0f}%.",
+            f"{_with_driver(results, per, hi['condition'])}, with {hi.get(big, 0):.0f}% of its liquid above "
+            f"{run_metrics.LARGE_UM:g} µm. Finest: {_with_driver(results, per, lo['condition'])}, with "
+            f"{lo.get(big, 0):.0f}% of its liquid above {run_metrics.LARGE_UM:g} µm.",
             defs("Dv", "lattice"),
             "Left: % of droplets per 5 µm bin. Middle: % of liquid volume per bin. Right: cumulative volume; "
             "where each curve crosses 10 / 50 / 90% is its Dv10 / Dv50 / Dv90.")
@@ -530,8 +530,8 @@ def tw_steadiness(results):
     top = sorted(slow, key=slow.get, reverse=True)[:2]
     calm = min(slow, key=slow.get)
     desc = (f"Most pulsing: {_with_driver(results, slow_run, top[0])}, slow share {slow[top[0]]:.0f}%"
-            + (f"; then {cond_text(results, top[1])}, {slow[top[1]]:.0f}%" if len(top) > 1 else "")
-            + f". Steadiest: {_with_driver(results, slow_run, calm)}, {slow[calm]:.0f}%.")
+            + (f"; then {cond_text(results, top[1])}, slow share {slow[top[1]]:.0f}%" if len(top) > 1 else "")
+            + f". Steadiest: {_with_driver(results, slow_run, calm)}, slow share {slow[calm]:.0f}%.")
     if lag and cv:
         desc += f" Across conditions lag-1 r runs {min(lag.values()):.2f}–{max(lag.values()):.2f}, count CV " \
                 f"{min(cv.values()):.2f}–{max(cv.values()):.2f}."
