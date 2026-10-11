@@ -190,6 +190,8 @@ def test_save_load_and_export(tmp_path):
     (rb.Plan(factors=[GAS, FEED], first={"sccm": "high"}), "every factor"),
     (rb.Plan(factors=[GAS, RPM, FEED], fraction="half", first={"sccm": "high", "rpm": "high", "sps": "low"}),
      "not one of the design's corners"),
+    (rb.Plan(factors=[replace(GAS, mid=10000, high=13000), FEED]), "outside what the rig can set"),
+    (rb.Plan(factors=[GAS, FEED], extras=[rb.Extra({"sccm": 12500, "sps": 4000})]), "outside what the rig can set"),
 ])
 def test_bad_plans_are_refused_with_a_reason(plan, msg):
     with pytest.raises(rb.PlanError, match=msg):

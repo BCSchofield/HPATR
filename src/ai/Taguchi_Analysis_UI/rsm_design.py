@@ -42,6 +42,9 @@ SCHEMA = 1
 SHEET_FILENAME = "rsm_run_sheet.json"
 EXPORT_STEM = "run_sheet"
 MAX_FACTORS = 5
+# what the rig can physically set (Ben, 2026-10-11): the gas flow controller tops out at 12,000 sccm.
+# There is no rated pressure limit, so peak pressure is watched, not constrained.
+RIG_LIMITS = {"sccm": (0.0, 12000.0)}
 
 
 # ---- inputs ---------------------------------------------------------------------------------------------
@@ -167,6 +170,15 @@ def _check(plan: Plan) -> list[str]:
         if uneven > 0.05:
             notes.append(f"{f.label}: uneven levels ({f.low:g} / {f.mid:g} / {f.high:g}); the middle sits at "
                          f"{f.real_code(f.mid):+.2f} in the fit's coding")
+    for f in plan.factors:
+        lo, hi = RIG_LIMITS.get(f.key, (-math.inf, math.inf))
+        if f.low < lo or f.high > hi:
+            raise PlanError(f"{f.label}: {f.low:g} to {f.high:g} is outside what the rig can set ({lo:g} to {hi:g})")
+    for e in plan.extras:
+        for k_, v in e.values.items():
+            lo, hi = RIG_LIMITS.get(k_, (-math.inf, math.inf))
+            if not lo <= v <= hi:
+                raise PlanError(f"extra run {e.values}: {k_} {v:g} is outside what the rig can set ({lo:g} to {hi:g})")
     if plan.block_factor is not None and plan.block_factor not in keys:
         raise PlanError(f"block factor {plan.block_factor!r} is not one of the factors")
     if plan.fraction not in (None, "half"):

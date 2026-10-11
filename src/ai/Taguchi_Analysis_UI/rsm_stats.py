@@ -265,6 +265,50 @@ def bh_across(fits: dict) -> None:
         fits[name].q[t] = qq
 
 
+# ---- where a fitted surface peaks (canonical analysis) ----------------------------------------------------
+
+@dataclass
+class Stationary:
+    coded: dict                       # axis factor -> coded value of the stationary point
+    value: float                      # fitted response there
+    kind: str                         # "maximum" | "minimum" | "saddle" | "ridge" (a near-zero curvature)
+    inside: bool                      # within the coded box [-1, 1] on every axis factor
+    eigen: list                       # curvatures along the principal axes
+
+
+def stationary(f: Fit, axis: list[str], fixed: dict | None = None, ridge_tol: float = 1e-6) -> Stationary | None:
+    """Solve grad = 0 of the fitted quadratic in the axis factors (other model factors held at `fixed`,
+    coded). y = b0 + x'b + x'Bx; x_s = -B^-1 b / 2. Undefined when a square or interaction is missing in
+    a way that leaves B singular (e.g. a linear-only factor): None."""
+    c = f.coef()
+    k = len(axis)
+    b = np.array([c.get(a, 0.0) for a in axis])
+    B = np.zeros((k, k))
+    for i, a in enumerate(axis):
+        B[i, i] = c.get(f"{a}^2", 0.0)
+        for j in range(i + 1, k):
+            v = c.get(f"{a}*{axis[j]}", c.get(f"{axis[j]}*{a}", 0.0)) / 2
+            B[i, j] = B[j, i] = v
+    if np.linalg.matrix_rank(B) < k:
+        return None
+    xs = -0.5 * np.linalg.solve(B, b)
+    ev = np.linalg.eigvalsh(B)
+    scale = max(1e-12, float(np.abs(ev).max()))
+    if np.all(ev < -ridge_tol * scale):
+        kind = "maximum"
+    elif np.all(ev > ridge_tol * scale):
+        kind = "minimum"
+    else:
+        kind = "saddle"
+    if np.min(np.abs(ev)) < 0.05 * scale:
+        kind = f"{kind} (nearly a ridge: one direction is almost flat)"
+    x = {a: float(v) for a, v in zip(axis, xs)}
+    pt = dict(fixed or {})
+    pt.update(x)
+    val = float(f.predict({kk: np.array([vv]) for kk, vv in pt.items()})["mean"][0])
+    return Stationary(x, val, kind, bool(np.all(np.abs(xs) <= 1 + 1e-9)), ev.tolist())
+
+
 # ---- drift ----------------------------------------------------------------------------------------------------
 
 @dataclass

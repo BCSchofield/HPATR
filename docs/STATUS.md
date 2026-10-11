@@ -1,6 +1,6 @@
 # STATUS — real-data droplet pipeline and Taguchi study
 
-**Last updated: 2026-10-11 (Mac: CCD plan Phase 3b committed; Phase 4 built, awaiting review).** This is the live state of the work. Claude keeps it current
+**Last updated: 2026-10-11 (Mac: CCD plan Phase 4 committed; Phase 4b (9x3 gas x feed trial) done, awaiting review).** This is the live state of the work. Claude keeps it current
 (see "How this file is maintained" at the bottom). History, evidence and full reasoning are in
 `docs/archive/HANDOFF_real_data_pipeline_LEGACY.md` (frozen 2026-10-07, newest section first).
 
@@ -238,6 +238,30 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
   mutation checks. No real-data analysis yet: that is Phase 4b.
   - **Open:** the rig's rated pressure limit (for the peak-pressure constraint) is not recorded
     anywhere; ask Ben.
+
+- **Phase 4 committed (c786e69).** Rig limits (Ben, 2026-10-11): gas flow max 12,000 sccm (now enforced by
+  the builder, `rsm_design.RIG_LIMITS`); there is NO rated pressure limit, so peak pressure is reported,
+  never a constraint.
+- **Phase 4b done (2026-10-11), uncommitted, awaiting review:** the 9x3 as a gas x feed surface, run the way
+  the tab's Analyse button will (select runs -> detect -> models -> `rsm_publish.publish`), into
+  `Practice Folder/output/9x3 response surface (gas x feed)/` (36 s). Built for it (the plan's Phase 5
+  publish, at 2-axis scope): `rsm_figures.py` (contour maps per held RPM, 3D surfaces, profiler with
+  CI/PI bands, desirability with sweet spot, fit checks, model comparison, validation),
+  `rsm_report.py` (tables shared by report / workbook / CSV; verdicts; stationary points by kind;
+  trade-offs at the optimum; interaction agreement across models; simple next runs),
+  `rsm_publish.py` (isolated steps, shared size / steadiness / quality extras, provenance), `rsm_deck.py`
+  (styled like the Taguchi deck, Terms cards, takeaway titles, shared figures as an appendix),
+  `rsm_stats.stationary`. Tests `test_rsm_publish.py` (8) + a workbook-field factor test (any
+  run_summary.xlsx field works as a factor, keyed `wb:<field>`).
+  **Findings on the real 9x3 (sizer 2.2.0):** model (a) gas x feed + RPM nuisance fits well (atomised
+  fraction R^2 0.99, predicted 0.98, no lack of fit; D32 has lack of fit p = 0.039); model (b) without RPM
+  shows lack of fit for nearly every response, so RPM is not noise. The gas x feed interaction flips
+  between the models (atomised -0.89 p 0.005 vs +0.46 ns; D32 +0.11 ns vs -1.19 p 0.003): not separated
+  from RPM (r = -0.61), as predicted. Surfaces are mostly saddles (gas and feed curve opposite ways).
+  Best overall (default goals: atomised up, atomised flow up, count CV down, D32 down) ~8,700 sccm,
+  8,000 steps/s (feed edge), best at 300 rpm (D 0.91 vs 0.80 at 600, 0.72 at 900); the feed edge is
+  throughput's pull: atomised fraction alone favours low feed. Phase 5 generalises to k axis factors
+  (pairs, holds) and the CCD day; Phase 6 is the real recommender.
 
 ## Next steps, in order
 

@@ -237,3 +237,24 @@ def test_a_three_factor_ccf_day_with_orifice_blocks_and_a_check_run():
     e = det.estimability
     assert e.full and e.n_params == 10 and e.n_fit == 21 and e.df_pure_error == 4 + 1 + 1
     assert not [f for p in det.points for f in p.flags]
+
+
+def test_a_factor_that_is_a_run_summary_field_works_like_a_built_in_one():
+    """Any run_summary.xlsx field can be a factor (here Motor Travel, 30 / 36 / 42 mm, crossed with gas
+    flow as a 2-factor CCF): detection, levels, point types and estimability are the same."""
+    pts = list(itertools.product((-1, 1), repeat=2)) + [(-1, 0), (1, 0), (0, -1), (0, 1)] + [(0, 0)] * 3
+    paths = []
+    with tempfile.TemporaryDirectory() as d:
+        start = datetime(2026, 10, 12, 8, 0)
+        for i, (g, m) in enumerate(pts, 1):
+            t = (start + timedelta(minutes=9 * i)).strftime("%H%M%S")
+            paths.append(fakes.make_run(Path(d), f"{t}_{9000 + 2000 * g:g}sccm_500rpm_4000sps_or1.2_bh0.5",
+                                        day=("2026", "10", "12"), overrides={"Motor Travel (mm)": str(36 + 6 * m)}))
+        design = rsm.from_runs(rd.load_runs(paths, check_reuse=False))
+        design.base.add_factor("Motor Travel (mm)")
+        det = design.detect()
+    assert {f.key for f in det.factors} == {"sccm", "wb:Motor Travel (mm)"}      # workbook factors are keyed "wb:<field>"
+    travel = next(f for f in det.factors if f.key == "wb:Motor Travel (mm)")
+    assert travel.levels == [30, 36, 42] and travel.label == "Motor Travel (mm)"
+    assert det.type_key == "ccf" and det.complete and det.estimability.full
+    assert det.counts() == {rsm.CORNER: 4, rsm.FACE: 4, rsm.CENTRE: 3}
