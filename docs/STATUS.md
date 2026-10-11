@@ -1,6 +1,6 @@
 # STATUS — real-data droplet pipeline and Taguchi study
 
-**Last updated: 2026-10-11 (Mac: CCD plan complete, Phase 7 committed 2ebc9f0; Mac light-mode theme fix; batch bugs 1-2, goal-ramp bug, feed floor 2,000 steps/s; mean diameter now a headline response; next is the 33-run CCD day).** This is the live state of the work. Claude keeps it current
+**Last updated: 2026-10-11 (Mac: CCD plan complete, Phase 7 committed 2ebc9f0; Mac light-mode theme fix; batch bugs 1-2, goal-ramp bug, feed floor 2,000 steps/s; mean diameter now a headline response and the default size goal; GUI_Clean auto-trigger at end of test (untried on the rig); next is the 33-run CCD day).** This is the live state of the work. Claude keeps it current
 (see "How this file is maintained" at the bottom). History, evidence and full reasoning are in
 `docs/archive/HANDOFF_real_data_pipeline_LEGACY.md` (frozen 2026-10-07, newest section first).
 
@@ -519,6 +519,14 @@ made", "Bit depth", and the dated sections).
 
 ## Recent changes (newest first; trim to ~10 entries, older ones live in git history)
 
+- 2026-10-11 (Mac, NOT yet tried on the rig): **GUI_Clean "Auto-trigger at end of test"** tickbox beside
+  Disarm / Abort (Camera tab; remembered in camera_settings.json as `auto_trigger_end`). On Start
+  Experiment it arms the camera if needed and fires the trigger at test length - 2 s - post-trigger
+  (test length = Motor Travel x 6800 / steps/s, traverse starting 0.5 s after Start), so the saved video
+  ends 2 s before the traverse stops (25 s test, 13 s video: fires with 15 s left). A test too short for
+  the video asks: trigger early / start without / cancel. Countdown shown under the camera buttons;
+  cancelled by Disarm / Abort, Pressure Off, a timed-out run, or the traverse finishing first.
+  `auto_trigger_plan()` is the timing (pure function); checked offscreen with a fake camera.
 - 2026-10-11 (Mac): **mean diameter is a headline response** (Ben: same level as D32 and atomised
   fraction). Taguchi: main effects, per run, S/N, GLR, interactions, residual checks, drift, report
   summary, deck headline slides. CCD: contour maps, 3D surfaces, all-pairs maps, drift, fit checks,

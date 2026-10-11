@@ -1480,6 +1480,32 @@ class _ThreadLocalStream:
 
 # ── Main application window ───────────────────────────────────────────────────
 
+def auto_trigger_plan(distance_mm, speed_sps, pre_s, post_s, *, steps_per_mm=6800,
+                      motor_delay_s=0.5, buffer_s=2.0, arm_lead_s=1.0):
+    """When to fire the camera so its recording covers the END of a Start Experiment run.
+
+    All times are seconds after Start is clicked. The traverse starts motor_delay_s
+    after Start (_start_experiment sends the motor command 500 ms later) and runs
+    distance_mm * steps_per_mm / speed_sps seconds. The camera saves pre_s before
+    the trigger and post_s after it, so firing at
+        motor end - buffer_s - post_s
+    makes the saved window end buffer_s before the traverse stops (the buffer
+    covers the motor's ramp and timing slack). E.g. a 25 s test with a 13 s
+    window fires with 15 s left.
+
+    fits is False when the test is too short for the window: the window would
+    start before the traverse does, or the trigger would come before the camera
+    has had arm_lead_s to start buffering.
+    """
+    test_s = float(distance_mm) * steps_per_mm / float(speed_sps)
+    end_s = motor_delay_s + test_s
+    trigger_s = end_s - buffer_s - float(post_s)
+    start_s = trigger_s - float(pre_s)
+    fits = start_s >= motor_delay_s and trigger_s >= arm_lead_s
+    return {"test_s": test_s, "end_s": end_s, "trigger_s": trigger_s,
+            "window_s": (start_s, trigger_s + float(post_s)), "fits": fits}
+
+
 class AtomisationApp(QMainWindow):
 
     MAX_MOTOR_MM = 72.5   # physical travel limit
@@ -1624,6 +1650,16 @@ class AtomisationApp(QMainWindow):
         self._experiment_watchdog = QTimer(self)
         self._experiment_watchdog.setSingleShot(True)
         self._experiment_watchdog.timeout.connect(self._on_experiment_timeout)
+
+        # Auto-trigger at the end of a test (Camera tab tickbox): one shot to fire,
+        # one 1 s tick for the countdown shown under the camera buttons.
+        self._auto_trig_timer = QTimer(self)
+        self._auto_trig_timer.setSingleShot(True)
+        self._auto_trig_timer.timeout.connect(self._auto_trigger_fire)
+        self._auto_trig_tick = QTimer(self)
+        self._auto_trig_tick.setInterval(1000)
+        self._auto_trig_tick.timeout.connect(self._auto_trigger_countdown)
+        self._auto_trig_due = None
 
         self._run_elapsed_timer = QTimer(self)
         self._run_elapsed_timer.setInterval(1000)
@@ -2958,6 +2994,20 @@ class AtomisationApp(QMainWindow):
         self._cam_abort_btn.clicked.connect(self._cam_abort)
         self._cam_arm_btn.clicked.connect(self._cam_arm)
         self._cam_trigger_btn.clicked.connect(self._cam_trigger)
+        self._auto_trig_chk = QCheckBox("Auto-trigger at end of test")
+        self._auto_trig_chk.setStyleSheet(f"color:{CLR_TEXT}; font-size:12px;")
+        self._auto_trig_chk.setToolTip(
+            "<b>Auto-trigger at end of test</b><br>"
+            "On Start Experiment, arms the camera (if it is not armed) and fires the "
+            "trigger by itself so the saved video is the LAST part of the test: it ends "
+            "2 s before the traverse stops.<br>"
+            "Trigger time = test length − 2 s − Post-trigger (s); test length = "
+            "Motor Travel × 6800 / Speed (steps/s).<br>"
+            "E.g. a 25 s test with a 13 s video triggers with 15 s left.<br>"
+            "Cancelled by Disarm / Abort, Pressure Off or a timed-out run. Remembered "
+            "between sessions.")
+        self._auto_trig_chk.stateChanged.connect(self._save_camera_settings)
+        cpr.addWidget(self._auto_trig_chk)
         cpr.addStretch()
         cpr.addWidget(self._cam_abort_btn)
         cpr.addWidget(self._cam_arm_btn)
@@ -4792,6 +4842,7 @@ class AtomisationApp(QMainWindow):
 
     def _on_movement_complete(self):
         self._experiment_watchdog.stop()
+        self._auto_trigger_cancel("the traverse finished before the camera fired")
         self.cumulative_distance = self._pre_move_cumulative + self._pending_move_distance
         self._pending_move_distance = 0.0
         self._update_travel_bar()
@@ -5020,6 +5071,7 @@ class AtomisationApp(QMainWindow):
 
     def _on_experiment_timeout(self):
         """Watchdog fired — serial reader likely died. Kill the gas and recover UI."""
+        self._auto_trigger_cancel("the run timed out")
         if self.pressure_data['experiment_active']:
             self._stop_bubbler_failsafe("experiment timed out")
             self.pressure_data['experiment_active'] = False
@@ -5044,6 +5096,7 @@ class AtomisationApp(QMainWindow):
         simply not being connected) can't prevent the others from stopping.
         """
         stopped = []
+        self._auto_trigger_cancel("Pressure Off")
 
         # Traverse motor (Portenta)
         if self.arduino_connected and self.arduino:
@@ -5506,6 +5559,7 @@ class AtomisationApp(QMainWindow):
         threading.Thread(target=_do_arm, daemon=True).start()
 
     def _cam_abort(self):
+        self._auto_trigger_cancel("camera disarmed")
         if self.phantom: self.phantom.abort()
         self._cam_status_lbl.setText("Camera: disarmed")
         self._cam_arm_status_lbl.setText("Not armed")
@@ -5513,6 +5567,90 @@ class AtomisationApp(QMainWindow):
         self._cam_arm_btn.setEnabled(True)
         self._set_trigger_enabled(False)
         self._set_camera_armed_indicator("transparent")
+
+    # ── Auto-trigger at the end of a test ────────────────────────────────────
+
+    def _auto_trigger_check(self, distance, speed):
+        """Before Start Experiment: None if auto-trigger is off or there is no camera,
+        a plan dict to schedule, or "cancel" if the user backed out of a test that is
+        too short for the video."""
+        if not (hasattr(self, "_auto_trig_chk") and self._auto_trig_chk.isChecked()):
+            return None
+        if not (self.phantom and self.phantom.is_connected):
+            self._log("Auto-trigger is ticked but the camera is not connected: "
+                      "this run will have no video.")
+            self._set_status("Auto-trigger skipped: camera not connected", CLR_ORANGE)
+            return None
+        try:
+            pre_s = float(self._cam_pre_s.text() or 0)
+            post_s = float(self._cam_post_s.text() or 0)
+        except ValueError:
+            self._warn("Auto-trigger", "Pre-trigger and Post-trigger (s) must be numbers.")
+            return "cancel"
+        plan = auto_trigger_plan(distance, speed, pre_s, post_s)
+        if plan["fits"]:
+            return plan
+        dlg = QMessageBox(self)
+        dlg.setWindowTitle("Test shorter than the video")
+        dlg.setIcon(QMessageBox.Icon.Warning)
+        dlg.setText(
+            f"This test runs for {plan['test_s']:.1f} s, but the video is "
+            f"{pre_s + post_s:g} s and auto-trigger keeps a 2 s margin before the end.\n\n"
+            "Trigger as soon as the camera is buffering (the video will run past the "
+            "end of the test), start without auto-trigger, or cancel?")
+        early = dlg.addButton("Trigger early", QMessageBox.ButtonRole.AcceptRole)
+        without = dlg.addButton("Start without", QMessageBox.ButtonRole.DestructiveRole)
+        dlg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        dlg.exec()
+        if dlg.clickedButton() == early:
+            plan["trigger_s"] = max(plan["trigger_s"], 1.0 + pre_s)
+            return plan
+        if dlg.clickedButton() == without:
+            return None
+        return "cancel"
+
+    def _auto_trigger_schedule(self, plan):
+        if not self.phantom.is_armed:
+            self._cam_arm()                       # buffering from now on
+        delay_ms = int(max(plan["trigger_s"], 1.0) * 1000)
+        self._auto_trig_due = time.time() + delay_ms / 1000
+        self._auto_trig_timer.start(delay_ms)
+        self._auto_trig_tick.start()
+        a, b = plan["window_s"]
+        self._log(f"Auto-trigger: test {plan['test_s']:.1f} s; camera fires {delay_ms / 1000:.1f} s "
+                  f"after Start, saving {a:.1f}–{b:.1f} s (the traverse stops at {plan['end_s']:.1f} s).")
+        self._auto_trigger_countdown()
+
+    def _auto_trigger_countdown(self):
+        if self._auto_trig_due is None:
+            self._auto_trig_tick.stop()
+            return
+        left = max(0, int(round(self._auto_trig_due - time.time())))
+        self._cam_arm_status_lbl.setText(f"Auto-trigger in {left} s")
+        self._cam_arm_status_lbl.setStyleSheet(f"color:{CLR_ORANGE}; font-size:12px;")
+
+    def _auto_trigger_fire(self):
+        self._auto_trig_due = None
+        self._auto_trig_tick.stop()
+        if not self.pressure_data['experiment_active']:
+            self._log("Auto-trigger: the run had already stopped; not fired.")
+            return
+        if not (self.phantom and self.phantom.is_armed):
+            self._log("Auto-trigger: the camera was not armed (already triggered, or arming "
+                      "failed); not fired.")
+            self._set_status("Auto-trigger did not fire: camera not armed", CLR_ORANGE)
+            return
+        self._log("Auto-trigger: firing the camera.")
+        self._cam_trigger()
+
+    def _auto_trigger_cancel(self, why):
+        timer = getattr(self, "_auto_trig_timer", None)        # None during start-up
+        if timer is None or (self._auto_trig_due is None and not timer.isActive()):
+            return
+        self._auto_trig_timer.stop()
+        self._auto_trig_tick.stop()
+        self._auto_trig_due = None
+        self._log(f"Auto-trigger cancelled: {why}.")
 
     def _on_save_format_changed(self, source: str):
         """Keep at least one save format ticked, then persist the pair.
@@ -7061,6 +7199,9 @@ class AtomisationApp(QMainWindow):
                        f"Only {remaining:.1f} mm of travel remains.\n"
                        "Home the motor to reset.")
             return
+        auto_plan = self._auto_trigger_check(distance, speed)
+        if auto_plan == "cancel":
+            return
 
         self.pressure_data['experiment_active'] = True
         self.pressure_data['experiment_start_time'] = time.time()
@@ -7128,7 +7269,10 @@ class AtomisationApp(QMainWindow):
         _move_time_ms = int((distance * _steps_per_mm / speed + 30) * 1000)
         self._experiment_watchdog.start(_move_time_ms)
 
-        # Camera is managed independently — arm/trigger from the Camera tab
+        # Camera: armed/triggered from the Camera tab, or by itself near the end of
+        # the test when "Auto-trigger at end of test" is ticked
+        if isinstance(auto_plan, dict):
+            self._auto_trigger_schedule(auto_plan)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Logic — Shadowgraph preview
@@ -7869,6 +8013,9 @@ class AtomisationApp(QMainWindow):
             finally:
                 self._save_fmt_guard = False
             self._pipeline_check.setChecked(bool(s.get("run_ai_analysis", True)))
+            self._auto_trig_chk.blockSignals(True)     # no save half-way through loading
+            self._auto_trig_chk.setChecked(bool(s.get("auto_trigger_end", False)))
+            self._auto_trig_chk.blockSignals(False)
             self._ai_stride.setText(str(s.get("ai_stride", self.DEFAULT_STRIDE)))
             if hasattr(self, "_rho_liquid_entry"):
                 self._rho_liquid_entry.setText(
@@ -7990,6 +8137,8 @@ class AtomisationApp(QMainWindow):
                 "orifice":           self._orifice_combo.currentText(),
                 "bubbler_height_mm": self._bubbler_height_entry.text().strip(),
                 "run_ai_analysis":   self._pipeline_check.isChecked(),
+                "auto_trigger_end":  self._auto_trig_chk.isChecked()
+                                     if hasattr(self, "_auto_trig_chk") else False,
                 "ai_stride":         self._get_ai_stride(),
                 "cone_autofocus":    self._cone_autofocus_chk.isChecked(),
                 "cone_focus":        self._cone_focus_spin.value(),
