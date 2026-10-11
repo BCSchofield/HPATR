@@ -17,7 +17,9 @@ temporary name and moved into place.
 """
 from __future__ import annotations
 
+import copy
 import csv
+import dataclasses
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,7 +28,7 @@ from typing import Callable
 import pandas as pd
 
 from . import deck as deck_mod
-from . import figures_extra, fsops, provenance, rsm_detect, rsm_figures, rsm_report, rsm_responses, size_bins, stats
+from . import figures, figures_extra, fsops, provenance, rsm_detect, rsm_figures, rsm_report, rsm_responses, size_bins, stats
 from .workbook import _style
 
 REPORT_NAME = "rsm_report.md"
@@ -163,18 +165,30 @@ def publish(design: rsm_detect.RsmDesign, output_dir: Path, models: list[ModelSp
         d.problems.append(p)
         log(p, "error")
 
-    shared = None
+    shared = bins = None
     if shared_extras:
         log("response surface: the shared size / steadiness / quality figures ...", "info")
-        shared = step("shared extras", lambda: stats.analyse(design.base, thr, None, False,
+        # grouped by SETTING: a CCD's "CCD run 7" Notes are run numbers, not the Taguchi trial numbers
+        # design.assign would otherwise read them as (and then report every repeat as a conflict)
+        base = copy.copy(design.base)
+        base.rows = [dataclasses.replace(r, trial=None, repeat=None) for r in design.base.rows]
+        shared = step("shared extras", lambda: stats.analyse(base, thr, None, False,
                                                              metrics_cache=output_dir / METRICS_CACHE))
         if shared is not None and not shared.refused:
+            bins = step("size bins", lambda: size_bins.from_results(shared, size_bins.DEFAULT_WIDTH_UM,
+                                                                    size_bins.DEFAULT_MAX_UM))
             extra: list[str] = []
-            d.figures += step("shared figures", lambda: figures_extra.make_all(shared, output_dir / FIGURES_DIR,
-                                                                               extra)) or []
+            figs = output_dir / FIGURES_DIR
+            # everything the Taguchi publish draws that is not Taguchi-specific (main effects, contributions,
+            # S/N, condition-mean interactions and the main-effects diagnostics are left out: the response-
+            # surface fit and its checks replace them)
+            d.figures += step("shared figures", lambda: figures_extra.make_all(shared, figs, extra)) or []
+            for fn in (lambda: figures.fig_per_run(shared, figs), lambda: figures.fig_glr(shared, figs)):
+                d.figures += step("shared figures", fn) or []
+            if bins is not None:
+                d.figures += step("size spread", lambda: figures.fig_size_spread_count(bins, figs)
+                                  + figures.fig_size_spread_volume(bins, figs)) or []
             d.problems += extra
-    bins = step("size bins", lambda: size_bins.from_results(shared, size_bins.DEFAULT_WIDTH_UM,
-                                                            size_bins.DEFAULT_MAX_UM)) if shared is not None else None
     prov = provenance.collect(shared, bins, output_dir) if shared is not None and not shared.refused else \
         provenance.Provenance(time.strftime("%Y-%m-%d %H:%M"), "unknown", False, [], L.thr, 0, 0, [], [])
 
@@ -199,6 +213,7 @@ def publish(design: rsm_detect.RsmDesign, output_dir: Path, models: list[ModelSp
         from . import rsm_deck
         d.deck = step("deck", lambda: rsm_deck.build(output_dir / DECK_NAME, d.models, prov,
                                                      output_dir / FIGURES_DIR, title,
-                                                     shared if shared is not None and not shared.refused else None))
+                                                     shared if shared is not None and not shared.refused else None,
+                                                     bins))
     d.seconds = time.time() - t0
     return d

@@ -34,6 +34,7 @@ from . import rsm_stats as rs
 from . import stats
 
 DEFAULT_GOALS = (("atom", "max"), ("af_flow", "max"), ("cv_droplets", "min"), ("d32", "min"))
+USABLE_R2_PRED = 0.5                  # below this a surface is not used to choose the best setting
 EXTRAPOLATION_TOL = 0.05              # coded distance beyond the design region still counted as inside
 
 
@@ -232,6 +233,16 @@ def analyse(L: Loaded, axis: list[str] | None = None, nuisance: dict | None = No
                                                                                time_term, x))
     rs.bh_across({k: f.full for k, f in fits.items() if f.full is not None})
     goals = goals if goals is not None else default_goals(L)
+    # a goal whose surface cannot predict a new run must not steer the best setting
+    weak = [g for g in goals if g.key not in fits or fits[g.key].full is None or fits[g.key].full.r2_pred is None
+            or fits[g.key].full.r2_pred < USABLE_R2_PRED]
+    if weak:
+        warnings.append("left out of the best-settings search (surface predicts new runs poorly, predicted R² below "
+                        f"{USABLE_R2_PRED}): " + ", ".join(
+                            f"{fits[g.key].label if g.key in fits else g.key}"
+                            + (f" ({fits[g.key].full.r2_pred:.2f})" if g.key in fits and fits[g.key].full is not None
+                               and fits[g.key].full.r2_pred is not None else "") for g in weak))
+        goals = [g for g in goals if g not in weak]
     constraints = list(constraints or [])
     live = {k: f.reduced for k, f in fits.items() if f.reduced is not None
             and (k in {g.key for g in goals} or k in {c.key for c in constraints})}

@@ -254,3 +254,52 @@ def make_measured_l9x3(root: Path, seed: int = 0, rpm_effect: float = 0.0,
         write_results(run, rng, 50 * scale, 0.05 + 0.05 * i_g + 0.01 * i_s, **kw)
         runs.append(run)
     return runs
+
+
+# ---- a measured response-surface day, from a built run sheet -------------------------------------------------
+
+def ccd_truth(v: dict, levels: dict) -> dict:
+    """The PLANTED surfaces of the simulated CCD day, in real coded units (v: factor -> setting;
+    levels: factor -> (low, high)). Atomised % peaks inside the gas range and rises with the orifice;
+    D-median falls with gas; droplet-count CV falls with gas; no rotation (0 rpm) costs 2 points."""
+    def c(k):
+        lo, hi = levels[k]
+        return (v[k] - (lo + hi) / 2) / ((hi - lo) / 2)
+    g, f, r, o = c("sccm"), c("sps"), c("rpm"), c("orifice")
+    atom = 14 + 3 * g - 1.5 * f + 1.0 * o + 0.5 * r - 2.0 * g * g - 0.8 * o * o + 0.6 * g * o - 0.4 * r * r
+    if v["rpm"] == 0:
+        atom -= 2.0
+    d_median = 52 - 2 * g + 1.5 * f - 1.0 * o + 1.2 * g * g
+    count_cv = 0.45 - 0.1 * g + 0.05 * r + 0.08 * g * g
+    return {"atom": atom, "d_median": d_median, "count_cv": max(count_cv, 0.05)}
+
+
+def make_measured_ccd_day(root: Path, sheet, day=("2026", "10", "20"), seed: int = 0, n_frames: int = 40,
+                          bh: float = 0.5, start_hhmm=(8, 0)) -> list[Path]:
+    """Measured run folders for every row of an rsm_design.Sheet (captured in sheet order, 9 min apart,
+    with the sheet's Notes), their results following ccd_truth with measurement noise. The droplet count
+    per frame varies with the planted count CV (extra out-of-focus rows, so D32 is untouched)."""
+    import csv
+    from datetime import datetime, timedelta
+    import numpy as np
+    rng = np.random.default_rng(seed)
+    levels = {f.key: (f.low, f.high) for f in sheet.plan.factors}
+    t0 = datetime(int(day[0]), int(day[1]), int(day[2]), *start_hhmm)
+    runs = []
+    for i, row in enumerate(sheet.rows, 1):
+        v = dict(row.values)
+        t = (t0 + timedelta(minutes=9 * i)).strftime("%H%M%S")
+        name = f"{t}_{v['sccm']:g}sccm_{v['rpm']:g}rpm_{v['sps']:g}sps_or{v['orifice']:g}_bh{bh:g}"
+        run = make_run(root, name, day=day, notes=row.notes)
+        truth = ccd_truth(v, levels)
+        write_results(run, rng, truth["d_median"], truth["atom"] / 100, n_frames=n_frames, per_frame=60)
+        sizes = run / "shadowgraph" / "analysis" / "droplets_0.30" / "droplet_sizes.csv"
+        frames = sorted({r["frame"] for r in csv.DictReader(open(sizes, encoding="utf-8"))})
+        with open(sizes, "a", newline="", encoding="utf-8") as fh:
+            w = csv.writer(fh)
+            for fr in frames:
+                n = int(max(0, 60 * (1 + truth["count_cv"] * rng.normal())))
+                for _ in range(n):
+                    w.writerow([fr, 30.0, "0"])
+        runs.append(run)
+    return runs

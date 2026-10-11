@@ -1,6 +1,6 @@
 # STATUS — real-data droplet pipeline and Taguchi study
 
-**Last updated: 2026-10-11 (Mac: CCD plan Phase 4 committed; Phase 4b (9x3 gas x feed trial) done, awaiting review).** This is the live state of the work. Claude keeps it current
+**Last updated: 2026-10-11 (Mac: CCD plan Phase 4b committed; Phase 5 built, awaiting review).** This is the live state of the work. Claude keeps it current
 (see "How this file is maintained" at the bottom). History, evidence and full reasoning are in
 `docs/archive/HANDOFF_real_data_pipeline_LEGACY.md` (frozen 2026-10-07, newest section first).
 
@@ -262,6 +262,27 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
   8,000 steps/s (feed edge), best at 300 rpm (D 0.91 vs 0.80 at 600, 0.72 at 900); the feed edge is
   throughput's pull: atomised fraction alone favours low feed. Phase 5 generalises to k axis factors
   (pairs, holds) and the CCD day; Phase 6 is the real recommender.
+
+- **Phase 4b committed (7c2037b).**
+- **Phase 5 done (2026-10-11), uncommitted, awaiting review:** the response-surface outputs generalised to
+  3-5 factors and the CCD day. `rsm_figures.MapLayout` / `map_layout()`: the CCD plan's layout by default
+  (gas x feed across/up, one panel per block factor = orifice, one figure per next factor = RPM, any
+  fifth held at the best setting), overridable; all-pairs maps; drift figure; desirability maps per
+  figure level. Report / deck: every map file, controls vs centres (0 rpm), best setting at settable
+  levels (orifice inserts) driving the next runs, stationary point along the curving factors when one is
+  a straight line (ridge), weak surfaces (predicted R^2 < 0.5) said plainly and kept out of the
+  best-settings search, numbers formatted 10,900 not 1.09e+04, natural condition order (C2 before C10).
+  Shared appendix now has everything non-Taguchi-specific (every run, GLR, size spread by count and
+  volume, distributions, percentiles, steadiness, spectra, time series, liquid area, replicates,
+  correlations, pieces, quality, galleries); the shared figures group a CCD's runs by SETTING
+  (Notes "CCD run 7" are run numbers, not Taguchi trials: before, 9 runs showed as conflicts). Every
+  surface slide has "What it shows" + a "How to read it" guide (Ben). `deck._Deck.figure` takes an
+  optional how-to-read text. `docs/RSM_GUIDE.md` updated.
+  **Simulated day** for review: `Practice Folder/SIMULATED CCD day (fake data, not real runs)/` (README
+  says so; `tests/fakes.make_measured_ccd_day` + `ccd_truth`), analysed to `Practice Folder/output/
+  SIMULATED CCD day (4 factors, 33 runs)/`: finds the planted gas peak (~10,500 vs planted ~10,800 sccm),
+  orifice ~1.6 mm, the 0 rpm control at -6.9 centre SDs (planted -2 points), the 0.8 mm check inside its
+  PI. Tests `test_rsm_ccd.py` (8). The 9x3 trial re-published with the new outputs.
 
 ## Next steps, in order
 

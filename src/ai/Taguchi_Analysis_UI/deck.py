@@ -151,7 +151,7 @@ def _label(results, key: str) -> str:
 
 def _conds(results) -> dict[str, list]:
     out: dict[str, list] = {}
-    for r in sorted(results.runs, key=lambda r: (r.condition, r.replicate or 0, r.name)):
+    for r in sorted(results.runs, key=lambda r: (tables.cond_order(r.condition), r.replicate or 0, r.name)):
         out.setdefault(r.condition, []).append(r)
     return out
 
@@ -865,30 +865,39 @@ class _Deck:
         return s
 
     @staticmethod
-    def _card_height(detail, terms, w=9.0) -> float:
+    def _card_height(detail, terms, w=9.0, how: str = "") -> float:
         per_line = 15.0 * w                             # ~chars per line at 10.5 pt / 8.5 pt
-        lines = math.ceil(len(detail) / per_line) + (math.ceil(len(terms) / (per_line * 1.2)) if terms else 0)
-        return 0.17 * max(1, lines) + 0.18 + (0.04 if terms else 0)
+        lines = math.ceil(len(detail) / per_line) + (math.ceil(len(terms) / (per_line * 1.2)) if terms else 0) \
+            + (math.ceil(len(how) / (per_line * 1.1)) if how else 0)
+        return 0.17 * max(1, lines) + 0.18 + (0.04 if terms else 0) + (0.04 if how else 0)
 
-    def _side_terms(self, slide, x, y, w, h, terms, accent) -> None:
-        """'Terms' card beside the figure (as the hand-made deck's 'How to read it' card)."""
+    def _side_terms(self, slide, x, y, w, h, terms, accent, how: str = "") -> None:
+        """Card beside the figure (as the hand-made deck's 'How to read it' card): how to read the figure,
+        then the terms it uses."""
         self._shape(slide, "card", x, y, w, h, CARD)
         self._shape(slide, "dot", x + 0.15, y + 0.14, 0.22, 0.22, accent)
         items = [t.strip() for t in terms.split("  ·  ") if t.strip()]
-        size = 8.5 if len(terms) < 650 else 7.5
-        self._text(slide, x + 0.45, y + 0.1, w - 0.55, 0.3, [(("Terms", 11, True, INK),)], 11)
+        size = 8.5 if len(terms) + len(how) < 650 else 7.5
+        self._text(slide, x + 0.45, y + 0.1, w - 0.55, 0.3,
+                   [(("How to read it" if how else "Terms", 11, True, INK),)], 11)
         paras = []
+        if how:
+            paras.append(((how, size, False, BODY),))
+            if items:
+                paras.append((("Terms", size + 1, True, INK),))
         for t in items:
             head, _, rest = t.partition(": ")
             paras.append(((head + ": ", size, True, BODY), (rest, size, False, BODY)) if rest else ((t, size, False, BODY),))
         self._text(slide, x + 0.15, y + 0.45, w - 0.27, h - 0.55, paras, size)
 
-    def _card_text(self, slide, x, y, w, detail, terms, accent) -> float:
+    def _card_text(self, slide, x, y, w, detail, terms, accent, how: str = "") -> float:
         """Description card with an accent bar; returns its bottom (inches)."""
-        h = self._card_height(detail, terms, w)
+        h = self._card_height(detail, terms, w, how)
         self._shape(slide, "card", x, y, w, h, CARD)
         self._shape(slide, "bar", x, y + 0.06, 0.06, h - 0.12, accent)
         paras = [((detail, 10.5, False, BODY),)]
+        if how:
+            paras.append((("How to read it  ", 9, True, BODY), (how, 9, False, BODY)))
         if terms:
             paras.append((("Terms  ", 8.5, True, MUTED), (terms, 8.5, False, MUTED)))
         self._text(slide, x + 0.16, y + 0.06, w - 0.25, h - 0.1, paras, 10.5)
@@ -941,29 +950,30 @@ class _Deck:
         from pptx.util import Inches
         if not Path(image).is_file():
             return False
-        title, detail, terms, notes = spec
+        title, detail, terms, notes, *more = spec
+        how = more[0] if more else ""
         detail = detail or _describe(image)
         s = self._slide(title)
         with Image.open(image) as im:
             w, h = im.size
-        # the terms either sit in the card above (full-width figure) or in a card beside the figure;
-        # whichever leaves the figure bigger
+        # how-to-read and terms either sit in the card above (full-width figure) or in a card beside
+        # the figure; whichever leaves the figure bigger
         side_w, gap = 2.45, 0.15
-        top_a = 1.12 + self._card_height(detail, terms) + 0.08
+        top_a = 1.12 + self._card_height(detail, terms, 9.0, how) + 0.08
         top_b = 1.12 + self._card_height(detail, "") + 0.08
         scale_a = min(9.0 / w, (5.2 - top_a) / h)
         scale_b = min((9.0 - side_w - gap) / w, (5.2 - top_b) / h)
-        if terms and scale_b > scale_a:
+        if (terms or how) and scale_b > scale_a:
             top = self._card_text(s, 0.5, 1.12, 9.0, detail, "", accent) + 0.08
             pw, ph = w * scale_b, h * scale_b
             box_w = 9.0 - side_w - gap
             s.shapes.add_picture(str(image), Inches(0.5 + (box_w - pw) / 2), Inches(top), Inches(pw), Inches(ph))
-            self._side_terms(s, 0.5 + box_w + gap, top, side_w, 5.2 - top, terms, accent)
+            self._side_terms(s, 0.5 + box_w + gap, top, side_w, 5.2 - top, terms, accent, how)
         else:
-            top = self._card_text(s, 0.5, 1.12, 9.0, detail, terms, accent) + 0.08
+            top = self._card_text(s, 0.5, 1.12, 9.0, detail, terms, accent, how) + 0.08
             pw, ph = w * scale_a, h * scale_a
             s.shapes.add_picture(str(image), Inches(0.5 + (9.0 - pw) / 2), Inches(top), Inches(pw), Inches(ph))
-        s.notes_slide.notes_text_frame.text = "\n\n".join(t for t in (detail, notes, terms) if t)
+        s.notes_slide.notes_text_frame.text = "\n\n".join(t for t in (detail, how, notes, terms) if t)
         return True
 
     def table(self, title: str, header: list[str], rows: list[list], detail: str = "", terms: str = "",

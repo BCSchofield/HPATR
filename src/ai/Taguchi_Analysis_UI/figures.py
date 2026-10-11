@@ -28,6 +28,7 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 
 from . import fsops
+from .tables import cond_order
 
 DPI = 300
 HEADLINE = ("d32", "atom")                      # the two responses every figure leads with
@@ -177,7 +178,7 @@ def fig_per_run(results, out_dir: Path) -> list[Path]:
     keys = _headline_keys(results) or [k for k in HEADLINE if k in results.responses]
     if not keys or not results.runs:
         return []
-    order = sorted(results.runs, key=lambda r: (r.condition, r.replicate or 0, r.name))
+    order = sorted(results.runs, key=lambda r: (cond_order(r.condition), r.replicate or 0, r.name))
     conds = list(dict.fromkeys(r.condition for r in order))
     cmap = {c: CONDITION_COLOURS[i % len(CONDITION_COLOURS)] for i, c in enumerate(conds)}
     fig = Figure(figsize=(max(7.0, 0.32 * len(order) + 2), 3.0 * len(keys) + 0.6))

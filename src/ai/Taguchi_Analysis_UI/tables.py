@@ -7,6 +7,7 @@ storage (the report rounds again for reading).
 from __future__ import annotations
 
 import math
+import re
 from typing import Any
 
 import numpy as np
@@ -34,8 +35,14 @@ def level_text(v) -> str:
     return f"{v:g}" if isinstance(v, (int, float)) else str(v)
 
 
+def cond_order(label: str):
+    """Natural order for condition labels: T2 before T10, C2 before C10."""
+    m = re.match(r"([A-Za-z]*)(\d+)$", str(label))
+    return (m.group(1), int(m.group(2)), "") if m else (str(label), 0, str(label))
+
+
 def _sorted_runs(results):
-    return sorted(results.runs, key=lambda r: (r.condition, r.replicate or 0, r.name))
+    return sorted(results.runs, key=lambda r: (cond_order(r.condition), r.replicate or 0, r.name))
 
 
 def per_run(results) -> list[dict]:

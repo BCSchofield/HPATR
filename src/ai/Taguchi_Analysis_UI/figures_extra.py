@@ -46,7 +46,7 @@ GALLERY_DIR = "galleries"
 
 def _conditions(results) -> dict[str, list]:
     out: dict[str, list] = {}
-    for r in sorted(results.runs, key=lambda r: (r.condition, r.replicate or 0, r.name)):
+    for r in sorted(results.runs, key=lambda r: (tables.cond_order(r.condition), r.replicate or 0, r.name)):
         out.setdefault(r.condition, []).append(r)
     return out
 
@@ -145,7 +145,7 @@ def fig_size_distribution(results, out_dir: Path) -> list[Path]:
 
 def fig_size_percentiles(results, out_dir: Path) -> list[Path]:
     rows = [(r, run_metrics.volume_percentiles(tables.in_focus_diameters(r))) for r in
-            sorted(results.runs, key=lambda r: (r.condition, r.replicate or 0, r.name))]
+            sorted(results.runs, key=lambda r: (tables.cond_order(r.condition), r.replicate or 0, r.name))]
     rows = [(r, p) for r, p in rows if None not in p]
     if not rows:
         return []

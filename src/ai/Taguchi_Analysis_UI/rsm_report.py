@@ -9,6 +9,7 @@ not separated from what the models treat differently.
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 import numpy as np
 
@@ -82,7 +83,8 @@ def stationary_points(R, key: str):
     fixed = dict(R.hold)
     if "time" in fr.reduced.terms:
         fixed["time"] = 0.0
-    return rs.stationary(fr.reduced, R.axis, fixed)
+    best = R.optimum.coded if R.optimum is not None else {}
+    return rs.stationary(fr.reduced, R.axis, fixed, fallback=best)
 
 
 def optimum_by_hold(R) -> list[tuple[dict, rs.Optimum]]:
@@ -107,7 +109,7 @@ def next_runs(R, best: tuple[dict, rs.Optimum] | None, n_confirm: int = 3) -> li
     for k in R.axis:
         v = R.decode(k, o.coded[k])
         step = NEXT_RUN_STEP.get(k)
-        v = round(v / step) * step if step else v
+        v = round(v / step) * step if step else round(v, 4)
         lo, hi = RIG_LIMITS.get(k, (-math.inf, math.inf))
         setting[k] = min(max(v, lo), hi)
     setting.update(hold)
@@ -117,6 +119,31 @@ def next_runs(R, best: tuple[dict, rs.Optimum] | None, n_confirm: int = 3) -> li
     rows.append({"run": n_confirm + 1, "why": "anchor: repeat of the design centre (links the sessions)",
                  **{_flabel(R, k): v for k, v in centre.items()}})
     return rows
+
+
+def controls(R) -> list[dict]:
+    """Every run outside the region (a control such as 0 rpm) against the centre runs, per headline
+    response: the CCD plan's "does rotation help?" comparison."""
+    cen = [r for r in R.loaded.runs if r.point.in_fit and r.point.kind == rdet.CENTRE]
+    out = []
+    for r in R.loaded.runs:
+        if r.point.kind != rdet.OUTSIDE:
+            continue
+        centre = {f.key: f.centre for f in R.loaded.detected.factors}
+        differs = ", ".join(f"{_short(_flabel(R, k))} {v:g}" for k, v in r.point.values.items() if v != centre.get(k))
+        for key in HEADLINE:
+            if key not in R.fits:
+                continue
+            c = np.array([x.values.get(key) for x in cen if x.values.get(key) is not None], float)
+            v = r.values.get(key)
+            row = {"run": r.point.name, "differs from the centre in": differs, "response": R.fits[key].label,
+                   "value": _r(v), "centre runs": len(c)}
+            if c.size >= 2 and v is not None:
+                sd = float(c.std(ddof=1))
+                row.update({"centre mean": _r(c.mean()), "centre SD": _r(sd),
+                            "difference in centre SDs": _r((v - c.mean()) / sd) if sd > 0 else None})
+            out.append(row)
+    return out
 
 
 # ---- tables -------------------------------------------------------------------------------------------------
@@ -195,13 +222,20 @@ def tables(models: dict) -> dict[str, list[dict]]:
              "fitted value there": _r(s.value)}
         for k, c in s.coded.items():
             d[_flabel(R, k)] = round(R.decode(k, c), 3)
+        for k, c in s.held.items():
+            d[_flabel(R, k)] = f"{num(R.decode(k, c))} (held: no curve)"
         st.append(d)
     out["stationary_points"] = st
 
     opt = []
     for n, M in models.items():
-        for hold, o in optimum_by_hold(M):
-            d = {"model": n, "held at": ", ".join(f"{_short(_flabel(M, k))} {v:g}" for k, v in hold.items()) or "-",
+        rows_ = list(optimum_by_hold(M))
+        if M.optimum_discrete is not None:
+            rows_.append(({"__settable__": True}, M.optimum_discrete))
+        for hold, o in rows_:
+            settable = hold.pop("__settable__", False) if isinstance(hold, dict) else False
+            d = {"model": n, "held at": ("at the levels that can be set" if settable else
+                                         ", ".join(f"{_short(_flabel(M, k))} {v:g}" for k, v in hold.items()) or "-"),
                  "desirability D": round(o.D, 4), "on the edge of": ", ".join(_short(_flabel(M, k)) for k in o.on_edge)}
             for k in M.axis:
                 d[_flabel(M, k)] = round(M.decode(k, o.coded[k]), 1)
@@ -238,7 +272,10 @@ def tables(models: dict) -> dict[str, list[dict]]:
     out["correlations"] = [{"model": n, "nuisance": _flabel(M, a), "axis term": term_text(M, t), "r": round(r, 4)}
                            for n, M in models.items() for a, t, r in M.correlations]
     best = max(optimum_by_hold(R), key=lambda ho: ho[1].D, default=None)
+    if best is not None and R.optimum_discrete is not None:
+        best = (best[0], R.optimum_discrete)            # confirm where the factors can actually be set
     out["next_runs"] = next_runs(R, best)
+    out["controls"] = controls(R)
     out["design"] = [{"level": f.level, "finding": f.text} for f in det.findings]
     return out
 
@@ -259,6 +296,14 @@ def results_csv(R) -> list[dict]:
     return rows
 
 
+def num(v) -> str:
+    """A setting or value for prose: 10,900 not 1.09e+04; 1.735; 0.0899."""
+    v = float(v)
+    if abs(v) >= 1000:
+        return f"{v:,.0f}"
+    return f"{v:.4g}"
+
+
 def _r(x, nd: int = 6):
     if x is None:
         return None
@@ -267,6 +312,12 @@ def _r(x, nd: int = 6):
 
 
 # ---- the report -------------------------------------------------------------------------------------------------
+
+def _stems(figs: set, base: str) -> list[str]:
+    """The figure stems for one map (base, or base_<factor><level> for one figure per level)."""
+    return sorted({Path(f).stem for f in figs if f.endswith(".png") and
+                   (Path(f).stem == base or Path(f).stem.startswith(base + "_"))})
+
 
 def _img(figs: set, name: str, cap: str) -> str:
     return f"![{cap}](figures/{name}.png)\n" if f"{name}.png" in figs else ""
@@ -293,8 +344,14 @@ def _verdict(R, key: str) -> list[str]:
     lofq = ("" if lof is None or lof.p is None else
             (f"; lack of fit is significant (p = {lof.p:.3f}): the surface misses something" if lof.p < ALPHA
              else f"; no evidence of lack of fit (p = {lof.p:.2f})"))
+    weak = ""
+    if f.r2_pred is not None and f.r2_pred < 0.5:
+        weak = (" **This surface predicts new runs poorly** (predicted R² below 0.5"
+                + ("; below 0, worse than just using the average" if f.r2_pred < 0 else "")
+                + "): treat its map as noise, not a guide.")
     out.append(f"**{fr.label}** " + ("; ".join(lin) if lin else "shows no clear slope along the axis factors")
-               + (f", and curves ({', '.join(curv)} significant)" if curv else "") + f". {fitq[:1].upper()}{fitq[1:]}{lofq}.")
+               + (f", and curves ({', '.join(curv)} significant)" if curv else "") + f". {fitq[:1].upper()}{fitq[1:]}{lofq}."
+               + weak)
     s = stationary_points(R, key)
     if s is not None:
         out.append(f"  - {stationary_text(R, key, s)}")
@@ -304,11 +361,14 @@ def _verdict(R, key: str) -> list[str]:
 def stationary_text(R, key: str, s) -> str:
     """The fitted surface's stationary point in words, by its kind and the response's direction."""
     fr = R.fits[key]
-    where = ", ".join(f"{_short(_flabel(R, k))} {R.decode(k, c):.4g}" for k, c in s.coded.items())
+    where = ", ".join(f"{_short(_flabel(R, k))} {num(R.decode(k, c))}" for k, c in s.coded.items())
     ridge = " (nearly a ridge: along one direction it barely changes)" if "ridge" in s.kind else ""
     good = (s.kind.startswith("maximum") and fr.direction == "larger") or \
            (s.kind.startswith("minimum") and fr.direction == "smaller")
     inside = "inside the tested range" if s.inside else "outside the tested range"
+    if s.held:
+        inside += ("; " + ", ".join(_short(_flabel(R, k)) for k in s.held) + " only a straight line, so held at the "
+                   "best setting: along it the best value is at an edge")
     if s.kind.startswith("saddle"):
         return (f"The surface is a saddle{ridge}: it rises along one direction and falls along another, centred at "
                 f"{where} ({inside}), so the best values lie on the edges of the range, not at an interior peak.")
@@ -380,7 +440,7 @@ def build(models: dict, prov, figure_files=(), title: str = "Response-surface an
     best = max(optimum_by_hold(R), key=lambda ho: ho[1].D, default=None)
     if best is not None:
         hold, o = best
-        where = ", ".join(f"{_short(_flabel(R, k))} {R.decode(k, o.coded[k]):.4g}" for k in R.axis)
+        where = ", ".join(f"{_short(_flabel(R, k))} {num(R.decode(k, o.coded[k]))}" for k in R.axis)
         held = ", ".join(f"{_short(_flabel(R, k))} {v:g}" for k, v in hold.items())
         L.append(f"- **Best overall setting** (desirability D = {o.D:.2f}): {where}" + (f" at {held}" if held else "")
                  + (f". It sits on the edge of the tested range for {', '.join(_short(_flabel(R, k)) for k in o.on_edge)}:"
@@ -389,7 +449,7 @@ def build(models: dict, prov, figure_files=(), title: str = "Response-surface an
             if up and down:
                 L.append(f"  - The trade-off on {_short(_flabel(R, k)).lower()}: {', '.join(up)} would rather it went "
                          f"up; {', '.join(down)} would rather it went down. The combined score settles at "
-                         f"{R.decode(k, o.coded[k]):.4g}.")
+                         f"{num(R.decode(k, o.coded[k]))}.")
     L.append("")
 
     # the design and the models
@@ -413,6 +473,10 @@ def build(models: dict, prov, figure_files=(), title: str = "Response-surface an
         rows.append([n, " × ".join(_short(_flabel(M, k)) for k in M.axis), nuis, len(M.terms), dfs,
                      "; ".join(M.warnings) or "–"])
     L.append(md_table(["Model", "Surface over", "Nuisance terms", "Terms", "Degrees of freedom", "Notes"], rows))
+    from . import rsm_figures as rf
+    lay = rf.map_layout(R)
+    if lay is not None:
+        L.append(f"Maps: {lay.describe(R)}.\n")
     if T["correlations"]:
         L.append("\n**Nuisance terms that track surface terms** (partial confounding: the two cannot be fully "
                  "separated)\n")
@@ -431,8 +495,10 @@ def build(models: dict, prov, figure_files=(), title: str = "Response-surface an
             continue
         for x in _verdict(R, key):
             L.append(x if x.startswith("  ") else f"{x}\n")
-        L.append(_img(figs, f"fig_rsm_contour_{key}", f"{fr.label} contour map"))
+        for stem in _stems(figs, f"fig_rsm_contour_{key}"):
+            L.append(_img(figs, stem, f"{fr.label} contour map"))
         L.append(_img(figs, f"fig_rsm_surface_{key}", f"{fr.label} 3D surface"))
+        L.append(_img(figs, f"fig_rsm_pairs_{key}", f"{fr.label}, every pair of factors"))
         f, red = fr.full, fr.reduced
         rows = []
         for i, t in enumerate(f.terms):
@@ -456,7 +522,8 @@ def build(models: dict, prov, figure_files=(), title: str = "Response-surface an
 
     # optimum and next runs
     L.append("## Best settings\n")
-    L.append(_img(figs, "fig_rsm_desirability", "Desirability"))
+    for stem in _stems(figs, "fig_rsm_desirability"):
+        L.append(_img(figs, stem, "Desirability"))
     L.append(_img(figs, "fig_rsm_profiler", "Prediction profiler"))
     L.append("Desirability scores each goal from 0 (unacceptable) to 1 (ideal) and takes the geometric mean, so no goal "
              "can be traded away completely. The goals and their ramps:\n")
@@ -485,6 +552,15 @@ def build(models: dict, prov, figure_files=(), title: str = "Response-surface an
                                                          for c in cols] for r in T["next_runs"]]))
 
     # runs outside the fit, drift
+    if T["controls"]:
+        L.append("\n## Controls against the centre runs\n")
+        L.append("A control sits outside the design (e.g. no rotation); it is compared with the centre runs, which "
+                 "differ from it only in that factor.\n")
+        L.append(md_table(["Run", "Differs in", "Response", "Value", "Centres (mean ± SD, n)", "Difference in SDs"],
+                          [[c["run"][:6], c["differs from the centre in"], _short(c["response"]), fmt(c["value"], 4),
+                            (f"{fmt(c.get('centre mean'), 4)} ± {fmt(c.get('centre SD'), 2)}, {c['centre runs']}"
+                             if c.get("centre mean") is not None else "–"),
+                            fmt(c.get("difference in centre SDs"), 2)] for c in T["controls"]]))
     L.append("\n## Runs kept out of the fit\n")
     if T["predictions"]:
         L.append(_img(figs, "fig_rsm_validation", "Validation runs"))
@@ -495,6 +571,7 @@ def build(models: dict, prov, figure_files=(), title: str = "Response-surface an
     else:
         L.append("None: every run is in the fit.\n")
     L.append("\n## Drift\n")
+    L.append(_img(figs, "fig_rsm_drift", "Drift"))
     if T["block_repeats"]:
         big = [p for p in T["block_repeats"] if p["in SDs of pure error"] is not None and abs(p["in SDs of pure error"]) > 2]
         L.append(f"Repeated settings inside a block, last minus first, in standard deviations of the run-to-run noise "

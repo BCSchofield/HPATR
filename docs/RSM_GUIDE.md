@@ -3,10 +3,12 @@
 This is the guide the Response surface tab of the Experiment Analysis app shows (Guide panel). It covers
 planning a central composite design (CCD), running it, and getting it analysed.
 
-> **What is built so far (2026-10-11):** building the run sheet (step 1) and detecting the design from
-> the captured runs (step 3) work, as code with tests; the tab that puts buttons on them comes in
-> Phase 7. Fitting the surfaces, the contour / 3D figures, validation runs and the recommended next runs
-> (step 5) are Phases 4 to 6, not built yet. The Taguchi tab is unchanged and works as before.
+> **What is built so far (2026-10-11):** building the run sheet (step 1), detecting the design (step 3)
+> and the whole analysis (step 5: fits, contour maps, 3D surfaces, profiler, desirability, fit checks,
+> drift, controls, validation runs, report, workbook, CSV and deck) work, as code with tests, and have
+> been run on the 9x3 practice copy and on a simulated 33-run day. Still to come: the recommender for the
+> next session (Phase 6) and the tab that puts buttons on all of it (Phase 7). The Taguchi tab is
+> unchanged and works as before.
 
 ## The idea in one paragraph
 
@@ -154,11 +156,29 @@ You can edit before analysing: rename a factor, correct a run's level, leave a r
 
 As for Taguchi: the Batch tab runs the AI and the classical measurement on the selected runs.
 
-## Step 5: analyse (Phases 4 to 6, not built yet)
+## Step 5: analyse
 
-What it will give: one fitted surface per response (atomised fraction, D32, mean diameter, throughput,
-steadiness, peak pressure), simplified to the terms that matter; checks of the fit (lack of fit,
-residuals, drift); contour maps and 3D surfaces per pair of factors, with the pressure limit shaded; the
-check and control runs compared with their predictions; the best settings by desirability; and a run
-sheet of recommended next runs (confirmations, or a new region if the best point is at an edge). The
-outputs mirror the Taguchi ones: report, workbook, figures and a PowerPoint deck.
+What you get, in the output folder (`rsm_report.md`, `rsm_analysis.xlsx`, `rsm_results.csv`,
+`rsm_deck.pptx`, `figures/`):
+
+- **One fitted surface per response** (atomised fraction, D32, mean diameter, throughput, steadiness,
+  peak pressure and the rest), the full quadratic and a simplified one (terms dropped highest order
+  first, keeping a slope while its curve or interaction stays), with R², predicted R² and lack of fit.
+  A surface with predicted R² below 0.5 is flagged as not usable and is kept out of the best-settings
+  search.
+- **Contour maps** laid out as the plan draws them: gas across, feed up, one panel per orifice, one map per
+  RPM; the runs at each setting marked and the best setting starred. **3D surfaces** of the same, an
+  **all-pairs** view (every pair of factors at the best setting), and a **profiler** (each factor swept
+  through the best setting with its uncertainty bands).
+- **Where each surface peaks** (a maximum, minimum or saddle, inside or outside the range).
+- **Best settings** by desirability (every goal scored 0 to 1, combined), continuous and at the levels
+  that can actually be set (e.g. the orifice inserts that exist), with what pulls each factor up or down.
+- **Controls** against the centre runs (does rotation help: the 0 rpm run vs the five centres), **check
+  and validation runs** against their 95% prediction intervals, and **drift** (centres over the day,
+  block repeats).
+- The size, steadiness, quality figures and image sheets from the Taguchi analysis that are not
+  Taguchi-specific, as an appendix.
+- Every slide in the deck says what it shows and how to read it, with the terms it uses defined.
+
+A **nuisance factor** can be kept in the model without being mapped (RPM in the 9x3 trial), and several
+models can be fitted side by side to see whether a term depends on it.

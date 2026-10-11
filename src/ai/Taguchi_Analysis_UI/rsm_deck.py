@@ -75,15 +75,60 @@ def rs_parents(t):
     return term_parents(t)
 
 
+def how_map(R, key: str) -> str:
+    from . import rsm_figures as rf
+    fr = R.fits[key]
+    L = rf.map_layout(R)
+    if L is None:
+        return ""
+    a, b = (_short(_f(R, k)).lower() for k in L.pair)
+    better = "higher" if fr.direction == "larger" else "lower"
+    bits = [f"{a.capitalize()} runs across, {b} up. Colour is the predicted {_short(fr.label).lower()}: yellow high, "
+            f"purple low ({better} is better). White lines join settings with the same prediction; where they bunch "
+            f"up the response changes fast."]
+    if L.panel:
+        bits.append(f"Each panel is one {_short(_f(R, L.panel)).lower()}" +
+                    (f"; each slide one {_short(_f(R, L.figure)).lower()}" if L.figure else "") + ".")
+    bits.append("Filled circles are runs made at that setting, hollow ones runs made elsewhere; the star is the best "
+                "setting for all the goals together on that map.")
+    return " ".join(bits)
+
+
+def how_surface(R, key: str) -> str:
+    from . import rsm_figures as rf
+    fr = R.fits[key]
+    L = rf.map_layout(R)
+    if L is None:
+        return ""
+    a, b = (_short(_f(R, k)).lower() for k in L.pair)
+    return (f"The same fitted surface as the map, as a landscape: {a} and {b} along the floor, height and colour the "
+            f"predicted {_short(fr.label).lower()}. A dome is a peak inside the range, a bowl a trough, a saddle rises "
+            f"one way and falls the other; a flat tilt means the best value is at an edge. Black dots are the measured "
+            f"runs at that setting: dots off the surface are what the model misses."
+            + (f" One panel per {_short(_f(R, L.panel)).lower()}." if L.panel else ""))
+
+
+HOW_PAIRS = ("Each small map is one pair of factors (across and up) with every other factor held at the best "
+             "setting; colour is the predicted value, the star the best setting. Read a row or a column to see how "
+             "one factor plays against each of the others.")
+HOW_DESIRABILITY = ("Colour is the overall desirability D for that setting: pale = every goal met well, dark = at "
+                    "least one goal poorly met. Hatched areas meet every goal at least halfway (the sweet spot); "
+                    "the star is the best D on that map.")
+HOW_PROFILER = ("Each column sweeps one factor from low to high with every other factor held at the best setting "
+                "(dotted line); each row is one response. The line is the prediction, the dark band its 95% "
+                "confidence interval, the light band where a single new run would land 95% of the time.")
+
+
 def tw_response(R, key: str, what: str):
     fr = R.fits[key]
     f = fr.full
     name = _short(fr.label)
     s = rsm_report.stationary_points(R, key)
+    weak = f.r2_pred is not None and f.r2_pred < 0.5
     if what == "contour":
-        title = f"{name}: {_shape_phrase(R, key)}"
+        title = f"{name}: {_shape_phrase(R, key)}" if not weak else f"{name}: no usable surface (predicted R² {f.r2_pred:.2f})"
     elif s is not None:
-        where = ", ".join(f"{R.decode(k, c):.4g} {rsm_report._flabel(R, k).split('(')[-1].rstrip(')')}"
+        where = ", ".join(f"{rsm_report.num(R.decode(k, c))} {rsm_report._flabel(R, k).split('(')[-1].rstrip(')')}"
                           for k, c in s.coded.items())
         kind = s.kind.split(" (")[0]
         title = f"{name} in 3D: a {kind} {'centred ' if kind == 'saddle' else ''}at {where}" + (
@@ -98,9 +143,21 @@ def tw_response(R, key: str, what: str):
                       R.loaded.detected.factors if fl.key == k)) for k in R.nuisance)
     if holds:
         detail += f" One panel per {holds} (kept in the model, not mapped)."
-    terms = defs("contour" if what == "contour" else "surface", "R2 pred", "lack of fit", "nuisance", "stationary")
-    return title, detail, terms, ("Star = the best setting for all the goals together, not this response's own peak. "
-                                  + " ".join(_plain(x) for x in rsm_report._verdict(R, key)))
+    if what == "contour":                       # three-panel maps: keep the card short so the maps stay big
+        short = ""
+        if s is not None:
+            where = ", ".join(f"{_short(_f(R, k)).lower()} {rsm_report.num(R.decode(k, c))}" for k, c in s.coded.items())
+            short = {"saddle": f" A saddle centred at {where}: the best values are on the edges.",
+                     "maximum": f" Highest at {where}.", "minimum": f" Lowest at {where}."}.get(
+                s.kind.split(" (")[0], "") + ("" if s.inside or not s.kind else " (outside the range)")
+        detail = (f"R² {f.r2:.2f}, predicted R² {f.r2_pred:.2f}"
+                  + ("" if lof is None or lof.p is None else f", lack of fit p = {lof.p:.2g}") + "." + short)
+        terms = defs("contour", *(("nuisance",) if R.nuisance else ()))
+    else:
+        terms = defs("surface", "R2 pred", "lack of fit", "stationary", *(("nuisance",) if R.nuisance else ()))
+    shows = f"What it shows: {detail}" if detail else ""
+    return (title, shows, terms, " ".join(_plain(x) for x in rsm_report._verdict(R, key)),
+            how_map(R, key) if what == "contour" else how_surface(R, key))
 
 
 def tw_desirability(R):
@@ -108,16 +165,21 @@ def tw_desirability(R):
     if best is None:
         return "Desirability", "", defs("desirability", "sweet spot"), ""
     hold, o = best
-    where = ", ".join(f"{_short(_f(R, k))} {R.decode(k, o.coded[k]):.4g}" for k in R.axis)
+    where = ", ".join(f"{_short(_f(R, k))} {rsm_report.num(R.decode(k, o.coded[k]))}" for k in R.axis)
     held = ", ".join(f"{_short(_f(R, k))} {v:g}" for k, v in hold.items())
-    goals = "; ".join(f"{_short(R.fits[g.key].label)} {'up' if g.direction == 'max' else 'down'}" for g in R.goals)
-    edge = (f" It sits on the edge of the tested range for {', '.join(_short(_f(R, k)) for k in o.on_edge)}, so the best "
-            f"point may lie beyond it." if o.on_edge else "")
-    trade = "".join(f" On {_short(_f(R, k)).lower()}: {', '.join(up)} pull it up, {', '.join(down)} pull it down."
-                    for k, (up, down) in rsm_report.tradeoffs(R, o).items() if up and down)
+    goals = ", ".join(f"{_short(R.fits[g.key].label).lower()} {'up' if g.direction == 'max' else 'down'}"
+                      for g in R.goals)
+    dropped = [w.split(": ", 1)[1] for w in R.warnings if w.startswith("left out of the best-settings search")]
+    edge = (f" On the edge of the range for {', '.join(_short(_f(R, k)).lower() for k in o.on_edge)}: the best point "
+            f"may lie beyond it." if o.on_edge else "")
+
+    def who(names):
+        return names[0] + " pulls" if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1] + " pull"
+    trade = " ".join(f"On {_short(_f(R, k)).lower()}, {who(up)} it up and {who(down)} it down."
+                     for k, (up, down) in rsm_report.tradeoffs(R, o).items() if up and down)
     return (f"Best overall: {where}" + (f" at {held}" if held else "") + f" (D = {o.D:.2f})",
-            f"Goals: {goals}. Ramps run across each response's observed range.{edge}{trade}",
-            defs("desirability", "sweet spot"), "")
+            f"Goals: {goals}." + (f" Left out (surface not usable): {dropped[0]}." if dropped else "") + edge,
+            defs("desirability", "sweet spot"), trade)
 
 
 def tw_profiler(R):
@@ -166,12 +228,12 @@ def tw_compare(models):
 def _table_opt(R, data):
     head = ["Model", "Held at", "D"] + [_short(_f(R, k)) for k in R.axis] + ["Edge"]
     rows = [[o["model"].split(":")[0], o["held at"], f"{o['desirability D']:.2f}"] +
-            [f"{o[_f(R, k)]:.4g}" for k in R.axis] + [o["on the edge of"] or "–"] for o in data["optimum"]]
+            [rsm_report.num(o[_f(R, k)]) for k in R.axis] + [o["on the edge of"] or "–"] for o in data["optimum"]]
     return head, rows
 
 
 def build(path: Path, models: dict, prov, figures_dir: Path, title: str = "Response-surface analysis",
-          shared=None) -> Path:
+          shared=None, bins=None) -> Path:
     figs = Path(figures_dir)
     names = list(models)
     R = models[names[0]]
@@ -205,12 +267,34 @@ def build(path: Path, models: dict, prov, figures_dir: Path, title: str = "Respo
         found.append(("Not separated", "; ".join(moved) + " change with the model: not interactions you can read."))
     d.cards("What was found", found[:6], dk.ORANGE)
 
+    from . import rsm_figures as rf
+    lay = rf.map_layout(R)
+    all_figs = {p.name for p in figs.glob("*.png")}
     for k in [k for k in list(rsm_report.HEADLINE) + ["lag1", "peak_bar"]
               if k in R.fits and R.fits[k].full is not None]:                # no fit (e.g. constant): no slides
-        d.figure(tw_response(R, k, "contour"), figs / f"fig_rsm_contour_{k}.png", dk.TEAL)
+        for stem in rsm_report._stems(all_figs, f"fig_rsm_contour_{k}"):
+            t, det_, terms, notes, how = tw_response(R, k, "contour")
+            lvl = stem[len(f"fig_rsm_contour_{k}"):].lstrip("_")
+            if lvl and lay is not None and lay.figure and lvl.startswith(lay.figure):
+                t = f"{t} ({_short(_f(R, lay.figure))} {lvl[len(lay.figure):]})"
+            d.figure((t, det_, terms, notes, how), figs / f"{stem}.png", dk.TEAL)
         d.figure(tw_response(R, k, "surface"), figs / f"fig_rsm_surface_{k}.png", dk.TEAL)
-    d.figure(tw_desirability(R), figs / "fig_rsm_desirability.png", dk.ORANGE)
-    d.figure(tw_profiler(R), figs / "fig_rsm_profiler.png", dk.ORANGE)
+        if (figs / f"fig_rsm_pairs_{k}.png").is_file():
+            d.figure((f"{_short(R.fits[k].label)}: every pair of factors at the best setting",
+                      f"What it shows: the fitted {_short(R.fits[k].label).lower()} for every pair of factors, so no "
+                      f"pairing is hidden by the map layout.", defs("contour", "coded"), "", HOW_PAIRS),
+                     figs / f"fig_rsm_pairs_{k}.png", dk.TEAL)
+    for stem in rsm_report._stems(all_figs, "fig_rsm_desirability"):
+        t, det_, terms, notes = tw_desirability(R)
+        lvl = stem[len("fig_rsm_desirability"):].lstrip("_")
+        if lvl and lay is not None and lay.figure:
+            here = f"{_short(_f(R, lay.figure))} {lvl[len(lay.figure):]}"
+            det_ = f"What it shows: where all the goals are met at {here}. {t} across every setting. " + det_
+            t = f"Where the goals are met at {here}"
+        else:
+            det_ = "What it shows: " + det_
+        d.figure((t, det_, terms, notes, HOW_DESIRABILITY), figs / f"{stem}.png", dk.ORANGE)
+    d.figure(tw_profiler(R) + (HOW_PROFILER,), figs / "fig_rsm_profiler.png", dk.ORANGE)
     if data["optimum"]:
         head, rows = _table_opt(R, data)
         d.table("Best settings, by held level and model", head, rows,
@@ -219,7 +303,8 @@ def build(path: Path, models: dict, prov, figures_dir: Path, title: str = "Respo
     if data["stationary_points"]:
         d.table("Where each fitted surface peaks", ["Response", "Kind", "Inside"] + [_short(_f(R, k)) for k in R.axis],
                 [[_short(s["response"]), s["kind"].split(" (")[0], s["inside the tested range"]] +
-                 [f"{s[_f(R, k)]:.4g}" for k in R.axis] for s in data["stationary_points"]],
+                 [(s[_f(R, k)] if isinstance(s[_f(R, k)], str) else rsm_report.num(s[_f(R, k)])) for k in R.axis]
+                 for s in data["stationary_points"]],
                 detail="Simplified model, nuisance factors at their centre. A peak outside the range means the best "
                        "value inside it is on an edge.", terms=defs("stationary"), accent=dk.TEAL)
     if data["next_runs"]:
@@ -228,6 +313,27 @@ def build(path: Path, models: dict, prov, figures_dir: Path, title: str = "Respo
                 [[r["run"]] + [f"{r[c]:.4g}" if isinstance(r[c], float) else r[c] for c in cols] for r in data["next_runs"]],
                 detail="Confirmation runs at the best setting (rounded to what can be set) and a centre repeat to link "
                        "the sessions. The full recommender comes later.", accent=dk.ORANGE)
+    if data.get("controls"):
+        d.table("Controls against the centre runs", ["Run", "Differs in", "Response", "Value", "Centres", "In SDs"],
+                [[c["run"][:6], c["differs from the centre in"], _short(c["response"]), f"{c['value']:.4g}"
+                  if c["value"] is not None else "–",
+                  f"{c['centre mean']:.4g} ± {c['centre SD']:.2g}" if c.get("centre mean") is not None else "–",
+                  f"{c['difference in centre SDs']:+.1f}" if c.get("difference in centre SDs") is not None else "–"]
+                 for c in data["controls"]],
+                detail="A control differs from the centre runs in one factor only (e.g. no rotation), so the difference "
+                       "is that factor's doing: beyond about ±2 centre SDs is a real difference.",
+                terms=defs("SD"), accent=dk.PURPLE)
+    if (figs / "fig_rsm_drift.png").is_file():
+        trends = [f"{_short(R.fits[k].label)} {R.fits[k].centre_trend.slope_per_h:+.3g}/h (p {R.fits[k].centre_trend.p:.2g})"
+                  for k in rsm_report.HEADLINE if k in R.fits and R.fits[k].centre_trend is not None
+                  and R.fits[k].centre_trend.p is not None]
+        drift = [t for t in trends if float(t.split("(p ")[1].rstrip(")")) < 0.05]
+        d.figure(("Drift through the day: " + ("none in the centre runs" if trends and not drift else
+                                                "check " + ", ".join(t.split(" ")[0] for t in drift) if drift else
+                                                "the repeated settings"),
+                  "Centre runs against time: " + "; ".join(trends) + "." if trends else
+                  "Repeated settings inside each block, first to last.", defs("drift"), ""),
+                 figs / "fig_rsm_drift.png", dk.GREY)
     d.figure(tw_fit(R), figs / "fig_rsm_fit_checks.png", dk.GREY)
     d.figure(tw_compare(models), figs / "fig_rsm_model_compare.png", dk.GREY)
     if data["predictions"]:
@@ -238,13 +344,39 @@ def build(path: Path, models: dict, prov, figures_dir: Path, title: str = "Respo
              for c in rsm_report.caveats(models)], dk.YELLOW)
 
     if shared is not None and shared.runs:
-        d.section("Appendix: the shared figures", "Droplet size, steadiness and data quality for the same runs, as in "
-                                                  "the Taguchi deck.")
-        bins = None
+        d.section("Appendix: the shared figures", "Everything the Taguchi deck shows that is not Taguchi-specific: every "
+                                                  "run, GLR, droplet size, steadiness, pieces, data quality, images. "
+                                                  "Conditions are the distinct settings (C1, C2, ...).")
+        parts = figs / dk.SLIDE_FIG_DIR
+        conds = list(dk._conds(shared))
+        d.figure(dk.tw_per_run(shared), figs / "fig_per_run.png", dk.ORANGE)
+        d.figure(dk.tw_glr(shared), figs / "fig_glr.png", dk.ORANGE)
+        if bins is not None:
+            d.figure(dk.tw_spread_count(shared, bins), figs / "fig_size_spread_count.png", dk.TEAL)
+            d.figure(dk.tw_spread_volume(shared, bins), figs / "fig_size_spread_volume.png", dk.TEAL)
         d.figure(dk.tw_size_distribution(shared), figs / "fig_size_distribution.png", dk.TEAL)
         d.figure(dk.tw_size_percentiles(shared), figs / "fig_size_percentiles.png", dk.TEAL)
         d.figure(dk.tw_steadiness(shared), figs / "fig_steadiness.png", dk.PURPLE)
         d.figure(dk.tw_spectra(shared), figs / "fig_spectra.png", dk.PURPLE)
+        for i, part in enumerate(dk._chunks(conds, dk.SERIES_PER_SLIDE), 1):
+            f1 = figures_extra.fig_series(shared, parts, only=part, name=f"fig_series_{i}", formats=("png",))
+            if f1:
+                d.figure(dk.tw_series(shared, part), f1[0], dk.PURPLE)
+        for i, part in enumerate(dk._chunks(conds, dk.SERIES_PER_SLIDE), 1):
+            f2 = figures_extra.fig_series_liquid(shared, parts, only=part, name=f"fig_series_liquid_{i}",
+                                                 formats=("png",))
+            if f2:
+                d.figure(dk.tw_series_liquid(shared, part), f2[0], dk.PURPLE)
+        analysed = [k for k in shared.responses if dk._analysed(shared, k)]
+        size_keys = [k for k in analysed if k in dk.SIZE_KEYS]
+        other = [k for k in analysed if k not in dk.SIZE_KEYS]
+        for i, (keys, what) in enumerate(((size_keys, "droplet size"), (other[:5], "atomisation and steadiness"),
+                                          (other[5:], "pulsing and pressure")), 1):
+            if keys:
+                f3 = figures_extra.fig_replicates(shared, parts, keys=keys, name=f"fig_replicates_{i}", formats=("png",))
+                if f3:
+                    d.figure(dk.tw_replicates(shared, keys, what), f3[0], dk.GREY)
+        d.figure(dk.tw_correlations(shared), figs / "fig_correlations.png", dk.GREY)
         d.figure(dk.tw_pieces(shared), figs / "fig_pieces.png", dk.TEAL)
         d.figure(dk.tw_quality(shared), figs / "fig_quality.png", dk.YELLOW)
         for c in dk._conds(shared):
