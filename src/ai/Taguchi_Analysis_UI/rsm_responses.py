@@ -33,7 +33,8 @@ from . import rsm_detect as rdet
 from . import rsm_stats as rs
 from . import stats
 
-DEFAULT_GOALS = (("atom", "max"), ("af_flow", "max"), ("cv_droplets", "min"), ("d32", "min"))
+# the size goal is MEAN diameter, not D32 (Ben, 2026-10-11); one size goal only, as two would double its weight
+DEFAULT_GOALS = (("atom", "max"), ("af_flow", "max"), ("cv_droplets", "min"), ("d_mean", "min"))
 USABLE_R2_PRED = 0.5                  # below this a surface is not used to choose the best setting
 EXTRAPOLATION_TOL = 0.05              # coded distance beyond the design region still counted as inside
 

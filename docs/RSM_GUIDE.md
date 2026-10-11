@@ -31,7 +31,9 @@ cd /Users/benschofield/Documents/GitHub/HPATR && /Users/benschofield/anaconda3/e
    **Goals** steer only the best setting and the next runs (not the fits or maps). Each response scores 0
    at **worst** and 1 at **best** (Maximise: worst below best; Minimise: worst above best; Hit a target:
    best is the target and the score falls to 0 as far either side as worst is); blank = the range seen in
-   the runs. **Importance** weights the goals (all 1 = equal; e.g. atomised fraction 3, D32 2). Set them
+   the runs. **Importance** weights the goals (all 1 = equal; e.g. atomised fraction 3, mean diameter 2).
+   The default goals: maximise atomised fraction and atomised liquid flow, minimise droplet-count CV and
+   mean diameter (the size goal; D32 is mapped and reported but not a default goal). Set them
    before the first Analyse or change them later and press Analyse again; they are saved with the output.
    Goals that measure the same thing stack: D32, mean diameter and D90 all say "smaller droplets", so
    choosing all three triples the weight on size. Pick one per thing you care about. And a fraction goal

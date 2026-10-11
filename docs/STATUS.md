@@ -522,8 +522,9 @@ made", "Bit depth", and the dated sections).
 - 2026-10-11 (Mac): **mean diameter is a headline response** (Ben: same level as D32 and atomised
   fraction). Taguchi: main effects, per run, S/N, GLR, interactions, residual checks, drift, report
   summary, deck headline slides. CCD: contour maps, 3D surfaces, all-pairs maps, drift, fit checks,
-  model comparison, validation, "What was found" (now two slides when it does not fit on one). Not a
-  default goal (it would double the weight on size with D32). Five-response CCD figures use two rows.
+  model comparison, validation, "What was found" (now two slides when it does not fit on one). And it
+  REPLACES D32 as the default size goal (Ben; one size goal, so size is not double-weighted). Folders with
+  saved Model choices keep their old goals. Five-response CCD figures use two rows.
   Also: the app opens maximised.
 - 2026-10-11 (Mac): batch worker survives a USB drop (bugs 1-2 of the 10-06 batch): see Known bugs.
   New statuses `crashed` and `drive_lost`, both resumable; `worker.RunLog`, `Worker._wait_for_drive`.

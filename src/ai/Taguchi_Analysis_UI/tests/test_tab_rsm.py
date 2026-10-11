@@ -95,7 +95,7 @@ def test_the_model_defaults_for_a_ccd(ccd):
     assert m["discrete"] == {"orifice": "0.5, 0.8, 1.2, 1.8"}
     models, opts = ccd.models_and_options()
     assert len(models) == 1 and opts["discrete"] == {"orifice": [0.5, 0.8, 1.2, 1.8]}
-    assert {g["key"] for g in opts["goals"]} == {"atom", "af_flow", "cv_droplets", "d32"}
+    assert {g["key"] for g in opts["goals"]} == {"atom", "af_flow", "cv_droplets", "d_mean"}     # mean diameter, not D32
 
 
 def test_a_validation_tick_leaves_the_fit_and_is_saved(app, ccd):
@@ -197,17 +197,17 @@ def test_goal_ends_mean_worst_and_best_for_every_aim():
 
 
 def test_the_goals_table_reaches_the_analysis_and_a_backwards_ramp_is_refused(app, ccd):
-    i = _goal_row(ccd, "d32")
+    i = _goal_row(ccd, "d_mean")
     ccd.goals_table.item(i, 2).setText("60")
     ccd.goals_table.item(i, 3).setText("30")
     ccd.goals_table.item(i, 4).setText("2")
-    g = next(x for x in ccd.models_and_options()[1]["goals"] if x["key"] == "d32")
+    g = next(x for x in ccd.models_and_options()[1]["goals"] if x["key"] == "d_mean")
     assert (g["direction"], g["low"], g["high"], g["importance"]) == ("min", 30.0, 60.0, 2.0)
     saved = json.loads((ccd.root / "out" / "rsm_model.json").read_text())
-    assert next(x for x in saved["goals"] if x["key"] == "d32")["worst"] == 60.0
+    assert next(x for x in saved["goals"] if x["key"] == "d_mean")["worst"] == 60.0
     ccd.goals_table.item(i, 2).setText("20")                     # worst below best on a Minimise goal
     ccd.analyse()
-    assert "must be above best" in ccd.analyse_label.text() and "D32" in ccd.analyse_label.text()
+    assert "must be above best" in ccd.analyse_label.text() and "Mean diameter" in ccd.analyse_label.text()
     ccd.goals_table.item(i, 2).setText("")                        # put it back for the other tests
     ccd.goals_table.item(i, 3).setText("")
     ccd.goals_table.item(i, 4).setText("1")
