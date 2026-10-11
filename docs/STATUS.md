@@ -1,6 +1,6 @@
 # STATUS — real-data droplet pipeline and Taguchi study
 
-**Last updated: 2026-10-11 (Mac: CCD plan Phase 2 committed; Phase 3a built, awaiting review).** This is the live state of the work. Claude keeps it current
+**Last updated: 2026-10-11 (Mac: CCD plan Phase 3a committed; Phase 3b built, awaiting review).** This is the live state of the work. Claude keeps it current
 (see "How this file is maintained" at the bottom). History, evidence and full reasoning are in
 `docs/archive/HANDOFF_real_data_pipeline_LEGACY.md` (frozen 2026-10-07, newest section first).
 
@@ -192,6 +192,29 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
   22-run day the plan file assumed; detection is any-k so nothing changed, the tests use the 33.
   Comparing the detected design with a BUILT sheet moves to 3b (the sheet format is defined
   there; the built sheet gets its own file, not `rsm_design.json`).
+
+- **Phase 3a committed (3846548).**
+- **Phase 3b done (2026-10-11), uncommitted, awaiting review:** `rsm_design.py`, the generic CCF
+  run-sheet builder: 2-5 factors (built-in keys or workbook fields), real low/mid/high levels
+  (uneven allowed), all corners or a half fraction (last factor = product of the others: res V for
+  5 factors, 16+10+5 = 31 runs), optional block factor (outer blocks: corners opened and closed by
+  the block factor's face point as start/end repeats; middle block: centres first, last and spread
+  through the other faces), extras (inside a block's level -> inside that block, never first or
+  last; off-grid -> after every block), a first run (pressure check: opens its block, block goes
+  first), seeded randomisation within blocks, Notes "CCD run N <type>" that rsm_detect reads back,
+  time estimate. Saved as `rsm_run_sheet.json` (load rebuilds from the plan and checks the rows),
+  exported as run_sheet.xlsx/.csv/.md. `compare(sheet, detected)`: as planned / out of order /
+  settings differ / not captured yet / not on the sheet (moved here from 3a). Ben's 33-run day
+  regenerated block by block; built -> captured as fake folders -> detected closes the loop.
+  Tests `test_rsm_design.py` (15) + mutation checks.
+  - **Near-aliasing check added to estimability (rsm_detect):** rank alone said a 4-factor
+    half-fraction CCF can fit the full quadratic (orifice's uneven middle breaks the aliasing by a
+    hair); VIFs are ~850 on all six interactions vs <= 3 for the full CCF. Kept terms with VIF > 50
+    are "nearly aliased"; `Estimability.usable` = full and none nearly aliased.
+  - Ben's sheet exported for a look: `Practice Folder/output/CCD run sheet (4 factors, 33 runs)/`.
+  - **`docs/RSM_GUIDE.md`** (Ben asked for a how-to in the GUI): step-by-step guide to planning,
+    running and analysing a CCD, each builder field explained; the Phase 7 tab shows it in a Guide
+    panel. Marks what is built and what is not. Keep it in step with the code.
 
 ## Next steps, in order
 

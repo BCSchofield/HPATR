@@ -59,6 +59,8 @@ DESIGN_FILENAME = "rsm_design.json"
 TOL = 0.03                      # coded values this close are the same point
 AXIAL_PAIR_TOL = 0.10           # |alpha+ - alpha-| / alpha for a symmetric axial pair
 MIN_COVERAGE = 0.75             # share of a type's expected points needed to call it that type
+VIF_NEAR_ALIAS = 50.0           # a kept term this inflated is estimable on paper only (aliased in all but
+                                # name: a 4-factor half-fraction CCF gives ~850, a full CCF at most ~3)
 
 CORNER, FACE, AXIAL, CENTRE, EDGE, CHECK, OUTSIDE, OTHER, MISSING = (
     "corner", "face", "axial", "centre", "edge", "check", "outside", "other", "missing")
@@ -168,6 +170,7 @@ class Term:
     separately_estimable: bool = True
     kept: bool = True
     aliases: list = field(default_factory=list)
+    vif: float | None = None             # variance inflation in the fitted model (kept terms)
 
 
 @dataclass
@@ -184,6 +187,15 @@ class Estimability:
     @property
     def dropped(self) -> list[Term]:
         return [t for t in self.terms if not t.kept]
+
+    @property
+    def nearly_aliased(self) -> list[Term]:
+        return [t for t in self.terms if t.kept and t.vif is not None and t.vif > VIF_NEAR_ALIAS]
+
+    @property
+    def usable(self) -> bool:
+        """The full quadratic is estimable AND no term is nearly aliased."""
+        return self.full and not self.nearly_aliased
 
 
 @dataclass
@@ -538,6 +550,18 @@ def estimability(points: list[RunPoint], keys: list[str]) -> Estimability | None
             r = _rank([cols[x] for x in kept], n)
             t.aliases = [u for u in kept
                          if _rank([cols[x] for x in kept if x != u] + [cols[t.name]], n) == r]
+    # variance inflation of each kept term (centred columns): rank alone misses near-aliasing
+    if len(kept) >= 2 and n > len(kept):
+        M = np.column_stack([cols[x] for x in kept])
+        M = M - M.mean(axis=0)
+        sd = M.std(axis=0)
+        live = sd > 1e-12
+        if live.sum() >= 2:
+            with np.errstate(all="ignore"):
+                C = np.corrcoef(M[:, live], rowvar=False)
+                v = np.diag(np.linalg.pinv(C))
+            for name, val in zip([x for x, ok in zip(kept, live) if ok], v):
+                next(t for t in terms if t.name == name).vif = float(val) if np.isfinite(val) else math.inf
     groups: dict = {}
     for p in fit:
         groups.setdefault(p.setting, []).append(p)
@@ -712,7 +736,11 @@ def analyse(d: RsmDesign) -> Detected:
         findings.append(Finding("info", f"{len(pairs)} setting(s) repeated inside a block (drift checks): "
                                         + "; ".join(pairs[:6]) + ("; ..." if len(pairs) > 6 else "")))
     if est is not None:
-        if est.full:
+        if est.full and est.nearly_aliased:
+            findings.append(Finding("warn", f"the full quadratic is estimable on paper only: "
+                                            + ", ".join(f"{t.name} (VIF {t.vif:.0f})" for t in est.nearly_aliased)
+                                            + " are nearly aliased, so their estimates would be meaningless"))
+        elif est.full:
             findings.append(Finding("ok", f"full quadratic estimable: {est.n_params} terms on {est.n_fit} runs, "
                                           f"{est.df_pure_error} pure-error df, {est.df_lack_of_fit} lack-of-fit df"))
         else:
