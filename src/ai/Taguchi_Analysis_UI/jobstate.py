@@ -50,7 +50,8 @@ UNRESPONSIVE_S = 30.0        # heartbeat older than this: the worker is not answ
 DEAD_S = 120.0               # ... older than this, with the pid gone: it has died
 STALL_S = 90.0               # no output for this long while alive: stuck in a stage?
 
-FINISHED = ("finished", "finished_with_failures", "halted", "stopped")
+FINISHED = ("finished", "finished_with_failures", "halted", "stopped", "crashed", "drive_lost")
+RESUMABLE = ("dead", "pending", "stopped", "crashed", "drive_lost")
 
 
 class JobBusy(RuntimeError):
@@ -298,7 +299,7 @@ class Liveness:
 
     @property
     def resumable(self) -> bool:
-        return self.state in ("dead", "pending", "stopped") and self.n_done < self.n_total
+        return self.state in RESUMABLE and self.n_done < self.n_total
 
 
 def liveness(jd: Path, now: float | None = None, stall_s: float = STALL_S) -> Liveness:
@@ -316,6 +317,8 @@ def liveness(jd: Path, now: float | None = None, stall_s: float = STALL_S) -> Li
     base = dict(n_done=n_done, n_total=n_total)
     status = state.get("status", "pending")
     w = state.get("worker") or {}
+    if status == "halted" and not c.get("contract_violation"):
+        status = "crashed"         # written by workers before 2026-10-11 for a crash too (the 10-06 batch)
     if status in FINISHED:
         return Liveness(status, f"{status.replace('_', ' ')}: {n_done}/{n_total} done", w.get("pid"), **base)
     if status != "running":

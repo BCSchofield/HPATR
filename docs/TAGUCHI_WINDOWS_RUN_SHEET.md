@@ -427,6 +427,8 @@ Taguchi_ReRun_2026-10-05"*.
 | **Run batch** is greyed out | Hover over it: the tooltip says why. |
 | Console says **stalled** | Some stages are quiet for a while. Wait 15 minutes. If it is still stalled, press **Stop now** and then **Resume**: the stuck run is redone. If it stalls again on the same run, Stop now, and bring the output folder's `_job` to the Mac session. |
 | `CUDA out of memory` in a log | Close other GPU programs, then **Resume**. |
+| Console says **paused: a drive could not be reached** | The LaCie (or the output drive) dropped and did not come back within 30 minutes. Reconnect it (same letter: see the next row), then press **Resume**. The interrupted run is redone. A drop that recovers within 30 minutes needs nothing: the batch waits, redoes that run once and carries on. |
+| Console says **the batch worker crashed** | A bug in the app, not your data. Press **Resume**; finished runs are kept. Bring the output folder's `_job` to the Mac session so it can be fixed. |
 | The LaCie was unplugged and came back with a different letter | Give it its old letter back: Start, right-click, **Disk Management**, right-click the LaCie, **Change Drive Letter and Paths…**, **Change**, pick the old letter. Then **Resume**. |
 | A run failed overnight | Morning: press **Retry failed (n)**. If it fails again, the reason is in its log under `_job\logs\`; bring `_job` to the Mac session. |
 | Anything else | Stop the batch if it is misbehaving, save the output (below) and bring it to the Mac session. |

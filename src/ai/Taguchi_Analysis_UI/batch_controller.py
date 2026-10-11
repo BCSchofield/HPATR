@@ -205,6 +205,12 @@ class BatchController(QObject):
         if self.live.state != self._last_live_state:
             if self.live.state == "dead":
                 self.log(f"✖ {self.live.detail}. Nothing is lost: click Resume to carry on.", "error")
+            elif self.live.state == "crashed":
+                self.log("✖ the batch worker crashed (the error is above). Finished runs are kept: "
+                         "click Resume to carry on.", "error")
+            elif self.live.state == "drive_lost":
+                self.log("✖ the batch paused because a drive could not be reached. Reconnect it and "
+                         "click Resume: the interrupted run is redone, reusing finished work.", "error")
             elif self.live.state == "stalled":
                 self.log(f"⚠ {self.live.detail}", "warn")
             self._last_live_state = self.live.state
@@ -241,6 +247,12 @@ class BatchController(QObject):
             return f"stopped: {live.n_done}/{live.n_total} done — click Resume to carry on", "warn"
         if live.state == "halted":
             return "✖ batch halted: the pipeline output did not match the contract (see console)", "error"
+        if live.state == "crashed":
+            return (f"✖ the batch worker crashed ({live.n_done}/{live.n_total} done; see console) — "
+                    f"click Resume to carry on"), "error"
+        if live.state == "drive_lost":
+            return (f"✖ paused: a drive could not be reached ({live.n_done}/{live.n_total} done) — "
+                    f"reconnect it and click Resume"), "error"
         if live.state == "finished_with_failures":
             return f"finished with failures: {live.detail}", "warn"
         if live.state == "finished":

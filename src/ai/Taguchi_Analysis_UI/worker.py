@@ -14,8 +14,16 @@ A failed run is recorded and the batch moves on (as batch_runs does). A CONTRACT
 VIOLATION halts the batch: if the pipeline no longer produces what the contract
 promises, every later run would be wrong in the same way.
 
+A DRIVE THAT DROPS (USB, overnight, 2026-10-06) must not end the night: writing the
+run log, the events or the state never fails a run or the worker (a failed write is
+kept and retried); a run that fails while its folder or the job folder cannot be
+reached, or with an OS error, waits up to DRIVE_WAIT_S for the drive to come back
+and is then redone ONCE (with reuse); if the drive does not come back the worker
+stops as "drive_lost" with that run pending, and Resume carries on.
+
 Exit codes: 0 all done, 1 finished with failed runs, 2 halted (contract), 3 another
-worker owns the job, 4 stopped on request, 5 bad job folder.
+worker owns the job, 4 stopped on request, 5 bad job folder, 6 the drive was lost,
+7 the worker crashed (a bug; Resume carries on).
 """
 from __future__ import annotations
 
@@ -33,8 +41,74 @@ from . import eta, jobstate, procs, progress
 from . import pipeline_spec as spec
 
 
+DRIVE_WAIT_S = 30 * 60.0    # how long a run waits for a dropped drive to come back
+DRIVE_POLL_S = 10.0
+LOG_REOPEN_S = 5.0          # a broken run log is reopened at most this often
+
+
 class HaltBatch(Exception):
     pass
+
+
+class DriveLost(Exception):
+    pass
+
+
+def reachable(path: Path) -> bool:
+    """Can the folder be listed right now? (False while its drive is disconnected.)"""
+    try:
+        os.listdir(path)
+        return True
+    except OSError:
+        return False
+
+
+def _os_error_in(exc: BaseException) -> bool:
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        if isinstance(exc, OSError):
+            return True
+        seen.add(id(exc))
+        exc = exc.__cause__ or exc.__context__
+    return False
+
+
+class RunLog:
+    """One run's log file. A failed write (a USB drop: OSError 22 on flush) never fails the run;
+    the file is reopened and writing carries on when it can. `broken` is the last error."""
+
+    def __init__(self, path: Path):
+        self.path, self.f, self.broken, self._tried = Path(path), None, None, 0.0
+        self._open()
+
+    def _open(self) -> None:
+        self._tried = time.monotonic()
+        try:
+            self.f = open(self.path, "a", encoding="utf-8")
+        except OSError as exc:
+            self.f, self.broken = None, exc
+
+    def write(self, text: str) -> bool:
+        if self.f is None and time.monotonic() - self._tried >= LOG_REOPEN_S:
+            self._open()
+        if self.f is None:
+            return False
+        try:
+            self.f.write(text)
+            self.f.flush()
+            return True
+        except OSError as exc:
+            self.broken = exc
+            self.close()
+            return False
+
+    def close(self) -> None:
+        f, self.f = self.f, None
+        if f is not None:
+            try:
+                f.close()
+            except OSError:
+                pass
 
 
 def _own_group() -> int | None:
@@ -96,14 +170,34 @@ class Worker:
         self._hb_stop = threading.Event()
         self._last_save = 0.0
         self._job_handle = None
+        self._unsent: list = []              # events not yet written (the job folder's drive dropped)
+        self._write_warned = False
+        self.drive_wait_s = DRIVE_WAIT_S
+        self.drive_poll_s = DRIVE_POLL_S
 
     # -- persistence ---------------------------------------------------------------
     def save(self, force: bool = True) -> None:
         now = time.monotonic()
         if force or now - self._last_save >= 2.0:          # progress saves are throttled
             self.state["eta"] = self._eta_snapshot()
-            jobstate.save_state(self.jd, self.state)
-            self._last_save = now
+            try:
+                jobstate.save_state(self.jd, self.state)
+                self._last_save = now
+            except OSError as exc:                       # kept in memory; the next save writes it
+                self._write_failed("state.json", exc)
+
+    def _write_failed(self, what: str, exc: OSError) -> None:
+        if not self._write_warned:
+            self._write_warned = True
+            print(f"[{jobstate.now_iso()}] could not write {what} ({exc}); carrying on", flush=True)
+            self.emit("warn", detail=f"could not write {what} ({type(exc).__name__}: {exc}); "
+                                     f"carrying on (a drive may have dropped)")
+
+    def _quietly(self, what: str, fn, *args) -> None:
+        try:
+            fn(*args)
+        except OSError as exc:
+            self._write_failed(what, exc)
 
     def _eta_snapshot(self) -> dict | None:
         try:
@@ -115,7 +209,18 @@ class Worker:
             return None
 
     def emit(self, kind: str, **fields) -> None:
-        self.events.append(kind, **fields)
+        """Append an event. If the job folder cannot be written, the event is kept (with its time)
+        and written, in order, with the next one that can be."""
+        self._unsent.append((kind, fields))
+        try:
+            while self._unsent:
+                k, f = self._unsent[0]
+                self.events.append(k, **f)
+                self._unsent.pop(0)
+        except OSError:
+            for _, f in self._unsent:
+                f.setdefault("written_late_from", jobstate.now_iso())
+            del self._unsent[:-5000]
 
     # -- heartbeat ---------------------------------------------------------------
     def _heartbeat(self) -> None:
@@ -182,7 +287,8 @@ class Worker:
                     self.emit("log", line="stop requested: stopping before the next run")
                     code = 4
                     break
-                self.process_run(r, settings, options)
+                while self.process_run(r, settings, options):      # True: redo it (the drive came back)
+                    pass
             else:
                 c = jobstate.counts(self.state)
                 failed = c.get("failed", 0) + c.get("contract_violation", 0)
@@ -192,41 +298,51 @@ class Worker:
             self.state["status"] = "halted"
             self.emit("error", detail=f"BATCH HALTED: {exc}")
             code = 2
+        except DriveLost as exc:
+            self.state["status"] = "drive_lost"
+            self.emit("error", detail=f"BATCH PAUSED, drive lost: {exc}. Reconnect it and click Resume.")
+            code = 6
         except Exception as exc:                           # a worker bug: record it, never vanish
             if self.state is not None:
-                self.state["status"] = "halted"
+                self.state["status"] = "crashed"           # not "halted": that means a contract violation
             self.emit("error", detail=f"worker crashed: {type(exc).__name__}: {exc}",
                       traceback=traceback.format_exc())
-            code = 2
+            code = 7
         finally:
             self._hb_stop.set()
             if self.state is not None:
                 self.save()
-                jobstate.write_timings(self.jd, self.state)
+                self._quietly("timings", jobstate.write_timings, self.jd, self.state)
                 c = jobstate.counts(self.state)
                 self.emit("job_end", status=self.state["status"], exit_code=code, counts=c)
-            jobstate.release_lock(self.jd, self.token)
+            self._quietly("worker.lock", jobstate.release_lock, self.jd, self.token)
             if isinstance(self.pipeline, RealPipeline):
-                self.calib.save()
+                self._quietly("the timing calibration", self.calib.save)
         return code
 
     # -- one run -------------------------------------------------------------------
-    def process_run(self, r: dict, settings: spec.RunSettings, options: dict) -> None:
+    def process_run(self, r: dict, settings: spec.RunSettings, options: dict) -> bool:
+        """Run one capture through the pipeline. Returns True when it should be run again at once
+        (it failed while the drive was away, the drive is back, and it has not been redone yet)."""
         run_dir = Path(r["path"])
+        again = False
         t_started = time.time()
         r.update(status="running", stage=None, error=None, started=jobstate.now_iso(),
                  progress=None, seconds={}, timings={})
         r["attempts"] = r.get("attempts", 0) + 1
         tracker = progress.Tracker()
-        logf = open(self.jd / "logs" / f"{r['index']:02d}_{r['name']}.log", "a", encoding="utf-8")
+        logf = RunLog(self.jd / "logs" / f"{r['index']:02d}_{r['name']}.log")
+        log_warned = [False]
         t_run = time.time()
         self.save()
         self.emit("run_start", i=r["index"], name=r["name"], attempt=r["attempts"])
 
         def log(line) -> None:
             text = str(line)
-            logf.write(text + ("" if text.endswith("\n") else "\n"))
-            logf.flush()
+            if not logf.write(text + ("" if text.endswith("\n") else "\n")) and not log_warned[0]:
+                log_warned[0] = True
+                self.emit("warn", i=r["index"], detail=f"could not write the run log ({logf.broken}); "
+                                                       f"the run carries on")
             for ev in tracker.feed(text):
                 k = ev.pop("k")
                 if k == "stage_start":
@@ -310,16 +426,55 @@ class Worker:
         except HaltBatch:
             raise
         except Exception as exc:
-            r["status"], r["error"] = "failed", f"{type(exc).__name__}: {exc}"
-            r["timings"]["total_s"] = round(time.time() - t_run, 1)
+            error = f"{type(exc).__name__}: {exc}"
             logf.write(traceback.format_exc())
-            self.emit("run_end", i=r["index"], name=r["name"], status="failed", error=r["error"])
-            self.emit("error", i=r["index"], detail=f"{r['name']} FAILED: {r['error']}",
-                      traceback=traceback.format_exc())
+            if _os_error_in(exc) or not (reachable(run_dir) and reachable(self.jd)):
+                if not self._wait_for_drive(r, run_dir, error):
+                    r.update(status="pending", stage=None, error=f"drive lost: {error}")
+                    raise DriveLost(f"{run_dir} or the job folder could not be reached for "
+                                    f"{self.drive_wait_s / 60:.0f} min ({r['name']}: {error})")
+                if not r.get("drive_retried"):
+                    r["drive_retried"] = True
+                    r.update(status="pending", stage=None, error=None)
+                    self.emit("warn", i=r["index"], detail=f"{r['name']} failed with the drive away "
+                                                           f"({error}); redoing it once, reusing finished work")
+                    again = True
+            if not again:
+                r["status"], r["error"] = "failed", error
+                r["timings"]["total_s"] = round(time.time() - t_run, 1)
+                self.emit("run_end", i=r["index"], name=r["name"], status="failed", error=r["error"])
+                self.emit("error", i=r["index"], detail=f"{r['name']} FAILED: {r['error']}",
+                          traceback=traceback.format_exc())
         finally:
             logf.close()
             self.save()
-            jobstate.write_timings(self.jd, self.state)
+            self._quietly("timings", jobstate.write_timings, self.jd, self.state)
+        return again
+
+    def _wait_for_drive(self, r: dict, run_dir: Path, error: str) -> bool:
+        """Wait (up to drive_wait_s) until the run folder and the job folder can be reached. True if
+        they can (at once, or after waiting)."""
+        def ok() -> bool:
+            return reachable(run_dir) and reachable(self.jd)
+        if ok():
+            return True
+        r["stage"] = "waiting for the drive"
+        self.emit("warn", i=r["index"], detail=f"{r['name']}: {run_dir} or the job folder cannot be reached "
+                                               f"({error}); waiting up to {self.drive_wait_s / 60:.0f} min "
+                                               f"for the drive to come back")
+        self.save()
+        t0 = time.monotonic()
+        last_note = t0
+        while time.monotonic() - t0 < self.drive_wait_s:
+            time.sleep(self.drive_poll_s)
+            if ok():
+                self.emit("log", i=r["index"], line=f"the drive is back after {time.monotonic() - t0:.0f} s")
+                return True
+            if time.monotonic() - last_note >= 60:          # keeps a reachable job folder from reading as stalled
+                last_note = time.monotonic()
+                self.emit("log", i=r["index"], line=f"still waiting for the drive "
+                                                    f"({time.monotonic() - t0:.0f} s)")
+        return False
 
     def _halt_on(self, violations, r: dict) -> None:
         errors = [v for v in violations if v.level == "error"]
