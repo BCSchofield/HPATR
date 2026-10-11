@@ -131,6 +131,7 @@ class RsmResults:
     optimum_discrete: rs.Optimum | None
     correlations: list                # (nuisance term, axis term, r) with |r| >= 0.3
     warnings: list
+    discrete: dict | None = None      # factor -> the real levels that can be set (e.g. orifice inserts)
 
     def factor(self, key: str) -> rdet.FactorLevels:
         return next(f for f in self.loaded.detected.factors if f.key == key)
@@ -257,7 +258,8 @@ def analyse(L: Loaded, axis: list[str] | None = None, nuisance: dict | None = No
             dcoded = {k: [det.factors[keys_all.index(k)].real_code(v) for v in vals] for k, vals in discrete.items()
                       if k in axis}
             opt_d = rs.optimise(live, goals, ranges, fixed, constraints, dcoded)
-    return RsmResults(L, axis, nuisance, hold_c, terms, dropped, fits, goals, constraints, opt, opt_d, corr, warnings)
+    return RsmResults(L, axis, nuisance, hold_c, terms, dropped, fits, goals, constraints, opt, opt_d, corr, warnings,
+                      discrete=dict(discrete) if discrete else None)
 
 
 def _centre_trend(fit_runs: list[RunData], key: str) -> rs.TimeTrend | None:

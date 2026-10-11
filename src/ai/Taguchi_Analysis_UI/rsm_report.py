@@ -98,29 +98,6 @@ def optimum_by_hold(R) -> list[tuple[dict, rs.Optimum]]:
     return out
 
 
-def next_runs(R, best: tuple[dict, rs.Optimum] | None, n_confirm: int = 3) -> list[dict]:
-    """Confirmation runs at the optimum (rounded to what can be set), plus one anchor repeat at the
-    design centre. The full recommender (moving the region, augmenting the model) is Phase 6."""
-    from .rsm_design import RIG_LIMITS
-    if best is None:
-        return []
-    hold, o = best
-    setting = {}
-    for k in R.axis:
-        v = R.decode(k, o.coded[k])
-        step = NEXT_RUN_STEP.get(k)
-        v = round(v / step) * step if step else round(v, 4)
-        lo, hi = RIG_LIMITS.get(k, (-math.inf, math.inf))
-        setting[k] = min(max(v, lo), hi)
-    setting.update(hold)
-    rows = [{"run": i + 1, "why": "confirmation at the optimum", **{_flabel(R, k): v for k, v in setting.items()}}
-            for i in range(n_confirm)]
-    centre = {f.key: f.centre for f in R.loaded.detected.factors}
-    rows.append({"run": n_confirm + 1, "why": "anchor: repeat of the design centre (links the sessions)",
-                 **{_flabel(R, k): v for k, v in centre.items()}})
-    return rows
-
-
 def controls(R) -> list[dict]:
     """Every run outside the region (a control such as 0 rpm) against the centre runs, per headline
     response: the CCD plan's "does rotation help?" comparison."""
@@ -271,10 +248,11 @@ def tables(models: dict) -> dict[str, list[dict]]:
 
     out["correlations"] = [{"model": n, "nuisance": _flabel(M, a), "axis term": term_text(M, t), "r": round(r, 4)}
                            for n, M in models.items() for a, t, r in M.correlations]
-    best = max(optimum_by_hold(R), key=lambda ho: ho[1].D, default=None)
-    if best is not None and R.optimum_discrete is not None:
-        best = (best[0], R.optimum_discrete)            # confirm where the factors can actually be set
-    out["next_runs"] = next_runs(R, best)
+    from . import rsm_recommend
+    recs = rsm_recommend.recommend(R, R.discrete)
+    out["next_runs"] = rsm_recommend.table(R, recs)
+    out["recommendations"] = [{"recommendation": r.title, "kind": r.kind, "runs": len(r.rows), "why": r.why}
+                              for r in recs]
     out["controls"] = controls(R)
     out["design"] = [{"level": f.level, "finding": f.text} for f in det.findings]
     return out
@@ -544,12 +522,26 @@ def build(models: dict, prov, figure_files=(), title: str = "Response-surface an
                           [[s["response"], s["kind"], s["inside the tested range"]] +
                            [fmt(s.get(_flabel(R, k)), 5) for k in R.axis] + [fmt(s["fitted value there"], 4)]
                            for s in T["stationary_points"]]))
-    if T["next_runs"]:
-        L.append("\n**Suggested next runs** (confirmation at the best setting, plus a centre repeat to link the sessions; "
-                 "the full recommender, which can also move the region, comes later)\n")
-        cols = [c for c in T["next_runs"][0] if c not in ("run",)]
-        L.append(md_table(["Run"] + cols, [[r["run"]] + [fmt(r[c], 5) if isinstance(r[c], float) else r[c]
-                                                         for c in cols] for r in T["next_runs"]]))
+    if T["recommendations"]:
+        L.append("\n## Recommended next runs\n")
+        L.append("What to run next, and why. Every run carries its predicted responses with the 95% prediction "
+                 "interval (where it should land); runs outside the tested region are marked as extrapolated. The "
+                 "same runs, numbered with the Notes to type, are in `next_runs.xlsx`.\n")
+        keys = [k for k in R.axis + list(R.nuisance)]
+        goals = [g.key for g in R.goals]
+        for rec_ in T["recommendations"]:
+            L.append(f"### {rec_['recommendation']}\n")
+            L.append(rec_["why"] + "\n")
+            rows = [r for r in T["next_runs"] if r["Recommendation"] == rec_["recommendation"]]
+            if rows:
+                head = ["Run", "Why this run"] + [_short(_flabel(R, k)) for k in keys] + \
+                       [f"{_short(R.fits[g].label)} (95% PI)" for g in goals] + ["Extrapolated"]
+                L.append(md_table(head, [[r["Run"], r["Why this run"]] + [fmt(r.get(_flabel(R, k)), 5) for k in keys]
+                                         + [f"{fmt(r.get('predicted ' + R.fits[g].label), 4)} "
+                                            f"({r.get(R.fits[g].label + ' 95% PI', '–')})" for g in goals]
+                                         + [r["extrapolated"] or "–"] for r in rows]))
+            elif rec_["kind"] == "new_ccd":
+                L.append("The full run sheet is in `next CCD/run_sheet.xlsx`.\n")
 
     # runs outside the fit, drift
     if T["controls"]:

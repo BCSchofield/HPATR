@@ -6,9 +6,9 @@ planning a central composite design (CCD), running it, and getting it analysed.
 > **What is built so far (2026-10-11):** building the run sheet (step 1), detecting the design (step 3)
 > and the whole analysis (step 5: fits, contour maps, 3D surfaces, profiler, desirability, fit checks,
 > drift, controls, validation runs, report, workbook, CSV and deck) work, as code with tests, and have
-> been run on the 9x3 practice copy and on a simulated 33-run day. Still to come: the recommender for the
-> next session (Phase 6) and the tab that puts buttons on all of it (Phase 7). The Taguchi tab is
-> unchanged and works as before.
+> been run on the 9x3 practice copy and on a simulated 33-run day, and so does the recommender for the
+> next session (step 6). Still to come: the tab that puts buttons on all of it (Phase 7). The Taguchi tab
+> is unchanged and works as before.
 
 ## The idea in one paragraph
 
@@ -179,6 +179,26 @@ What you get, in the output folder (`rsm_report.md`, `rsm_analysis.xlsx`, `rsm_r
 - The size, steadiness, quality figures and image sheets from the Taguchi analysis that are not
   Taguchi-specific, as an appendix.
 - Every slide in the deck says what it shows and how to read it, with the terms it uses defined.
+
+## Step 6: what to run next
+
+`next_runs.xlsx` (and `.csv`, `.md`) is a ready-to-use run sheet, numbered, with the Notes to type and
+every run's predicted responses and 95% prediction interval. It holds whichever of these apply, each with
+the reason:
+
+- **Confirm the best setting**: three runs there (rounded to what the rig can set, at an insert that
+  exists) and a repeat of the design centre to link the sessions. Always.
+- **Move the region**, when the best setting is on an edge or nothing curves: runs stepping outward along
+  the direction the combined score rises fastest (stopping at the rig's limits: gas 12,000 sccm), and a
+  whole new CCD centred on the best setting (in `next CCD/`). Runs beyond the tested range are marked as
+  extrapolation, and any factor taken beyond its tested range with no recorded rig limit (RPM, feed) is
+  named, so it can be checked on the rig first.
+- **Strengthen the model**, when it is weak (lack of fit, a goal surface that cannot predict new runs, a
+  check run that missed): the runnable settings that most reduce the model's uncertainty, the first next
+  to any run that missed.
+- **Make a new insert**, only when the plan's three conditions all hold: the best point is at the 0.5 or
+  1.8 mm edge, the orifice slope is still significant and improving there, and the 0.8 mm check run
+  matched the model. The size is the next step by the same ratio (e.g. 1.8 → about 2.7 mm).
 
 A **nuisance factor** can be kept in the model without being mapped (RPM in the 9x3 trial), and several
 models can be fitted side by side to see whether a term depends on it.

@@ -307,12 +307,23 @@ def build(path: Path, models: dict, prov, figures_dir: Path, title: str = "Respo
                  for s in data["stationary_points"]],
                 detail="Simplified model, nuisance factors at their centre. A peak outside the range means the best "
                        "value inside it is on an edge.", terms=defs("stationary"), accent=dk.TEAL)
-    if data["next_runs"]:
-        cols = [c for c in data["next_runs"][0] if c != "run"]
-        d.table("Suggested next runs", ["Run"] + [_short(c) for c in cols],
-                [[r["run"]] + [f"{r[c]:.4g}" if isinstance(r[c], float) else r[c] for c in cols] for r in data["next_runs"]],
-                detail="Confirmation runs at the best setting (rounded to what can be set) and a centre repeat to link "
-                       "the sessions. The full recommender comes later.", accent=dk.ORANGE)
+    keys = list(R.axis) + list(R.nuisance)
+    for rec_ in data.get("recommendations", []):
+        rows = [r for r in data["next_runs"] if r["Recommendation"] == rec_["recommendation"]][:9]
+        if rows:
+            g = R.goals[0].key if R.goals else None
+            head = ["Run", "Why this run"] + [_short(_f(R, k)) for k in keys] + \
+                   ([f"{_short(R.fits[g].label)} (PI)"] if g else [])
+            body = [[r["Run"], r["Why this run"][:38]] + [rsm_report.num(r[_f(R, k)]) if isinstance(r[_f(R, k)], (int, float))
+                                                           else r[_f(R, k)] for k in keys]
+                    + ([f"{r.get('predicted ' + R.fits[g].label, float('nan')):.3g} ({r.get(R.fits[g].label + ' 95% PI', '–')})"]
+                       if g else []) for r in rows]
+            d.table(f"Next: {rec_['recommendation'][:70]}", head, body, detail=rec_["why"], accent=dk.ORANGE)
+        else:
+            d.cards(f"Next: {rec_['recommendation'][:70]}",
+                    [("Why", rec_["why"]), ("The run sheet", "Every run of the new design, in order, with the Notes to "
+                                                              "type: next CCD/run_sheet.xlsx (and .csv, .md).")],
+                    dk.ORANGE)
     if data.get("controls"):
         d.table("Controls against the centre runs", ["Run", "Differs in", "Response", "Value", "Centres", "In SDs"],
                 [[c["run"][:6], c["differs from the centre in"], _short(c["response"]), f"{c['value']:.4g}"

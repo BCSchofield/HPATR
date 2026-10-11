@@ -41,7 +41,7 @@ METRICS_CACHE = "cache/run_metrics"
 SHEETS = (("Runs", "runs"), ("Fit summary", "fit_summary"), ("Coefficients", "coefficients"),
           ("Model comparison", "model_comparison"), ("Stationary points", "stationary_points"),
           ("Best settings", "optimum"), ("Goals", "goals"), ("Constraints", "constraints"),
-          ("Next runs", "next_runs"), ("Predictions", "predictions"), ("Block repeats", "block_repeats"),
+          ("Recommendations", "recommendations"), ("Next runs", "next_runs"), ("Predictions", "predictions"), ("Block repeats", "block_repeats"),
           ("Correlations", "correlations"), ("Design checks", "design"))
 
 Log = Callable[[str, str], None]
@@ -67,6 +67,7 @@ class RsmDeliverables:
     workbook: Path | None = None
     csv: Path | None = None
     deck: Path | None = None
+    next_runs: list[Path] = field(default_factory=list)
     figures: list[Path] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)
     seconds: float = 0.0
@@ -205,6 +206,9 @@ def publish(design: rsm_detect.RsmDesign, output_dir: Path, models: list[ModelSp
     d.workbook = step("workbook", lambda: _workbook(output_dir / WORKBOOK_NAME, data, prov))
     primary = next(iter(d.models.values()))
     d.csv = step("results CSV", lambda: _write_csv(output_dir / CSV_NAME, rsm_report.results_csv(primary)))
+    from . import rsm_recommend
+    d.next_runs = step("next runs", lambda: rsm_recommend.export(primary, rsm_recommend.recommend(
+        primary, primary.discrete), output_dir)) or []
     reason = deck_mod.available()
     if reason:
         log(f"response surface: {reason}", "warn")

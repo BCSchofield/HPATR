@@ -192,6 +192,8 @@ def test_save_load_and_export(tmp_path):
      "not one of the design's corners"),
     (rb.Plan(factors=[replace(GAS, mid=10000, high=13000), FEED]), "outside what the rig can set"),
     (rb.Plan(factors=[GAS, FEED], extras=[rb.Extra({"sccm": 12500, "sps": 4000})]), "outside what the rig can set"),
+    (rb.Plan(factors=[GAS, replace(RPM, mid=700, high=1100)]), "outside what the rig can set"),
+    (rb.Plan(factors=[GAS, replace(FEED, mid=9000, high=13000)]), "outside what the rig can set"),
 ])
 def test_bad_plans_are_refused_with_a_reason(plan, msg):
     with pytest.raises(rb.PlanError, match=msg):

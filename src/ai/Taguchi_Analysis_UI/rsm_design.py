@@ -42,9 +42,10 @@ SCHEMA = 1
 SHEET_FILENAME = "rsm_run_sheet.json"
 EXPORT_STEM = "run_sheet"
 MAX_FACTORS = 5
-# what the rig can physically set (Ben, 2026-10-11): the gas flow controller tops out at 12,000 sccm.
-# There is no rated pressure limit, so peak pressure is watched, not constrained.
-RIG_LIMITS = {"sccm": (0.0, 12000.0)}
+# what the rig can physically set (Ben, 2026-10-11): gas flow controller 12,000 sccm, bubbler 1,000 rpm
+# (0 rpm, no rotation, is allowed: the control run), silicone feed about 12,000 steps/s. There is no rated
+# pressure limit, so peak pressure is watched, not constrained.
+RIG_LIMITS = {"sccm": (0.0, 12000.0), "rpm": (0.0, 1000.0), "sps": (0.0, 12000.0)}
 
 
 # ---- inputs ---------------------------------------------------------------------------------------------

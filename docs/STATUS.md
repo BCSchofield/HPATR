@@ -1,6 +1,6 @@
 # STATUS — real-data droplet pipeline and Taguchi study
 
-**Last updated: 2026-10-11 (Mac: CCD plan Phase 4b committed; Phase 5 built, awaiting review).** This is the live state of the work. Claude keeps it current
+**Last updated: 2026-10-11 (Mac: CCD plan Phase 5 committed; Phase 6 (recommender) built, awaiting review).** This is the live state of the work. Claude keeps it current
 (see "How this file is maintained" at the bottom). History, evidence and full reasoning are in
 `docs/archive/HANDOFF_real_data_pipeline_LEGACY.md` (frozen 2026-10-07, newest section first).
 
@@ -283,6 +283,27 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
   SIMULATED CCD day (4 factors, 33 runs)/`: finds the planted gas peak (~10,500 vs planted ~10,800 sccm),
   orifice ~1.6 mm, the 0 rpm control at -6.9 centre SDs (planted -2 points), the 0.8 mm check inside its
   PI. Tests `test_rsm_ccd.py` (8). The 9x3 trial re-published with the new outputs.
+
+- **Phase 5 committed (9c8b8d8).**
+- **Phase 6 done (2026-10-11), uncommitted, awaiting review:** `rsm_recommend.py`, the next-run recommender.
+  confirm (best setting x3 + centre anchor, snapped to the rig's steps / existing inserts / limits) always;
+  steepest (path of steepest ascent of the desirability from the best setting, outward on edge factors,
+  stops at the rig limit) and new_ccd (same-size CCF shifted so the best point is inside, built by
+  rsm_design, rig limits applied; nuisance factors held where the score is highest) when the optimum is on
+  an edge or nothing curves; augment (D-optimal greedy on the model's terms over a runnable candidate
+  grid, the first next to a failed check / validation run) when the model is weak; new_level (next insert
+  size by the same ratio) only when the CCD plan's three conditions hold. Every run predicted with its 95%
+  PI, extrapolation flagged; factors taken beyond the tested range with no recorded rig limit (RPM, feed)
+  are named for checking. Wired into the publish: report section, workbook sheets, one deck slide per
+  recommendation, `next_runs.xlsx/.csv/.md` and `next CCD/run_sheet.*`; the Phase 4b placeholder next
+  runs are gone. Tests `test_rsm_recommend.py` (10, planted surfaces) + mutation checks (rig clamp, check
+  condition, D-optimal pick caught; the edge-or-flat trigger is redundant with the direction check).
+  On the real 9x3: confirm 8,700 sccm / 8,000 steps/s / 300 rpm (atomised 17.0%, PI 15.4-18.6); steepest
+  ascent pushes feed up to 12,000 steps/s (extrapolated); new CCD gas 4,400-10,400 x feed 6,000-10,000
+  at 300 rpm; 4 runs to fix D32's lack of fit.
+  **Rig limits (Ben, 2026-10-11): gas 12,000 sccm, bubbler 1,000 rpm (0 allowed: the control), feed about
+  12,000 steps/s**, in `rsm_design.RIG_LIMITS`: the builder refuses levels beyond them and the recommender
+  stops there. No rated pressure limit.
 
 ## Next steps, in order
 

@@ -116,3 +116,14 @@ def test_every_surface_slide_says_what_it_shows_and_how_to_read_it(day):
         assert "What it shows" in body and "How to read it" in body, title
         surfaces += 1
     assert surfaces >= 6 * 3 + 6 + 3        # maps (3 RPM each), 3D + pairs per response, desirability per RPM
+
+
+def test_the_publish_carries_the_recommendations(day):
+    out = day["out"]
+    assert {"next_runs.xlsx", "next_runs.csv", "next_runs.md"} <= {p.name for p in out.iterdir()}
+    text = (out / "rsm_report.md").read_text(encoding="utf-8")
+    assert "## Recommended next runs" in text and "### Confirm the best setting" in text
+    from pptx import Presentation
+    titles = [next((sh.text_frame.text for sh in s.shapes if sh.has_text_frame and sh.text_frame.text.strip()), "")
+              for s in Presentation(str(out / "rsm_deck.pptx")).slides]
+    assert any(t.startswith("Next: Confirm the best setting") for t in titles)
