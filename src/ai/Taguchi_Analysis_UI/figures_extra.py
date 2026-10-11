@@ -35,9 +35,9 @@ from .figures import CONDITION_COLOURS, FACTOR_COLOURS, GREY, _axes_style, _save
 
 SIZE_BIN_UM = 5.0
 SIZE_MAX_UM = 300.0
-DRIFT_KEYS = ("d32", "atom", "dv50", "af_flow", "per_frame", "cv_droplets")
-DIAG_KEYS = ("d32", "atom", "dv50", "af_flow")
-INTERACTION_KEYS = ("d32", "atom")
+DRIFT_KEYS = ("d32", "d_mean", "atom", "dv50", "af_flow", "per_frame", "cv_droplets")
+DIAG_KEYS = ("d32", "d_mean", "atom", "dv50", "af_flow")
+INTERACTION_KEYS = ("d32", "d_mean", "atom")
 GALLERY_WIDTH = 760                  # px per thumbnail
 GALLERY_DIR = "galleries"
 

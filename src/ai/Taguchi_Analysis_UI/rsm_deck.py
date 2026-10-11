@@ -251,7 +251,7 @@ def build(path: Path, models: dict, prov, figures_dir: Path, title: str = "Respo
             detail=f"{det.design_type}. " + " ".join(c for c in rsm_report.caveats(models)[:2]),
             terms=defs("nuisance", "coded", "aliased"), accent=dk.NAVY)
 
-    found = []
+    found, more = [], []
     for k in [k for k in rsm_report.HEADLINE if k in R.fits]:
         v = rsm_report._verdict(R, k)
         if v:
@@ -260,12 +260,17 @@ def build(path: Path, models: dict, prov, figures_dir: Path, title: str = "Respo
             found.append((_short(R.fits[k].label), body[:1].upper() + body[1:] + "."))
     best = max(rsm_report.optimum_by_hold(R), key=lambda ho: ho[1].D, default=None)
     if best is not None:
-        found.append(("Best overall setting", tw_desirability(R)[0].replace("Best overall: ", "") + "."))
+        more.append(("Best overall setting", tw_desirability(R)[0].replace("Best overall: ", "") + "."))
     moved = [rsm_report.term_text(R, row["term"]) + " on " + _short(R.fits[k].label) for k in rsm_report.HEADLINE
              for row in rsm_report.interaction_agreement(models, k) if not row["agree"]]
     if moved:
-        found.append(("Not separated", "; ".join(moved) + " change with the model: not interactions you can read."))
-    d.cards("What was found", found[:6], dk.ORANGE)
+        more.append(("Not separated", "; ".join(moved) + " change with the model: not interactions you can read."))
+    if len(found) + len(more) <= 6:
+        d.cards("What was found", found + more, dk.ORANGE)
+    else:                                       # five headline responses: one slide for them, one for the rest
+        d.cards("What was found: the headline responses", found[:6], dk.ORANGE)
+        if more:
+            d.cards("What was found: the best setting", more, dk.ORANGE)
 
     from . import rsm_figures as rf
     lay = rf.map_layout(R)

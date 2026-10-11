@@ -74,7 +74,7 @@ def test_takeaways_match_what_was_built_in(world):
     """The synthetic campaign's gas flow drives droplet size and atomisation; RPM does nothing."""
     _, slides = _slides(world["res"].deck)
     titles = [s["title"] for s in slides]
-    assert any(t.startswith("Gas flow drives both D32") for t in titles), titles
+    assert "Gas flow drives D32 in-focus, mean diameter and atomised fraction" in titles, titles
     assert not any("RPM drives" in t for t in titles)
     caveats = " ".join(slides[-1]["texts"])
     n = len(world["res"].results.multiple)

@@ -205,7 +205,7 @@ def test_size_bin_colours_are_one_ordered_ramp_not_a_categorical_palette():
 
 def test_main_effects_has_one_panel_per_response_and_factor(world, captured):
     figures.fig_main_effects(world["res"].results, Path("x"))
-    assert len(captured["fig_main_effects"].axes) == 2 * 3
+    assert len(captured["fig_main_effects"].axes) == 3 * 3        # D32, mean diameter, atomised fraction
 
 
 def test_contributions_bars_partition_100_percent(world, captured):

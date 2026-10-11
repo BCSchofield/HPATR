@@ -31,7 +31,8 @@ from . import fsops
 from .tables import cond_order
 
 DPI = 300
-HEADLINE = ("d32", "atom")                      # the two responses every figure leads with
+HEADLINE = ("d32", "d_mean", "atom")            # the responses every figure leads with (mean diameter: Ben,
+                                                # 2026-10-11, on a level with D32 and atomised fraction)
 # the deck template's accents ("Atomisation Ink": orange, teal, purple, yellow, then greys), so the
 # figures match the slides they sit on
 FACTOR_COLOURS = ("#E07A3F", "#2A9D8F", "#7B6CB0", "#F2C14E", "#22313F", "#9AA5AD", "#C9D3D9")

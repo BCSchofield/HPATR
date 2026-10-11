@@ -18,7 +18,7 @@ from . import rsm_stats as rs
 from .report import fmt, fmt_p, md_table
 
 ALPHA = 0.05
-HEADLINE = ("atom", "d32", "af_flow", "cv_droplets")
+HEADLINE = ("atom", "d32", "d_mean", "af_flow", "cv_droplets")   # mean diameter: Ben, 2026-10-11
 NEXT_RUN_STEP = {"sccm": 100, "sps": 100, "rpm": 50, "orifice": None, "bh": 0.1}    # setpoint resolution
 # rsm_results.csv: the column names the CCD plan's own analysis code reads
 CSV_NAMES = {"atom": "af", "d32": "d32", "d_mean": "mean_d", "d_median": "median_d", "d90": "d90_count",

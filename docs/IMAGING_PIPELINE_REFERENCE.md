@@ -39,8 +39,10 @@ listed in §14.
  STAGE 7  companion analyses   pulsing (pulsing/), sizer comparison (comparison_*.md)
 ```
 
-Two numbers are the headline Taguchi responses: **D32 of in-focus droplets** (Stage 4) and the
-**classical atomised area fraction** (Stage 5). Everything else is a secondary response.
+Three numbers are the headline responses (Taguchi and response surface): **D32 of in-focus droplets**
+and their **mean diameter** (D10; Stage 4; mean diameter promoted to headline by Ben, 2026-10-11) and the
+**classical atomised area fraction** (Stage 5). Everything else is a secondary response, still analysed
+in full. The response-surface analysis also leads with atomised liquid flow and droplet-count CV.
 
 ---
 

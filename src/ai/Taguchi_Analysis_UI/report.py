@@ -17,7 +17,7 @@ from pathlib import Path
 from . import covariates, run_metrics, size_bins, stats, tables
 
 ALPHA = 0.05
-HEADLINE = ("d32", "atom")
+HEADLINE = ("d32", "d_mean", "atom")          # figures.HEADLINE
 CONFOUNDED_R = 0.5             # |r| between a factor's level and capture time worth a warning
 OUTLIER_STD = 3.0              # standardised residuals listed in the model checks
 SUMMARY_KEYS = ("d32", "atom", "dv50", "af_flow", "per_frame", "cv_droplets", "thin_pct", "lag1", "peak_bar")
@@ -211,7 +211,8 @@ def _responses_section(results) -> str:
     head = [k for k in keys if k in HEADLINE]
     rest = [k for k in keys if k not in HEADLINE]
     lines = ["## Results by response\n",
-             "The two headline responses first; every other response the pipeline measures follows.\n"]
+             "The headline responses first (D32, mean diameter, atomised fraction); every other response the "
+             "pipeline measures follows.\n"]
     lines += [_response_section(results, k, q) for k in head + rest]
     return "\n".join(lines)
 

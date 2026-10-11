@@ -328,13 +328,23 @@ def _describe(image: Path) -> str:
 
 # ---- takeaways ----------------------------------------------------------------------------------------
 
+def _and(items: list[str]) -> str:
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def _names(results, keys: list[str]) -> str:
+    """Response names for a title: short (no ", in-focus" / ", classical"), first capitalised, joined."""
+    return _and([_label(results, k).split(",")[0] if i == 0 else _label(results, k).split(",")[0].lower()
+                 for i, k in enumerate(keys)])
+
+
 def tw_main_effects(results):
     tops = [(k, t) for k in report.HEADLINE if (t := top_factor(results, k)) is not None]
     if not tops:
         title = "Main effects"
-    elif len(tops) == 2 and tops[0][1][0] == tops[1][1][0]:
-        title = (f"{_short(tops[0][1][0])} drives both {_label(results, tops[0][0])} and "
-                 f"{_label(results, tops[1][0]).lower()}")
+    elif len(tops) >= 2 and len({t[0] for _, t in tops}) == 1:
+        title = (f"{_short(tops[0][1][0])} drives {'both ' if len(tops) == 2 else ''}"
+                 + _names(results, [k for k, _ in tops]))
     else:
         title = "; ".join(f"{_label(results, k)} follows {_short(t[0]).lower()}" for k, t in tops)
     bits = []
@@ -353,7 +363,7 @@ def tw_main_effects(results):
         t = top_factor(results, k)
         bits.append(f"{_label(results, k)}: " + "; ".join(spans)
                     + (f". {_short(t[0])} explains {t[1]:.0f}% ({_p(t[2])})" if t else ""))
-    return (title, ". ".join(bits) + ".", defs("main effect", "SE", "bootstrap", "p", "D32", "atomised"),
+    return (title, ". ".join(bits) + ".", defs("main effect", "SE", "bootstrap", "p", "D32", "D10", "atomised"),
             "Each panel: one factor, its levels on the x axis. Dashed line = grand mean; black bars = SE; grey "
             "band = frame-bootstrap 95% CI. p from the ANOVA, top right.")
 
@@ -414,10 +424,10 @@ def tw_sn(results):
         bits.append((k, best))
     if not bits:
         return "Signal-to-noise ratio", "", defs("S/N"), ""
-    same = len(bits) == 2 and bits[0][1] == bits[1][1]
+    same = len(bits) >= 2 and all(b == bits[0][1] for _, b in bits)
     title = (f"S/N favours {', '.join(bits[0][1])} for " +
-             (f"both {_label(results, bits[0][0])} and {_label(results, bits[1][0]).lower()}" if same
-              else _label(results, bits[0][0])))
+             (("both " if len(bits) == 2 else "") + _names(results, [k for k, _ in bits])
+              if same else _label(results, bits[0][0])))
     desc = " ".join(f"Best levels for {_label(results, k)}: {', '.join(b)}." for k, b in bits)
     return (title, desc, defs("S/N"), "")
 

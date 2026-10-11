@@ -1,6 +1,6 @@
 # STATUS — real-data droplet pipeline and Taguchi study
 
-**Last updated: 2026-10-11 (Mac: CCD plan complete, Phase 7 committed 2ebc9f0; Mac light-mode theme fix; batch bugs 1-2 and the goal-ramp bug fixed, all committed; next is the 33-run CCD day).** This is the live state of the work. Claude keeps it current
+**Last updated: 2026-10-11 (Mac: CCD plan complete, Phase 7 committed 2ebc9f0; Mac light-mode theme fix; batch bugs 1-2, goal-ramp bug, feed floor 2,000 steps/s; mean diameter now a headline response; next is the 33-run CCD day).** This is the live state of the work. Claude keeps it current
 (see "How this file is maintained" at the bottom). History, evidence and full reasoning are in
 `docs/archive/HANDOFF_real_data_pipeline_LEGACY.md` (frozen 2026-10-07, newest section first).
 
@@ -519,6 +519,12 @@ made", "Bit depth", and the dated sections).
 
 ## Recent changes (newest first; trim to ~10 entries, older ones live in git history)
 
+- 2026-10-11 (Mac): **mean diameter is a headline response** (Ben: same level as D32 and atomised
+  fraction). Taguchi: main effects, per run, S/N, GLR, interactions, residual checks, drift, report
+  summary, deck headline slides. CCD: contour maps, 3D surfaces, all-pairs maps, drift, fit checks,
+  model comparison, validation, "What was found" (now two slides when it does not fit on one). Not a
+  default goal (it would double the weight on size with D32). Five-response CCD figures use two rows.
+  Also: the app opens maximised.
 - 2026-10-11 (Mac): batch worker survives a USB drop (bugs 1-2 of the 10-06 batch): see Known bugs.
   New statuses `crashed` and `drive_lost`, both resumable; `worker.RunLog`, `Worker._wait_for_drive`.
 - 2026-10-11 (Mac): dark theme made OS-independent. `theme.apply_fusion_style` now sets a full dark

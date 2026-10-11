@@ -23,6 +23,7 @@ next one; any further factor is held at the best setting. Any of it can be given
 from __future__ import annotations
 
 import itertools
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -36,7 +37,7 @@ from .stats import t_quantile
 
 N_GRID = 60
 MAP_CMAP = "viridis"
-HEADLINE = ("atom", "d32", "af_flow", "cv_droplets")
+HEADLINE = ("atom", "d32", "d_mean", "af_flow", "cv_droplets")   # mean diameter: Ben, 2026-10-11
 PAIR_PREFERENCE = ("sccm", "sps", "rpm", "orifice", "bh")
 
 
@@ -377,6 +378,19 @@ def fig_desirability(R, out_dir: Path, layout: MapLayout | None = None) -> list[
     return written
 
 
+def _panels(n: int, w: float, h: float, extra_w: float = 0.0, sharey: bool = False):
+    """A figure with n panels: one row up to four, then two rows (unused panels hidden) so five or more
+    responses stay readable on a slide. Returns (figure, the n axes in order, the first unused panel or None:
+    somewhere to put a legend that would otherwise cover data)."""
+    rows = 1 if n <= 4 else 2
+    cols = math.ceil(n / rows)
+    fig = Figure(figsize=(w * cols + extra_w, h * rows))
+    axes = list(fig.subplots(rows, cols, squeeze=False, sharey=sharey).flat)
+    for ax in axes[n:]:
+        ax.set_visible(False)
+    return fig, axes[:n], (axes[n] if len(axes) > n else None)
+
+
 def fig_drift(R, out_dir: Path, keys=HEADLINE) -> list[Path]:
     """Centre runs against capture time (with their trend) and repeated settings inside a block (first
     to last): what the day did to the same setting."""
@@ -385,8 +399,7 @@ def fig_drift(R, out_dir: Path, keys=HEADLINE) -> list[Path]:
     have_pairs = any(R.fits[k].block_pairs for k in keys)
     if not keys or (len(cen) < 3 and not have_pairs):
         return []
-    fig = Figure(figsize=(3.4 * len(keys), 3.2))
-    axes = fig.subplots(1, len(keys), squeeze=False)[0]
+    fig, axes, _ = _panels(len(keys), 3.4, 3.2)
     for ax, key in zip(axes, keys):
         fr = R.fits[key]
         if len(cen) >= 3:
@@ -473,8 +486,7 @@ def fig_model_compare(results: dict, out_dir: Path, keys=HEADLINE) -> list[Path]
     if not keys:
         return []
     terms = [t for t in first.terms if t != "1"]
-    fig = Figure(figsize=(3.4 * len(keys) + 0.8, 0.32 * len(terms) + 1.8))
-    axes = fig.subplots(1, len(keys), squeeze=False, sharey=True)[0]
+    fig, axes, spare = _panels(len(keys), 3.4, 0.32 * len(terms) + 1.8, extra_w=0.8, sharey=True)
     y = np.arange(len(terms))[::-1]
     for ax, key in zip(axes, keys):
         for m, name in enumerate(names):
@@ -493,7 +505,12 @@ def fig_model_compare(results: dict, out_dir: Path, keys=HEADLINE) -> list[Path]
         _axes_style(ax)
         ax.set_title(_short(first.fits[key].label), fontsize=8, loc="left")
         ax.set_xlabel("coefficient (coded units), 95% CI", fontsize=7)
-    axes[0].legend(fontsize=7, frameon=False, loc="lower left")
+    if spare is not None:                        # an empty panel: the legend goes there, off the data
+        spare.set_visible(True)
+        spare.axis("off")
+        spare.legend(*axes[0].get_legend_handles_labels(), fontsize=8, frameon=False, loc="center left")
+    else:
+        axes[0].legend(fontsize=7, frameon=False, loc="lower left")
     fig.suptitle("The same terms under each model: a term whose estimate moves between models is not separated "
                  "from what the models treat differently", fontsize=9, y=1.0)
     fig.tight_layout(rect=(0, 0, 1, 0.94))
@@ -504,8 +521,7 @@ def fig_validation(R, out_dir: Path, keys=HEADLINE) -> list[Path]:
     keys = [k for k in keys if k in R.fits and R.fits[k].predictions]
     if not keys:
         return []
-    fig = Figure(figsize=(3.6 * len(keys), 3.2))
-    axes = fig.subplots(1, len(keys), squeeze=False)[0]
+    fig, axes, _ = _panels(len(keys), 3.6, 3.2)
     for ax, key in zip(axes, keys):
         preds = R.fits[key].predictions
         for i, p in enumerate(preds):

@@ -296,7 +296,7 @@ def main() -> None:
 
     window = MainWindow()
     theme.restyle_inputs(window)
-    window.show()
+    window.showMaximized()          # fills the screen (not F11 full screen); 1400 x 900 when un-maximised
     sys.exit(app.exec())
 
 
