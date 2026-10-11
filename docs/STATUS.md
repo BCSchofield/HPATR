@@ -1,6 +1,6 @@
 # STATUS — real-data droplet pipeline and Taguchi study
 
-**Last updated: 2026-10-11 (Mac: CCD plan Phase 3a committed; Phase 3b built, awaiting review).** This is the live state of the work. Claude keeps it current
+**Last updated: 2026-10-11 (Mac: CCD plan Phase 3b committed; Phase 4 built, awaiting review).** This is the live state of the work. Claude keeps it current
 (see "How this file is maintained" at the bottom). History, evidence and full reasoning are in
 `docs/archive/HANDOFF_real_data_pipeline_LEGACY.md` (frozen 2026-10-07, newest section first).
 
@@ -215,6 +215,29 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
   - **`docs/RSM_GUIDE.md`** (Ben asked for a how-to in the GUI): step-by-step guide to planning,
     running and analysing a CCD, each builder field explained; the Phase 7 tab shows it in a Guide
     panel. Marks what is built and what is not. Keep it in step with the code.
+
+- **Phase 3b committed (0b292ee).**
+- **Phase 4 done (2026-10-11), uncommitted, awaiting review:** the response-surface statistics.
+  `rsm_stats.py` (numpy only): quadratic in real coding (axis factors full quadratic; nuisance factors
+  linear or linear + square, no interactions; optional centred time term); OLS with SE / t / p,
+  R^2 / adjusted / predicted (PRESS); 95% CI and PI; lack of fit vs pure error; backward elimination
+  with hierarchy, highest order first (nuisance terms kept); VIFs and nuisance-vs-axis correlations;
+  BH q over every full-model term test of every response; time trends; Derringer-Suich desirability
+  (max / min / target ramps, hard constraints) and a grid + local search optimum, continuous or at
+  settable levels, with edge flags. `rsm_responses.py`: loads a detected design's runs through the
+  new shared `stats.load_measured_run` (the Taguchi analysis now uses it too, so both read runs
+  identically; mixed sizer versions refuse), fits every response (full + reduced), drift (centres vs
+  time, block repeat pairs as z of pure error, residual trend), predicts every run outside the fit
+  with its PI (pass / fail, extrapolation flagged) and finds the optimum. Default goals: atomised
+  fraction max, atomised liquid flow max, count CV min, D32 min (ramps = observed range).
+  Tests: `test_rsm_stats.py` (14: independent QR/scipy fit, explicit leave-one-out PRESS, the CCD
+  plan's lack-of-fit formula, PI coverage by simulation, hierarchy over 100 noise draws, planted
+  optima / constraints / settable levels), `test_rsm_responses.py` (8: measured fake 3-factor CCF day
+  recovers its planted surface and optimum, bad validation run fails; fake 9x3 as gas x feed with RPM
+  as nuisance = 8 terms, 18 pure-error df, 1 lack-of-fit df; real 9x3 RPM vs g*f r = -0.61) +
+  mutation checks. No real-data analysis yet: that is Phase 4b.
+  - **Open:** the rig's rated pressure limit (for the peak-pressure constraint) is not recorded
+    anywhere; ask Ben.
 
 ## Next steps, in order
 

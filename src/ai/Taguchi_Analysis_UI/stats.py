@@ -500,6 +500,43 @@ def multiple_comparisons(responses: dict[str, ResponseResult], factors) -> list[
     return [(rk, fk, p, qq) for (rk, fk, p), qq in zip(tests, q)]
 
 
+def load_measured_run(path: Path, info, thr: float, rng, do_bootstrap: bool, metrics_cache: Path | None,
+                      skipped: list, warnings: list):
+    """One measured run, read the way every analysis reads it (Taguchi and response surface alike):
+    load_run's nine responses with their self-consistency gates and frame bootstrap, then the shared
+    per-run data layer (run_metrics) and its five extra responses. Returns (rec, values, ci, context,
+    metrics), or None after recording why in `skipped`."""
+    ta = spec.rdc_module("taguchi_analysis")
+    name = Path(path).name
+    if info is not None and not info.analysis.measured:
+        skipped.append((name, "not measured yet: run the batch on it first"))
+        return None
+    try:
+        rec = load_run_responses(path, thr, rng, do_bootstrap)
+    except RunLoadError as exc:
+        skipped.append((name, f"cannot be read: {exc}"))
+        return None
+    context = covariates.run_context(info) if info is not None else None
+    try:
+        metrics = run_metrics.load_or_compute(path, thr, cache_dir=metrics_cache, rec=rec, context=context)
+    except Exception as exc:                               # noqa: BLE001 -- the nine still stand
+        metrics = {"missing": {"all": f"{type(exc).__name__}: {exc}"}}
+        warnings.append(f"{name}: per-run metrics failed ({exc}); extra responses missing")
+    extra = run_metrics.response_values(metrics, rec, getattr(ta, "N_BOOT", 0) if do_bootstrap else 0,
+                                        getattr(ta, "SEED", 0))
+    for k, v in extra.items():
+        if k.startswith("boot_"):
+            arr = np.asarray(v, float)
+            rec[k] = arr
+            if np.isfinite(arr).any():
+                rec[f"{k[5:]}_ci"] = np.nanpercentile(arr, [2.5, 97.5])
+        else:
+            rec[k] = v
+    values = {k: rec.get(k) for k, _l, _d, _q in responses_table()}
+    ci = {k: tuple(rec[f"{k}_ci"]) for k in values if f"{k}_ci" in rec}
+    return rec, values, ci, context, metrics
+
+
 def analyse(design: dz.Design, thr: float | None = None,
             progress: Callable[[int, int, str], None] | None = None,
             do_bootstrap: bool = True, metrics_cache: Path | None = None) -> Results:
@@ -526,36 +563,13 @@ def analyse(design: dz.Design, thr: float | None = None,
         if progress:
             progress(i, len(todo), row.name)
         info = design.runs.get(row.path)
-        if info is not None and not info.analysis.measured:
-            skipped.append((row.name, "not measured yet: run the batch on it first"))
+        loaded = load_measured_run(row.path, info, s.score_thresh, rng, do_bootstrap, metrics_cache,
+                                   skipped, warnings)
+        if loaded is None:
             continue
-        try:
-            rec = load_run_responses(row.path, s.score_thresh, rng, do_bootstrap)
-        except RunLoadError as exc:
-            skipped.append((row.name, f"cannot be read: {exc}"))
-            continue
+        rec, values, ci, context, metrics = loaded
         levels = {f.key: row.value(f.key) for f in factors}
         rec["levels"] = levels
-        context = covariates.run_context(info) if info is not None else None
-        # the shared per-run data layer: the extra responses and every figure's data
-        try:
-            metrics = run_metrics.load_or_compute(row.path, s.score_thresh, cache_dir=metrics_cache,
-                                                  rec=rec, context=context)
-        except Exception as exc:                           # noqa: BLE001 -- the nine still stand
-            metrics = {"missing": {"all": f"{type(exc).__name__}: {exc}"}}
-            warnings.append(f"{row.name}: per-run metrics failed ({exc}); extra responses missing")
-        extra = run_metrics.response_values(metrics, rec, getattr(ta, "N_BOOT", 0) if do_bootstrap
-                                            else 0, getattr(ta, "SEED", 0))
-        for k, v in extra.items():
-            if k.startswith("boot_"):
-                arr = np.asarray(v, float)
-                rec[k] = arr
-                if np.isfinite(arr).any():
-                    rec[f"{k[5:]}_ci"] = np.nanpercentile(arr, [2.5, 97.5])
-            else:
-                rec[k] = v
-        values = {k: rec.get(k) for k, _l, _d, _q in responses_table()}
-        ci = {k: tuple(rec[f"{k}_ci"]) for k in values if f"{k}_ci" in rec}
         runs.append(RunRecord(row.name, row.path, cond.label, a.of(row).replicate, levels, values,
                               ci, rec.get("sizer_version"), len(rec.get("frames", [])), rec,
                               context, metrics))
