@@ -397,7 +397,7 @@ def test_the_main_window_has_the_tab_and_analyse_gets_its_bin_settings(app, tmp)
     w = MainWindow()
     try:
         st = w.settings_tab
-        assert isinstance(st, SettingsTab) and w.centralWidget().tabText(2).strip() == "Settings"
+        assert isinstance(st, SettingsTab) and w.centralWidget().tabText(3).strip() == "Settings"
         assert w.taguchi_tab.bins_provider() == (25.0, 200.0)
         st.width.editor.setText("50")
         st.width.editor.editingFinished.emit()

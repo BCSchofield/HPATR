@@ -7,8 +7,40 @@ planning a central composite design (CCD), running it, and getting it analysed.
 > and the whole analysis (step 5: fits, contour maps, 3D surfaces, profiler, desirability, fit checks,
 > drift, controls, validation runs, report, workbook, CSV and deck) work, as code with tests, and have
 > been run on the 9x3 practice copy and on a simulated 33-run day, and so does the recommender for the
-> next session (step 6). Still to come: the tab that puts buttons on all of it (Phase 7). The Taguchi tab
-> is unchanged and works as before.
+> next session (step 6), all from the Response surface tab. The Taguchi tab is unchanged and works as
+> before.
+
+## Using the app
+
+Launch it (Mac):
+
+```
+cd /Users/benschofield/Documents/GitHub/HPATR && /Users/benschofield/anaconda3/envs/phantom/bin/python3 -m src.ai.Taguchi_Analysis_UI
+```
+
+1. **Batch tab**: add the run folders (a day folder, or a parent of several) and tick the runs; choose an
+   **output folder** (everything is written there, never into a run folder). Runs need measuring first
+   (Run batch) unless they already are.
+2. **Response surface tab → Design**: the banner says what the runs form. Check the table: every run's
+   point type, block and levels; untick a run to leave it out; tick **Validation** to keep a run out of
+   the fit and predict it instead; type in a factor cell to correct a level. Findings below say what is
+   missing, what is confounded with time, and whether the quadratic can be fitted.
+3. **Model**: each factor's role (surface factor = mapped; nuisance = kept in the model, not mapped; left
+   out), the levels that can actually be set (orifice inserts), the goals for the best setting, and
+   whether to also fit without the nuisance factors to compare.
+4. **Analyse and next runs**: press **Analyse**; then **Open deck**, **Open report**, **Open next runs**.
+   The recommendations for the next session are listed with their reasons.
+5. **Build a run sheet** (before a new experiment): type the factors and levels (or **Load the 33-run
+   example**), **Build**, check the preview and summary, **Export run sheet to the output folder**. Once
+   that day's runs are captured, the Design page shows each run against its row (as planned, out of
+   order, settings differ, not captured yet).
+
+Your edits (design, model choices) are saved in the output folder and come back next time.
+
+**Practice on the 9x3:** add `/Volumes/LaCie/Experiments/Taguchi/Claude Experiments/Practice Folder/2026`,
+choose a new folder under `Practice Folder/output/` as the output, open the Response surface tab. It is
+an L9, so the Model page defaults to gas × feed as the surface with RPM as a nuisance term and the
+comparison fit ticked (the 9x3 trial). Press Analyse (about 40 s).
 
 ## The idea in one paragraph
 

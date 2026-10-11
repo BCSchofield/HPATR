@@ -153,6 +153,27 @@ def default_goals(L: Loaded) -> list[rs.Goal]:
     return out
 
 
+def resolve_goals(L: Loaded, goals) -> list[rs.Goal]:
+    """Goals as the tab gives them: rs.Goal, or dicts {key, direction ("max" | "min" | "target"),
+    low, high, target, importance} where a blank (None) ramp end is the range observed in the fitted
+    runs. A goal on a response with no usable values is dropped."""
+    out = []
+    fit_runs = [r for r in L.runs if r.point.in_fit]
+    for g in goals:
+        if isinstance(g, rs.Goal):
+            out.append(g)
+            continue
+        v = [r.values.get(g["key"]) for r in fit_runs]
+        v = [x for x in v if x is not None and math.isfinite(x)]
+        if len(v) < 3 or max(v) == min(v):
+            continue
+        lo = g.get("low") if g.get("low") is not None else float(min(v))
+        hi = g.get("high") if g.get("high") is not None else float(max(v))
+        out.append(rs.Goal(g["key"], g.get("direction", "max"), float(lo), float(hi), g.get("target"),
+                           importance=float(g.get("importance") or 1.0)))
+    return out
+
+
 def _x(runs: list[RunData], keys: list[str], time_term: bool) -> dict:
     x = {k: np.array([r.point.real[k] for r in runs], float) for k in keys}
     if time_term:
@@ -233,7 +254,7 @@ def analyse(L: Loaded, axis: list[str] | None = None, nuisance: dict | None = No
                                 _block_pairs(det, L.runs, key, full), _predict(L, red, key, model_keys, nuisance,
                                                                                time_term, x))
     rs.bh_across({k: f.full for k, f in fits.items() if f.full is not None})
-    goals = goals if goals is not None else default_goals(L)
+    goals = resolve_goals(L, goals) if goals is not None else default_goals(L)
     # a goal whose surface cannot predict a new run must not steer the best setting
     weak = [g for g in goals if g.key not in fits or fits[g.key].full is None or fits[g.key].full.r2_pred is None
             or fits[g.key].full.r2_pred < USABLE_R2_PRED]

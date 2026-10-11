@@ -479,9 +479,45 @@ and % by volume (Σd³); a condition pools its replicates' droplets (one populat
 **GLR** (`covariates.py`): treated as a covariate, not a factor (it is built from gas and liquid
 flow, so it is aliased with them): correlation and log–log power-law exponent per response.
 
+**Extra responses** (`run_metrics.py`, the shared per-run data layer, cached in `<output>/cache/`):
+Dv50 (volume median, grouped-data interpolation across the pixel lattice's diameter cells), atomised
+liquid flow (mL/min × atomised fraction), frames below half the mean count, lag-1 correlation of the
+droplet count, peak pressure: 14 responses, 42 factor tests on the 9x3.
+
 **Deliverables:** `taguchi_report.md`, `taguchi_analysis.xlsx`, `figures/` (main effects,
-contributions, per run, S/N, GLR, size spread by count and volume), optional `csv/` and `odd/`
-(odd-frame pack), and provenance (repo revision, sizer version, thresholds, bootstrap, bins).
+contributions, per run, S/N, GLR, size spread by count and volume; plus `figures_extra.py`: size
+distributions and percentiles, per-run time series with pressure, liquid area, spectra, steadiness,
+drift, replicates, interaction plots, residual checks, correlations, liquid pieces, data quality, image
+galleries), `taguchi_deck.pptx` (`deck.py`, on Ben's template; needs python-pptx), optional `csv/` and
+`odd/` (odd-frame pack), and provenance (repo revision, sizer version, thresholds, bootstrap, bins).
+
+---
+
+## 9b. Stage 6b: response-surface analysis (Response surface tab → `rsm_publish.publish()`)
+
+For a central composite design (or any run set where a quadratic can be fitted). Guide for users:
+`docs/RSM_GUIDE.md` (shown in the tab).
+
+- **Design detection** (`rsm_detect.py`): factors, design levels (uneven allowed: design coding −1/0/+1
+  classifies points, real coding (v − mid-range)/half-range fits, so 1.2 on 0.5/1.2/1.8 is +0.08), axial
+  pairs, off-grid check runs and controls outside the region, point types, repeats, design type with
+  missing points, hard-to-change block factor (confounded with time), Notes vs point type and order,
+  estimability (rank + VIF > 50 = nearly aliased).
+- **Run-sheet builder** (`rsm_design.py`): face-centred CCD for 2–5 factors, optional half fraction,
+  block factor with start/end repeats, extras, pressure-check first run, seeded order; rig limits gas
+  12,000 sccm, 1,000 rpm, feed 12,000 steps/s.
+- **Fit** (`rsm_stats.py`, `rsm_responses.py`): quadratic in real coding over the surface factors, nuisance
+  factors as slope or slope + curve; OLS with SE/t/p, R², adjusted, predicted (PRESS); lack of fit vs pure
+  error; backward elimination with hierarchy; BH q across responses; CI and PI; drift (centres, block
+  repeats, residuals vs time); runs outside the fit predicted with 95% PI; Derringer–Suich desirability
+  (goal surfaces with predicted R² < 0.5 left out), optimum continuous and at settable levels.
+- **Outputs** (`rsm_figures.py`, `rsm_report.py`, `rsm_deck.py`): contour maps (gas × feed per orifice per
+  RPM by default), 3D surfaces, all-pairs maps, profiler, desirability with sweet spot, fit checks, model
+  comparison, drift, validation; `rsm_report.md`, `rsm_analysis.xlsx`, `rsm_results.csv` (the CCD plan's
+  columns), `rsm_deck.pptx` (every slide: what it shows, how to read it, terms).
+- **Next runs** (`rsm_recommend.py`): confirmation at the best setting + centre anchor; steepest ascent and a
+  new CCD when the optimum is on an edge; D-optimal runs when the model is weak; a new insert size only
+  when the CCD plan's three conditions hold; `next_runs.xlsx/.csv/.md` and `next CCD/`.
 
 ---
 

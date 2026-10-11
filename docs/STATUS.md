@@ -1,6 +1,6 @@
 # STATUS — real-data droplet pipeline and Taguchi study
 
-**Last updated: 2026-10-11 (Mac: CCD plan Phase 5 committed; Phase 6 (recommender) built, awaiting review).** This is the live state of the work. Claude keeps it current
+**Last updated: 2026-10-11 (Mac: CCD plan Phase 6 committed; Phase 7 (the tab) built, Ben to try it).** This is the live state of the work. Claude keeps it current
 (see "How this file is maintained" at the bottom). History, evidence and full reasoning are in
 `docs/archive/HANDOFF_real_data_pipeline_LEGACY.md` (frozen 2026-10-07, newest section first).
 
@@ -304,6 +304,29 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
   **Rig limits (Ben, 2026-10-11): gas 12,000 sccm, bubbler 1,000 rpm (0 allowed: the control), feed about
   12,000 steps/s**, in `rsm_design.RIG_LIMITS`: the builder refuses levels beyond them and the recommender
   stops there. No rated pressure limit.
+
+- **Phase 6 committed (b4d4baa).**
+- **Phase 7 done (2026-10-11), uncommitted, Ben to try it himself on the 9x3 practice copy:** `tab_rsm.py`, the
+  **Response surface tab** (window now "Experiment Analysis"; QSettings app name unchanged so remembered
+  folders survive). Sub-tabs: Design (banner, editable run table: use, point type, block, factor levels,
+  validation tick, built-sheet status, Notes check; findings; block factor; saved to rsm_design.json),
+  Model (factor roles: surface / nuisance slope / nuisance slope+curve / left out; settable levels;
+  goals with blank ramps = observed range; time term; comparison fit; saved to rsm_model.json; an L9
+  defaults to the 9x3 gas x feed trial, a CCD to all-surface with the orifice sizes seen), Analyse and
+  next runs (thread, open report / deck / next runs / folder, recommendations listed), Build a run
+  sheet (table + options + extras text, Load the 33-run example, Build, Export to the output folder),
+  Guide (docs/RSM_GUIDE.md, now with "Using the app" and a 9x3 practice walkthrough).
+  `rsm_responses.resolve_goals` (dict goals, blank ramp = observed). Tests `test_tab_rsm.py` (9, headless,
+  incl. a real Analyse on the simulated CCD day). Verified headless on the real 9x3 copy: detects the
+  L9, defaults to the trial, Analyse writes everything, 4 recommendations listed.
+  - **GUI_Clean**: the Start Experiment standard check no longer flags "Run AI analysis: off" (the AI runs
+    afterwards in the app). NOT DONE (auto-mode safety check blocked the edit): "Use standard settings"
+    still re-ticks the AI box (`self._pipeline_check.setChecked(True)`, ~line 7006 of
+    src/gui/GUI_Clean.py): delete that line by hand or in a non-auto session.
+  - Settings tab unchanged: no pressure limit to set (there is none), desirability goals live on the
+    Model page, bin settings were already there.
+  - `docs/IMAGING_PIPELINE_REFERENCE.md` §9 updated (extra responses, figures, deck) and §9b added
+    (response-surface stage).
 
 ## Next steps, in order
 

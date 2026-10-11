@@ -24,6 +24,7 @@ from .batch_controller import LIVE, BatchController, confirm_text
 from .console import ConsolePane
 from .pane_outputs import OutputsPane
 from .pane_runs import RunsPane
+from .tab_rsm import RsmTab
 from .tab_settings import SettingsTab
 from .tab_taguchi import TaguchiTab
 
@@ -233,7 +234,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.preflight_report = None  # PreflightReport once checked; gates the batch
-        self.setWindowTitle("Taguchi Analysis")
+        self.setWindowTitle("Experiment Analysis")
         self.resize(1400, 900)
 
         tabs = QTabWidget()
@@ -244,6 +245,10 @@ class MainWindow(QMainWindow):
         self.taguchi_tab.options_provider = self.batch_tab.outputs_pane.options
         self.taguchi_tab.batch_busy = lambda: self.batch_tab.controller.mode in LIVE
         tabs.addTab(self.taguchi_tab, "  Taguchi  ")
+        self.rsm_tab = RsmTab(self.batch_tab.runs_pane)
+        self.rsm_tab.log = self.batch_tab.console.log
+        self.rsm_tab.batch_busy = lambda: self.batch_tab.controller.mode in LIVE
+        tabs.addTab(self.rsm_tab, "  Response surface  ")
         self.settings_tab = SettingsTab(self.batch_tab.runs_pane)
         self.settings_tab.log = self.batch_tab.console.log
         self.taguchi_tab.bins_provider = lambda: (self.settings_tab.bin_width, self.settings_tab.bin_max)
@@ -284,8 +289,8 @@ class MainWindow(QMainWindow):
 
 def main() -> None:
     app = QApplication(sys.argv)
-    app.setApplicationName("Taguchi Analysis")
-    app.setApplicationDisplayName("Taguchi Analysis")
+    app.setApplicationName("Taguchi Analysis")              # kept: QSettings (remembered folders) key on it
+    app.setApplicationDisplayName("Experiment Analysis")
 
     theme.apply_fusion_style(app)
 

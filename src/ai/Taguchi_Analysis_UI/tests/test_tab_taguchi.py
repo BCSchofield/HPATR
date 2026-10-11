@@ -302,8 +302,8 @@ def test_a_save_failure_is_reported_not_raised(app, tmp, monkeypatch):
 def test_the_main_window_has_the_tab_wired_to_the_console(app, tmp):
     w = MainWindow()
     try:
-        names = [w.centralWidget().tabText(i).strip() for i in range(3)]
-        assert names == ["Batch", "Taguchi", "Settings"]
+        names = [w.centralWidget().tabText(i).strip() for i in range(4)]
+        assert names == ["Batch", "Taguchi", "Response surface", "Settings"]
         assert isinstance(w.taguchi_tab, TaguchiTab)
         w.taguchi_tab.log("hello from the design tab", "warn")
         w.batch_tab.console._flush()

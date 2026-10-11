@@ -6960,7 +6960,8 @@ class AtomisationApp(QMainWindow):
 
     def _standard_capture_diffs(self):
         """[(label, on screen, standard)] for every capture field that differs from
-        STANDARD_CAPTURE, plus the AI-analysis box if it is off."""
+        STANDARD_CAPTURE. The AI-analysis box is not checked: the AI runs afterwards in the
+        Experiment Analysis app's batch (CCD plan Phase 7), so capturing with it off is normal."""
         fields = {"fps": self._cam_fps, "exposure_us": self._cam_exp,
                   "width": self._cam_width, "height": self._cam_height,
                   "pre_trigger_s": self._cam_pre_s, "post_trigger_s": self._cam_post_s,
@@ -6974,8 +6975,6 @@ class AtomisationApp(QMainWindow):
                 same = False
             if not same:
                 diffs.append((label, cur or "(blank)", std))
-        if not self._pipeline_check.isChecked():
-            diffs.append(("Run AI analysis", "off", "on"))
         return diffs
 
     def _check_standard_capture(self) -> bool:
