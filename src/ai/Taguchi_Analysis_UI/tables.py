@@ -9,7 +9,9 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from . import covariates
+import numpy as np
+
+from . import covariates, run_metrics
 
 
 def _r(x: Any, nd: int = 6):
@@ -177,6 +179,219 @@ def skipped(results) -> list[dict]:
     return [{"run": n, "why": w} for n, w in results.skipped]
 
 
+# ---- the richer outputs: size percentiles, steadiness, pieces, data quality, per-condition summary ----
+
+def _conditions(results) -> dict[str, list]:
+    out: dict[str, list] = {}
+    for r in _sorted_runs(results):
+        out.setdefault(r.condition, []).append(r)
+    return out
+
+
+def _cond_levels(results, runs) -> dict:
+    return {f.label: runs[0].levels.get(f.key) for f in results.factors}
+
+
+def _size_row(d) -> dict:
+    """The size columns from in-focus diameters (one run, or a condition's pooled droplets)."""
+    d = np.asarray(d, float)
+    d = d[np.isfinite(d)]
+    if d.size == 0:
+        return {"droplets": 0}
+    v = d ** 3
+    dv10, dv50, dv90 = run_metrics.volume_percentiles(d)
+    return {"droplets": int(d.size), "D10 (um)": _r(float(d.mean()), 4),
+            "D32 (um)": _r(float(v.sum() / (d ** 2).sum()), 4),
+            "Dv10 (um)": _r(dv10, 4), "Dv50 (um)": _r(dv50, 4), "Dv90 (um)": _r(dv90, 4),
+            "span": _r((dv90 - dv10) / dv50, 4) if dv50 else None,
+            f"% volume < {run_metrics.SMALL_UM:g} um": _r(float(100 * v[d < run_metrics.SMALL_UM].sum() / v.sum()), 3),
+            f"% volume > {run_metrics.LARGE_UM:g} um": _r(float(100 * v[d > run_metrics.LARGE_UM].sum() / v.sum()), 3)}
+
+
+def in_focus_diameters(r) -> np.ndarray:
+    dia = (r.rec or {}).get("dia") or {}
+    parts = [np.asarray(v, float) for v in dia.values() if len(v)]
+    return np.concatenate(parts) if parts else np.empty(0)
+
+
+def size_percentiles(results) -> list[dict]:
+    return [{"run": r.name, "condition": r.condition, **_size_row(in_focus_diameters(r))}
+            for r in _sorted_runs(results)]
+
+
+def size_percentiles_by_condition(results) -> list[dict]:
+    """Each condition's replicates POOLED as one population (as size_bins does), not averaged."""
+    rows = []
+    for c, rs in _conditions(results).items():
+        pooled = np.concatenate([in_focus_diameters(r) for r in rs]) if rs else np.empty(0)
+        rows.append({"condition": c, **_cond_levels(results, rs), "runs": len(rs), **_size_row(pooled)})
+    return rows
+
+
+def steadiness(results) -> list[dict]:
+    rows = []
+    for r in _sorted_runs(results):
+        st = (r.metrics or {}).get("steadiness") or {}
+        pr = (r.metrics or {}).get("pressure") or {}
+        lag = st.get("lag_r") or {}
+        rows.append({"run": r.name, "condition": r.condition, "frames": st.get("frames"),
+                     "analysed fps": _r(st.get("fs_hz"), 4),
+                     "droplets per frame (all)": _r(st.get("count_mean"), 4),
+                     "droplet-count CV": _r(st.get("count_cv"), 4),
+                     "frames below half mean (%)": _r(st.get("thin_pct"), 4),
+                     **{f"lag-{k} r": _r(lag.get(k), 4) for k in ("1", "2", "4", "8", "16")},
+                     f"slow share < {run_metrics.SLOW_HZ:g} Hz (%)": _r(st.get("slow_share_pct"), 4),
+                     "slow share if white noise (%)": _r(st.get("slow_share_noise_pct"), 4),
+                     "slow peak (Hz)": _r(st.get("slow_peak_hz"), 4),
+                     "liquid-area CV": _r(st.get("liquid_cv"), 4),
+                     "pressure in camera window (barA)": _r(pr.get("pressure_mean"), 5),
+                     "pressure CV (%)": _r(pr.get("pressure_cv_pct"), 4),
+                     "gas-flow CV (%)": _r(pr.get("gas_flow_cv_pct"), 4),
+                     "r pressure vs droplets": _r(pr.get("r_pressure_droplets"), 4),
+                     "peak pressure (barA)": _r((r.metrics or {}).get("peak_bar"), 5),
+                     "note": pr.get("note", "")})
+    return rows
+
+
+def liquid_pieces(results) -> list[dict]:
+    rows = []
+    for r in _sorted_runs(results):
+        pc = (r.metrics or {}).get("pieces") or {}
+        rows.append({"run": r.name, "condition": r.condition, "pieces": pc.get("n"),
+                     "pieces per frame": _r(pc.get("per_frame"), 4),
+                     "median area (px)": _r(pc.get("median_px"), 4), "p90 area (px)": _r(pc.get("p90_px"), 4),
+                     "largest area (px)": _r(pc.get("largest_px"), 4),
+                     "median area (mm2)": _r(pc.get("median_mm2"), 4),
+                     "largest area (mm2)": _r(pc.get("largest_mm2"), 4)})
+    return rows
+
+
+# data-quality columns that are checked for odd runs: (column, metrics path)
+QUALITY_COLUMNS = (
+    ("moved by sharpness rule (% of in-focus)", ("quality", "moved_pct_of_in_focus")),
+    ("out-of-focus share (%)", None),
+    ("detections per frame", ("quality", "detections_per_frame")),
+    ("background median (counts)", ("quality", "bg_median")),
+    ("dark specks in background (%)", ("quality", "dark_speck_pct")),
+    ("static detection spots", ("quality", "static_spots")),
+)
+QUALITY_Z = 3.5                  # robust z (median / 1.4826 MAD) beyond which a run is flagged
+
+
+def _quality_values(r) -> dict:
+    q = (r.metrics or {}).get("quality") or {}
+    out = {}
+    for col, path in QUALITY_COLUMNS:
+        if path is None:
+            n_in, n_oof = q.get("in_focus"), q.get("out_of_focus")
+            out[col] = 100 * n_oof / (n_in + n_oof) if n_in is not None and n_oof is not None and (n_in + n_oof) else None
+        else:
+            out[col] = q.get(path[1])
+    return out
+
+
+def quality_flags(results) -> dict[str, list[dict]]:
+    """Run name -> the data-quality checks where it is far from the other runs (robust z), as
+    {"column", "value", "typical" (the median run), "z"}. A check whose runs barely vary (MAD 0)
+    flags nothing."""
+    vals = {r.name: _quality_values(r) for r in results.runs}
+    flags: dict[str, list[dict]] = {n: [] for n in vals}
+    for col, _ in QUALITY_COLUMNS:
+        xs = {n: v[col] for n, v in vals.items() if v.get(col) is not None}
+        if len(xs) < 5:
+            continue
+        a = np.array(list(xs.values()), float)
+        med = float(np.median(a))
+        mad = 1.4826 * float(np.median(np.abs(a - med)))
+        if mad <= 0:
+            continue
+        for n, x in xs.items():
+            z = (x - med) / mad
+            if abs(z) > QUALITY_Z:
+                flags[n].append({"column": col, "value": x, "typical": med, "z": z})
+    return flags
+
+
+def flag_text(f: dict) -> str:
+    return f"{f['column']}: {f['value']:.3g} (typical run {f['typical']:.3g}, robust z {f['z']:+.0f})"
+
+
+def data_quality(results) -> list[dict]:
+    flags = quality_flags(results)
+    rows = []
+    for r in _sorted_runs(results):
+        q = (r.metrics or {}).get("quality") or {}
+        row = {"run": r.name, "condition": r.condition, "sizer version": q.get("sizer_version") or r.sizer_version,
+               "in-focus droplets": q.get("in_focus"), "out-of-focus droplets": q.get("out_of_focus"),
+               "moved by sharpness rule": q.get("moved_by_rule")}
+        row.update({k: _r(v, 4) if isinstance(v, float) else v for k, v in _quality_values(r).items()})
+        row["flags"] = "; ".join(flag_text(f) for f in flags.get(r.name, []))
+        missing = (r.metrics or {}).get("missing") or {}
+        row["missing inputs"] = "; ".join(f"{k}: {v}" for k, v in missing.items())
+        rows.append(row)
+    return rows
+
+
+def condition_summary(results) -> list[dict]:
+    """Every analysed response per condition: mean, repeat SD and the 95% CI of the mean
+    (Student t on the replicates: run-to-run variation, unlike the frame-bootstrap CIs)."""
+    from . import stats
+    rows = []
+    for c, rs in _conditions(results).items():
+        for key, res in results.responses.items():
+            v = np.array([r.values[key] for r in rs if r.values.get(key) is not None
+                          and math.isfinite(r.values[key])], float)
+            row = {"condition": c, **_cond_levels(results, rs), "response": res.label, "runs": int(v.size),
+                   "mean": _r(float(v.mean())) if v.size else None, "repeat SD": None,
+                   "CI low": None, "CI high": None}
+            if v.size >= 2:
+                sd = float(v.std(ddof=1))
+                half = stats.t_quantile(0.05, v.size - 1) * sd / math.sqrt(v.size)
+                row.update({"repeat SD": _r(sd), "CI low": _r(float(v.mean()) - half),
+                            "CI high": _r(float(v.mean()) + half)})
+            rows.append(row)
+    return rows
+
+
+def residuals(results) -> list[dict]:
+    """Each run's value, its main-effects fit and the residual, per response, with capture time."""
+    from . import stats
+    hours = stats.run_hours(results)
+    rows = []
+    for key, res in results.responses.items():
+        fit = stats.main_effects_fit(results, key)
+        if fit is None:
+            continue
+        for r, y, f, e, z in zip(fit.runs, fit.y, fit.fitted, fit.resid, fit.std_resid):
+            rows.append({"response": res.label, "run": r.name, "condition": r.condition,
+                         "hours from first run": _r(hours.get(r.name), 4), "value": _r(float(y)),
+                         "fitted (main effects)": _r(float(f)), "residual": _r(float(e)),
+                         "standardised residual": _r(float(z), 3)})
+    return rows
+
+
+def drift_rows(results) -> list[dict]:
+    from . import stats
+    return [{"response": results.responses[d.key].label, "runs": d.n, "residual slope per hour": _r(d.slope_per_h),
+             "SE": _r(d.se), "p": _r(d.p, 8), "q (BH)": _r(q, 8), "r": _r(d.r, 4)}
+            for d, q in stats.drifts(results)]
+
+
+def response_correlations(results) -> list[dict]:
+    keys = [k for k, res in results.responses.items() if res.anova is not None]
+    vals = {k: np.array([r.values.get(k) if r.values.get(k) is not None else np.nan
+                         for r in results.runs], float) for k in keys}
+    rows = []
+    for a in keys:
+        row = {"response": results.responses[a].label}
+        for b in keys:
+            m = np.isfinite(vals[a]) & np.isfinite(vals[b])
+            ok = m.sum() >= 3 and vals[a][m].std() > 0 and vals[b][m].std() > 0
+            row[results.responses[b].label] = _r(float(np.corrcoef(vals[a][m], vals[b][m])[0, 1]), 3) if ok else None
+        rows.append(row)
+    return rows
+
+
 def all_tables(results, bins) -> dict[str, list[dict]]:
     """name -> rows, for the CSV pack and the workbook."""
     return {
@@ -193,5 +408,14 @@ def all_tables(results, bins) -> dict[str, list[dict]]:
         "glr_context": glr_context(results),
         "glr_trends": glr_trends(results),
         "replicate_outliers": outliers(results),
+        "condition_summary": condition_summary(results),
+        "size_percentiles": size_percentiles(results),
+        "size_percentiles_by_condition": size_percentiles_by_condition(results),
+        "steadiness": steadiness(results),
+        "drift": drift_rows(results),
+        "residuals": residuals(results),
+        "response_correlations": response_correlations(results),
+        "liquid_pieces": liquid_pieces(results),
+        "data_quality": data_quality(results),
         "skipped_runs": skipped(results),
     }

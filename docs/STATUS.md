@@ -1,6 +1,6 @@
 # STATUS — real-data droplet pipeline and Taguchi study
 
-**Last updated: 2026-10-11 (Mac: CCD plan Phase 1 done; practice copy of the 9x3 runs made).** This is the live state of the work. Claude keeps it current
+**Last updated: 2026-10-11 (Mac: CCD plan Phase 2 built, awaiting review; Dv percentile fix).** This is the live state of the work. Claude keeps it current
 (see "How this file is maintained" at the bottom). History, evidence and full reasoning are in
 `docs/archive/HANDOFF_real_data_pipeline_LEGACY.md` (frozen 2026-10-07, newest section first).
 
@@ -127,6 +127,49 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
   `9x3 Taguchi Repeats (reference copy)/` of the published output, and `output/` for practice
   publishes. All 27 load as analysable, 0 runnable (no .cine), so the batch cannot re-measure them.
   Point test publishes here, never at `2026/10/05` or `9x3 Taguchi Repeats`.
+- **Phase 2 done (2026-10-11), uncommitted, awaiting Ben's review:** richer Taguchi outputs + deck.
+  New `figures_extra.py` (size distributions + cumulative volume, Dv10-90 per run, per-run time
+  series of droplets/frame with pressure and of liquid area, spectra, steadiness by condition,
+  drift, replicates with t CIs, interaction plots with the L9 aliasing caveat, residual
+  diagnostics, response correlations, liquid pieces, data quality, image galleries of each run's
+  lowest/highest-atomised frames), `deck.py` -> `taguchi_deck.pptx` (12-13 slides, titles are
+  takeaways computed from the numbers; drift slide only if a drift survives BH), 9 new workbook
+  sheets / CSVs, matching report sections; `stats.main_effects_fit / drift / drifts /
+  order_confounding / t_quantile`. `python-pptx` 1.0.2 installed in the Mac `phantom` env
+  (Windows env not yet; without it everything else publishes and the report says why).
+  Published from the practice folder to `Practice Folder/output/9x3 phase 2/` (82 s cached).
+  Tests: `test_figures_extra.py` (15), `test_deck.py` (6).
+  - **Phase 1 bug fixed:** Dv10/50/90 interpolated between sorted droplets, which on the pixel
+    lattice always returns a lattice value: 8 distinct Dv50s in 27 runs, identical replicates,
+    gas p = 5e-15. Now grouped-data interpolation across lattice cells (26 distinct; replicates
+    differ by 0.2-1 um). `run_metrics.SCHEMA` 2 invalidates old caches.
+  - **Drift is a light check, by Ben's call** (climate-controlled lab): kept in the report and
+    workbook (none found on the 9x3: all p > 0.7), out of the headline findings and the deck
+    unless a drift survives BH. RPM-vs-run-order (r = +0.91) is one caveat line.
+  - **Deck has every figure (2026-10-11, after Ben's review):** 42 slides on the 9x3. Each figure slide:
+    takeaway title + description with numbers from the tables + speaker notes; tall figures
+    (time series, replicates, model checks) redrawn in slide-sized parts into `figures/slides/`;
+    galleries as an appendix. Descriptions fall back to a plain one when numbers are missing.
+  - **Deck styled like Ben's hand-made decks (2026-10-11):** built on `assets/deck_template.pptx` (his
+    9x3 `taguchi_results.pptx` with its slides removed: "Atomisation Ink" theme, navy title slide,
+    grey-blue cards, orange/teal/purple/yellow accents; figure factor colours now match). Each figure
+    slide: takeaway title, description card, and a "Terms" card defining every statistic it uses
+    (beside the figure when that leaves it bigger). Conditions are named with their levels and the
+    factor driving them. Pulsing figure is 2 x 2. Slide order unchanged (Ben: no other layout changes).
+  - **For Phase 5 (Ben, 2026-10-11):** `rsm_deck.pptx` must carry the 3D response surfaces (with design
+    points), contour maps and profiler, every figure with a takeaway + description like the Taguchi deck.
+    First real ones in Phase 4b (9x3 gas x feed).
+  - **For Phase 3b:** the builder must offer half-fraction corners (resolution V) for 5 factors
+    (CCF full 47 runs -> ~31). Detection and the model are already any-k in the plan.
+  - **Splash is not a BG_FRAMES problem (checked 2026-10-11, Ben confirmed it is a splash):** it
+    lands mid-capture and darkens (113007: clean for the first ~25%, then 0.74 -> 0.44 of its
+    surround), so no static median can match every frame; more frames would not help. Impact
+    nil: T on it stays > 0.86 vs the classical seed 0.70, and model detections on it are below the
+    chance rate for that area (113007: 168 vs ~370 expected). Leave BG_FRAMES = 40; wipe the
+    window between runs. A rolling (time-local) background is the fix if splashes get bigger.
+  - **Data-quality finding:** 113007, 124030 (and mildly 120201) have a large defocused dark spot
+    in the median background (~1700 px, left of centre): most likely a silicone splash on the
+    window for most of that capture.
 
 ## Next steps, in order
 
@@ -142,7 +185,12 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
 4. **Fold in the Windows timings**: `9x3 Taguchi Repeats/_job/eta_calibration.json` +
    `_job/timings.csv` -> replace `eta.PRIORS_BY_OS["Windows"]` in `eta.py` with measured
    lo/typ/hi per stage. ~10 min, any time.
-5. **Hardware:** powered USB 3 hub for the LaCie on the home PC (also the diagnostic: still drops
+5. **Install `python-pptx` on both Windows machines** (the Taguchi app's PowerPoint deck needs it;
+   without it the publish still writes everything else and the report says why). Command Prompt:
+   home PC `"C:\Users\BenSc\anaconda3\envs\Detectron\python.exe" -m pip install "python-pptx==1.0.2"`;
+   lab PC `"C:\Users\55154111\AppData\Local\Programs\Python\Python311\python.exe" -m pip install "python-pptx==1.0.2"`.
+   It also pulls in `lxml` and `XlsxWriter` (new installs, nothing upgraded on the Mac).
+6. **Hardware:** powered USB 3 hub for the LaCie on the home PC (also the diagnostic: still drops
    on the hub -> cable or drive).
 
 ## Open questions that block or bias results

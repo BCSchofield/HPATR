@@ -36,13 +36,27 @@ def tmp():
 # ---- pure arithmetic -----------------------------------------------------------------------------
 
 def test_volume_percentiles_by_hand():
-    # volumes 1, 8, 27, 64 (sum 100): cumulative 0.01, 0.09, 0.36, 1.00
+    # volumes 1, 8, 27, 64 (sum 100); cells 0.5-1.5, 1.5-2.5, 2.5-3.5, 3.5-4.5 with cumulative
+    # volume 0, 0.01, 0.09, 0.36, 1.00 at their edges
     d = [1, 2, 3, 4]
     dv10, dv50, dv90 = rm.volume_percentiles(d)
-    assert dv10 == pytest.approx(2 + (0.10 - 0.09) / (0.36 - 0.09))
-    assert dv50 == pytest.approx(3 + (0.50 - 0.36) / (1.00 - 0.36))
-    assert dv90 == pytest.approx(3 + (0.90 - 0.36) / (1.00 - 0.36))
+    assert dv10 == pytest.approx(2.5 + (0.10 - 0.09) / (0.36 - 0.09))
+    assert dv50 == pytest.approx(3.5 + (0.50 - 0.36) / (1.00 - 0.36))
+    assert dv90 == pytest.approx(3.5 + (0.90 - 0.36) / (1.00 - 0.36))
     assert rm.volume_percentiles([]) == [None, None, None]
+    assert rm.volume_percentiles([7.0, 7.0]) == [7.0, 7.0, 7.0]
+
+
+def test_volume_percentiles_move_continuously_on_a_lattice():
+    """Many droplets per lattice value (as the real in-focus diameters): the old interpolation
+    between sorted droplets returned a lattice value whatever the distribution did; across
+    cells, a small shift of volume moves Dv50 a little, not a lattice step or not at all."""
+    lattice = np.array([50.0, 51.0, 52.0, 53.0, 54.0])
+    base = np.repeat(lattice, [400, 400, 400, 400, 400])
+    shifted = np.concatenate([base, np.full(40, 54.0)])          # 2% more droplets at the top
+    a, b = rm.volume_percentiles(base)[1], rm.volume_percentiles(shifted)[1]
+    assert a not in lattice and b not in lattice
+    assert 0 < b - a < 0.5
 
 
 def test_size_part_matches_the_definitions():

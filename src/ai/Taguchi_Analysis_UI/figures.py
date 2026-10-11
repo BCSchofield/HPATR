@@ -31,19 +31,23 @@ from . import fsops
 
 DPI = 300
 HEADLINE = ("d32", "atom")                      # the two responses every figure leads with
-FACTOR_COLOURS = ("#0a84ff", "#ff9f0a", "#30d158", "#bf5af2", "#ff453a", "#64d2ff", "#ffd60a")
+# the deck template's accents ("Atomisation Ink": orange, teal, purple, yellow, then greys), so the
+# figures match the slides they sit on
+FACTOR_COLOURS = ("#E07A3F", "#2A9D8F", "#7B6CB0", "#F2C14E", "#22313F", "#9AA5AD", "#C9D3D9")
 GREY = "#8e8e93"
 # conditions need MORE distinct colours than factors do (an L9 has 9): matplotlib's tab10.
 CONDITION_COLOURS = ("#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2",
                      "#7f7f7f", "#bcbd22", "#17becf")
 
 
-def _save(fig: Figure, out_dir: Path, name: str) -> list[Path]:
+def _save(fig: Figure, out_dir: Path, name: str, formats=("png", "svg")) -> list[Path]:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     FigureCanvasAgg(fig)
     written = []
     for ext, kw in (("png", {"dpi": DPI}), ("svg", {})):
+        if ext not in formats:
+            continue
         path = out_dir / f"{name}.{ext}"
         tmp = out_dir / f".{name}.{ext}.tmp"
         fig.savefig(tmp, format=ext, bbox_inches="tight", facecolor="white", **kw)

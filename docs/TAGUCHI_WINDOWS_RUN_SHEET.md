@@ -127,12 +127,13 @@ nothing changes underneath torch, detectron2 or OpenCV.
 | the pipeline | `opencv-python`, `cine-handler`, `pycocotools` | yes (the pipeline has run here) |
 | inference | `torch` (CUDA build), `detectron2` 0.6 | yes. **Never** `pip install torch`: the plain wheel is CPU-only and would replace the CUDA one |
 | tests (optional) | `pytest` | maybe |
+| the PowerPoint deck (`taguchi_deck.pptx`) | `python-pptx` 1.0.2 | **no: install it** (without it everything else is still written) |
 
 If you'd rather install the usual set in one go, this is safe. numpy is pinned to the lab PC's
 recorded 1.26.4, and packages already installed are left alone:
 
 ```
-"%PY%" -m pip install "numpy==1.26.4" PySide6 pandas openpyxl matplotlib scipy psutil pytest
+"%PY%" -m pip install "numpy==1.26.4" PySide6 pandas openpyxl matplotlib scipy psutil pytest "python-pptx==1.0.2"
 ```
 
 **C2.** Section **4** printed a line like `set LACIE=E:`. **Paste that line.** The checks

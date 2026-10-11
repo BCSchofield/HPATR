@@ -100,6 +100,8 @@ class AnalysisController(QObject):
             log(f"  report    {d.report}", "ok")
         if d.workbook:
             log(f"  workbook  {d.workbook}", "ok")
+        if d.deck:
+            log(f"  deck      {d.deck}", "ok")
         if d.figures:
             log(f"  figures   {len(d.figures) // 2} (png + svg) in {d.figures[0].parent}", "ok")
         if d.csv_dir:

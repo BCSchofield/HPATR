@@ -14,10 +14,13 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
-from . import covariates, size_bins, tables
+from . import covariates, run_metrics, size_bins, stats, tables
 
 ALPHA = 0.05
 HEADLINE = ("d32", "atom")
+CONFOUNDED_R = 0.5             # |r| between a factor's level and capture time worth a warning
+OUTLIER_STD = 3.0              # standardised residuals listed in the model checks
+SUMMARY_KEYS = ("d32", "atom", "dv50", "af_flow", "per_frame", "cv_droplets", "thin_pct", "lag1", "peak_bar")
 
 
 def fmt(x, nd: int = 4) -> str:
@@ -103,6 +106,15 @@ def _findings(results, bins) -> list[str]:
         bits = [f"{results.responses[rk].label}: r = {t.r:+.2f}" + (f", {p_eq(t.p)}" if t.p is not None else "")
                 for rk, t in glr]
         out.append("**GLR** (a trend, not a factor): " + "; ".join(bits) + ".")
+    drifting = [d for d, q in stats.drifts(results) if q < ALPHA]
+    if drifting:
+        out.append("**Drift**: " + "; ".join(f"{results.responses[d.key].label} residuals drift "
+                                             f"{d.slope_per_h:+.3g} per hour ({p_eq(d.p)}, BH q < {ALPHA})"
+                                             for d in drifting) + ".")
+    flagged = {n: f for n, f in tables.quality_flags(results).items() if f}
+    if flagged:
+        out.append(f"**Data quality**: {len(flagged)} run(s) stand out on a data-quality check "
+                   f"({', '.join(n[:6] for n in sorted(flagged))}); see *Sizer and data quality*.")
     return out
 
 
@@ -226,6 +238,203 @@ def _size_section(bins, figs: set[str]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _img(figs: set[str], name: str, caption: str) -> str:
+    return f"![{caption}](figures/{name}.png)\n" if f"{name}.png" in figs else ""
+
+
+def _by_condition(rows: list[dict], cols: list[str]) -> list[list]:
+    """Condition means of per-run table rows (keeps the table order)."""
+    acc: dict[str, list] = {}
+    for r in rows:
+        acc.setdefault(r["condition"], []).append(r)
+    out = []
+    for c, rs in acc.items():
+        line = [c]
+        for col in cols:
+            v = [r[col] for r in rs if isinstance(r.get(col), (int, float)) and math.isfinite(r[col])]
+            line.append(fmt(sum(v) / len(v), 3) if v else "\u2013")
+        out.append(line)
+    return out
+
+
+def _size_detail_section(results, figs: set[str]) -> str:
+    rows = tables.size_percentiles_by_condition(results)
+    if not rows or not any(r.get("droplets") for r in rows):
+        return ""
+    lo, hi = f"% volume < {run_metrics.SMALL_UM:g} um", f"% volume > {run_metrics.LARGE_UM:g} um"
+    lines = ["## Droplet size distributions\n",
+             "In-focus droplets, each condition's replicates pooled. **Dv10 / Dv50 / Dv90** are the diameters below "
+             "which 10 / 50 / 90% of the liquid volume lies; **span** = (Dv90 \u2212 Dv10) / Dv50. Percentiles are "
+             "interpolated across the pixel lattice's diameter cells, so they move continuously. "
+             f"{size_bins.CAVEAT}\n",
+             _img(figs, "fig_size_distribution", "Size distributions per condition"),
+             _img(figs, "fig_size_percentiles", "Volume percentiles per run")]
+    lines.append(md_table(["Condition", "Droplets", "D10", "D32", "Dv10", "Dv50", "Dv90", "Span",
+                           f"% vol < {run_metrics.SMALL_UM:g} \u00b5m", f"% vol > {run_metrics.LARGE_UM:g} \u00b5m"],
+                          [[r["condition"], f"{r['droplets']:,}", fmt(r.get("D10 (um)"), 4), fmt(r.get("D32 (um)"), 4),
+                            fmt(r.get("Dv10 (um)"), 4), fmt(r.get("Dv50 (um)"), 4), fmt(r.get("Dv90 (um)"), 4),
+                            fmt(r.get("span"), 3), fmt(r.get(lo), 3), fmt(r.get(hi), 3)] for r in rows]))
+    lines.append("\nPer run: workbook sheet *Size percentiles*.\n")
+    return "\n".join(l for l in lines if l) + "\n"
+
+
+def _steadiness_section(results, figs: set[str]) -> str:
+    rows = tables.steadiness(results)
+    if not any(r.get("droplets per frame (all)") is not None for r in rows):
+        return ""
+    slow = f"slow share < {run_metrics.SLOW_HZ:g} Hz (%)"
+    noise = next((r["slow share if white noise (%)"] for r in rows if r.get("slow share if white noise (%)")), None)
+    cols = ["droplets per frame (all)", "droplet-count CV", "frames below half mean (%)", "lag-1 r", slow,
+            "liquid-area CV", "pressure CV (%)", "r pressure vs droplets"]
+    lines = ["## Steadiness and pulsing\n",
+             "From the droplet count of every frame (in and out of focus, so independent of the sizer version) and the "
+             "classical liquid area. **Lag-1 r** is the correlation of each frame's count with the next one's: near 0 "
+             "is frame-to-frame noise, high values mean the spray comes and goes in bursts. **Slow share** is the part of "
+             f"the count's variance below {run_metrics.SLOW_HZ:g} Hz (Welch spectrum)"
+             + (f"; white noise would put about {noise:.0f}% there" if noise else "") + ". **r pressure vs droplets** "
+             "correlates the logged upstream pressure with the droplet count inside the camera window.\n",
+             _img(figs, "fig_steadiness", "Steadiness by condition"),
+             _img(figs, "fig_spectra", "Droplet-count spectra"),
+             _img(figs, "fig_series", "Droplets per frame and pressure through each capture"),
+             _img(figs, "fig_series_liquid", "Liquid area through each capture")]
+    lines.append("**Condition means**\n")
+    lines.append(md_table(["Condition", "Droplets/frame", "Count CV", "Frames < half mean %", "Lag-1 r",
+                           "Slow share %", "Liquid CV", "Pressure CV %", "r(pressure, droplets)"],
+                          _by_condition(rows, cols)))
+    lines.append("\nPer run (with lag-2 to lag-16 and the slow peak): workbook sheet *Steadiness*.\n")
+    return "\n".join(l for l in lines if l) + "\n"
+
+
+def _drift_section(results, figs: set[str]) -> str:
+    rows = tables.drift_rows(results)
+    if not rows:
+        return ""
+    conf = stats.order_confounding(results)
+    lines = ["## Drift, replicates and interactions\n",
+             "A check for anything that changes slowly through a session (window dirt, gas supply, the silicone, "
+             "nozzle fouling), on what the factors leave unexplained: each response's main-effects residuals against "
+             "capture time (straight line, slope per hour), with BH q across the responses.\n"]
+    if conf:
+        lines.append("Factor level against capture time: " + "; ".join(
+            f"{f} r = {r:+.2f}" + (" (**confounded with time of day**)" if abs(r) >= CONFOUNDED_R else "")
+            for f, r in conf) + ". A drift that follows a confounded factor appears as that factor's effect, "
+            "not as residual drift.\n")
+    lines.append(_img(figs, "fig_drift", "Responses against capture time"))
+    lines.append(md_table(["Response", "Runs", "Residual slope per hour", "SE", "p", "q (BH)", "r"],
+                          [[r["response"], r["runs"], fmt(r["residual slope per hour"], 3), fmt(r["SE"], 3),
+                            fmt_p(r["p"]), fmt_p(r["q (BH)"]), fmt(r["r"], 3)] for r in rows]))
+    lines.append(_img(figs, "fig_replicates", "Replicates per condition"))
+    if "fig_interactions.png" in figs:
+        from . import figures_extra
+        lines.append(_img(figs, "fig_interactions", "Condition means for each pair of factors"))
+        if not figures_extra.is_full_factorial(results):
+            lines.append("> The design is fractional: in the interaction plots each point also changes the other "
+                         "factor(s), so non-parallel lines can be another factor's main effect. In an L9 every "
+                         "two-factor interaction is aliased with the third factor; only the lack-of-fit test (above, "
+                         "per response) says whether interactions matter at all.\n")
+    return "\n".join(l for l in lines if l) + "\n"
+
+
+def _diagnostics_section(results, figs: set[str]) -> str:
+    if "fig_diagnostics.png" not in figs and "fig_correlations.png" not in figs:
+        return ""
+    lines = ["## Model checks\n",
+             "Residuals of the main-effects model the ANOVA tests against, standardised by the residual standard "
+             "deviation and leverage. Points beyond \u00b12 are expected about 1 time in 20; a curved normal plot or a "
+             "pattern against the fitted value or time means the model misses something.\n",
+             _img(figs, "fig_diagnostics", "Model checks")]
+    big = []
+    for key in results.responses:
+        fit = stats.main_effects_fit(results, key)
+        if fit is None:
+            continue
+        for r, z in zip(fit.runs, fit.std_resid):
+            if math.isfinite(z) and abs(z) > OUTLIER_STD:
+                big.append([results.responses[key].label, r.name, r.condition, f"{z:+.2f}"])
+    if big:
+        lines.append(f"\n**Standardised residuals beyond \u00b1{OUTLIER_STD:g}**\n")
+        lines.append(md_table(["Response", "Run", "Condition", "Standardised residual"], big))
+    lines.append(_img(figs, "fig_correlations", "Response correlations"))
+    lines.append("Correlations are across all runs, so they include the factors' own effects: two responses that "
+                 "both follow gas flow correlate strongly whether or not one causes the other.\n")
+    return "\n".join(l for l in lines if l) + "\n"
+
+
+def _pieces_section(results, figs: set[str]) -> str:
+    rows = tables.liquid_pieces(results)
+    if not any(r.get("pieces") for r in rows):
+        return ""
+    lines = ["## Un-atomised liquid pieces\n",
+             "Connected regions of un-atomised liquid in the classical masks (`classical_components.csv`).\n",
+             _img(figs, "fig_pieces", "Un-atomised liquid pieces"),
+             md_table(["Condition", "Pieces per frame", "Median area (mm\u00b2)", "Largest (mm\u00b2)"],
+                      _by_condition(rows, ["pieces per frame", "median area (mm2)", "largest area (mm2)"]))]
+    return "\n".join(l for l in lines if l) + "\n"
+
+
+def _quality_section(results, figs: set[str]) -> str:
+    rows = tables.data_quality(results)
+    if not rows:
+        return ""
+    versions = sorted({str(r.get("sizer version")) for r in rows})
+    lines = ["## Sizer and data quality\n",
+             f"Sizer version: {', '.join(versions)}. Each check is compared across runs with a robust z "
+             f"(median and MAD); a run beyond {tables.QUALITY_Z:g} is flagged. **Moved by the sharpness rule** is the "
+             "share of round droplets the 2.2.0 rule reclassified as out of focus; **dark specks** is the share of the "
+             "median background darker than 75% of its surroundings (dirt on the window or sensor); **static spots** "
+             "are places with a droplet detection in at least "
+             f"{100 * run_metrics.STATIC_FRAC:.0f}% of frames.\n",
+             _img(figs, "fig_quality", "Sizer and data quality")]
+    flagged = [(r["run"], r["condition"], r["flags"]) for r in rows if r.get("flags")]
+    if flagged:
+        lines.append(md_table(["Run", "Condition", "Stands out on"], [list(f) for f in flagged]))
+    else:
+        lines.append("No run stands out on any check.\n")
+    missing = [(r["run"], r["missing inputs"]) for r in rows if r.get("missing inputs")]
+    if missing:
+        lines.append("\n**Inputs missing** (those parts are blank, the rest is computed)\n")
+        lines.append(md_table(["Run", "Missing"], [list(m) for m in missing]))
+    return "\n".join(l for l in lines if l) + "\n"
+
+
+def _condition_summary_section(results) -> str:
+    keys = [k for k in SUMMARY_KEYS if k in results.responses and results.responses[k].anova is not None]
+    if not keys:
+        return ""
+    rows = tables.condition_summary(results)
+    cell = {(r["condition"], r["response"]): r for r in rows}
+    conds = list(dict.fromkeys(r["condition"] for r in rows))
+    out = []
+    for c in conds:
+        line = [c]
+        for k in keys:
+            r = cell.get((c, results.responses[k].label))
+            if r is None or r["mean"] is None:
+                line.append("\u2013")
+            elif r["CI high"] is None:
+                line.append(fmt(r["mean"], 4))
+            else:
+                line.append(f"{fmt(r['mean'], 4)} \u00b1 {fmt(r['CI high'] - r['mean'], 2)}")
+        out.append(line)
+    return "\n".join([
+        "## Per-condition summary\n",
+        "Mean \u00b1 half-width of the 95% confidence interval of the mean, from the replicates (run-to-run "
+        "variation, Student t). Every analysed response, with the repeat SD, is in the workbook sheet "
+        "*Condition summary*.\n",
+        md_table(["Condition"] + [results.responses[k].label for k in keys], out)]) + "\n"
+
+
+def _gallery_section(results, figure_files) -> str:
+    gal = sorted(Path(p) for p in figure_files if Path(p).parent.name == "galleries")
+    if not gal:
+        return ""
+    lines = ["## Images\n",
+             "Each run's lowest- and highest-atomised frame (classical overlays: brown = un-atomised liquid, circles = "
+             "droplets), one sheet per condition:\n"]
+    lines += [f"- [{p.stem.replace('gallery_', '')}](figures/galleries/{p.name})" for p in gal]
+    return "\n".join(lines) + "\n"
+
+
 def _glr_section(results, figs: set[str]) -> str:
     runs_with = [r for r in results.runs if r.context and r.context.glr is not None]
     lines = ["## Gas-to-liquid ratio (GLR)\n"]
@@ -344,6 +553,14 @@ def build(results, bins, prov, findings=(), odd=None, figure_files=(), title: st
             body.append(f"![{cap}](figures/{name}.png)\n")
     body.append(_responses_section(results))
     body.append(_size_section(bins, figs))
+    body.append(_size_detail_section(results, figs))
+    body.append(_steadiness_section(results, figs))
+    body.append(_drift_section(results, figs))
+    body.append(_diagnostics_section(results, figs))
+    body.append(_pieces_section(results, figs))
+    body.append(_quality_section(results, figs))
+    body.append(_condition_summary_section(results))
+    body.append(_gallery_section(results, figure_files))
     body.append(_glr_section(results, figs))
     body.append(_odd_section(results, odd))
     body.append(_left_out_section(results))

@@ -1,7 +1,7 @@
 """publish.py -- design -> statistics -> every deliverable, in one call. No Qt.
 
-    analyse (stats.py) -> size bins -> figures -> odd-frame pack (optional) -> report
-    -> workbook -> flat CSVs + results.json (optional)
+    analyse (stats.py) -> size bins -> figures + extra figures and galleries -> odd-frame pack
+    (optional) -> report -> workbook -> PowerPoint deck -> flat CSVs + results.json (optional)
 
 The Analyse button runs this on a worker thread; tests call it directly.
 
@@ -10,7 +10,9 @@ SAFETY
   * A REFUSED analysis (mixed sizer versions, nothing to analyse) writes no report, workbook
     or figures (only the design file the user just edited is saved), so a good report from an
     earlier analysis is never replaced by a refusal.
-  * Each optional step (figures, odd pack, CSVs) is isolated: if one fails, the rest still
+  * The deck needs python-pptx. Without it everything else is written and the report's Warnings
+    say why there is no deck (a missing optional library is not a failure).
+  * Each optional step (figures, odd pack, deck, CSVs) is isolated: if one fails, the rest still
     land, and the failure is reported (console, and the report's Warnings section) rather
     than swallowed. A failing report or workbook is reported too.
   * Files are written to a temp name and moved into place.
@@ -24,11 +26,13 @@ from pathlib import Path
 from typing import Callable
 
 from . import design as dz
-from . import figures, fsops, jobstate, odd, provenance, report, size_bins, stats, tables, workbook
+from . import deck as deck_mod
+from . import figures, figures_extra, fsops, jobstate, odd, provenance, report, size_bins, stats, tables, workbook
 
 REPORT_NAME = "taguchi_report.md"
 METRICS_CACHE = "cache/run_metrics"     # run_metrics.load_or_compute, one JSON per run
 WORKBOOK_NAME = "taguchi_analysis.xlsx"
+DECK_NAME = deck_mod.DECK_NAME
 FIGURES_DIR = "figures"
 CSV_DIR = "csv"
 
@@ -44,6 +48,7 @@ class Deliverables:
     prov: provenance.Provenance | None = None
     report: Path | None = None
     workbook: Path | None = None
+    deck: Path | None = None
     figures: list[Path] = field(default_factory=list)
     csv_dir: Path | None = None
     odd: odd.OddResult | None = None
@@ -125,10 +130,23 @@ def publish(design: dz.Design, output_dir: Path, *, thr: float | None = None,
 
     log("analysis: drawing figures ...", "info")
     d.figures = step("figures", lambda: figures.make_all(results, d.bins, output_dir / FIGURES_DIR)) or []
+    log("analysis: drawing the extra figures and image galleries ...", "info")
+    extra_problems: list[str] = []
+    d.figures += step("extra figures", lambda: figures_extra.make_all(results, output_dir / FIGURES_DIR,
+                                                                      extra_problems)) or []
+    for msg in extra_problems:                         # one failed figure: reported, the rest stand
+        d.problems.append(msg)
+        results.warnings.append(msg)
+        log(msg, "error")
 
     if options.get("odd_pack"):
         log("analysis: building the odd-frame pack ...", "info")
         d.odd = step("odd-frame pack", lambda: odd.make_pack(results, output_dir))
+
+    no_deck = deck_mod.available()
+    if no_deck:
+        results.warnings.append(no_deck)
+        log(f"analysis: {no_deck}", "warn")
 
     findings = step("design checks", lambda: dz.diagnose(design)) or []
     text = step("report", lambda: report.build(results, d.bins, d.prov, findings, d.odd, d.figures))
@@ -143,6 +161,11 @@ def publish(design: dz.Design, output_dir: Path, *, thr: float | None = None,
 
     d.workbook = step("workbook", lambda: workbook.write(
         output_dir / WORKBOOK_NAME, results, d.bins, d.prov, workbook.read_timings(output_dir)))
+
+    if not no_deck:
+        log("analysis: building the PowerPoint deck ...", "info")
+        d.deck = step("deck", lambda: deck_mod.build(output_dir / DECK_NAME, results, d.bins, d.prov,
+                                                     output_dir / FIGURES_DIR))
 
     if options.get("flat_csvs"):
         d.csv_dir = step("flat CSVs", lambda: write_flat_csvs(output_dir, results, d.bins, d.prov))

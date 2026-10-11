@@ -28,6 +28,15 @@ SHEETS = (                               # (sheet name <= 31 chars, table key, a
     ("GLR context", "glr_context", False),
     ("GLR trends", "glr_trends", False),
     ("Replicate outliers", "replicate_outliers", False),
+    ("Condition summary", "condition_summary", False),
+    ("Size percentiles", "size_percentiles", False),
+    ("Size percentiles by condition", "size_percentiles_by_condition", False),
+    ("Steadiness", "steadiness", False),
+    ("Drift", "drift", False),
+    ("Residuals", "residuals", False),
+    ("Response correlations", "response_correlations", False),
+    ("Liquid pieces", "liquid_pieces", False),
+    ("Data quality", "data_quality", False),
     ("Skipped runs", "skipped_runs", False),
 )
 P_COLUMNS = {"p", "q (BH)"}

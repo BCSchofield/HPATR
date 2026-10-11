@@ -35,7 +35,7 @@ import numpy as np
 
 from . import fsops
 
-SCHEMA = 1
+SCHEMA = 2                        # 2: grouped-data Dv percentiles (2026-10-11)
 SLOW_HZ = 2.0                     # "slow pulsing": variance below this frequency
 SMALL_UM, LARGE_UM = 50.0, 125.0  # % volume below / above (the CCD plan's size-spread response)
 FRAME_PX = 2048 * 1152            # used only when the frame size is not recorded
@@ -85,14 +85,25 @@ def _jsonable(x):
 
 def volume_percentiles(d, ps=(10, 50, 90)) -> list[float | None]:
     """Dv_p: the diameter below which p% of the droplet VOLUME (sum d^3) lies.
-    Interpolated on the cumulative volume of the sorted diameters."""
-    d = np.sort(np.asarray(d, dtype=float))
+
+    Grouped-data interpolation: each distinct diameter is a cell reaching halfway to its
+    neighbours, and the cumulative volume is interpolated linearly across the cells. The
+    in-focus diameters sit on the pixel lattice (~1 um apart near 60 um, thousands of droplets
+    per value), so interpolating between the sorted droplets themselves always lands ON a
+    lattice value: on the 10/05 9x3 that gave 8 distinct Dv50s in 27 runs and identical
+    replicates (found 2026-10-11). Across cells the estimate moves continuously with the
+    distribution."""
+    d = np.asarray(d, dtype=float)
     d = d[np.isfinite(d)]
     if d.size == 0:
         return [None for _ in ps]
-    cum = np.cumsum(d ** 3)
-    cum = cum / cum[-1]
-    return [float(np.interp(p / 100.0, cum, d)) for p in ps]
+    u, inv = np.unique(d, return_inverse=True)
+    w = np.bincount(inv, weights=d ** 3)
+    if u.size == 1:
+        return [float(u[0]) for _ in ps]
+    edges = np.concatenate([[u[0] - (u[1] - u[0]) / 2], (u[:-1] + u[1:]) / 2, [u[-1] + (u[-1] - u[-2]) / 2]])
+    cum = np.concatenate([[0.0], np.cumsum(w)]) / w.sum()
+    return [float(np.interp(p / 100.0, cum, edges)) for p in ps]
 
 
 def capture_time(run_dir: Path) -> str | None:

@@ -141,7 +141,12 @@ def test_every_figure_is_written_as_png_and_svg(world):
         png, svg = fig_dir / f"{name}.png", fig_dir / f"{name}.svg"
         assert png.is_file() and svg.is_file(), name
         assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n" and b"<svg" in svg.read_bytes()[:400]
-    assert len(world["res"].figures) == 2 * len(EXPECTED_FIGS)
+    written = {p.name for p in world["res"].figures}
+    assert {f"{n}.{e}" for n in EXPECTED_FIGS for e in ("png", "svg")} <= written
+    # the extra figures (figures_extra) are listed too, each as a PNG + SVG pair; their own
+    # tests are in test_figures_extra.py
+    extra = [p for p in world["res"].figures if p.stem not in EXPECTED_FIGS and p.parent.name == "figures"]
+    assert extra and len(extra) % 2 == 0
 
 
 def test_pngs_are_300_dpi_not_screen_resolution(world):

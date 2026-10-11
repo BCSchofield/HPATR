@@ -589,3 +589,130 @@ def analyse(design: dz.Design, thr: float | None = None,
             results.warnings.append(f"{len(no_glr)} run(s) have no GLR ({why}), so the GLR trends use "
                                     f"the other {len(runs) - len(no_glr)} run(s).")
     return results
+
+
+# ---- fit, drift and run order (the richer outputs: diagnostics, drift plots, condition CIs) ----
+
+def t_quantile(p: float, df: float) -> float:
+    """Two-sided Student-t critical value t with P(|T| > t) = p, from f_sf (T^2 ~ F(1, df)),
+    by bisection: no scipy needed. t_quantile(0.05, 2) = 4.303."""
+    if df <= 0:
+        return math.inf
+    lo, hi = 0.0, 1e4
+    for _ in range(200):
+        mid = (lo + hi) / 2
+        if f_sf(mid * mid, 1, df) > p:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2
+
+
+def run_hours(results: Results) -> dict[str, float]:
+    """Run name -> hours since the first capture of the campaign (capture time from the date
+    folders + HHMMSS, run_metrics.capture_time). Runs without a capture time are left out."""
+    from datetime import datetime
+    when = {}
+    for r in results.runs:
+        iso = (r.metrics or {}).get("captured") or run_metrics.capture_time(r.path)
+        if iso:
+            when[r.name] = datetime.fromisoformat(iso)
+    if not when:
+        return {}
+    t0 = min(when.values())
+    return {k: (v - t0).total_seconds() / 3600 for k, v in when.items()}
+
+
+@dataclass
+class Fit:
+    """The main-effects model of one response, run by run (what the ANOVA tests against)."""
+    key: str
+    runs: list                       # RunRecord, those with a finite value
+    y: np.ndarray
+    fitted: np.ndarray
+    resid: np.ndarray
+    std_resid: np.ndarray            # internally studentised: e / (s sqrt(1 - h)); NaN where h ~ 1
+    df_resid: int
+    s: float | None                  # residual standard deviation; None when saturated
+
+
+def main_effects_fit(results: Results, key: str) -> Fit | None:
+    used = [r for r in results.runs if r.values.get(key) is not None and math.isfinite(r.values[key])]
+    keys = [f.key for f in results.factors]
+    if len(used) < 3 or not keys:
+        return None
+    fl = {k: sorted({r.levels[k] for r in results.runs}, key=lambda x: (str(type(x)), x)) for k in keys}
+    X = _design_matrix({k: [r.levels[k] for r in used] for k in keys}, keys, fl)
+    y = np.array([r.values[key] for r in used], float)
+    with np.errstate(all="ignore"):                    # Accelerate BLAS false alarms (see run_metrics)
+        beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+        fitted = X @ beta
+        h = np.einsum("ij,ji->i", X, np.linalg.pinv(X))
+    resid = y - fitted
+    df = len(y) - int(np.linalg.matrix_rank(X))
+    s = math.sqrt(float(resid @ resid) / df) if df > 0 and float(resid @ resid) > 0 else None
+    with np.errstate(all="ignore"):
+        std = (resid / (s * np.sqrt(1 - h)) if s else np.full(len(y), np.nan))
+    std = np.where(1 - h > 1e-9, std, np.nan)
+    return Fit(key, used, y, fitted, resid, std, df, s)
+
+
+@dataclass
+class Drift:
+    """Straight-line trend of a response's main-effects residuals over the day: what changes
+    with time beyond what the factors explain."""
+    key: str
+    n: int
+    slope_per_h: float
+    se: float | None
+    p: float | None
+    r: float | None
+
+
+def drift(results: Results, key: str, fit: Fit | None = None) -> Drift | None:
+    res = results.responses.get(key)
+    if res is not None and res.anova is None:              # constant or too few runs: nothing to test
+        return None
+    fit = fit or main_effects_fit(results, key)
+    hours = run_hours(results)
+    if fit is None or fit.s is None:                       # saturated, or the factors explain every run
+        return None
+    pts = [(hours[r.name], e) for r, e in zip(fit.runs, fit.resid) if r.name in hours]
+    if len(pts) < 4:
+        return None
+    t = np.array([p[0] for p in pts])
+    e = np.array([p[1] for p in pts])
+    sxx = float(((t - t.mean()) ** 2).sum())
+    if sxx <= 0:
+        return None
+    slope = float(((t - t.mean()) * (e - e.mean())).sum() / sxx)
+    res = e - e.mean() - slope * (t - t.mean())
+    n = len(pts)
+    se = math.sqrt(float(res @ res) / (n - 2) / sxx) if n > 2 else None
+    p = f_sf((slope / se) ** 2, 1, n - 2) if se else (0.0 if slope else 1.0)
+    r = float(np.corrcoef(t, e)[0, 1]) if e.std() > 0 else None
+    return Drift(key, n, slope, se, p, r)
+
+
+def drifts(results: Results, keys=None) -> list[tuple[Drift, float]]:
+    """drift() for each response (all analysed ones by default), with its Benjamini-Hochberg q
+    across these tests: with nine or more responses a p < 0.05 somewhere is likely by chance."""
+    keys = list(results.responses) if keys is None else [k for k in keys if k in results.responses]
+    ds = [d for d in (drift(results, k) for k in keys) if d is not None and d.p is not None]
+    return list(zip(ds, benjamini_hochberg([d.p for d in ds])))
+
+
+def order_confounding(results: Results) -> list[tuple[str, float]]:
+    """(factor label, r) between each factor's level (rank: low, mid, high...) and capture time.
+    A large |r| means the factor's effect cannot be told apart from a drift over the day."""
+    hours = run_hours(results)
+    out = []
+    for f in results.factors:
+        lv = sorted({r.levels[f.key] for r in results.runs}, key=lambda x: (str(type(x)), x))
+        pts = [(lv.index(r.levels[f.key]), hours[r.name]) for r in results.runs if r.name in hours]
+        if len(pts) < 4:
+            continue
+        a = np.array(pts, float)
+        if a[:, 0].std() > 0 and a[:, 1].std() > 0:
+            out.append((f.label, float(np.corrcoef(a[:, 0], a[:, 1])[0, 1])))
+    return out
