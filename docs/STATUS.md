@@ -1,6 +1,6 @@
 # STATUS — real-data droplet pipeline and Taguchi study
 
-**Last updated: 2026-10-11 (Mac: CCD plan Phase 6 committed; Phase 7 (the tab) built, Ben to try it).** This is the live state of the work. Claude keeps it current
+**Last updated: 2026-10-11 (Mac: CCD plan complete, Phase 7 committed 2ebc9f0; next is the 33-run CCD day).** This is the live state of the work. Claude keeps it current
 (see "How this file is maintained" at the bottom). History, evidence and full reasoning are in
 `docs/archive/HANDOFF_real_data_pipeline_LEGACY.md` (frozen 2026-10-07, newest section first).
 
@@ -306,7 +306,7 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
   stops there. No rated pressure limit.
 
 - **Phase 6 committed (b4d4baa).**
-- **Phase 7 done (2026-10-11), uncommitted, Ben to try it himself on the 9x3 practice copy:** `tab_rsm.py`, the
+- **Phase 7 committed (2ebc9f0); the CCD plan is complete.** Ben to try it himself on the 9x3 practice copy: `tab_rsm.py`, the
   **Response surface tab** (window now "Experiment Analysis"; QSettings app name unchanged so remembered
   folders survive). Sub-tabs: Design (banner, editable run table: use, point type, block, factor levels,
   validation tick, built-sheet status, Notes check; findings; block factor; saved to rsm_design.json),
@@ -330,6 +330,13 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
 
 ## Next steps, in order
 
+0. **The 33-run 4-factor CCD day** (gas 7000/9000/11000, RPM 100/500/900, feed 3000/4000/5000,
+   orifice 0.5/1.2/1.8; orifice blocks, 5 centres, block repeats, 0 rpm control, 0.8 mm check).
+   Before it: Ben practises the Response surface tab on the 9x3 copy (`docs/RSM_GUIDE.md`, "Using
+   the app"); delete `self._pipeline_check.setChecked(True)` (~line 7006, GUI_Clean.py, "Use standard
+   settings"); pull `Testing` + install python-pptx on the lab PC (item 5); fix app bugs 1-2 (item 3)
+   since the day's batch runs overnight; build + export the run sheet in the app, type each run's
+   "CCD run N <point type>" in Notes. After it: batch on Windows, then the Response surface tab.
 1. **RPM confirmation test** (Ben, lower urgency now): one gas/silicone setting, RPM alternated
    300/900/300/900... in one session (4-6 runs). Randomise run order in every future campaign.
 2. ~~Ben to decide the default~~ **DECIDED 2026-10-08: 2.2.0, for good** (may revisit). What
