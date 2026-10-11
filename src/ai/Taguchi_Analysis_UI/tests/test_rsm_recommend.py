@@ -93,6 +93,7 @@ def test_snap_keeps_settings_runnable(interior):
     assert rec.snap(interior, "sccm", 12345) == 12000 and rec.snap(interior, "sccm", -50) == 0
     assert rec.snap(interior, "rpm", 1700) == 1000 and rec.snap(interior, "sps", 12600) == 12000
     assert rec.snap(interior, "sccm", 10449) == 10400 and rec.snap(interior, "sps", 3951) == 4000
+    assert rec.snap(interior, "sps", 400) == 2000                       # the lowest feed that sprays usefully
     assert rec.snap(interior, "orifice", 1.45, INSERTS) == 1.2 and rec.snap(interior, "orifice", 1.6, INSERTS) == 1.8
 
 
@@ -116,6 +117,20 @@ def test_the_new_ccd_contains_the_best_point_and_respects_the_rig(gas_edge):
     assert r.sheet is not None and r.sheet.estimability.usable
     ori = next(f for f in r.plan.factors if f.key == "orifice")
     assert (ori.low, ori.mid, ori.high) == (0.5, 1.2, 1.8)                     # inserts stay the ones that exist
+
+
+def test_a_path_towards_low_feed_stops_at_the_feed_floor_not_at_zero():
+    """Found 2026-10-11 on the 9x3: goals favouring a high atomised fraction walked feed down to 0 steps/s."""
+    d, R = world(lambda g, f, o: 14 + 2 * g - 2 * g * g - 4.0 * f + 0.5 * o - 1.0 * o * o)
+    try:
+        steep = next(r for r in rec.recommend(R, INSERTS) if r.kind == "steepest")
+        feed = [r.values["sps"] for r in steep.rows]
+        assert feed == sorted(feed, reverse=True) and feed[-1] == 2000 and min(feed) >= 2000
+        assert "rig's limit" in steep.rows[-1].label
+        ccd = next(r for r in rec.recommend(R, INSERTS) if r.kind == "new_ccd")
+        assert next(f for f in ccd.plan.factors if f.key == "sps").low >= 2000
+    finally:
+        d.cleanup()
 
 
 # ---- a new insert ---------------------------------------------------------------------------------------------

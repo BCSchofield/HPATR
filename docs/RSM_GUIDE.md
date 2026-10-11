@@ -33,6 +33,10 @@ cd /Users/benschofield/Documents/GitHub/HPATR && /Users/benschofield/anaconda3/e
    best is the target and the score falls to 0 as far either side as worst is); blank = the range seen in
    the runs. **Importance** weights the goals (all 1 = equal; e.g. atomised fraction 3, D32 2). Set them
    before the first Analyse or change them later and press Analyse again; they are saved with the output.
+   Goals that measure the same thing stack: D32, mean diameter and D90 all say "smaller droplets", so
+   choosing all three triples the weight on size. Pick one per thing you care about. And a fraction goal
+   alone (atomised %) rises as the liquid flow falls: keep **atomised liquid flow** as a goal if
+   throughput matters, or the best setting drifts to the lowest feed.
 4. **Analyse and next runs**: press **Analyse**; then **Open deck**, **Open report**, **Open next runs**.
    The recommendations for the next session are listed with their reasons.
 5. **Build a run sheet** (before a new experiment): type the factors and levels (or **Load the 33-run
@@ -226,7 +230,7 @@ the reason:
 - **Confirm the best setting**: three runs there (rounded to what the rig can set, at an insert that
   exists) and a repeat of the design centre to link the sessions. Always.
 - **Move the region**, when the best setting is on an edge or nothing curves: runs stepping outward along
-  the direction the combined score rises fastest (stopping at the rig's limits: gas 12,000 sccm), and a
+  the direction the combined score rises fastest (stopping at the rig's limits: gas 12,000 sccm, bubbler 1,000 rpm, feed 2,000 to 12,000 steps/s), and a
   whole new CCD centred on the best setting (in `next CCD/`). Runs beyond the tested range are marked as
   extrapolation, and any factor taken beyond its tested range with no recorded rig limit (RPM, feed) is
   named, so it can be checked on the rig first.

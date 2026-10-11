@@ -43,9 +43,11 @@ SHEET_FILENAME = "rsm_run_sheet.json"
 EXPORT_STEM = "run_sheet"
 MAX_FACTORS = 5
 # what the rig can physically set (Ben, 2026-10-11): gas flow controller 12,000 sccm, bubbler 1,000 rpm
-# (0 rpm, no rotation, is allowed: the control run), silicone feed about 12,000 steps/s. There is no rated
-# pressure limit, so peak pressure is watched, not constrained.
-RIG_LIMITS = {"sccm": (0.0, 12000.0), "rpm": (0.0, 1000.0), "sps": (0.0, 12000.0)}
+# (0 rpm, no rotation, is allowed: the control run), silicone feed 2,000 to about 12,000 steps/s (the
+# lowest feed that still sprays usefully; without a floor, goals that favour a high atomised FRACTION walked
+# the recommender down to 0 steps/s, no liquid). There is no rated pressure limit, so peak pressure is
+# watched, not constrained.
+RIG_LIMITS = {"sccm": (0.0, 12000.0), "rpm": (0.0, 1000.0), "sps": (2000.0, 12000.0)}
 
 
 # ---- inputs ---------------------------------------------------------------------------------------------

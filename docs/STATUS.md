@@ -301,7 +301,7 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
   On the real 9x3: confirm 8,700 sccm / 8,000 steps/s / 300 rpm (atomised 17.0%, PI 15.4-18.6); steepest
   ascent pushes feed up to 12,000 steps/s (extrapolated); new CCD gas 4,400-10,400 x feed 6,000-10,000
   at 300 rpm; 4 runs to fix D32's lack of fit.
-  **Rig limits (Ben, 2026-10-11): gas 12,000 sccm, bubbler 1,000 rpm (0 allowed: the control), feed about
+  **Rig limits (Ben, 2026-10-11): gas 12,000 sccm, bubbler 1,000 rpm (0 allowed: the control), feed 2,000 to about
   12,000 steps/s**, in `rsm_design.RIG_LIMITS`: the builder refuses levels beyond them and the recommender
   stops there. No rated pressure limit.
 
@@ -417,6 +417,15 @@ Response surface tab, found 2026-10-11 (tested on fakes: the 9x3 + 4 next-sessio
   (`tab_rsm.goal_for_fit`): worst scores 0 and best 1 for every aim, a target is the best column
   (symmetric ramp out to worst), a backwards ramp is refused with the response named; older saved
   rsm_model.json (low/high keys) still read. Tests in test_tab_rsm.py, mutation-checked.
+
+- ~~Steepest ascent / new CCD could walk feed down to 0 steps/s~~ **FIXED 2026-10-11:** feed floor
+  2,000 steps/s (Ben: the lowest that sprays usefully) in `rsm_design.RIG_LIMITS`; found when Ben's
+  practice goals (size x3 + atomised fraction, no liquid-flow goal) sent the path to "8200 sccm, 0 steps/s".
+  Guide now warns that correlated goals stack and a fraction goal alone favours the lowest feed.
+  **Ben's goal trial on the 9x3** (2026-10-11, `Practice Folder/Ben 9x3 CCD practice` vs
+  `output/9x3 response surface (gas x feed)/Baseline (default goals, importance all 1)`): best setting
+  moved from 8,744 sccm / 8,000 steps/s to 8,187 / 4,000; driven by the goal SET (liquid-flow goal
+  removed, three size goals), not the importance numbers (all-1 importance gave 8,626 / 4,000).
 
 Elsewhere:
 - **Static specks detected as droplets.** The same ~5 places (e.g. x1824 y648, x336 y852,

@@ -505,7 +505,7 @@ For a central composite design (or any run set where a quadratic can be fitted).
   estimability (rank + VIF > 50 = nearly aliased).
 - **Run-sheet builder** (`rsm_design.py`): face-centred CCD for 2–5 factors, optional half fraction,
   block factor with start/end repeats, extras, pressure-check first run, seeded order; rig limits gas
-  12,000 sccm, 1,000 rpm, feed 12,000 steps/s.
+  12,000 sccm, 1,000 rpm, feed 2,000 to 12,000 steps/s.
 - **Fit** (`rsm_stats.py`, `rsm_responses.py`): quadratic in real coding over the surface factors, nuisance
   factors as slope or slope + curve; OLS with SE/t/p, R², adjusted, predicted (PRESS); lack of fit vs pure
   error; backward elimination with hierarchy; BH q across responses; CI and PI; drift (centres, block
