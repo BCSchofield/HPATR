@@ -320,9 +320,7 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
   incl. a real Analyse on the simulated CCD day). Verified headless on the real 9x3 copy: detects the
   L9, defaults to the trial, Analyse writes everything, 4 recommendations listed.
   - **GUI_Clean**: the Start Experiment standard check no longer flags "Run AI analysis: off" (the AI runs
-    afterwards in the app). NOT DONE (auto-mode safety check blocked the edit): "Use standard settings"
-    still re-ticks the AI box (`self._pipeline_check.setChecked(True)`, ~line 7006 of
-    src/gui/GUI_Clean.py): delete that line by hand or in a non-auto session.
+    afterwards in the app). "Use standard settings" no longer re-ticks the AI box either (line deleted 2026-10-11).
   - Settings tab unchanged: no pressure limit to set (there is none), desirability goals live on the
     Model page, bin settings were already there.
   - `docs/IMAGING_PIPELINE_REFERENCE.md` §9 updated (extra responses, figures, deck) and §9b added
@@ -333,8 +331,7 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
 0. **The 33-run 4-factor CCD day** (gas 7000/9000/11000, RPM 100/500/900, feed 3000/4000/5000,
    orifice 0.5/1.2/1.8; orifice blocks, 5 centres, block repeats, 0 rpm control, 0.8 mm check).
    Before it: Ben practises the Response surface tab on the 9x3 copy (`docs/RSM_GUIDE.md`, "Using
-   the app"); delete `self._pipeline_check.setChecked(True)` (~line 7006, GUI_Clean.py, "Use standard
-   settings"); pull `Testing` + install python-pptx on the lab PC (item 5); (app bugs 1-2 now fixed); build + export the run sheet in the app, type each run's
+   the app"); pull `Testing` + install python-pptx on the lab PC (item 5); (app bugs 1-2 now fixed); build + export the run sheet in the app, type each run's
    "CCD run N <point type>" in Notes. After it: batch on Windows, then the Response surface tab.
 1. **RPM confirmation test** (Ben, lower urgency now): one gas/silicone setting, RPM alternated
    300/900/300/900... in one session (4-6 runs). Randomise run order in every future campaign.

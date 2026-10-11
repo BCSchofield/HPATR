@@ -7003,7 +7003,6 @@ class AtomisationApp(QMainWindow):
                       "ai_stride": self._ai_stride}
             for key, _label, std in self.STANDARD_CAPTURE:
                 fields[key].setText(std)
-            self._pipeline_check.setChecked(True)
             if self.phantom:
                 self._cam_configure()          # push to the camera; also saves settings
             else:
