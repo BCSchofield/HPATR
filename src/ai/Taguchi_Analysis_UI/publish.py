@@ -27,6 +27,7 @@ from . import design as dz
 from . import figures, fsops, jobstate, odd, provenance, report, size_bins, stats, tables, workbook
 
 REPORT_NAME = "taguchi_report.md"
+METRICS_CACHE = "cache/run_metrics"     # run_metrics.load_or_compute, one JSON per run
 WORKBOOK_NAME = "taguchi_analysis.xlsx"
 FIGURES_DIR = "figures"
 CSV_DIR = "csv"
@@ -96,7 +97,8 @@ def publish(design: dz.Design, output_dir: Path, *, thr: float | None = None,
     dz.save(design, output_dir)
 
     log("analysis: reading the measured runs ...", "info")
-    results = stats.analyse(design, thr, progress, do_bootstrap)
+    results = stats.analyse(design, thr, progress, do_bootstrap,
+                            metrics_cache=output_dir / METRICS_CACHE)
     d.results = results
     for w in results.warnings:
         log(f"analysis: {w}", "warn")

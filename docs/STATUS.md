@@ -1,6 +1,6 @@
 # STATUS — real-data droplet pipeline and Taguchi study
 
-**Last updated: 2026-10-08 (lab PC: 2.2.0 adopted for good, CLI defaults flipped, 390 fps settled).** This is the live state of the work. Claude keeps it current
+**Last updated: 2026-10-11 (Mac: CCD plan Phase 1 done; practice copy of the 9x3 runs made).** This is the live state of the work. Claude keeps it current
 (see "How this file is maintained" at the bottom). History, evidence and full reasoning are in
 `docs/archive/HANDOFF_real_data_pipeline_LEGACY.md` (frozen 2026-10-07, newest section first).
 
@@ -104,6 +104,29 @@ process diagnosis or model-building for its own sake.
   D32 56.19 um; `--no-sharpness-rule` -> 2.1.0, 81.58 um (matches the recorded 81.59); 57,654
   droplets both ways.
 - A new day is a new block: include 1-2 repeats of 10/05 conditions to measure the day offset.
+
+## Response-surface (CCD) support + richer outputs (plan approved 2026-10-11)
+
+Plan: `~/.claude/plans/purring-bubbling-raccoon.md` (7 phases, each ending in a stop). Extends the
+Taguchi app with a Response surface tab (detect or build a CCD, analyse, validate any run, recommend
+runs), richer figures/data for both analyses, and a PowerPoint deck. First real-data trial: the
+9x3 as a gas x feed surface (Phase 4b).
+
+- **Phase 1 done (2026-10-11), uncommitted:** `run_metrics.py`, the shared per-run data layer (size
+  distribution incl. Dv10/50/90 and span; steadiness and pulsing incl. spectrum and slow share;
+  pressure inside the camera window; un-atomised pieces; sizer and data quality incl. static spots;
+  atomised liquid flow; capture time), cached per run in `<output>/cache/run_metrics/`. Five new
+  analysed responses in the Taguchi analysis: **Dv50, atomised liquid flow, frames below half the
+  mean count, lag-1 correlation, peak pressure** (42 factor tests now, BH-corrected). Matches the
+  2026-10-07 pulsing analysis to 4 dp on run 124632. Real 9x3 publishes in ~80 s (first run fills
+  the cache). Tests: `tests/test_run_metrics.py` (9).
+- **Practice folder (2026-10-11), for all development/testing of this plan:**
+  `/Volumes/LaCie/Experiments/Taguchi/Claude Experiments/Practice Folder/`. Holds `2026/10/05/<27
+  runs>` (date levels kept, the app reads the date from the path) with everything except
+  `raw/CINE/` and `raw/frames/` (3.4 GB; checksums match the originals), a
+  `9x3 Taguchi Repeats (reference copy)/` of the published output, and `output/` for practice
+  publishes. All 27 load as analysable, 0 runnable (no .cine), so the batch cannot re-measure them.
+  Point test publishes here, never at `2026/10/05` or `9x3 Taguchi Repeats`.
 
 ## Next steps, in order
 

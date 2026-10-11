@@ -50,6 +50,7 @@ import numpy as np
 
 from . import covariates
 from . import design as dz
+from . import run_metrics
 from . import pipeline_spec as spec
 
 OUTLIER_Z = 3.0                 # standardised residual beyond which a replicate is flagged
@@ -330,8 +331,10 @@ def load_run_responses(run_dir: Path, thr: float, rng=None, do_bootstrap: bool =
 
 
 def responses_table():
-    """(key, label, direction, quantised) for every response, from taguchi_analysis."""
-    return list(spec.rdc_module("taguchi_analysis").RESPONSES)
+    """(key, label, direction, quantised) for every response: taguchi_analysis's nine, then the
+    app's extra five (run_metrics.EXTRA_RESPONSES: Dv50, atomised liquid flow, frames below half
+    the mean count, lag-1 correlation, peak pressure)."""
+    return list(spec.rdc_module("taguchi_analysis").RESPONSES) + list(run_metrics.EXTRA_RESPONSES)
 
 
 # ---- results ----------------------------------------------------------------------------------------------
@@ -377,6 +380,7 @@ class RunRecord:
     frames: int
     rec: dict = field(default_factory=dict, repr=False)  # the full load_run record
     context: Any = None                                  # covariates.RunContext: GLR, densities...
+    metrics: dict = field(default_factory=dict, repr=False)  # run_metrics.compute(): figures' data
 
 
 @dataclass
@@ -498,7 +502,7 @@ def multiple_comparisons(responses: dict[str, ResponseResult], factors) -> list[
 
 def analyse(design: dz.Design, thr: float | None = None,
             progress: Callable[[int, int, str], None] | None = None,
-            do_bootstrap: bool = True) -> Results:
+            do_bootstrap: bool = True, metrics_cache: Path | None = None) -> Results:
     """Load every analysable run in the design and run the statistics."""
     s = spec.effective(spec.RunSettings(score_thresh=thr))
     ta = spec.rdc_module("taguchi_analysis")
@@ -532,11 +536,29 @@ def analyse(design: dz.Design, thr: float | None = None,
             continue
         levels = {f.key: row.value(f.key) for f in factors}
         rec["levels"] = levels
-        values = {k: rec.get(k) for k in getattr(ta, "RESP_KEYS", [])}
+        context = covariates.run_context(info) if info is not None else None
+        # the shared per-run data layer: the extra responses and every figure's data
+        try:
+            metrics = run_metrics.load_or_compute(row.path, s.score_thresh, cache_dir=metrics_cache,
+                                                  rec=rec, context=context)
+        except Exception as exc:                           # noqa: BLE001 -- the nine still stand
+            metrics = {"missing": {"all": f"{type(exc).__name__}: {exc}"}}
+            warnings.append(f"{row.name}: per-run metrics failed ({exc}); extra responses missing")
+        extra = run_metrics.response_values(metrics, rec, getattr(ta, "N_BOOT", 0) if do_bootstrap
+                                            else 0, getattr(ta, "SEED", 0))
+        for k, v in extra.items():
+            if k.startswith("boot_"):
+                arr = np.asarray(v, float)
+                rec[k] = arr
+                if np.isfinite(arr).any():
+                    rec[f"{k[5:]}_ci"] = np.nanpercentile(arr, [2.5, 97.5])
+            else:
+                rec[k] = v
+        values = {k: rec.get(k) for k, _l, _d, _q in responses_table()}
         ci = {k: tuple(rec[f"{k}_ci"]) for k in values if f"{k}_ci" in rec}
         runs.append(RunRecord(row.name, row.path, cond.label, a.of(row).replicate, levels, values,
                               ci, rec.get("sizer_version"), len(rec.get("frames", [])), rec,
-                              covariates.run_context(info) if info is not None else None))
+                              context, metrics))
 
     results = Results(factors, runs, {}, skipped, warnings,
                       n_boot=getattr(ta, "N_BOOT", 0) if do_bootstrap else 0,
