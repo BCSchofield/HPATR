@@ -1,6 +1,6 @@
 # STATUS — real-data droplet pipeline and Taguchi study
 
-**Last updated: 2026-10-12 (lab PC: STATUS commit refs fixed, tracked __pycache__ removed, front limit switch tested on the rig, emoji removed from GUI_Clean console messages, switch noise filter in firmware (needs flashing), GUI_Clean SCCM ramp + bubbler starts with Start Experiment (untried on the rig); Mac: CCD plan complete, Phase 7 committed 2ebc9f0; Mac light-mode theme fix; batch bugs 1-2, goal-ramp bug, feed floor 2,000 steps/s; mean diameter now a headline response and the default size goal; GUI_Clean auto-trigger at end of test and pressure cut-off (both untried on the rig); GUI_Clean review fixes + front limit switch firmware (committed 58f1b94; firmware flashed and switch-tested on the lab rig 2026-10-12, all passed); next is the 33-run CCD day).** This is the live state of the work. Claude keeps it current
+**Last updated: 2026-10-12 (lab PC: GUI_Clean camera save hardened after a lost auto-trigger capture (untried on the rig); STATUS commit refs fixed, tracked __pycache__ removed, front limit switch tested on the rig, emoji removed from GUI_Clean console messages, switch noise filter in firmware (needs flashing), GUI_Clean SCCM ramp + bubbler starts with Start Experiment (untried on the rig); Mac: CCD plan complete, Phase 7 committed 2ebc9f0; Mac light-mode theme fix; batch bugs 1-2, goal-ramp bug, feed floor 2,000 steps/s; mean diameter now a headline response and the default size goal; GUI_Clean auto-trigger at end of test and pressure cut-off (both untried on the rig); GUI_Clean review fixes + front limit switch firmware (committed 58f1b94; firmware flashed and switch-tested on the lab rig 2026-10-12, all passed); next is the 33-run CCD day).** This is the live state of the work. Claude keeps it current
 (see "How this file is maintained" at the bottom). History, evidence and full reasoning are in
 `docs/archive/HANDOFF_real_data_pipeline_LEGACY.md` (frozen 2026-10-07, newest section first).
 
@@ -539,6 +539,24 @@ made", "Bit depth", and the dated sections).
 - Give Ben exact paste-able commands with absolute paths and the real interpreter.
 
 ## Recent changes (newest first; trim to ~10 entries, older ones live in git history)
+
+- 2026-10-12 (lab PC, compiled only, NOT yet on the rig): **GUI_Clean lost auto-trigger capture.** A
+  run's auto-trigger fired and logged "saving .cine", then failed ("Error — re-arm manually"); no .cine
+  in the run folder and none in PCC. The error text went only to the status bar, which the end-of-run
+  auto-save overwrote 14 s later, so the cause is unknown. Suspect: the fixed post-trigger settle used
+  the GUI fields' post-trigger count, not the camera's (they differ if fields changed since Apply Config
+  or the camera was power-cycled), so the cine could be opened while still recording. Changes: wait for
+  `partition_recorded(1)` using the camera's own post-trigger frames / fps (fallback: old fixed settle);
+  `save_recording` raises if no file / empty file (the >= 90 %-stall "done" path used to log success with
+  nothing on disk); "never started" vs "stalled" save errors; Arm, Disarm / Abort, Apply Config and
+  auto-arm on Start refused while a save runs (`_cam_saving`), since each overwrites or clears camera
+  RAM; failures go to the console with the failing step, plus a traceback in the LaCie `Logs\serial_*.txt`,
+  and say whether the cine is still in camera RAM (save it from PCC before arming). Check on the rig:
+  a normal auto-trigger capture still saves, and the post-trigger wait isn't stuck on its +15 s timeout
+  (that would mean `partition_recorded(1)` doesn't index partitions from 1).
+  Same day, 10:50: an editor tab holding an old copy saved `GUI_Clean.py` back to the 7513f1e version
+  (no SCCM ramp, no bubbler at Start, emoji back, camera fix gone). Restored from HEAD and the fix
+  re-applied; the clobbered copy is not kept in the repo.
 
 - 2026-10-12 (lab PC, offscreen-tested with fake devices, NOT yet on the rig): **GUI_Clean SCCM ramp and
   bubbler at Start.** "SCCM ramp /s" box under the cut-off (0-12000 sccm/s, empty/0 = off, remembered as

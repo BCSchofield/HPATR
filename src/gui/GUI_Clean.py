@@ -1123,6 +1123,33 @@ class PhantomController:
     def trigger(self):
         self.cam.trigger(); self.is_armed = False; return True
 
+    def camera_post_trigger(self):
+        """(post_trigger_frames, frame_rate) as the CAMERA has them, or None.
+
+        The GUI fields can differ from what Apply Config last pushed (fields
+        edited since, or the camera power-cycled), and it is the camera's
+        values that decide when the cine is actually stored."""
+        try:
+            return int(self.cam.post_trigger_frames), float(self.cam.frame_rate)
+        except Exception:
+            return None
+
+    def wait_for_stored(self, cine_index=1, timeout_s=10.0, poll_s=0.25):
+        """Poll until the camera reports the cine recorded.
+
+        True once stored, False on timeout, None if the camera can't say (the
+        query itself fails) -- callers then fall back to a fixed wait."""
+        deadline = time.time() + timeout_s
+        while True:
+            try:
+                if self.cam.partition_recorded(cine_index):
+                    return True
+            except Exception:
+                return None
+            if time.time() >= deadline:
+                return False
+            time.sleep(poll_s)
+
     # A CINE save is abandoned only when progress genuinely stops, never on a
     # fixed ceiling: a large capture can legitimately run far longer than any
     # constant while still writing steadily.  The old 600 s limit failed
@@ -1177,6 +1204,10 @@ class PhantomController:
                 if progress_cb: progress_cb(100, 0.0)
                 break  # stalled near end — assume complete
             elif now - last_change > self.CINE_STALL_TIMEOUT_S:
+                if pct < 0:
+                    raise RuntimeError(
+                        f"CINE save never started — no progress from the SDK in "
+                        f"{self.CINE_STALL_TIMEOUT_S:.0f} s")
                 raise RuntimeError(
                     f"CINE save stalled at {pct}% — no progress for "
                     f"{self.CINE_STALL_TIMEOUT_S:.0f} s")
@@ -1185,6 +1216,18 @@ class PhantomController:
             raise RuntimeError(
                 f"CINE save exceeded {self.CINE_ABSOLUTE_MAX_S / 3600:.0f} h "
                 f"(progress: {self.current_cine.save_percentage}%)")
+        # "Done" above is the SDK's progress callback (or a stall at >= 90%),
+        # not proof of a file.  A save that reports done with nothing on disk
+        # used to be logged as a success.
+        try:
+            size = os.path.getsize(output_path)
+        except OSError:
+            size = -1
+        if size <= 0:
+            raise RuntimeError(
+                f"the SDK reported the .cine save finished (last progress {last_pct}%) "
+                f"but {'the file is empty' if size == 0 else 'no file was written'}: "
+                f"{output_path}")
         return True
 
     def save_tiffs_from_ram(self, output_dir, tiff_prefix='frame', cine_index=1, frame_range=None,
@@ -1636,6 +1679,10 @@ class AtomisationApp(QMainWindow):
         self.afg     = AFGController()     if PYVISA_AVAILABLE       else None
 
         self.camera_available = platform.system() == "Windows" and PHANTOM_SDK_AVAILABLE
+        # True from a trigger until its save has finished or failed.  Arm,
+        # Disarm, Apply Config and auto-arm on Start all overwrite or clear the
+        # camera's RAM, so they are refused while it is set.
+        self._cam_saving = False
 
         self.cumulative_distance = 0.0
         self._pre_move_cumulative  = 0.0   # cumulative_distance before the current motor move
@@ -6056,8 +6103,19 @@ class AtomisationApp(QMainWindow):
 
         return _frames(self._cam_pre_s), _frames(self._cam_post_s)
 
+    def _cam_refuse_while_saving(self, action: str) -> bool:
+        """True (and say so) if a capture is still being saved off the camera.
+        `action` would overwrite or clear camera RAM and lose that capture."""
+        if not self._cam_saving:
+            return False
+        self._log(f"{action} refused: the last capture is still being saved off the "
+                  "camera, and this would wipe it from camera RAM.")
+        self._set_status(f"{action} refused: camera is still saving", CLR_ORANGE)
+        return True
+
     def _cam_configure(self):
         if not self.phantom: return
+        if self._cam_refuse_while_saving("Apply Config"): return
         try:
             fps       = float(self._cam_fps.text())
             pre_frames, post_frames = self._cam_frame_counts()
@@ -6099,6 +6157,7 @@ class AtomisationApp(QMainWindow):
     def _cam_arm(self):
         """Start continuous ring-buffer recording. Camera buffers until Trigger is clicked."""
         if not self.phantom: return
+        if self._cam_refuse_while_saving("Arm"): return
         def _do_arm():
             try:
                 self.phantom.start_recording()
@@ -6120,6 +6179,7 @@ class AtomisationApp(QMainWindow):
         threading.Thread(target=_do_arm, daemon=True).start()
 
     def _cam_abort(self):
+        if self._cam_refuse_while_saving("Disarm / Abort"): return
         self._auto_trigger_cancel("camera disarmed")
         if self.phantom: self.phantom.abort()
         self._cam_status_lbl.setText("Camera: disarmed")
@@ -6171,6 +6231,12 @@ class AtomisationApp(QMainWindow):
         return "cancel"
 
     def _auto_trigger_schedule(self, plan):
+        if self._cam_saving:
+            # Arming now would record over the capture still being saved.
+            self._log("Auto-trigger: the camera is still saving the previous capture, "
+                      "so it can't be armed. This run will have no video.")
+            self._set_status("Auto-trigger skipped: camera still saving", CLR_ORANGE)
+            return
         if not self.phantom.is_armed:
             self._cam_arm()                       # buffering from now on
         delay_ms = int(max(plan["trigger_s"], 1.0) * 1000)
@@ -6280,9 +6346,12 @@ class AtomisationApp(QMainWindow):
                 lambda p=_run_folder: self._cam_save_lbl.setText(f"Saving to: {p}"))
 
         frame_range = (-pre_frames, post_frames - 1) if pre_frames > 0 else None
+        self._cam_saving = True     # cleared when the save thread ends, either way
 
         def _do_trigger():
             import glob as _glob
+            import traceback as _tb
+            step = "trigger"
             try:
                 QTimer.singleShot(0, self, lambda: self._cam_arm_status_lbl.setText("Triggering…"))
                 self.phantom.trigger()
@@ -6295,13 +6364,38 @@ class AtomisationApp(QMainWindow):
                         _trel - pre_frames / fps_val,
                         _trel + post_frames / fps_val,
                     ))
-                # Fixed settle: post-trigger frames + 2 s for the camera to commit the cine.
-                # wait_for_cine() polling was replaced because cam.Cine() can block at the
-                # SDK level without raising, leaving the thread stuck indefinitely.
-                settle = post_frames / fps_val + 2.0
+                # Wait for the camera to finish its post-trigger frames and store
+                # the cine.  How long that takes is set by the CAMERA's
+                # post-trigger count and frame rate, which need not match the
+                # fields (edited since Apply Config, or camera power-cycled).  A
+                # fixed sleep based on the fields could open the cine while the
+                # camera was still recording it.  Polls partition_recorded, not
+                # cam.Cine(), which can block in the SDK without raising.
+                step = "waiting for the camera to store the cine"
+                cam_pt = self.phantom.camera_post_trigger()
+                if cam_pt is not None:
+                    cam_post, cam_fps = cam_pt
+                    if cam_post != post_frames:
+                        self._log_queue.put(
+                            f"  Note: the camera is set to {cam_post} post-trigger frames "
+                            f"but the fields give {post_frames}. Press Apply Config to "
+                            "make them agree; waiting on the camera's count.")
+                    expect = cam_post / max(cam_fps, 1.0)
+                else:
+                    expect = post_frames / fps_val
                 QTimer.singleShot(0, self,
-                    lambda s=settle: self._cam_arm_status_lbl.setText(f"Settling {s:.1f} s…"))
-                time.sleep(settle)
+                    lambda s=expect: self._cam_arm_status_lbl.setText(
+                        f"Recording post-trigger ({s:.1f} s)…"))
+                time.sleep(min(expect, 0.5))
+                stored = self.phantom.wait_for_stored(1, timeout_s=expect + 15.0)
+                if stored is None:
+                    time.sleep(max(0.0, expect - 0.5) + 2.0)     # can't ask: old fixed settle
+                elif not stored:
+                    self._log_queue.put(
+                        f"  Warning: the camera hadn't reported the cine stored "
+                        f"{expect + 15:.0f} s after the trigger; trying the save anyway.")
+                else:
+                    time.sleep(0.5)      # let the camera finish committing the header
 
                 def _progress_reporter(label):
                     """Progress callback: status label, progress bar, and console.
@@ -6333,6 +6427,7 @@ class AtomisationApp(QMainWindow):
                         self._cam_save_progress.setVisible(True),
                     ))
                     _t_cine = time.time()
+                    step = "saving the .cine"
                     self._log_queue.put(f"── saving .cine → {os.path.basename(cine_path)} ──")
                     self.phantom.save_recording(cine_path, file_format='cine',
                                                 frame_range=frame_range,
@@ -6359,6 +6454,7 @@ class AtomisationApp(QMainWindow):
                         try: os.remove(_old)
                         except OSError: pass
                     _t_tiff = time.time()
+                    step = "saving TIFFs"
                     self._log_queue.put("── saving TIFFs ──")
                     self.phantom.save_tiffs_from_ram(tiff_dir, tiff_prefix='frame',
                                                      frame_range=frame_range,
@@ -6412,14 +6508,40 @@ class AtomisationApp(QMainWindow):
                             self._log("  (AI analysis skipped: no .cine was saved)"),
                         ))
 
-                # 5 — re-arm automatically so the camera is ready for the next trigger
+                # 5 — re-arm automatically so the camera is ready for the next trigger.
+                # The flag is cleared first: the re-arm runs on the GUI thread and
+                # would otherwise be refused as "still saving".
+                self._cam_saving = False
                 QTimer.singleShot(0, self, self._cam_arm)
 
             except Exception as e:
-                err = str(e)
+                self._cam_saving = False
+                err = f"{type(e).__name__}: {e}"
+                # The console, not just the status bar: the end-of-run auto-save
+                # overwrites the status bar seconds later, and that is how the
+                # cause of a lost capture went unrecorded (2026-10-12).
+                try:
+                    log_serial(f"Camera capture failed while {step}:\n{_tb.format_exc()}")
+                except Exception:
+                    pass
+                in_ram = None
+                try:
+                    in_ram = bool(self.phantom.cam.partition_recorded(1))
+                except Exception:
+                    pass
+                if in_ram:
+                    advice = ("The recording is still in camera RAM. Save it from PCC "
+                              "before pressing Arm: arming records over it.")
+                elif in_ram is False:
+                    advice = "The camera reports no stored recording."
+                else:
+                    advice = ("Check PCC for the recording before pressing Arm: "
+                              "arming records over it.")
+                self._log_queue.put(f"CAMERA CAPTURE FAILED while {step}: {err}")
+                self._log_queue.put(f"  {advice}")
                 QTimer.singleShot(0, self, lambda: (
-                    self._set_status(f"Trigger error: {err}", CLR_RED),
-                    self._cam_arm_status_lbl.setText("Error — re-arm manually"),
+                    self._set_status(f"Capture failed while {step}: {err}", CLR_RED),
+                    self._cam_arm_status_lbl.setText("Capture failed — see console"),
                     self._cam_arm_btn.setEnabled(True),
                     self._set_camera_armed_indicator("transparent"),
                     self._cam_save_progress.setVisible(False),
