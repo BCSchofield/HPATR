@@ -37,10 +37,20 @@ const long MAX_TRAVEL_STEPS = (long)(72.5 * steps_per_mm);   // 493000
 // count (which is wrong if homing was interrupted or steps were lost).  Same
 // polarity as the back switch: HIGH = beam blocked = at the limit.  With
 // INPUT_PULLUP a disconnected switch also reads HIGH, which fails safe (no
-// forward motion).  FRONT_LIMIT_READS consecutive HIGH reads count as a hit, so
-// one noise spike cannot stop a run.  Check with "SWITCHES:" before relying on it.
-const int FRONT_LIMIT_READS = 3;
-int frontHighCount = 0;
+// forward motion).  Check with "SWITCHES:" before relying on it.
+//
+// Both switches are filtered in time: a switch only counts as having changed once
+// every read for SWITCH_HOLD_US has agreed.  The pins use the weak internal
+// pull-up and pick up spikes from the motor (2 A, 10000 steps/s while homing): a
+// single-read check homed at mid-travel on 2026-10-08 and 2026-10-12.  A real slot
+// stays blocked for far longer than 2 ms (2 ms = 20 steps = 0.003 mm at homing speed).
+const unsigned long SWITCH_HOLD_US = 2000;
+struct SwitchFilter {
+  int pin;
+  bool agreeing;        // every read since `since` has matched the level asked for
+  unsigned long since;  // micros() of the first matching read
+};
+SwitchFilter frontFilter = {frontOpticalSwitchPin, false, 0};
 long dist; //Creates a variable to store the distance
 long travel; //Used to store value entered in the Serial Monitor
 int moveFinished = 1; //Used to check if move has been completed
@@ -90,14 +100,24 @@ void resetMovementState() {
   debugLog("Movement state reset complete");
 }
 
-// True once the front switch has read HIGH FRONT_LIMIT_READS times in a row.
-bool frontLimitHit() {
-  if (digitalRead(frontOpticalSwitchPin) == HIGH) {
-    if (frontHighCount < FRONT_LIMIT_READS) frontHighCount++;
-  } else {
-    frontHighCount = 0;
+// True once f.pin has read `level` on every read for SWITCH_HOLD_US.  Any read
+// at the other level restarts the wait.
+bool switchHeld(SwitchFilter& f, int level) {
+  if (digitalRead(f.pin) != level) {
+    f.agreeing = false;
+    return false;
   }
-  return frontHighCount >= FRONT_LIMIT_READS;
+  unsigned long now = micros();
+  if (!f.agreeing) {
+    f.agreeing = true;
+    f.since = now;
+  }
+  return now - f.since >= SWITCH_HOLD_US;
+}
+
+// True once the front switch has read HIGH (blocked) for SWITCH_HOLD_US.
+bool frontLimitHit() {
+  return switchHeld(frontFilter, HIGH);
 }
 
 // Raw state of both switches, for checking wiring and polarity from the GUI.
@@ -480,8 +500,9 @@ void loop() {
 // Backstop only, for the case where the motor is not moving at all.
 #define HOMING_ABSOLUTE_MAX_MS    300000UL
 
-// Run the stepper at its current speed until `pin` reads `target`.
-// Returns false if it travels `maxSteps` without seeing it.
+// Run the stepper at its current speed until `pin` has read `target` for
+// SWITCH_HOLD_US (see SwitchFilter).  Returns false if it travels `maxSteps`
+// without seeing it.
 //
 // Every homing wait MUST go through here.  The bare `while (digitalRead(...))`
 // loops this replaces had no bound and no output, so any switch that never
@@ -496,8 +517,9 @@ bool runUntilSwitch(int pin, int target, long maxSteps) {
   unsigned long start = millis();
   unsigned long lastBeat = start;
   homingHitFront = false;
-  frontHighCount = 0;
-  while (digitalRead(pin) != target) {
+  frontFilter.agreeing = false;
+  SwitchFilter sw = {pin, false, 0};
+  while (!switchHeld(sw, target)) {
     // Never drive forward into the front switch, even while homing.
     if (stepper.speed() > 0 && frontLimitHit()) {
       homingHitFront = true;

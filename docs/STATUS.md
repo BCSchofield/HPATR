@@ -1,6 +1,6 @@
 # STATUS — real-data droplet pipeline and Taguchi study
 
-**Last updated: 2026-10-12 (lab PC: STATUS commit refs fixed, tracked __pycache__ removed, front limit switch tested on the rig, emoji removed from GUI_Clean console messages; Mac: CCD plan complete, Phase 7 committed 2ebc9f0; Mac light-mode theme fix; batch bugs 1-2, goal-ramp bug, feed floor 2,000 steps/s; mean diameter now a headline response and the default size goal; GUI_Clean auto-trigger at end of test and pressure cut-off (both untried on the rig); GUI_Clean review fixes + front limit switch firmware (committed 58f1b94; firmware flashed and switch-tested on the lab rig 2026-10-12, all passed); next is the 33-run CCD day).** This is the live state of the work. Claude keeps it current
+**Last updated: 2026-10-12 (lab PC: STATUS commit refs fixed, tracked __pycache__ removed, front limit switch tested on the rig, emoji removed from GUI_Clean console messages, switch noise filter in firmware (needs flashing); Mac: CCD plan complete, Phase 7 committed 2ebc9f0; Mac light-mode theme fix; batch bugs 1-2, goal-ramp bug, feed floor 2,000 steps/s; mean diameter now a headline response and the default size goal; GUI_Clean auto-trigger at end of test and pressure cut-off (both untried on the rig); GUI_Clean review fixes + front limit switch firmware (committed 58f1b94; firmware flashed and switch-tested on the lab rig 2026-10-12, all passed); next is the 33-run CCD day).** This is the live state of the work. Claude keeps it current
 (see "How this file is maintained" at the bottom). History, evidence and full reasoning are in
 `docs/archive/HANDOFF_real_data_pipeline_LEGACY.md` (frozen 2026-10-07, newest section first).
 
@@ -540,6 +540,16 @@ made", "Bit depth", and the dated sections).
 
 ## Recent changes (newest first; trim to ~10 entries, older ones live in git history)
 
+- 2026-10-12 (lab PC, compiled, NOT yet flashed): **Portenta switch noise filter.** A HOME stopped at
+  mid-travel (back switch "found" after 233,673 of ~480,000 steps; back-off cleared in 0 steps, so a
+  spike on pin 5, not the beam). Same fault in the serial logs on 2026-10-08 11:17 (28 mm short; the
+  11:31 home then ran 23 mm past zero, so runs in between had a wrong zero; per-run travel is relative).
+  Every other home since 09-09 triggers at 479,500-480,100 steps moved. Fix: both switches now count
+  only after every read agrees for 2 ms (`SWITCH_HOLD_US`, `SwitchFilter`, `switchHeld()`); homing
+  (`runUntilSwitch`) and the front stop use it (the front was 3 back-to-back reads, microseconds).
+  Home shifts by at most ~20 steps (0.003 mm). Hardware cure if it persists: switch leads away from
+  motor cables, or a stiffer pull-up / 100 nF to GND on pin 5. After flashing: home a few times from
+  the far end and check "moved" is ~480,000 each time.
 - 2026-10-12 (Mac, NOT yet on the rig): **GUI_Clean safety + data fixes, and Portenta firmware.**
   FIRMWARE (`src/gui/Pressure_Motor_Portenta.cpp`, Portenta H7 M7; flashed and tested on the lab rig 2026-10-12: polarity correct, jog / move / homing all stop at the front switch, the 72.5 mm soft limit stops a forward jog before the switch is reached, so the switch is a backstop only): the
   front optical switch (pin 1, previously configured but never read) is now an ABSOLUTE forward stop:
