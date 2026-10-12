@@ -1,6 +1,6 @@
 # STATUS — real-data droplet pipeline and Taguchi study
 
-**Last updated: 2026-10-12 (lab PC: GUI_Clean camera save hardened after a lost auto-trigger capture (untried on the rig); STATUS commit refs fixed, tracked __pycache__ removed, front limit switch tested on the rig, emoji removed from GUI_Clean console messages, switch noise filter in firmware (needs flashing), GUI_Clean SCCM ramp + bubbler starts with Start Experiment (untried on the rig); Mac: CCD plan complete, Phase 7 committed 2ebc9f0; Mac light-mode theme fix; batch bugs 1-2, goal-ramp bug, feed floor 2,000 steps/s; mean diameter now a headline response and the default size goal; GUI_Clean auto-trigger at end of test and pressure cut-off (both untried on the rig); GUI_Clean review fixes + front limit switch firmware (committed 58f1b94; firmware flashed and switch-tested on the lab rig 2026-10-12, all passed); next is the 33-run CCD day).** This is the live state of the work. Claude keeps it current
+**Last updated: 2026-10-12 (lab PC: 33-run CCD day captured, all cines saved, run 33 stall flag cleared by hand; GUI_Clean camera save hardened after a lost auto-trigger capture (untried on the rig); STATUS commit refs fixed, tracked __pycache__ removed, front limit switch tested on the rig, emoji removed from GUI_Clean console messages, switch noise filter in firmware (needs flashing), GUI_Clean SCCM ramp + bubbler starts with Start Experiment (untried on the rig); Mac: CCD plan complete, Phase 7 committed 2ebc9f0; Mac light-mode theme fix; batch bugs 1-2, goal-ramp bug, feed floor 2,000 steps/s; mean diameter now a headline response and the default size goal; GUI_Clean auto-trigger at end of test and pressure cut-off (both untried on the rig); GUI_Clean review fixes + front limit switch firmware (committed 58f1b94; firmware flashed and switch-tested on the lab rig 2026-10-12, all passed); next is the 33-run CCD day).** This is the live state of the work. Claude keeps it current
 (see "How this file is maintained" at the bottom). History, evidence and full reasoning are in
 `docs/archive/HANDOFF_real_data_pipeline_LEGACY.md` (frozen 2026-10-07, newest section first).
 
@@ -539,6 +539,15 @@ made", "Bit depth", and the dated sections).
 - Give Ben exact paste-able commands with absolute paths and the real interpreter.
 
 ## Recent changes (newest first; trim to ~10 entries, older ones live in git history)
+
+- 2026-10-12 (lab PC): **33-run CCD day captured.** All 33 runs in `E:\Experiments\2026\10\12\`
+  (105301 … 151407), settings and order match the seed-1 sheet (`ben_plan()` in
+  `tests/test_rsm_design.py`); every run has a full 13.93 GB cine. The two morning runs that lost their
+  cine (~10:36, 11:10) were deleted by Ben. Run 33 (0.8 mm check) was flagged "STOPPED: bubbler motor
+  stalled mid-run stalled at 66 RPM" by the GUI's stall check; Ben says the run was fine, so the flag
+  was removed by hand (run_summary Run status -> "complete", master_log Notes prefix removed; inline-XML
+  edit, images untouched). Worth knowing when reading run 33's RPM. Next: batch on Windows, then the
+  Response surface tab.
 
 - 2026-10-12 (lab PC, compiled only, NOT yet on the rig): **GUI_Clean lost auto-trigger capture.** A
   run's auto-trigger fired and logged "saving .cine", then failed ("Error — re-arm manually"); no .cine

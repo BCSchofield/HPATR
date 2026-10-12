@@ -14,7 +14,7 @@
   "cone_camera_index": 0,
   "save_video": true,
   "save_tiffs": false,
-  "orifice": "1.8mm",
+  "orifice": "0.8mm",
   "bubbler_height_mm": "0.5",
   "run_ai_analysis": false,
   "auto_trigger_end": true,
@@ -24,7 +24,7 @@
   "cone_autofocus": true,
   "cone_focus": 50,
   "cone_top_crop": 0.24,
-  "last_flow": 7000.0,
+  "last_flow": 9000.0,
   "alicat_port": "COM4",
   "lamella_crop": {
     "x": 860,
