@@ -1,6 +1,6 @@
 # STATUS — real-data droplet pipeline and Taguchi study
 
-**Last updated: 2026-10-12 (Mac: CCD plan complete, Phase 7 committed 2ebc9f0; Mac light-mode theme fix; batch bugs 1-2, goal-ramp bug, feed floor 2,000 steps/s; mean diameter now a headline response and the default size goal; GUI_Clean auto-trigger at end of test and pressure cut-off (both untried on the rig); GUI_Clean review fixes + front limit switch firmware (uncommitted, needs flashing and a switch check on the rig); next is the 33-run CCD day).** This is the live state of the work. Claude keeps it current
+**Last updated: 2026-10-12 (lab PC: STATUS commit refs fixed, tracked __pycache__ removed; Mac: CCD plan complete, Phase 7 committed 2ebc9f0; Mac light-mode theme fix; batch bugs 1-2, goal-ramp bug, feed floor 2,000 steps/s; mean diameter now a headline response and the default size goal; GUI_Clean auto-trigger at end of test and pressure cut-off (both untried on the rig); GUI_Clean review fixes + front limit switch firmware (committed 58f1b94; firmware flashed on the lab rig 2026-10-12, switch test pending); next is the 33-run CCD day).** This is the live state of the work. Claude keeps it current
 (see "How this file is maintained" at the bottom). History, evidence and full reasoning are in
 `docs/archive/HANDOFF_real_data_pipeline_LEGACY.md` (frozen 2026-10-07, newest section first).
 
@@ -112,7 +112,7 @@ Taguchi app with a Response surface tab (detect or build a CCD, analyse, validat
 runs), richer figures/data for both analyses, and a PowerPoint deck. First real-data trial: the
 9x3 as a gas x feed surface (Phase 4b).
 
-- **Phase 1 done (2026-10-11), uncommitted:** `run_metrics.py`, the shared per-run data layer (size
+- **Phase 1 done (2026-10-11), committed c43df2f:** `run_metrics.py`, the shared per-run data layer (size
   distribution incl. Dv10/50/90 and span; steadiness and pulsing incl. spectrum and slow share;
   pressure inside the camera window; un-atomised pieces; sizer and data quality incl. static spots;
   atomised liquid flow; capture time), cached per run in `<output>/cache/run_metrics/`. Five new
@@ -127,7 +127,7 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
   `9x3 Taguchi Repeats (reference copy)/` of the published output, and `output/` for practice
   publishes. All 27 load as analysable, 0 runnable (no .cine), so the batch cannot re-measure them.
   Point test publishes here, never at `2026/10/05` or `9x3 Taguchi Repeats`.
-- **Phase 2 done (2026-10-11), uncommitted, awaiting Ben's review:** richer Taguchi outputs + deck.
+- **Phase 2 done (2026-10-11), committed 5649800, awaiting Ben's review:** richer Taguchi outputs + deck.
   New `figures_extra.py` (size distributions + cumulative volume, Dv10-90 per run, per-run time
   series of droplets/frame with pressure and of liquid area, spectra, steadiness by condition,
   drift, replicates with t CIs, interaction plots with the L9 aliasing caveat, residual
@@ -172,7 +172,7 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
     window for most of that capture.
 
 - **Phase 2 committed (5649800).**
-- **Phase 3a done (2026-10-11), uncommitted, awaiting review:** `rsm_detect.py` detects the
+- **Phase 3a done (2026-10-11), committed 3846548, awaiting review:** `rsm_detect.py` detects the
   response-surface design from the run folders alone (no sheet): varying factors + held-fixed list;
   design levels (uneven allowed: DESIGN coding classifies, REAL coding fits, 1.2 mm -> +0.08); special
   values that only occur with every other factor at centre (symmetric pair beyond the levels = axial,
@@ -194,7 +194,7 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
   there; the built sheet gets its own file, not `rsm_design.json`).
 
 - **Phase 3a committed (3846548).**
-- **Phase 3b done (2026-10-11), uncommitted, awaiting review:** `rsm_design.py`, the generic CCF
+- **Phase 3b done (2026-10-11), committed 0b292ee, awaiting review:** `rsm_design.py`, the generic CCF
   run-sheet builder: 2-5 factors (built-in keys or workbook fields), real low/mid/high levels
   (uneven allowed), all corners or a half fraction (last factor = product of the others: res V for
   5 factors, 16+10+5 = 31 runs), optional block factor (outer blocks: corners opened and closed by
@@ -217,7 +217,7 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
     panel. Marks what is built and what is not. Keep it in step with the code.
 
 - **Phase 3b committed (0b292ee).**
-- **Phase 4 done (2026-10-11), uncommitted, awaiting review:** the response-surface statistics.
+- **Phase 4 done (2026-10-11), committed c786e69, awaiting review:** the response-surface statistics.
   `rsm_stats.py` (numpy only): quadratic in real coding (axis factors full quadratic; nuisance factors
   linear or linear + square, no interactions; optional centred time term); OLS with SE / t / p,
   R^2 / adjusted / predicted (PRESS); 95% CI and PI; lack of fit vs pure error; backward elimination
@@ -242,7 +242,7 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
 - **Phase 4 committed (c786e69).** Rig limits (Ben, 2026-10-11): gas flow max 12,000 sccm (now enforced by
   the builder, `rsm_design.RIG_LIMITS`); there is NO rated pressure limit, so peak pressure is reported,
   never a constraint.
-- **Phase 4b done (2026-10-11), uncommitted, awaiting review:** the 9x3 as a gas x feed surface, run the way
+- **Phase 4b done (2026-10-11), committed 7c2037b, awaiting review:** the 9x3 as a gas x feed surface, run the way
   the tab's Analyse button will (select runs -> detect -> models -> `rsm_publish.publish`), into
   `Practice Folder/output/9x3 response surface (gas x feed)/` (36 s). Built for it (the plan's Phase 5
   publish, at 2-axis scope): `rsm_figures.py` (contour maps per held RPM, 3D surfaces, profiler with
@@ -264,7 +264,7 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
   (pairs, holds) and the CCD day; Phase 6 is the real recommender.
 
 - **Phase 4b committed (7c2037b).**
-- **Phase 5 done (2026-10-11), uncommitted, awaiting review:** the response-surface outputs generalised to
+- **Phase 5 done (2026-10-11), committed 9c8b8d8, awaiting review:** the response-surface outputs generalised to
   3-5 factors and the CCD day. `rsm_figures.MapLayout` / `map_layout()`: the CCD plan's layout by default
   (gas x feed across/up, one panel per block factor = orifice, one figure per next factor = RPM, any
   fifth held at the best setting), overridable; all-pairs maps; drift figure; desirability maps per
@@ -285,7 +285,7 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
   PI. Tests `test_rsm_ccd.py` (8). The 9x3 trial re-published with the new outputs.
 
 - **Phase 5 committed (9c8b8d8).**
-- **Phase 6 done (2026-10-11), uncommitted, awaiting review:** `rsm_recommend.py`, the next-run recommender.
+- **Phase 6 done (2026-10-11), committed b4d4baa, awaiting review:** `rsm_recommend.py`, the next-run recommender.
   confirm (best setting x3 + centre anchor, snapped to the rig's steps / existing inserts / limits) always;
   steepest (path of steepest ascent of the desirability from the best setting, outward on edge factors,
   stops at the rig limit) and new_ccd (same-size CCF shifted so the best point is inside, built by
@@ -330,7 +330,8 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
 
 0. **The 33-run 4-factor CCD day** (gas 7000/9000/11000, RPM 100/500/900, feed 3000/4000/5000,
    orifice 0.5/1.2/1.8; orifice blocks, 5 centres, block repeats, 0 rpm control, 0.8 mm check).
-   Before it: Ben practises the Response surface tab on the 9x3 copy (`docs/RSM_GUIDE.md`, "Using
+   Before it: test the flashed front limit switch firmware and the GUI_Clean fixes on the rig (switch
+   polarity, forward jog/move stopping at the switch, homing, cut-off, auto-trigger). Ben practises the Response surface tab on the 9x3 copy (`docs/RSM_GUIDE.md`, "Using
    the app"); pull `Testing` + install python-pptx on the lab PC (item 5); (app bugs 1-2 now fixed); build + export the run sheet in the app, type each run's
    "CCD run N <point type>" in Notes. After it: batch on Windows, then the Response surface tab.
 1. **RPM confirmation test** (Ben, lower urgency now): one gas/silicone setting, RPM alternated
@@ -361,7 +362,7 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
 - **Syringe steps/mm = 6800, confirmed in firmware** (`Pressure_Motor_Portenta.cpp:30`), matching
   the GUI, so recorded liquid flows and GLRs stand. Older docs saying 13,600 were an arithmetic slip
   (fixed 2026-10-07). **Firmware bug found:** the travel check allows 986,000 steps (= 145 mm, not
-  72.5 mm); the GUI's 72.5 mm limit is what currently protects the syringe. Not yet fixed/reflashed.
+  72.5 mm); FIXED in 58f1b94 (MAX_TRAVEL_STEPS = 493000) and flashed 2026-10-12; the front switch is now the hard stop.
 - **Measurement method (longer term):** `docs/DROPLET_MEASUREMENT_METHOD.md` (2026-10-07) is the
   plan to make sizes defensible: dot-reticle + glass-bead calibration of edge, focus and depth of
   field, size-dependent DOF weighting, shape classification instead of rejection, volume-based
@@ -387,7 +388,7 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
 
 ## Known bugs, not fixed
 
-GUI_Clean (review 2026-10-12, Mac). FIXED the same day (uncommitted, offscreen-tested, NOT yet on the rig):
+GUI_Clean (review 2026-10-12, Mac). FIXED the same day (committed 58f1b94, offscreen-tested; firmware flashed 2026-10-12, NOT yet tested on the rig):
 Alicat reader death / silence, jog limits + front switch, Clean removed, close check, cut-off clearing,
 Space bar, speed 0, stopped runs marked, conditions recorded at Start, atomic writes, settings saved
 half-loaded, unused code, How To button + text (details under Recent changes). Still open (Ben's call):
@@ -404,7 +405,7 @@ half-loaded, unused code, How To button + text (details under Recent changes). S
   the GUI thread; ~30 setStyleSheet/s; console never trimmed.
 
 Taguchi_Analysis_UI (found in the 2026-10-06 batch):
-1. ~~One failed log write kills the worker~~ **FIXED 2026-10-11** (Mac, uncommitted): writes to the
+1. ~~One failed log write kills the worker~~ **FIXED 2026-10-11** (Mac, committed 6f63e76): writes to the
    run log, events and state never fail a run or the worker (kept and retried); a run that fails with
    an OS error or with its folder / the job folder unreachable waits up to 30 min for the drive and is
    redone once (reusing finished work); if the drive does not return the worker stops as
@@ -536,7 +537,7 @@ made", "Bit depth", and the dated sections).
 ## Recent changes (newest first; trim to ~10 entries, older ones live in git history)
 
 - 2026-10-12 (Mac, NOT yet on the rig): **GUI_Clean safety + data fixes, and Portenta firmware.**
-  FIRMWARE (`src/gui/Pressure_Motor_Portenta.cpp`, compiles for Portenta H7 M7; MUST be flashed): the
+  FIRMWARE (`src/gui/Pressure_Motor_Portenta.cpp`, Portenta H7 M7; flashed on the lab rig 2026-10-12, switch test pending): the
   front optical switch (pin 1, previously configured but never read) is now an ABSOLUTE forward stop:
   3 consecutive HIGH reads halt any forward move, jog or homing back-off (`FRONT_LIMIT: pos=` then
   MOVEMENT_COMPLETE / JOG_LIMIT); forward moves/jogs are refused while it reads HIGH; backward always
