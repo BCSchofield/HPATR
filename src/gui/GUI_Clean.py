@@ -4734,7 +4734,7 @@ class AtomisationApp(QMainWindow):
 
     def _alicat_alarm(self, why: str):
         msg = f"ALICAT: {why} — pressure is NOT being monitored"
-        self._log(f"⚠ {msg}.")
+        self._log(f"{msg}.")
         self._hdr_pressure_lbl.setText("no data")
         self._hdr_pressure_dot.setStyleSheet(f"color:{CLR_RED}; font-size:10px; background:transparent;")
         self._flash_log_border(CLR_RED)
@@ -4793,7 +4793,7 @@ class AtomisationApp(QMainWindow):
         self._pressure_off(f"pressure cut-off: {pressure:.2f} barA reached the "
                            f"{limit:.2f} barA limit")
         msg = f"PRESSURE CUT-OFF: {pressure:.2f} barA reached the {limit:.2f} barA limit"
-        self._log(f"⚠ {msg} — traverse, bubbler and gas stopped.")
+        self._log(f"{msg} — traverse, bubbler and gas stopped.")
         self._set_status(f"{msg} — everything stopped", CLR_RED)
         self._flash_log_border(CLR_RED)
         self._update_cutoff_status()
@@ -5075,7 +5075,7 @@ class AtomisationApp(QMainWindow):
             # the bubbler was not at its set speed for all of it.
             self._mark_run_stopped(f"bubbler motor stalled mid-run{rpm_note.replace(' — ', ' ')}",
                                    early=False)
-            self._log(f"⚠ Bubbler stalled during the run{rpm_note}; the run will be "
+            self._log(f"Bubbler stalled during the run{rpm_note}; the run will be "
                       "marked as stopped.")
 
     def _start_serial_reader(self):
@@ -5197,7 +5197,7 @@ class AtomisationApp(QMainWindow):
             self._reset_rpm_spin_ui()
             self._log(f"Bubbler motor stopped automatically ({reason}).")
         except Exception as e:
-            self._log(f"⚠ Bubbler motor auto-stop FAILED ({e}) -- stop it manually.")
+            self._log(f"Bubbler motor auto-stop FAILED ({e}) -- stop it manually.")
             self._set_status(f"Bubbler auto-stop failed: {e}", CLR_RED)
 
     def _on_movement_complete(self):
@@ -5267,7 +5267,7 @@ class AtomisationApp(QMainWindow):
             if self._run_stop_reason:
                 self._set_status(f"Run STOPPED ({self._run_stop_reason}) — saved and "
                                  "marked as stopped", CLR_RED)
-                self._log(f"⚠ Run stopped early: {self._run_stop_reason}. Saved with "
+                self._log(f"Run stopped early: {self._run_stop_reason}. Saved with "
                           "Run status = stopped.")
             else:
                 self._set_status("Experiment complete ✓ — remember to Save to Excel", CLR_GREEN)
@@ -5540,7 +5540,7 @@ class AtomisationApp(QMainWindow):
             self._front_limit_steps = None
         pos = (f" at {self._front_limit_steps / 6800.0:.1f} mm"
                if self._front_limit_steps is not None else "")
-        self._log(f"⚠ FRONT LIMIT SWITCH reached{pos} — the Portenta stopped the traverse.")
+        self._log(f"FRONT LIMIT SWITCH reached{pos} — the Portenta stopped the traverse.")
         self._flash_log_border(CLR_RED)
         if self.pressure_data['experiment_active']:
             self._mark_run_stopped(f"front limit switch reached{pos}")
@@ -5551,7 +5551,7 @@ class AtomisationApp(QMainWindow):
 
     def _on_traverse_stall(self, line: str):
         """Portenta: the traverse stopped moving for 2 s before its target."""
-        self._log(f"⚠ Traverse stalled: {line}")
+        self._log(f"Traverse stalled: {line}")
         self._mark_run_stopped(f"traverse stalled ({line.split(':', 1)[-1].strip()})")
 
     def _on_switch_report(self, line: str):
@@ -5566,7 +5566,7 @@ class AtomisationApp(QMainWindow):
     def _on_portenta_error(self, line: str):
         """A move the Portenta refused, or a failed homing: say so, and end a run
         that is waiting for a move that will never come."""
-        self._log(f"⚠ Portenta: {line}")
+        self._log(f"Portenta: {line}")
         self._set_status(f"Portenta: {line}", CLR_RED)
         if line.startswith("HOMING_FAILED"):
             self._homed_dot.setStyleSheet(f"color:{CLR_RED}; font-size:10px;")
@@ -6437,7 +6437,7 @@ class AtomisationApp(QMainWindow):
         if _sv:
             self._log(f"  sizer {_sv}")
         if results.get("_classical_error"):
-            self._log(f"  ⚠ classical stage failed: {results['_classical_error']}")
+            self._log(f"  classical stage failed: {results['_classical_error']}")
 
         # Stage breakdown, so a slow run says WHICH stage was slow.
         stages = results.get("_stage_seconds") or {}

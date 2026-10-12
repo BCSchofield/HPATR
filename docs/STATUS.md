@@ -1,6 +1,6 @@
 # STATUS — real-data droplet pipeline and Taguchi study
 
-**Last updated: 2026-10-12 (lab PC: STATUS commit refs fixed, tracked __pycache__ removed; Mac: CCD plan complete, Phase 7 committed 2ebc9f0; Mac light-mode theme fix; batch bugs 1-2, goal-ramp bug, feed floor 2,000 steps/s; mean diameter now a headline response and the default size goal; GUI_Clean auto-trigger at end of test and pressure cut-off (both untried on the rig); GUI_Clean review fixes + front limit switch firmware (committed 58f1b94; firmware flashed on the lab rig 2026-10-12, switch test pending); next is the 33-run CCD day).** This is the live state of the work. Claude keeps it current
+**Last updated: 2026-10-12 (lab PC: STATUS commit refs fixed, tracked __pycache__ removed, front limit switch tested on the rig, emoji removed from GUI_Clean console messages; Mac: CCD plan complete, Phase 7 committed 2ebc9f0; Mac light-mode theme fix; batch bugs 1-2, goal-ramp bug, feed floor 2,000 steps/s; mean diameter now a headline response and the default size goal; GUI_Clean auto-trigger at end of test and pressure cut-off (both untried on the rig); GUI_Clean review fixes + front limit switch firmware (committed 58f1b94; firmware flashed and switch-tested on the lab rig 2026-10-12, all passed); next is the 33-run CCD day).** This is the live state of the work. Claude keeps it current
 (see "How this file is maintained" at the bottom). History, evidence and full reasoning are in
 `docs/archive/HANDOFF_real_data_pipeline_LEGACY.md` (frozen 2026-10-07, newest section first).
 
@@ -330,8 +330,8 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
 
 0. **The 33-run 4-factor CCD day** (gas 7000/9000/11000, RPM 100/500/900, feed 3000/4000/5000,
    orifice 0.5/1.2/1.8; orifice blocks, 5 centres, block repeats, 0 rpm control, 0.8 mm check).
-   Before it: test the flashed front limit switch firmware and the GUI_Clean fixes on the rig (switch
-   polarity, forward jog/move stopping at the switch, homing, cut-off, auto-trigger). Ben practises the Response surface tab on the 9x3 copy (`docs/RSM_GUIDE.md`, "Using
+   Before it: try the remaining GUI_Clean fixes on the rig (front limit switch firmware DONE 2026-10-12;
+   still untried: cut-off, auto-trigger, static run, Alicat alarm). Ben practises the Response surface tab on the 9x3 copy (`docs/RSM_GUIDE.md`, "Using
    the app"); pull `Testing` + install python-pptx on the lab PC (item 5); (app bugs 1-2 now fixed); build + export the run sheet in the app, type each run's
    "CCD run N <point type>" in Notes. After it: batch on Windows, then the Response surface tab.
 1. **RPM confirmation test** (Ben, lower urgency now): one gas/silicone setting, RPM alternated
@@ -388,10 +388,14 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
 
 ## Known bugs, not fixed
 
-GUI_Clean (review 2026-10-12, Mac). FIXED the same day (committed 58f1b94, offscreen-tested; firmware flashed 2026-10-12, NOT yet tested on the rig):
+GUI_Clean (review 2026-10-12, Mac). FIXED the same day (committed 58f1b94; firmware + front switch tested on the rig 2026-10-12, the rest offscreen only):
 Alicat reader death / silence, jog limits + front switch, Clean removed, close check, cut-off clearing,
 Space bar, speed 0, stopped runs marked, conditions recorded at Start, atomic writes, settings saved
 half-loaded, unused code, How To button + text (details under Recent changes). Still open (Ben's call):
+- Traverse driver unpowered (rig safety switch off, 2026-10-12): the motor is limp, homing counts steps to
+  its 1.1M-step limit and the GUI takes ~110 s to connect, then shows HOMING_FAILED "back switch never
+  triggered". Check the safety switch / supply first. Proposed, not made: a driver check before homing
+  (fail in ~3 s) and Home re-sending the driver settings (Ben has not decided).
 - STOP / cut-off within 0.5 s of Start does not cancel the delayed traverse command (Ben: leave).
 - AI auto-save writes into whichever run is current when the AI finishes (Ben: runs never overlap).
 - `_run_folder` never cleared: a manual trigger between runs writes into, and deletes the TIFFs of,
@@ -537,7 +541,7 @@ made", "Bit depth", and the dated sections).
 ## Recent changes (newest first; trim to ~10 entries, older ones live in git history)
 
 - 2026-10-12 (Mac, NOT yet on the rig): **GUI_Clean safety + data fixes, and Portenta firmware.**
-  FIRMWARE (`src/gui/Pressure_Motor_Portenta.cpp`, Portenta H7 M7; flashed on the lab rig 2026-10-12, switch test pending): the
+  FIRMWARE (`src/gui/Pressure_Motor_Portenta.cpp`, Portenta H7 M7; flashed and tested on the lab rig 2026-10-12: polarity correct, jog / move / homing all stop at the front switch, the 72.5 mm soft limit stops a forward jog before the switch is reached, so the switch is a backstop only): the
   front optical switch (pin 1, previously configured but never read) is now an ABSOLUTE forward stop:
   3 consecutive HIGH reads halt any forward move, jog or homing back-off (`FRONT_LIMIT: pos=` then
   MOVEMENT_COMPLETE / JOG_LIMIT); forward moves/jogs are refused while it reads HIGH; backward always
