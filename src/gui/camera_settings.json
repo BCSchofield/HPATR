@@ -17,6 +17,8 @@
   "orifice": "1.2mm",
   "bubbler_height_mm": "2",
   "run_ai_analysis": false,
+  "auto_trigger_end": false,
+  "pressure_cutoff_bar": 9.0,
   "ai_stride": 10,
   "cone_autofocus": true,
   "cone_focus": 50,

@@ -1,6 +1,6 @@
 # STATUS — real-data droplet pipeline and Taguchi study
 
-**Last updated: 2026-10-11 (Mac: CCD plan complete, Phase 7 committed 2ebc9f0; Mac light-mode theme fix; batch bugs 1-2, goal-ramp bug, feed floor 2,000 steps/s; mean diameter now a headline response and the default size goal; GUI_Clean auto-trigger at end of test (untried on the rig); next is the 33-run CCD day).** This is the live state of the work. Claude keeps it current
+**Last updated: 2026-10-12 (Mac: CCD plan complete, Phase 7 committed 2ebc9f0; Mac light-mode theme fix; batch bugs 1-2, goal-ramp bug, feed floor 2,000 steps/s; mean diameter now a headline response and the default size goal; GUI_Clean auto-trigger at end of test and pressure cut-off (both untried on the rig); next is the 33-run CCD day).** This is the live state of the work. Claude keeps it current
 (see "How this file is maintained" at the bottom). History, evidence and full reasoning are in
 `docs/archive/HANDOFF_real_data_pipeline_LEGACY.md` (frozen 2026-10-07, newest section first).
 
@@ -519,6 +519,14 @@ made", "Bit depth", and the dated sections).
 
 ## Recent changes (newest first; trim to ~10 entries, older ones live in git history)
 
+- 2026-10-12 (Mac, NOT yet tried on the rig): **GUI_Clean pressure cut-off** box under Gas Flow Off
+  (Hardware tab, Mass Flow Control card; 0-30 barA, empty/0 = off; remembered as `pressure_cutoff_bar`). Every
+  Alicat frame (~0.2 s) compares the RAW barA reading (absolute, not the smoothed trace) with it; the
+  first frame at or above it runs `_pressure_off()` (traverse/silicone feed STOP, bubbler stop, gas
+  zeroed), logs, flashes the console red and shows a warning. Latched (fires once), re-arms below 90%
+  of the limit; status beside the box reads Off / Armed / TRIPPED. A run stopped this way still
+  auto-saves (the Portenta answers STOP with MOVEMENT_COMPLETE); re-home afterwards. For the
+  small-orifice / high-flow tests. Checked offscreen with fake devices.
 - 2026-10-11 (Mac, NOT yet tried on the rig): **GUI_Clean "Auto-trigger at end of test"** tickbox beside
   Disarm / Abort (Camera tab; remembered in camera_settings.json as `auto_trigger_end`). On Start
   Experiment it arms the camera if needed and fires the trigger at test length - 2 s - post-trigger

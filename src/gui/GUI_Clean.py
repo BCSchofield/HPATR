@@ -1603,6 +1603,11 @@ class AtomisationApp(QMainWindow):
         self._pressure_ema = None   # reset when new readings arrive after a gap
         self._flow_ema     = None
 
+        # Pressure cut-off: None = off. Latched once tripped so it fires once per
+        # excursion; re-arms when the raw reading falls back below 90% of it.
+        self._cutoff_bar     = None
+        self._cutoff_tripped = False
+
         # Guard flag — set while the save-format checkboxes are being corrected
         # programmatically so the toggled handler doesn't recurse.
         self._save_fmt_guard = False
@@ -2564,6 +2569,43 @@ class AtomisationApp(QMainWindow):
             "Immediately sets the Alicat setpoint to 0 sccm")
         off_f_btn.clicked.connect(self._flow_off)
 
+        # Automatic STOP EVERYTHING, driven by the Alicat pressure.
+        self._cutoff_entry = QLineEdit()
+        self._cutoff_entry.setPlaceholderText("off")
+        self._cutoff_entry.setFixedWidth(56)
+        self._cutoff_entry.setValidator(QDoubleValidator(0.0, 30.0, 2))
+        self._cutoff_entry.setToolTip(
+            "<b>Pressure cut-off (barA, 0–30)</b><br>"
+            "If the live Alicat pressure ever reaches this value, STOP EVERYTHING "
+            "fires automatically: traverse (silicone feed) stopped, bubbler motor "
+            "stopped, gas zeroed.<br><br>"
+            "Compared against the <b>raw</b> barA reading (the Alicat's absolute "
+            "pressure, ≈ gauge + 1 bar), not the smoothed trace, so it acts on the "
+            "first frame over (~0.2 s polling).<br>"
+            "Fires once, then re-arms when the pressure falls below 90% of the "
+            "cut-off. Leave empty or 0 to switch it off. Remembered between "
+            "sessions.<br><br>"
+            "<i>A run stopped this way is saved as normal (the traverse reports "
+            "complete on STOP); re-home afterwards as for any emergency stop.</i>")
+        self._cutoff_entry.editingFinished.connect(self._on_cutoff_changed)
+        self._cutoff_status_lbl = QLabel("Off")
+        self._cutoff_status_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
+        cut_lbl = QLabel("Cut-off barA")
+        cut_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
+        cutoff_row = QWidget()
+        crl = QHBoxLayout(cutoff_row)
+        crl.setContentsMargins(0, 0, 0, 0)
+        crl.setSpacing(6)
+        crl.addWidget(cut_lbl)
+        crl.addWidget(self._cutoff_entry)
+        crl.addWidget(self._cutoff_status_lbl)
+        off_f_stack = QWidget()
+        off_f_vl = QVBoxLayout(off_f_stack)
+        off_f_vl.setContentsMargins(0, 0, 0, 0)
+        off_f_vl.setSpacing(4)
+        off_f_vl.addWidget(off_f_btn)
+        off_f_vl.addWidget(cutoff_row)
+
         self._last_flow_btn = QPushButton("Set last flow")
         self._last_flow_btn.setStyleSheet(f"""
             QPushButton {{
@@ -2589,7 +2631,7 @@ class AtomisationApp(QMainWindow):
         set_f_vl.addWidget(set_f_btn)
         set_f_vl.addWidget(self._last_flow_btn)
         mfir.addWidget(mf_lbl); mfir.addWidget(self._flow_entry)
-        mfir.addWidget(set_f_stack); mfir.addStretch(); mfir.addWidget(off_f_btn)
+        mfir.addWidget(set_f_stack); mfir.addStretch(); mfir.addWidget(off_f_stack)
         c_mfc.layout().addWidget(mf_input_row)
 
         # Live readouts
@@ -4471,8 +4513,60 @@ class AtomisationApp(QMainWindow):
         self._mfc_temp_lbl.setText(f"{temp:.1f} °C")
         clr = CLR_GREEN if mass_flow > 0.5 else CLR_TEXT
         self._mfc_flow_lbl.setStyleSheet(f"color:{clr}; font-size:14px; font-weight:700;")
+        self._check_pressure_cutoff(pressure)
         # The Alicat is the only source for the live graphs and the run log.
         self._record_alicat_sample(pressure, mass_flow)
+
+    def _on_cutoff_changed(self):
+        """Read the cut-off box (empty or 0 = off), re-arm it and remember it."""
+        text = self._cutoff_entry.text().strip()
+        try:
+            val = float(text) if text else 0.0
+        except ValueError:
+            val = 0.0
+        new = val if 0.0 < val <= 30.0 else None
+        if new != self._cutoff_bar:
+            self._log(f"Pressure cut-off {'set to %.2f barA' % new if new else 'switched off'}.")
+        self._cutoff_bar, self._cutoff_tripped = new, False
+        self._update_cutoff_status()
+        self._save_camera_settings()
+
+    def _update_cutoff_status(self):
+        if self._cutoff_bar is None:
+            text, clr = "Off", CLR_TEXT_SEC
+        elif self._cutoff_tripped:
+            text, clr = "TRIPPED", CLR_RED
+        else:
+            text, clr = "Armed", CLR_GREEN
+        self._cutoff_status_lbl.setText(text)
+        self._cutoff_status_lbl.setStyleSheet(f"color:{clr}; font-size:12px; font-weight:600;")
+
+    def _check_pressure_cutoff(self, pressure: float):
+        """STOP EVERYTHING the first frame the raw pressure reaches the cut-off."""
+        limit = self._cutoff_bar
+        if limit is None:
+            return
+        if self._cutoff_tripped:
+            if pressure < 0.9 * limit:
+                self._cutoff_tripped = False
+                self._log(f"Pressure cut-off re-armed ({pressure:.2f} barA).")
+                self._update_cutoff_status()
+            return
+        if pressure < limit:
+            return
+        self._cutoff_tripped = True
+        self._pressure_off()
+        msg = f"PRESSURE CUT-OFF: {pressure:.2f} barA reached the {limit:.2f} barA limit"
+        self._log(f"⚠ {msg} — traverse, bubbler and gas stopped.")
+        self._set_status(f"{msg} — everything stopped", CLR_RED)
+        self._flash_log_border(CLR_RED)
+        self._update_cutoff_status()
+        # After the stop commands have gone out; the dialog runs its own loop.
+        QTimer.singleShot(0, self, lambda: self._warn(
+            "Pressure cut-off",
+            f"The pressure reached {pressure:.2f} barA (cut-off {limit:.2f} barA).\n\n"
+            "STOP EVERYTHING has fired: traverse, bubbler motor and gas flow are "
+            "stopped. Re-home the traverse before the next run."))
 
     def _set_flow(self):
         if not self.alicat_connected or not self.alicat:
@@ -8016,6 +8110,13 @@ class AtomisationApp(QMainWindow):
             self._auto_trig_chk.blockSignals(True)     # no save half-way through loading
             self._auto_trig_chk.setChecked(bool(s.get("auto_trigger_end", False)))
             self._auto_trig_chk.blockSignals(False)
+            try:                        # a bad value must not stop the rest loading
+                _cut = float(s.get("pressure_cutoff_bar") or 0)
+            except (TypeError, ValueError):
+                _cut = 0.0
+            self._cutoff_bar = _cut if 0 < _cut <= 30 else None
+            self._cutoff_entry.setText(f"{_cut:g}" if self._cutoff_bar else "")
+            self._update_cutoff_status()
             self._ai_stride.setText(str(s.get("ai_stride", self.DEFAULT_STRIDE)))
             if hasattr(self, "_rho_liquid_entry"):
                 self._rho_liquid_entry.setText(
@@ -8139,6 +8240,7 @@ class AtomisationApp(QMainWindow):
                 "run_ai_analysis":   self._pipeline_check.isChecked(),
                 "auto_trigger_end":  self._auto_trig_chk.isChecked()
                                      if hasattr(self, "_auto_trig_chk") else False,
+                "pressure_cutoff_bar": getattr(self, "_cutoff_bar", None),
                 "ai_stride":         self._get_ai_stride(),
                 "cone_autofocus":    self._cone_autofocus_chk.isChecked(),
                 "cone_focus":        self._cone_focus_spin.value(),
