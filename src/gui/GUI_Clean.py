@@ -897,7 +897,13 @@ class AlicatMFC:
     line driver, and dropping them kills transmit while leaving receive alive.
 
     Threading: every port operation belongs to the reader thread.  Other threads
-    only ever call set_flow()/flow_off(), which enqueue a command string.
+    only ever call set_flow()/flow_off(), which enqueue a setpoint.
+
+    Ramping: set_flow(sccm, ramp_rate) moves the setpoint from wherever it is now
+    to `sccm` at `ramp_rate` sccm/s.  The reader sends the ramp's current value on
+    every cycle (RAMP_INTERVAL while ramping), so the Alicat sees a staircase of
+    small steps that its own control loop smooths.  flow_off() always cuts to
+    0 at once and cancels any ramp.
     """
     DEVICE_ID = "A"
     BAUD      = 19200
@@ -905,7 +911,10 @@ class AlicatMFC:
     def __init__(self, port: str):
         self.port = port
         self.ser: serial.Serial | None = None
-        self._cmd_queue: queue.SimpleQueue = queue.SimpleQueue()
+        self._cmd_queue: queue.SimpleQueue = queue.SimpleQueue()   # setpoints, sccm
+        self._lock = threading.Lock()
+        self._commanded = 0.0     # last setpoint sent (or about to be)
+        self._ramp = None         # (from_sccm, to_sccm, sccm_per_s, t0) while ramping
 
     # ── command builders ──────────────────────────────────────────────────
     @classmethod
@@ -953,7 +962,7 @@ class AlicatMFC:
                 f"is '{self.DEVICE_ID}', baud is {self.BAUD}, and control mode is Serial/Front Panel."
             )
 
-        self._cmd_queue.put(self.cmd_setpoint(0.0))   # always start from 0 sccm
+        self._cmd_queue.put(0.0)   # always start from 0 sccm
 
     def _probe(self, attempts: int = 3) -> bool:
         """Poll a few times and report whether the unit answers at all."""
@@ -975,18 +984,48 @@ class AlicatMFC:
             except Exception: pass
 
     # ── queued commands (safe from any thread) ────────────────────────────
-    def set_flow(self, sccm: float):
-        self._cmd_queue.put(self.cmd_setpoint(sccm))
+    def set_flow(self, sccm: float, ramp_rate: float | None = None) -> float:
+        """Go to `sccm`: at once, or at `ramp_rate` sccm/s from the current
+        setpoint.  Returns the ramp time in seconds (0 for a jump)."""
+        with self._lock:
+            start = self._ramp_value() if self._ramp else self._commanded
+            if ramp_rate and ramp_rate > 0 and abs(sccm - start) >= 0.1:
+                self._ramp = (start, sccm, ramp_rate, time.monotonic())
+                return abs(sccm - start) / ramp_rate
+            self._ramp = None
+            self._cmd_queue.put(sccm)
+            return 0.0
 
     def flow_off(self):
-        self._cmd_queue.put(self.cmd_setpoint(0.0))
+        with self._lock:
+            self._ramp = None
+            self._cmd_queue.put(0.0)
+
+    @property
+    def ramping(self) -> bool:
+        return self._ramp is not None
+
+    def _ramp_value(self) -> float:
+        start, target, rate, t0 = self._ramp
+        step = rate * (time.monotonic() - t0)
+        if step >= abs(target - start):
+            return target
+        return start + step if target > start else start - step
 
     def next_command(self) -> str:
-        """A pending setpoint if one is queued, otherwise a plain status poll."""
-        try:
-            return self._cmd_queue.get_nowait()
-        except queue.Empty:
-            return self.cmd_poll()
+        """A pending setpoint if one is queued, else the ramp's current value,
+        else a plain status poll."""
+        with self._lock:
+            try:
+                sccm = self._cmd_queue.get_nowait()
+            except queue.Empty:
+                if self._ramp is None:
+                    return self.cmd_poll()
+                sccm = self._ramp_value()
+                if sccm == self._ramp[1]:
+                    self._ramp = None          # arrived: this is the last step
+            self._commanded = sccm
+            return self.cmd_setpoint(sccm)
 
     # ── raw I/O (reader thread only) ──────────────────────────────────────
     def write(self, cmd: str):
@@ -1644,6 +1683,8 @@ class AtomisationApp(QMainWindow):
         # excursion; re-arms when the raw reading falls back below 90% of it.
         self._cutoff_bar     = None
         self._cutoff_tripped = False
+        # Gas ramp, sccm per second: None = setpoints jump straight to the target.
+        self._flow_ramp = None
         # How the current run ended early, if it did (None = ran to completion).
         # Recorded in run_summary ("Run status") and prefixed to the master_log
         # Notes. _move_stopped_early / _last_move_pct give the travel actually
@@ -2669,12 +2710,37 @@ class AtomisationApp(QMainWindow):
         crl.addWidget(cut_lbl)
         crl.addWidget(self._cutoff_entry)
         crl.addWidget(self._cutoff_status_lbl)
+
+        # Gas ramp: how fast Set Flow and Start Experiment move the setpoint.
+        self._ramp_entry = QLineEdit()
+        self._ramp_entry.setPlaceholderText("off")
+        self._ramp_entry.setFixedWidth(56)
+        self._ramp_entry.setValidator(_BlankOrRangeValidator(0.0, 12000.0, 0))
+        self._ramp_entry.setToolTip(
+            "<b>SCCM ramp (sccm per second, 0–12000)</b><br>"
+            "Set Flow and Start Experiment move the gas smoothly from the current "
+            "setpoint to the target at this rate: 1000 takes 6000 sccm up from 0 "
+            "in 6 s. The setpoint is updated 10 times a second.<br><br>"
+            "Gas Flow Off, STOP EVERYTHING and the pressure cut-off always cut the "
+            "gas at once. Leave empty or 0 to jump straight to the target. "
+            "Remembered between sessions.")
+        self._ramp_entry.editingFinished.connect(self._on_ramp_changed)
+        ramp_lbl = QLabel("SCCM ramp /s")
+        ramp_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
+        ramp_row = QWidget()
+        rrl = QHBoxLayout(ramp_row)
+        rrl.setContentsMargins(0, 0, 0, 0)
+        rrl.setSpacing(6)
+        rrl.addWidget(ramp_lbl)
+        rrl.addWidget(self._ramp_entry)
+        rrl.addStretch()
         off_f_stack = QWidget()
         off_f_vl = QVBoxLayout(off_f_stack)
         off_f_vl.setContentsMargins(0, 0, 0, 0)
         off_f_vl.setSpacing(4)
         off_f_vl.addWidget(off_f_btn)
         off_f_vl.addWidget(cutoff_row)
+        off_f_vl.addWidget(ramp_row)
 
         self._last_flow_btn = QPushButton("Set last flow")
         self._last_flow_btn.setStyleSheet(f"""
@@ -4613,6 +4679,8 @@ class AtomisationApp(QMainWindow):
     # One request/response exchange every 200 ms; the unit replies in ~30–50 ms.
     ALICAT_POLL_INTERVAL = 0.2
     ALICAT_REPLY_TIMEOUT = 0.15
+    # While a gas ramp runs: a new setpoint every 100 ms (10 steps a second).
+    ALICAT_RAMP_INTERVAL = 0.1
 
     def _start_alicat_reader(self):
         if not self.alicat or not self.alicat.ser: return
@@ -4645,7 +4713,9 @@ class AtomisationApp(QMainWindow):
                     misses = 0
                     self._parse_alicat_line(frame)
 
-                remaining = self.ALICAT_POLL_INTERVAL - (time.monotonic() - cycle_start)
+                interval = (self.ALICAT_RAMP_INTERVAL if mfc.ramping
+                            else self.ALICAT_POLL_INTERVAL)
+                remaining = interval - (time.monotonic() - cycle_start)
                 if remaining > 0:
                     time.sleep(remaining)
         except serial.SerialException as e:
@@ -4764,6 +4834,29 @@ class AtomisationApp(QMainWindow):
         self._update_cutoff_status()
         self._save_camera_settings()
 
+    def _on_ramp_changed(self):
+        """Read the SCCM ramp box (empty or 0 = off) and remember it."""
+        text = self._ramp_entry.text().strip()
+        try:
+            val = float(text) if text else 0.0
+        except ValueError:
+            val = 0.0
+        new = val if 0.0 < val <= 12000.0 else None
+        if new != self._flow_ramp:
+            self._log(f"Gas ramp {'set to %.0f sccm/s' % new if new else 'switched off'}.")
+        self._flow_ramp = new
+        self._save_camera_settings()
+
+    def _send_flow(self, sccm: float) -> str:
+        """Send a setpoint, ramped if the SCCM ramp box is set; returns a status
+        phrase for the caller to show."""
+        secs = self.alicat.set_flow(sccm, self._flow_ramp)
+        if secs > 0:
+            self._log(f"Gas ramping to {sccm:.0f} sccm at {self._flow_ramp:.0f} sccm/s "
+                      f"({secs:.1f} s).")
+            return f"ramping to {sccm:.1f} sccm ({secs:.1f} s)"
+        return f"set to {sccm:.1f} sccm"
+
     def _update_cutoff_status(self):
         if self._cutoff_bar is None:
             text, clr = "Off", CLR_TEXT_SEC
@@ -4817,8 +4910,7 @@ class AtomisationApp(QMainWindow):
             val = float(self._flow_entry.text())
             if not 0 <= val <= 12000:
                 raise ValueError
-            self.alicat.set_flow(val)
-            self._set_status(f"Flow set to {val:.1f} sccm")
+            self._set_status(f"Flow {self._send_flow(val)}")
             self._last_flow = val
             self._last_flow_btn.setText(f"Set last: {val:.1f} sccm")
             self._last_flow_btn.setEnabled(True)
@@ -4870,17 +4962,31 @@ class AtomisationApp(QMainWindow):
             self._reset_rpm_spin_ui()   # deliberate stop, not a stall
             self._set_status("Motor stopped")
         else:
-            try:
-                rpm_text = self._rpm_entry.text().strip()
-                rpm = float(rpm_text) if rpm_text else 100.0
-                self.rpm_arduino.send_rpm(rpm)
-            except Exception as e:
-                self._set_status(f"RPM send error: {e}", CLR_RED); return
-            self.rpm_spinning = True
-            self._motor_stalled = False   # fresh start clears any previous stall indication
-            self._rpm_spin_btn.setText("Stop")
-            self._rpm_spin_btn.setStyleSheet(accent_button("Stop", CLR_GREEN).styleSheet())
-            self._set_status(f"Motor spinning at {rpm:.0f} RPM", CLR_GREEN)
+            rpm_text = self._rpm_entry.text().strip()
+            if self._start_spin(float(rpm_text) if rpm_text else 100.0):
+                self._set_status(f"Motor spinning at {self._spin_rpm:.0f} RPM", CLR_GREEN)
+
+    def _start_spin(self, rpm: float) -> bool:
+        """Send the RPM to the Uno and show the motor as spinning."""
+        try:
+            self.rpm_arduino.send_rpm(rpm)
+        except Exception as e:
+            self._set_status(f"RPM send error: {e}", CLR_RED)
+            return False
+        self._spin_rpm = rpm
+        self.rpm_spinning = True
+        self._motor_stalled = False   # fresh start clears any previous stall indication
+        self._rpm_spin_btn.setText("Stop")
+        self._rpm_spin_btn.setStyleSheet(accent_button("Stop", CLR_GREEN).styleSheet())
+        return True
+
+    def _start_rpm(self) -> float | None:
+        """The RPM in the box if Start Experiment should spin the bubbler, else None."""
+        try:
+            rpm = float(self._rpm_entry.text().strip())
+        except ValueError:
+            return None
+        return rpm if rpm > 0 else None
 
     def _start_rpm_serial_reader(self):
         if not self.rpm_arduino or not self.rpm_arduino.ser: return
@@ -7659,6 +7765,15 @@ class AtomisationApp(QMainWindow):
                        "no live Alicat readings, so it could not fire.\n\n"
                        "Connect the MFC, or switch the cut-off off, before starting.")
             return
+        # A value in the RPM box means this run spins the bubbler.
+        start_rpm = self._start_rpm()
+        if start_rpm is not None and not (self.rpm_connected and self.rpm_arduino):
+            self._warn("Bubbler motor not connected",
+                       f"The RPM box says {start_rpm:g} RPM, but the RPM Arduino is not "
+                       "connected, so the bubbler would not spin.\n\n"
+                       "Connect it on the Hardware tab, or clear the RPM box for a run "
+                       "without rotation.")
+            return
         if static:
             auto_plan = None
             if self._auto_trig_chk.isChecked():
@@ -7730,7 +7845,9 @@ class AtomisationApp(QMainWindow):
         self._run_elapsed_timer.start()
 
         if self.alicat_connected and self.alicat:
-            self.alicat.set_flow(flow)
+            self._send_flow(flow)
+        if start_rpm is not None and self._start_spin(start_rpm):
+            self._log(f"Bubbler motor started at {start_rpm:g} RPM.")
         self._pre_move_cumulative   = self.cumulative_distance
         if static:
             # No move, so no MOVEMENT_COMPLETE and no watchdog: the run ends with
@@ -8539,6 +8656,12 @@ class AtomisationApp(QMainWindow):
             self._cutoff_bar = _cut if 0 < _cut <= 30 else None
             self._cutoff_entry.setText(f"{_cut:g}" if self._cutoff_bar else "")
             self._update_cutoff_status()
+            try:
+                _ramp = float(s.get("gas_ramp_sccm_s") or 0)
+            except (TypeError, ValueError):
+                _ramp = 0.0
+            self._flow_ramp = _ramp if 0 < _ramp <= 12000 else None
+            self._ramp_entry.setText(f"{_ramp:g}" if self._flow_ramp else "")
             self._ai_stride.setText(str(s.get("ai_stride", self.DEFAULT_STRIDE)))
             if hasattr(self, "_rho_liquid_entry"):
                 self._rho_liquid_entry.setText(
@@ -8665,6 +8788,7 @@ class AtomisationApp(QMainWindow):
                 "auto_trigger_end":  self._auto_trig_chk.isChecked()
                                      if hasattr(self, "_auto_trig_chk") else False,
                 "pressure_cutoff_bar": getattr(self, "_cutoff_bar", None),
+                "gas_ramp_sccm_s":   getattr(self, "_flow_ramp", None),
                 "ai_stride":         self._get_ai_stride(),
                 "cone_autofocus":    self._cone_autofocus_chk.isChecked(),
                 "cone_focus":        self._cone_focus_spin.value(),
