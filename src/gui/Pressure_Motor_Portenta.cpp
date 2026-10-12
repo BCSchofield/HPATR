@@ -29,7 +29,18 @@ TMC5160Stepper driver = TMC5160Stepper(CS_PIN, R_SENSE);
 
 constexpr uint32_t steps_per_mm = ((200 * 16) / 2) * 4.25; // ((200*16)/2)*4.25  (((Steps per rotation of motor * MicroSteps)/Lead of screw)*GearBox). = 6,800
 const int frontOpticalSwitchPin = 1; //Creates a variable to store the front optical switch pin
-const int backOpticalSwitchPin = 5; //Creates a variable to store the back optical switch pin 
+const int backOpticalSwitchPin = 5; //Creates a variable to store the back optical switch pin
+// Soft travel limit: 72.5 mm from home.  Was 986000, the figure for the old (wrong)
+// 13600 steps/mm, which allowed 145 mm.
+const long MAX_TRAVEL_STEPS = (long)(72.5 * steps_per_mm);   // 493000
+// The front optical switch is the ABSOLUTE forward stop, independent of the step
+// count (which is wrong if homing was interrupted or steps were lost).  Same
+// polarity as the back switch: HIGH = beam blocked = at the limit.  With
+// INPUT_PULLUP a disconnected switch also reads HIGH, which fails safe (no
+// forward motion).  FRONT_LIMIT_READS consecutive HIGH reads count as a hit, so
+// one noise spike cannot stop a run.  Check with "SWITCHES:" before relying on it.
+const int FRONT_LIMIT_READS = 3;
+int frontHighCount = 0;
 long dist; //Creates a variable to store the distance
 long travel; //Used to store value entered in the Serial Monitor
 int moveFinished = 1; //Used to check if move has been completed
@@ -79,6 +90,44 @@ void resetMovementState() {
   debugLog("Movement state reset complete");
 }
 
+// True once the front switch has read HIGH FRONT_LIMIT_READS times in a row.
+bool frontLimitHit() {
+  if (digitalRead(frontOpticalSwitchPin) == HIGH) {
+    if (frontHighCount < FRONT_LIMIT_READS) frontHighCount++;
+  } else {
+    frontHighCount = 0;
+  }
+  return frontHighCount >= FRONT_LIMIT_READS;
+}
+
+// Raw state of both switches, for checking wiring and polarity from the GUI.
+void reportSwitches() {
+  Serial.println("SWITCHES: back=" + String(digitalRead(backOpticalSwitchPin) ? "HIGH" : "LOW") +
+                 " front=" + String(digitalRead(frontOpticalSwitchPin) ? "HIGH" : "LOW") +
+                 " pos=" + String(stepper.currentPosition()));
+}
+
+// Hard stop at the front switch.  Ends a move (MOVEMENT_COMPLETE, so the GUI
+// closes the run) or a jog (JOG_POS / JOG_LIMIT).  FRONT_LIMIT comes first so the
+// GUI can record why.
+void haltAtFrontLimit() {
+  long pos = stepper.currentPosition();
+  stepper.setSpeed(0);
+  stepper.moveTo(pos);                 // distanceToGo() -> 0: no deceleration run-on
+  Serial.println("FRONT_LIMIT: pos=" + String(pos));
+  if (jogMode) {
+    jogMode = false;
+    Serial.println("JOG_POS:" + String(pos));
+    Serial.println("JOG_LIMIT");
+  }
+  if (moveFinished == 0) {
+    moveFinished = 1;
+    movementTimeout = 0;
+    Serial.println("MOVEMENT_COMPLETE");
+  }
+  Serial.println("ARDUINO_READY");
+}
+
 void setup() {
   SPI.begin(); //Starts the SPI communication
   Serial.begin(9600);  // Initialize serial communication (USB CDC)
@@ -89,6 +138,7 @@ void setup() {
   pinMode(backOpticalSwitchPin, INPUT_PULLUP); // Set the back optical switch pin as INPUT_PULLUP
   while(!Serial); // Waits for serial port to connect
   Serial.println("ARDUINO_READY"); //Handshake for Python code
+  reportSwitches();  // wiring check: both should read LOW (beam clear) away from the ends
   
   pinMode(CS_PIN, OUTPUT); // Sets CS_PIN (Pin 10) as an Output
   digitalWrite(CS_PIN, HIGH); // Writes the CS_PIN (Pin 10) as High
@@ -229,11 +279,23 @@ void loop() {
       int jogSpeed    = inputString.substring(jogSpeedIdx + 4, jogDirIdx).toInt();
       jogDirection    = inputString.substring(jogDirIdx + 5).toInt();
       debugLog("JOG command - Speed: " + String(jogSpeed) + ", Dir: " + String(jogDirection));
+      if (jogDirection > 0 && digitalRead(frontOpticalSwitchPin) == HIGH) {
+        jogMode = true;            // so haltAtFrontLimit reports JOG_POS / JOG_LIMIT
+        haltAtFrontLimit();        // refuse: already at the front switch
+        inputString = "";
+        stringComplete = false;
+        return;
+      }
       stepper.enableOutputs();
       stepper.setMaxSpeed(jogSpeed);
       stepper.setSpeed((float)(jogDirection * jogSpeed));
       jogMode  = true;
       lastMillis = millis();
+    }
+    // Report both limit switches (wiring / polarity check)
+    else if (inputString.indexOf("SWITCHES:") != -1) {
+      reportSwitches();
+      Serial.println("ARDUINO_READY");
     }
     // Check for STOP command — emergency stop for jogs AND SPEED:/DIST: moves
     else if (inputString.indexOf("STOP") != -1) {
@@ -271,6 +333,16 @@ void loop() {
     stringComplete = false; // Clear the string complete variable
     debugLog("Command processing complete, waiting for next command");
     debugLog("=== COMMAND PROCESSING END ===");
+  }
+
+  // Front optical switch: absolute forward stop for moves and jogs.  Polled
+  // every loop so the debounce count stays current; only acts on FORWARD motion,
+  // so the carriage can always be driven back off the switch.
+  bool atFront = frontLimitHit();
+  bool movingForward = (moveFinished == 0 && stepper.distanceToGo() > 0) ||
+                       (jogMode && jogDirection > 0);
+  if (atFront && movingForward) {
+    haltAtFrontLimit();
   }
 
   // Monitor movement progress (non-blocking)
@@ -379,7 +451,7 @@ void loop() {
   // Jog mode: constant-speed movement driven by held GUI button
   if (jogMode) {
     long currentPos = stepper.currentPosition();
-    bool atLimit = (jogDirection > 0 && currentPos >= 986000) ||
+    bool atLimit = (jogDirection > 0 && currentPos >= MAX_TRAVEL_STEPS) ||
                    (jogDirection < 0 && currentPos <= 0);
     if (atLimit) {
       jogMode = false;
@@ -404,7 +476,7 @@ void loop() {
 // At 6800 steps/mm the back-off covers only 0.029 mm/s, so a 30 s limit would
 // abort after 0.88 mm and blame a healthy switch.
 #define HOMING_BACKOFF_MAX_STEPS   68000L    // 10 mm — far more than clearing a slot
-#define HOMING_SEARCH_MAX_STEPS  1100000L    // beyond the 986000-step axis limit
+#define HOMING_SEARCH_MAX_STEPS  1100000L    // well beyond the 493000-step (72.5 mm) axis
 // Backstop only, for the case where the motor is not moving at all.
 #define HOMING_ABSOLUTE_MAX_MS    300000UL
 
@@ -417,11 +489,20 @@ void loop() {
 // and driving the motor into a hard stop the whole time.  A dead or miswired
 // switch presented as "the GUI can't find the board on COMx", which is
 // impossible to diagnose from the outside.
+bool homingHitFront = false;   // set when runUntilSwitch stopped at the front switch
+
 bool runUntilSwitch(int pin, int target, long maxSteps) {
   long startPos = stepper.currentPosition();
   unsigned long start = millis();
   unsigned long lastBeat = start;
+  homingHitFront = false;
+  frontHighCount = 0;
   while (digitalRead(pin) != target) {
+    // Never drive forward into the front switch, even while homing.
+    if (stepper.speed() > 0 && frontLimitHit()) {
+      homingHitFront = true;
+      return false;
+    }
     if (labs(stepper.currentPosition() - startPos) > maxSteps) return false;
     if (millis() - start > HOMING_ABSOLUTE_MAX_MS) return false;
     // Heartbeat so a connected host can see homing is alive and moving,
@@ -466,6 +547,7 @@ void homing() {
     debugLog("Switch already triggered - moving away first");
     stepper.setSpeed(200);
     if (!runUntilSwitch(backOpticalSwitchPin, LOW, HOMING_BACKOFF_MAX_STEPS)) {
+      if (homingHitFront) { homingFailed("front limit switch reached while backing off"); return; }
       homingFailed("back switch stayed HIGH after backing off 10mm - check it is "
                    "wired to pin 5, shares ground with the board, and is not "
                    "inverted (pin 5 reads HIGH when disconnected)");
@@ -494,6 +576,7 @@ void homing() {
   stepper.setSpeed(200); // Move away from switch
   debugLog("Moving away from switch at speed 200");
   if (!runUntilSwitch(backOpticalSwitchPin, LOW, HOMING_BACKOFF_MAX_STEPS)) {
+    if (homingHitFront) { homingFailed("front limit switch reached while backing off home"); return; }
     homingFailed("back switch stayed HIGH after backing off home");
     return;
   }
@@ -516,10 +599,16 @@ void executeMovement(int speed, float distance) {
   long currentPos = stepper.currentPosition();
   long targetPos = currentPos + travelSteps;
   
-  // Validate that we don't exceed the 72.5mm limit (986000 steps)
-  if (targetPos < 0 || targetPos > 986000) {
+  // Validate that we don't exceed the 72.5mm limit (MAX_TRAVEL_STEPS)
+  if (targetPos < 0 || targetPos > MAX_TRAVEL_STEPS) {
     Serial.println("ERROR: Movement would exceed limits (0-72.5mm from home)");
-    debugLog("Current position: " + String(currentPos) + ", Target would be: " + String(targetPos) + ", Limit: 986000");
+    debugLog("Current position: " + String(currentPos) + ", Target would be: " + String(targetPos) + ", Limit: " + String(MAX_TRAVEL_STEPS));
+    return;
+  }
+  // Refuse a forward move while sitting on the front switch.
+  if (travelSteps > 0 && digitalRead(frontOpticalSwitchPin) == HIGH) {
+    Serial.println("FRONT_LIMIT: pos=" + String(currentPos));
+    Serial.println("ERROR: Movement refused - front limit switch is triggered");
     return;
   }
   

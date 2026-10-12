@@ -40,7 +40,6 @@ from datetime import datetime
 
 import matplotlib
 matplotlib.use("Agg")          # non-interactive backend — only used for snapshot renders
-import matplotlib.pyplot as plt
 
 import pyqtgraph as pg
 pg.setConfigOption('background', '#2c2c2e')
@@ -52,19 +51,16 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QLineEdit, QComboBox, QCheckBox, QTextEdit, QPlainTextEdit,
     QFrame, QTabWidget, QSizePolicy, QProgressBar, QScrollArea,
     QGridLayout, QMessageBox, QFileDialog, QSpinBox, QInputDialog,
-    QDialog, QDialogButtonBox, QRadioButton
+    QDialog, QDialogButtonBox, QRadioButton, QAbstractSpinBox
 )
 from PySide6.QtCore import Qt, QTimer, Signal, Slot, QObject, QThread, QSize, QEvent, QRectF, QPointF
-from PySide6.QtGui import QFont, QPixmap, QImage, QColor, QPalette, QIcon, QPainter, QPen, QPolygonF, QIntValidator, QDoubleValidator
+from PySide6.QtGui import QFont, QPixmap, QImage, QColor, QPalette, QIcon, QPainter, QPen, QPolygonF, QIntValidator, QDoubleValidator, QValidator
 
 # ── Path setup ──────────────────────────────────────────────────────────────
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
-    from config_loader import get_gui_config, resolve_path, find_lacie_drive
-    GUI_CONFIG = get_gui_config()
+    from config_loader import find_lacie_drive
 except ImportError:
-    GUI_CONFIG = {}
-    def resolve_path(p, lacie_base=None): return p
     def find_lacie_drive(): return None
 
 # Cone_4.py lives in Trials/ relative to the repo root
@@ -81,7 +77,7 @@ except ImportError:
 # ── Optional SDKs ────────────────────────────────────────────────────────────
 PHANTOM_SDK_AVAILABLE = False
 try:
-    from pyphantom import Phantom, utils, cine
+    from pyphantom import Phantom, utils
     PHANTOM_SDK_AVAILABLE = True
 except ImportError:
     pass
@@ -1033,7 +1029,7 @@ class PhantomController:
     def __init__(self):
         self.ph = None; self.cam = None; self.current_cine = None
         self.is_connected = False; self.is_recording = False
-        self.recording_started = False; self.is_armed = False
+        self.is_armed = False
         self._fps = 1000.0  # updated by configure()
 
     def connect(self, ip_address=None, camera_index=0):
@@ -1083,10 +1079,10 @@ class PhantomController:
 
     def start_recording(self):
         self.cam.record(); self.is_recording = True; self.is_armed = True
-        self.recording_started = False; return True
+        return True
 
     def trigger(self):
-        self.cam.trigger(); self.recording_started = True; self.is_armed = False; return True
+        self.cam.trigger(); self.is_armed = False; return True
 
     # A CINE save is abandoned only when progress genuinely stops, never on a
     # fixed ceiling: a large capture can legitimately run far longer than any
@@ -1181,7 +1177,7 @@ class PhantomController:
 
     def abort(self):
         if self.is_recording:
-            self.cam.clear_ram(); self.is_recording = False; self.recording_started = False
+            self.cam.clear_ram(); self.is_recording = False
         self.is_armed = False
         return True
 
@@ -1326,9 +1322,6 @@ class _ElidingLabel(QLabel):
     def setText(self, text):                      # noqa: N802  (Qt naming)
         self._full = text or ""
         self._apply()
-
-    def fullText(self) -> str:                    # noqa: N802
-        return self._full
 
     def resizeEvent(self, e):                     # noqa: N802
         super().resizeEvent(e)
@@ -1478,6 +1471,52 @@ class _ThreadLocalStream:
         raise io.UnsupportedOperation("fileno")
 
 
+class _BlankOrRangeValidator(QDoubleValidator):
+    """A QDoubleValidator that also accepts an empty box (meaning "off").
+    QDoubleValidator calls empty text Intermediate, and editingFinished only
+    fires on Acceptable text, so clearing the box used to change nothing."""
+
+    def validate(self, text, pos):
+        if not text.strip():
+            return (QValidator.State.Acceptable, text, pos)
+        return super().validate(text, pos)
+
+
+# ── Safe file writes ──────────────────────────────────────────────────────────
+# Spreadsheets and settings are written to a temporary file in the same folder
+# and then swapped in with os.replace, which is atomic on one volume: a crash, a
+# full disk or a LaCie dropout mid-write leaves the previous file intact rather
+# than a truncated one. (Windows: the swap fails if Excel has the file open,
+# exactly as writing it in place did.)
+
+def _tmp_path(path):
+    """`run_summary.xlsx` -> `run_summary.saving.xlsx` (keeps the extension the
+    writers infer the format from)."""
+    root, ext = os.path.splitext(path)
+    return f"{root}.saving{ext}"
+
+
+def _commit_tmp(tmp, path):
+    try:
+        os.replace(tmp, path)
+    except Exception:
+        try: os.remove(tmp)
+        except OSError: pass
+        raise
+
+
+def _replace_atomically(path, write):
+    """Call write(tmp_path), then swap the result in over `path`."""
+    tmp = _tmp_path(path)
+    try:
+        write(tmp)
+    except Exception:
+        try: os.remove(tmp)
+        except OSError: pass
+        raise
+    _commit_tmp(tmp, path)
+
+
 # ── Main application window ───────────────────────────────────────────────────
 
 def auto_trigger_plan(distance_mm, speed_sps, pre_s, post_s, *, steps_per_mm=6800,
@@ -1557,14 +1596,12 @@ class AtomisationApp(QMainWindow):
         self.phantom = PhantomController() if PHANTOM_SDK_AVAILABLE else None
         self.afg     = AFGController()     if PYVISA_AVAILABLE       else None
 
-        self.is_windows = platform.system() == "Windows"
-        self.camera_available = self.is_windows and PHANTOM_SDK_AVAILABLE
+        self.camera_available = platform.system() == "Windows" and PHANTOM_SDK_AVAILABLE
 
         self.cumulative_distance = 0.0
         self._pre_move_cumulative  = 0.0   # cumulative_distance before the current motor move
         self._pending_move_distance = 0.0  # distance of the move in progress
         self._jogging = False
-        self.cleaning_in_progress = False
         self._experiment_saved = True   # True until an experiment runs unsaved
         self._run_folder = None          # Set eagerly on Start Experiment, cleared on next start
         self._run_started_at = None      # datetime of that start; the spreadsheets stamp THIS
@@ -1607,6 +1644,21 @@ class AtomisationApp(QMainWindow):
         # excursion; re-arms when the raw reading falls back below 90% of it.
         self._cutoff_bar     = None
         self._cutoff_tripped = False
+        # How the current run ended early, if it did (None = ran to completion).
+        # Recorded in run_summary ("Run status") and prefixed to the master_log
+        # Notes. _move_stopped_early / _last_move_pct give the travel actually
+        # covered, so the travel counter is not credited the full distance.
+        self._run_stop_reason    = None
+        self._move_stopped_early = False
+        self._last_move_pct      = 0
+        self._front_limit_steps  = None
+        # The run's conditions as they were at Start (see _snapshot_run_conditions)
+        self._run_conditions     = None
+        # True from Jog press to release, independent of the board's replies
+        self._jog_held           = False
+        # Alicat health: time of the last frame (monotonic) and a latched alarm
+        self._alicat_last_frame_t = None
+        self._alicat_stale        = False
 
         # Guard flag — set while the save-format checkboxes are being corrected
         # programmatically so the toggled handler doesn't recurse.
@@ -1619,6 +1671,9 @@ class AtomisationApp(QMainWindow):
         self._last_saved_run_folder: str | None = None
         self._build_ui()
         self._load_camera_settings()
+        # Space = camera trigger (see _SpaceTriggerFilter)
+        self._space_filter = _SpaceTriggerFilter(self)
+        QApplication.instance().installEventFilter(self._space_filter)
         # Bring the MFC up on its own — the rig always has one, and every run
         # needs the flow and pressure trace it provides.
         QTimer.singleShot(800, self, self._auto_connect_alicat)
@@ -1675,6 +1730,17 @@ class AtomisationApp(QMainWindow):
         self._lacie_poll_timer.setInterval(5000)
         self._lacie_poll_timer.timeout.connect(self._poll_lacie)
         self._lacie_poll_timer.start()
+
+        # Ends a run after STOP EVERYTHING when no MOVEMENT_COMPLETE follows
+        self._stop_fallback_timer = QTimer(self)
+        self._stop_fallback_timer.setSingleShot(True)
+        self._stop_fallback_timer.timeout.connect(self._end_run_after_stop)
+
+        # Alicat health check (see _check_alicat_alive)
+        self._alicat_health_timer = QTimer(self)
+        self._alicat_health_timer.setInterval(500)
+        self._alicat_health_timer.timeout.connect(self._check_alicat_alive)
+        self._alicat_health_timer.start()
 
         # Log panel queue drain — flushes pipeline/cone stdout into the right-panel log widget
         self._log_poll_timer = QTimer(self)
@@ -2007,7 +2073,7 @@ class AtomisationApp(QMainWindow):
             "3. Zeroes the AliCat flow setpoint<br>"
             "<i>Re-home the traverse motor afterwards — the travel counter "
             "credits the full commanded distance on an aborted move.</i>")
-        self._pressure_off_btn_left.clicked.connect(self._pressure_off)
+        self._pressure_off_btn_left.clicked.connect(lambda: self._pressure_off())
         pressure_off_card.layout().addWidget(self._pressure_off_btn_left)
 
         vl.addWidget(pressure_off_card)
@@ -2205,11 +2271,15 @@ class AtomisationApp(QMainWindow):
                 border-bottom: 2px solid {CLR_ACCENT};
             }}
         """)
+        # Index of the How To tab itself (always last), not a hard-coded number:
+        # it was 6 / 5 after two tabs were added, opening Extremes and lighting
+        # the button on Cone.
+        _how_to_idx = self._tabs.count() - 1
         _how_to_btn.clicked.connect(
-            lambda checked: self._tabs.setCurrentIndex(6 if checked else 0)
+            lambda checked: self._tabs.setCurrentIndex(_how_to_idx if checked else 0)
         )
         self._tabs.currentChanged.connect(
-            lambda idx: _how_to_btn.setChecked(idx == 5)
+            lambda idx: _how_to_btn.setChecked(idx == _how_to_idx)
         )
         self._tabs.setCornerWidget(_how_to_btn, Qt.Corner.TopRightCorner)
         return self._tabs
@@ -2573,7 +2643,7 @@ class AtomisationApp(QMainWindow):
         self._cutoff_entry = QLineEdit()
         self._cutoff_entry.setPlaceholderText("off")
         self._cutoff_entry.setFixedWidth(56)
-        self._cutoff_entry.setValidator(QDoubleValidator(0.0, 30.0, 2))
+        self._cutoff_entry.setValidator(_BlankOrRangeValidator(0.0, 30.0, 2))
         self._cutoff_entry.setToolTip(
             "<b>Pressure cut-off (barA, 0–30)</b><br>"
             "If the live Alicat pressure ever reaches this value, STOP EVERYTHING "
@@ -2688,7 +2758,7 @@ class AtomisationApp(QMainWindow):
         motor_btns = QWidget()
         mb = QHBoxLayout(motor_btns); mb.setContentsMargins(0,0,0,0); mb.setSpacing(8)
         self._home_btn  = accent_button("🏠  Home",    CLR_ORANGE)
-        self._clean_btn = accent_button("🧼  Clean",   CLR_PURPLE)
+        self._switches_btn = ghost_button("Check switches")
         self._move_btn  = accent_button("Move",        CLR_ACCENT)
         self._homed_dot = dot_indicator(CLR_RED)
         homed_lbl = QLabel("Homed"); homed_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
@@ -2727,26 +2797,29 @@ class AtomisationApp(QMainWindow):
         jog_vl.addWidget(self._jog_up_btn)
         jog_vl.addWidget(self._jog_down_btn)
 
-        self._home_btn.setFixedHeight(36); self._clean_btn.setFixedHeight(36); self._move_btn.setFixedHeight(36)
+        self._home_btn.setFixedHeight(36); self._switches_btn.setFixedHeight(36); self._move_btn.setFixedHeight(36)
         self._home_btn.setToolTip(
             "<b>Home motor</b><br>"
             "1. Drives the motor to the reference (zero) position<br>"
             "2. Sets the internal position counter to zero<br>"
             "Run this once before any other motor commands")
-        self._clean_btn.setToolTip(
-            "<b>Cleaning cycle</b><br>"
-            "1. Moves the motor forward through the cleaning stroke<br>"
-            "2. Returns to the starting position<br>"
-            "Flushes the nozzle to clear any blockages")
+        self._switches_btn.setToolTip(
+            "<b>Check limit switches</b><br>"
+            "Asks the Portenta for the raw state of both optical switches and logs it "
+            "to the console: back (home) and front (absolute forward stop).<br>"
+            "Each should read LOW with the beam clear and HIGH with it blocked. "
+            "The front switch stops any forward move or jog the moment it reads HIGH; "
+            "a front switch that reads HIGH with the beam clear (unplugged, or wired "
+            "the other way round) blocks all forward motion.")
         self._move_btn.setToolTip(
             "<b>Move motor</b><br>"
             "1. Reads the Speed (steps/s) and Motor Travel (mm) fields<br>"
             "2. Sends a relative move command to the Portenta<br>"
             "3. Motor moves by that distance at that speed")
         self._home_btn.clicked.connect(self._home_motor)
-        self._clean_btn.clicked.connect(self._start_cleaning)
+        self._switches_btn.clicked.connect(self._check_switches)
         self._move_btn.clicked.connect(self._move_motor)
-        mb.addWidget(self._home_btn); mb.addWidget(self._clean_btn)
+        mb.addWidget(self._home_btn); mb.addWidget(self._switches_btn)
         mb.addStretch(); mb.addWidget(self._homed_dot); mb.addWidget(homed_lbl)
         mb.addStretch(); mb.addWidget(jog_widget); mb.addWidget(self._move_btn)
         c3.layout().addWidget(motor_btns)
@@ -3833,110 +3906,198 @@ class AtomisationApp(QMainWindow):
         vl = QVBoxLayout(w); vl.setContentsMargins(20,20,20,20); vl.setSpacing(14)
 
         sections = [
-            ("GETTING STARTED", [
-                ("1. Connect the Arduino",
-                 "Go to the Hardware tab. Select the correct serial port from the dropdown and click Connect. "
-                 "The status dot in the header turns green when connected. The Arduino controls the stepper "
-                 "motor. Gas flow and pressure come from the AliCat MFC, connected separately below it."),
-                ("2. Home the motor",
-                 "Before moving the nozzle, click Home. This zeroes the position counter. The Motor Travel "
-                 "bar on the left updates in real-time. Never exceed the maximum travel shown — the motor "
-                 f"hard limit is {AtomisationApp.MAX_MOTOR_MM} mm."),
-                ("3. Set the gas flow",
-                 "Connect the AliCat MFC in the Hardware tab, enter a target flow (0 – 12000 sccm) and "
-                 "click Set Flow. Measured flow, pressure, temperature and setpoint update live, and the "
-                 "Mass Flow and Pressure graphs on the left plot them. Click Gas Flow Off to zero the "
-                 "setpoint immediately."),
+            ("LAYOUT", [
+                ("Header",
+                 "Left to right: LaCie (green when the drive is found), the last saved run "
+                 "(click it to open the folder) and the folder the next run will go to "
+                 "(orange if it already exists), the calibrated px/mm, then the Portenta, "
+                 "Camera, AFG, live pressure (barA) and MFC indicators, and the run timer. "
+                 "The Camera box is outlined orange while armed and green while a "
+                 "trigger is saving."),
+                ("Left panel",
+                 "Live Camera View with its own Connect, Ping and Live Feed buttons (the "
+                 "same feed as the Calibration tab). Below it the live Mass Flow and "
+                 "Pressure graphs from the Alicat (last 60 s). Smooth applies an EMA to "
+                 "both traces on screen only; the saved data is always raw. At the bottom, "
+                 "STOP EVERYTHING."),
+                ("Tabs",
+                 "Hardware (connections, bubbler RPM, gas flow, traverse), Materials, "
+                 "Camera, AFG1062, Calibration, Cone and Extremes. This page is the How "
+                 "To button at the top right."),
+                ("Right panel and bottom bar",
+                 "Right: Nozzle (orifice, bubbler height), Notes with Save to Excel, and "
+                 "the Console log. Bottom: status message, GLR, Volume, the Motor Travel "
+                 "bar, START EXPERIMENT and a second camera Trigger."),
             ]),
-            ("PHANTOM HIGH-SPEED CAMERA", [
-                ("Connecting",
-                 "Go to the Camera tab. Enter the camera IP (default 100.100.100.1) and click Connect. "
-                 "Use Ping to verify network reachability without a full connection. The Phantom SDK is "
-                 "Windows-only — a warning appears on other platforms."),
-                ("Configuring",
-                 "Set FPS, resolution (Width × Height), exposure time (µs), and recording duration (s). "
-                 "Click Apply Config to push settings to the camera before capturing. Typical settings: "
-                 "1000 fps, 640×480, 100 µs exposure."),
-                ("Capturing",
-                 "Click ● Capture to trigger a high-speed recording. The .cine is saved into the run "
-                 "folder. Tick Run AI analysis after capture and the chain runs on it automatically: "
-                 "frames are extracted, the model detects droplets, filaments and blobs, and D32 plus "
-                 "the atomised fraction are measured. Outputs land in the run's shadowgraph/analysis/ "
-                 "folder, and the Extremes tab shows the whole-run numbers and extreme frames "
-                 "when it finishes."),
-                ("Live view",
-                 "The Live Camera View (top left) has its own Connect, Ping and Live Feed "
-                 "buttons. It shows the same feed as the Calibration tab — starting or "
-                 "stopping it in either place does both."),
-                ("Calibration",
-                 "Go to the Calibration sub-panel to set the pixel-to-mm scale. Capture a live frame "
-                 "with a known reference object in view, draw the reference line, and enter the real "
-                 "distance. The scale factor is saved and used by the analysis pipeline."),
+            ("CONNECTING", [
+                ("Portenta (traverse / silicone feed)",
+                 "Connects by itself at launch when a Portenta port is found; otherwise "
+                 "pick the port on the Hardware tab and click Connect. The board homes "
+                 "once at start-up and Connect waits for it, which can take up to a "
+                 "minute. A failed home shows HOMING FAILED and the reason in the status "
+                 "bar. The Homed dot only turns green after you press Home in this "
+                 "session, so Home before the first run."),
+                ("Arduino Uno (bubbler spin motor)",
+                 "Also connects by itself when an Uno is found. Enter the RPM and click "
+                 "Spin (it becomes Stop; click again to stop). The actual RPM is shown "
+                 "beside it. SG goes amber as an early warning and red at the "
+                 "firmware's stall threshold; on a stall the board stops the motor itself "
+                 "and SG stays red until the next Spin. SG is grey while stopped or below "
+                 "60 RPM. OTPW = driver running hot, OT = driver has shut itself off. "
+                 "Current reading about half while idle is normal."),
+                ("Alicat MFC (gas)",
+                 "Connects by itself at launch on the last port used (COM4 by default) "
+                 "and sets 0 sccm. Enter a target (0 – 12000 sccm) and click Set Flow; "
+                 "Set last flow re-sends the previous setpoint; Gas Flow Off zeroes it. "
+                 "Mass flow, setpoint, pressure and temperature update every 0.2 s and "
+                 "feed the graphs and the header."),
+                ("Phantom camera",
+                 "Windows + Phantom SDK only. Connect and Ping on the Camera tab or the "
+                 "Live Camera View. Set FPS, size, Pre-/Post-trigger (s) and exposure; the "
+                 "RAM CAPACITY box shows how long the camera can hold at those settings. "
+                 "Tick Save video (.cine) and/or Save TIFFs (one must stay on). Apply "
+                 "Config pushes the settings, Arm starts the ring buffer, Trigger saves "
+                 "the pre + post window and re-arms by itself, Disarm / Abort stops "
+                 "buffering and clears the camera RAM."),
+                ("Standard capture settings",
+                 "If any capture field differs from the campaign standard (390 fps, 4 µs, "
+                 "2048×1152, 0 s pre, 13 s post, stride 10), START EXPERIMENT asks first: "
+                 "Use standard settings, Keep mine, or Cancel."),
+                ("AFG1062",
+                 "Pick CH1 or CH2, Connect, set Pulse Duration (s), Apply Config, then "
+                 "Test Fire for a single pulse. It is stand-alone: START EXPERIMENT does "
+                 "not fire it."),
             ]),
-            ("CONE ANGLE MEASUREMENT", [
-                ("Overview",
-                 "The Cone tab uses a standard USB webcam pointed at the spray to measure the full "
-                 "spray cone angle in real time. The algorithm (Cone_4) fits sigmoid curves to each "
-                 "row of the image to locate the left and right spray boundaries, then uses RANSAC "
-                 "robust line fitting to compute the half-angles and report the full cone angle."),
-                ("Setup",
-                 "Connect the webcam, select its index (usually 0), and click Start Camera. The live "
-                 "feed appears in the top panel. Adjust manual focus if your webcam supports it — "
-                 "untick Auto-focus and set the focus value (0–250)."),
-                ("Capturing",
-                 "Click Capture & Analyse to grab a frame and run the cone detection. The annotated "
-                 "result image (with fitted boundary lines overlaid) is shown immediately and saved "
-                 "to cone_captures/ alongside the raw frame. The cone angle is displayed in large "
-                 "text below the image."),
-                ("Auto-capture",
-                 "When the webcam is running and a full experiment is started (▶ START EXPERIMENT), "
-                 "auto-capture activates automatically — taking a new measurement every 5 seconds "
-                 "throughout the run. The status label shows 'Auto-capture: ON (every 5 s)'."),
-                ("Debug output",
-                 "Cone_4 also saves a 6-panel debug image alongside the annotated result showing: "
-                 "the processed grayscale image, the sigmoid inflection-point map, accepted boundary "
-                 "points coloured by R² quality, outermost-filtered boundary points, RANSAC inliers "
-                 "(bright) vs outliers (dim), and the final annotated overlay."),
+            ("SAFETY", [
+                ("STOP EVERYTHING",
+                 "Stops the traverse (Portenta), stops the bubbler motor (Uno) and zeroes "
+                 "the gas setpoint, each independently, so one device missing or failing "
+                 "cannot block the others. It also cancels a pending auto-trigger. It "
+                 "does not touch the camera."),
+                ("Pressure cut-off",
+                 "The Cut-off barA box under Gas Flow Off. If the raw Alicat pressure "
+                 "(absolute, about gauge + 1 bar) reaches it, STOP EVERYTHING fires "
+                 "automatically and a warning appears. Status reads Off, Armed, TRIPPED, "
+                 "or NO DATA when there are no live Alicat readings (it cannot fire then, "
+                 "so START is refused while it is set). It fires once, then re-arms when "
+                 "the pressure falls below 90% of the cut-off. Empty or 0 switches it "
+                 "off. Remembered between sessions."),
+                ("Alicat readings lost",
+                 "If the Alicat stops sending readings for 2 s, or its connection drops, "
+                 "the console turns red and the header pressure reads 'no data'. During a "
+                 "run, STOP EVERYTHING fires and the run is marked stopped. Set Flow and "
+                 "START are refused until it is reconnected. Close the gas at the valve "
+                 "if in doubt: with no connection, Gas Flow Off cannot reach the unit."),
+                ("Front limit switch",
+                 "The front optical switch on the traverse is an absolute stop. The "
+                 "Portenta halts the motor the moment it is reached, in any move or jog, "
+                 "whatever the step count says, and refuses to drive further forward "
+                 "while it is triggered; you can always drive back off it. The GUI fires "
+                 "STOP EVERYTHING, ends the run and marks it stopped. Check switches (Motor "
+                 "card) logs both switches: each should read LOW with the beam clear and "
+                 "HIGH with it blocked. Check the front one before relying on it."),
+                ("Re-home after any emergency stop",
+                 "After STOP EVERYTHING, the pressure cut-off or the front limit switch, "
+                 "press Home before the next move. The travel counter can be wrong after "
+                 "an interrupted move."),
+                ("Watchdog",
+                 "If the Portenta never reports the traverse finished (move time + 30 s), "
+                 "the GUI stops the traverse, bubbler and gas, and saves the run marked "
+                 "stopped."),
             ]),
-            ("AFG1062 SIGNAL GENERATOR", [
-                ("Connecting",
-                 "Select CH1 or CH2 from the Channel dropdown and click Connect. The AFG generates "
-                 "the electrical trigger pulse that fires the atomiser nozzle."),
-                ("Firing",
-                 "Set Pulse Duration (s) and click Apply Config. Use Test Fire to send a single "
-                 "test pulse without running a full experiment."),
+            ("MOTOR (TRAVERSE)", [
+                ("Speed and Motor Travel",
+                 "Speed is in steps/s (6800 steps/mm), with the matching mL/min shown "
+                 "beside it. Motor Travel is the stroke in mm, with its volume beside it. "
+                 "Both feed the GLR."),
+                ("Home, Move, Jog",
+                 "Home drives to the back switch and zeroes the counter. Move travels "
+                 "Motor Travel at Speed. Hold the ↑ / ↓ buttons to jog at Speed; release "
+                 "to stop; a jog also stops at the travel limit. Move and Start are "
+                 "refused if they would take the traverse past "
+                 f"{AtomisationApp.MAX_MOTOR_MM} mm from home."),
+                ("Speed 0 (static run)",
+                 "START with Speed 0 runs the gas, logging (and the bubbler, if spinning) "
+                 "with no traverse move. It has no end of its own: finish it with STOP "
+                 "EVERYTHING (or the cut-off); it is saved as a static run."),
+                ("Motor Travel bar",
+                 f"Bottom bar: position out of {AtomisationApp.MAX_MOTOR_MM} mm. Turns "
+                 "orange at 70% and red at 90%, with the remaining mm shown. Volume "
+                 "beside it is the silicone used so far. Home to reset it."),
             ]),
-            ("SAVING RESULTS", [
-                ("Excel log",
-                 "Pick the Orifice in the right panel, add any notes (fluid composition, "
-                 "temperature, observations), then click Save to Excel. Two files are written: "
-                 "run_summary.xlsx inside the run folder, and a row in Experiments/Logs/master_log.xlsx. "
-                 "Saving happens automatically when an experiment ends and again when the AI chain "
-                 "finishes, so use the button only to add notes written afterwards — it updates the "
-                 "same row rather than creating a second one."),
-                ("Shadowgraph result",
-                 "The Extremes tab opens with the WHOLE-RUN numbers — Run SMD, atomised fraction "
-                 "and their confidence, pooled over every analysed frame — then the four extreme "
-                 "frames, outlined green (in focus), magenta (out of focus), orange (filament) and "
-                 "blue (blob). It fills in when the AI chain finishes."),
+            ("RUNNING AN EXPERIMENT", [
+                ("1. Set the conditions",
+                 "Materials tab: fluid and gas densities plus the Fluid and Gas tags (the "
+                 "GLR is NOT SET without the densities). Nozzle: orifice, and bubbler "
+                 "height (hardware state, so only change it when you move the bubbler). "
+                 "Hardware tab: target flow, RPM, Speed and Motor Travel. START does not "
+                 "spin the bubbler: click Spin first."),
+                ("2. START EXPERIMENT",
+                 "Needs the Portenta. Creates the run folder, sets the gas to the target "
+                 "flow, starts logging pressure and flow and the run timer, and sends the "
+                 "traverse move 0.5 s later. If the cone webcam is running, it takes one "
+                 "cone capture 5 s in. If the previous run was not saved you are asked "
+                 "first."),
+                ("3. Auto-trigger at end of test",
+                 "Tickbox beside Disarm / Abort on the Camera tab. On START it arms the "
+                 "camera if needed and fires at: test length − 2 s − Post-trigger, so the "
+                 "saved video covers the last part of the test and ends 2 s before the "
+                 "traverse stops (test length = Motor Travel × 6800 / Speed). If the test "
+                 "is too short you can Trigger early, Start without, or Cancel. A "
+                 "countdown shows under the camera buttons."),
+                ("4. Manual trigger",
+                 "Trigger in the bottom bar or on the Camera tab, or press Space. Works "
+                 "only while the camera is armed. Space is ignored while you are typing in "
+                 "a text box. Press C for a cone capture (cone webcam running)."),
             ]),
-            ("TIPS & ENVIRONMENT", [
-                ("Where the analysis output goes",
-                 "Everything for a run lives under its own folder: raw/CINE/ holds the recording, "
-                 "raw/frames/ the extracted frames, and analysis/ the predictions, per-frame marked-up "
-                 "images, measurements and size histograms. Only raw/CINE/ needs backing up — "
-                 "everything else can be regenerated from it."),
+            ("END OF RUN", [
+                ("Automatic save",
+                 "When the traverse finishes, the bubbler and gas are stopped and the run "
+                 "is saved: a folder on the LaCie under Experiments/YYYY/MM/DD/<run id> "
+                 "(time_flow_rpm_speed_orifice_bubbler-height), run_summary.xlsx with "
+                 "the pressure and flow data and graphs, and a row in "
+                 "Experiments/Logs/master_log.xlsx. Camera windows are shaded red on the "
+                 "graphs."),
+                ("Runs stopped early",
+                 "Runs ended by STOP EVERYTHING, the pressure cut-off, the front limit "
+                 "switch, a traverse or bubbler stall, lost Alicat readings or the "
+                 "watchdog are still saved, and marked: 'Run status' in run_summary.xlsx "
+                 "reads STOPPED and the reason, and the master_log Notes start with ⚠ "
+                 "STOPPED. Motor Travel is credited only with the distance covered."),
+                ("Notes and the next run",
+                 "Type Notes after the run and click Save to Excel: it updates the same "
+                 "row, never adds a second one. The run's conditions are recorded as they "
+                 "were at START, so you can already type the next run's values and still "
+                 "re-save Notes for the last one."),
+            ]),
+            ("ANALYSIS AND OTHER TABS", [
+                ("AI analysis (optional)",
+                 "Tick Run AI analysis after capture on the Camera tab and set the Stride "
+                 "(analyse every Nth frame; the note shows frames and expected time). It "
+                 "runs on the saved .cine, so Save video must be ticked: frame "
+                 "extraction, detection, then D32 and atomised fraction into "
+                 "shadowgraph/analysis/. The run's row is re-saved with the results. "
+                 "Full Analyse Cine runs the same chain on any .cine without touching "
+                 "master_log."),
+                ("Extremes",
+                 "Fills in when the AI finishes: the WHOLE RUN numbers (Run SMD, "
+                 "atomised fraction, confidence), then the lowest and highest D32 and "
+                 "highest and lowest atomised-fraction frames. Green = in-focus droplet, "
+                 "magenta = out of focus, orange = un-atomised liquid."),
+                ("Calibration (px/mm)",
+                 "Start Feed and Use as Calibration Image, or Load from File. Scroll to "
+                 "zoom, right-drag to pan, double-click to reset. Click two points a "
+                 "known distance apart, enter the distance in mm and Calculate px/mm. "
+                 "The value goes in the header and is remembered. The Lamella Analysis "
+                 "card is on this tab too."),
+                ("Cone",
+                 "Pick the webcam index and Start Camera. Set the top crop (red band on "
+                 "the feed) and focus. Manual Capture (or C) runs the cone-angle fit; the "
+                 "annotated image goes into the run's cone/ folder, the last five show in "
+                 "the history strip, and the run's cone image goes into master_log."),
                 ("Running on macOS",
-                 "The GUI runs on macOS for layout/design work. Phantom camera capture and Arduino serial "
-                 "require Windows (or the correct driver). Connect warnings will appear for unavailable hardware."),
-                ("Python environment",
-                 "macOS: conda activate phantom → python src/gui/GUI_Clean.py\n"
-                 "Windows: there is NO conda env — use system Python 3.11 by its full path. "
-                 "Launching from (base) puts the whole AI chain on a Python with no torch."),
-                ("Cone detection dependency",
-                 "Cone_4 requires scipy (pip install scipy). If 'Cone_4.py not found' appears, ensure "
-                 "scipy is installed in the active conda environment and that Trials/Cone_4.py exists "
-                 "in the repo."),
+                 "Layout work only: the Phantom camera needs Windows and its SDK, so the "
+                 "camera buttons are disabled on the Mac."),
             ]),
         ]
 
@@ -4399,7 +4560,11 @@ class AtomisationApp(QMainWindow):
         self._hdr_mfc_lbl.setStyleSheet(f"color:{CLR_TEXT}; font-size:12px;")
         self._set_status("Alicat MFC connected — flow at 0 sccm", CLR_GREEN)
         self._save_camera_settings()
+        # Give the first poll a full stale window before alarming.
+        self._alicat_last_frame_t = time.monotonic()
+        self._alicat_stale = False
         self._start_alicat_reader()
+        self._update_cutoff_status()
 
     def _on_mfc_error(self, msg):
         self._mfc_connect_btn.setEnabled(True)
@@ -4428,6 +4593,8 @@ class AtomisationApp(QMainWindow):
         self._mfc_setpt_lbl.setText("–")
         self._mfc_pres_lbl.setText("–")
         self._mfc_temp_lbl.setText("–")
+        self._alicat_last_frame_t = None
+        self._update_cutoff_status()
         self._set_status("Alicat MFC disconnected")
 
     def _auto_connect_alicat(self):
@@ -4483,12 +4650,18 @@ class AtomisationApp(QMainWindow):
                     time.sleep(remaining)
         except serial.SerialException as e:
             print(f"[ALICAT] serial error: {e}", flush=True)
+            crash = f"serial error: {e}"
         except Exception as e:
             print(f"[ALICAT] reader stopped: {e}", flush=True)
+            crash = f"reader stopped: {e}"
+        else:
+            crash = None                  # Disconnect cleared _alicat_serial_active
         finally:
             self._alicat_serial_active = False
             try: mfc.close()
             except Exception: pass
+        if crash:
+            QTimer.singleShot(0, self, lambda c=crash: self._on_alicat_reader_died(c))
 
     def _parse_alicat_line(self, line: str):
         # Frame: A +00.995 +030.17 +00000 +00500 +00500 +0000000     N2
@@ -4501,12 +4674,20 @@ class AtomisationApp(QMainWindow):
             temp      = float(parts[2])
             mass_flow = float(parts[4])
             setpoint  = float(parts[5])
+            # Stamped here, on the reader thread, so a busy GUI thread (a save,
+            # a modal dialog) cannot make healthy readings look stale.
+            self._alicat_last_frame_t = time.monotonic()
             QTimer.singleShot(0, self, lambda p=pressure, t=temp, m=mass_flow, s=setpoint:
                 self._on_alicat_reading(p, t, m, s))
         except (ValueError, IndexError):
             pass
 
     def _on_alicat_reading(self, pressure: float, temp: float, mass_flow: float, setpoint: float):
+        self._alicat_last_frame_t = time.monotonic()
+        if self._alicat_stale:
+            self._alicat_stale = False
+            self._log("Alicat readings are back.")
+            self._update_cutoff_status()
         self._mfc_flow_lbl.setText(f"{mass_flow:.1f} sccm")
         self._mfc_setpt_lbl.setText(f"{setpoint:.1f} sccm")
         self._mfc_pres_lbl.setText(f"{pressure:.2f} barA")
@@ -4516,6 +4697,58 @@ class AtomisationApp(QMainWindow):
         self._check_pressure_cutoff(pressure)
         # The Alicat is the only source for the live graphs and the run log.
         self._record_alicat_sample(pressure, mass_flow)
+
+    # ── Alicat health ────────────────────────────────────────────────────────
+    # The Alicat is the only pressure source, so the cut-off is only as good as
+    # its readings. The reader thread can die (USB adapter pulled, driver error)
+    # or the unit can stop answering; either way the UI used to stay "Connected",
+    # the cut-off stayed "Armed" and Gas Off only queued a command nobody sent.
+
+    ALICAT_STALE_S = 2.0      # ~10 missed 200 ms polls
+
+    def _alicat_live(self) -> bool:
+        """True when the reader is running and a frame arrived recently."""
+        return (self.alicat_connected and self._alicat_serial_active
+                and self._alicat_last_frame_t is not None
+                and time.monotonic() - self._alicat_last_frame_t < self.ALICAT_STALE_S)
+
+    def _check_alicat_alive(self):
+        """Every 0.5 s: alarm once if a connected Alicat has gone quiet."""
+        if not self.alicat_connected or self._alicat_stale:
+            return
+        last = self._alicat_last_frame_t
+        if last is None or time.monotonic() - last < self.ALICAT_STALE_S:
+            return
+        self._alicat_stale = True
+        self._alicat_alarm(f"no readings for {time.monotonic() - last:.0f} s")
+
+    def _on_alicat_reader_died(self, why: str):
+        """The reader thread exited on an error: the port is closed, nothing is
+        polled and queued gas commands will never be sent."""
+        self._trigger_mfc_disconnect()          # first, so its status line doesn't hide the alarm
+        self._alicat_stale = True
+        self._alicat_alarm(f"connection lost ({why})")
+        self._mfc_status_lbl.setText("LOST — reconnect")
+        self._mfc_status_lbl.setStyleSheet(f"color:{CLR_RED}; font-size:12px; font-weight:600;")
+        self._hdr_mfc_dot.setStyleSheet(f"color:{CLR_RED}; font-size:10px; background:transparent;")
+
+    def _alicat_alarm(self, why: str):
+        msg = f"ALICAT: {why} — pressure is NOT being monitored"
+        self._log(f"⚠ {msg}.")
+        self._hdr_pressure_lbl.setText("no data")
+        self._hdr_pressure_dot.setStyleSheet(f"color:{CLR_RED}; font-size:10px; background:transparent;")
+        self._flash_log_border(CLR_RED)
+        self._update_cutoff_status()
+        if self.pressure_data['experiment_active']:
+            self._pressure_off(f"Alicat {why}")
+            self._set_status(f"{msg} — run stopped", CLR_RED)
+            QTimer.singleShot(0, self, lambda: self._warn(
+                "Alicat readings lost",
+                f"The Alicat {why}.\n\nPressure was not being monitored, so the run was "
+                "stopped (STOP EVERYTHING). Check the gas is off at the valve, then "
+                "reconnect the MFC on the Hardware tab."))
+        else:
+            self._set_status(f"{msg} — check the MFC and reconnect", CLR_RED)
 
     def _on_cutoff_changed(self):
         """Read the cut-off box (empty or 0 = off), re-arm it and remember it."""
@@ -4534,6 +4767,8 @@ class AtomisationApp(QMainWindow):
     def _update_cutoff_status(self):
         if self._cutoff_bar is None:
             text, clr = "Off", CLR_TEXT_SEC
+        elif self._alicat_stale or not self.alicat_connected:
+            text, clr = "NO DATA", CLR_RED
         elif self._cutoff_tripped:
             text, clr = "TRIPPED", CLR_RED
         else:
@@ -4555,7 +4790,8 @@ class AtomisationApp(QMainWindow):
         if pressure < limit:
             return
         self._cutoff_tripped = True
-        self._pressure_off()
+        self._pressure_off(f"pressure cut-off: {pressure:.2f} barA reached the "
+                           f"{limit:.2f} barA limit")
         msg = f"PRESSURE CUT-OFF: {pressure:.2f} barA reached the {limit:.2f} barA limit"
         self._log(f"⚠ {msg} — traverse, bubbler and gas stopped.")
         self._set_status(f"{msg} — everything stopped", CLR_RED)
@@ -4571,6 +4807,12 @@ class AtomisationApp(QMainWindow):
     def _set_flow(self):
         if not self.alicat_connected or not self.alicat:
             self._set_status("Alicat MFC not connected", CLR_ORANGE); return
+        if not self._alicat_live():
+            self._warn("Alicat not responding",
+                       "The Alicat is not sending readings, so the setpoint may never "
+                       "reach it and the pressure is not being monitored.\n\n"
+                       "Reconnect the MFC on the Hardware tab first.")
+            return
         try:
             val = float(self._flow_entry.text())
             if not 0 <= val <= 12000:
@@ -4592,9 +4834,13 @@ class AtomisationApp(QMainWindow):
 
     def _flow_off(self):
         if not self.alicat_connected or not self.alicat:
-            self._set_status("Alicat MFC not connected", CLR_ORANGE); return
+            self._set_status("Alicat MFC not connected — close the gas at the valve", CLR_RED); return
         self.alicat.flow_off()
-        self._set_status("Gas flow off")
+        if self._alicat_live():
+            self._set_status("Gas flow off")
+        else:
+            self._set_status("Gas Off sent, but the Alicat is not responding — "
+                             "close the gas at the valve", CLR_RED)
 
     def _reset_rpm_spin_ui(self, clear_sg: bool = True):
         """Return the RPM controls to their stopped state.
@@ -4824,6 +5070,13 @@ class AtomisationApp(QMainWindow):
         self._rpm_sg_lbl.setStyleSheet(f"color:{CLR_RED}; font-size:14px; font-weight:700;")
         rpm_note = f" — stalled at {stall_rpm:.0f} RPM" if stall_rpm is not None else ""
         self._set_status(f"Motor stall detected{rpm_note} — stopped automatically", CLR_RED)
+        if self.pressure_data['experiment_active']:
+            # The traverse and gas carry on, so the run still ends normally, but
+            # the bubbler was not at its set speed for all of it.
+            self._mark_run_stopped(f"bubbler motor stalled mid-run{rpm_note.replace(' — ', ' ')}",
+                                   early=False)
+            self._log(f"⚠ Bubbler stalled during the run{rpm_note}; the run will be "
+                      "marked as stopped.")
 
     def _start_serial_reader(self):
         if not self.arduino or not self.arduino.ser: return
@@ -4838,8 +5091,20 @@ class AtomisationApp(QMainWindow):
                     line = self.arduino.ser.readline().decode('utf-8', errors='replace').strip()
                     if line:
                         log_serial(f"Received: {line}")
-                        if "MOVEMENT_COMPLETE" in line or "MOVEMENT_TIMEOUT" in line:
+                        if line.startswith("FRONT_LIMIT"):
+                            QTimer.singleShot(0, self, lambda l=line: self._on_front_limit(l))
+                        elif line.startswith("STALL_DETECTED"):
+                            QTimer.singleShot(0, self, lambda l=line: self._on_traverse_stall(l))
+                        elif "MOVEMENT_TIMEOUT" in line:
+                            QTimer.singleShot(0, self, lambda: self._mark_run_stopped(
+                                "the Portenta's own movement timeout fired", early=False))
                             QTimer.singleShot(0, self, self._on_movement_complete)
+                        elif "MOVEMENT_COMPLETE" in line:
+                            QTimer.singleShot(0, self, self._on_movement_complete)
+                        elif line.startswith("SWITCHES:"):
+                            QTimer.singleShot(0, self, lambda l=line: self._on_switch_report(l))
+                        elif line.startswith("ERROR:") or line.startswith("HOMING_FAILED"):
+                            QTimer.singleShot(0, self, lambda l=line: self._on_portenta_error(l))
                         elif line.startswith("JOG_POS:"):
                             try:
                                 steps = int(line.split(":")[1])
@@ -4856,6 +5121,7 @@ class AtomisationApp(QMainWindow):
                                 pct = int(line.split(":")[-1].strip().replace("%", ""))
                                 live_dist = self._pre_move_cumulative + (self._pending_move_distance * pct / 100.0)
                                 QTimer.singleShot(0, self, lambda p=pct, d=live_dist: (
+                                    setattr(self, "_last_move_pct", p),
                                     self._exp_progress.setValue(p),
                                     self._update_travel_bar(d),
                                 ))
@@ -4936,9 +5202,24 @@ class AtomisationApp(QMainWindow):
 
     def _on_movement_complete(self):
         self._experiment_watchdog.stop()
+        self._stop_fallback_timer.stop()
         self._auto_trigger_cancel("the traverse finished before the camera fired")
-        self.cumulative_distance = self._pre_move_cumulative + self._pending_move_distance
+        if self._front_limit_steps is not None:
+            # The board reported exactly where it stopped
+            self.cumulative_distance = min(self.MAX_MOTOR_MM, self._front_limit_steps / 6800.0)
+        elif self._move_stopped_early:
+            # Credit only the travel actually covered (last progress report)
+            self.cumulative_distance = (self._pre_move_cumulative
+                                        + self._pending_move_distance * self._last_move_pct / 100.0)
+        else:
+            self.cumulative_distance = self._pre_move_cumulative + self._pending_move_distance
+        # A second MOVEMENT_COMPLETE (e.g. after the STOP fallback already ended
+        # the run) must not move the counter back to the start of this move.
+        self._pre_move_cumulative = self.cumulative_distance
         self._pending_move_distance = 0.0
+        self._move_stopped_early = False
+        self._front_limit_steps = None
+        self._last_move_pct = 0
         self._update_travel_bar()
         if self.pressure_data['experiment_active']:
             self._stop_bubbler_failsafe("experiment complete")
@@ -4983,8 +5264,15 @@ class AtomisationApp(QMainWindow):
             ))
             self._start_btn.setEnabled(True)
             self._stop_run_timer()
-            self._set_status("Experiment complete ✓ — remember to Save to Excel", CLR_GREEN)
-            threading.Thread(target=self.arduino.reset_state, daemon=True).start()
+            if self._run_stop_reason:
+                self._set_status(f"Run STOPPED ({self._run_stop_reason}) — saved and "
+                                 "marked as stopped", CLR_RED)
+                self._log(f"⚠ Run stopped early: {self._run_stop_reason}. Saved with "
+                          "Run status = stopped.")
+            else:
+                self._set_status("Experiment complete ✓ — remember to Save to Excel", CLR_GREEN)
+            if self.arduino:
+                threading.Thread(target=self.arduino.reset_state, daemon=True).start()
 
     @staticmethod
     def _open_folder(path: str):
@@ -5164,33 +5452,34 @@ class AtomisationApp(QMainWindow):
             f"color:{'#e5e5ea' if connected else CLR_TEXT_SEC}; font-size:12px;")
 
     def _on_experiment_timeout(self):
-        """Watchdog fired — serial reader likely died. Kill the gas and recover UI."""
+        """Watchdog fired: no MOVEMENT_COMPLETE within the expected time + 30 s
+        (Portenta reader dead, board hung, or a lost message). Stop the
+        traverse, then end and SAVE the run through the normal path -- gas off,
+        bubbler stopped, trace kept, marked as stopped."""
         self._auto_trigger_cancel("the run timed out")
-        if self.pressure_data['experiment_active']:
-            self._stop_bubbler_failsafe("experiment timed out")
-            self.pressure_data['experiment_active'] = False
-            self._cone_auto_timer.stop()
-            if self.alicat_connected and self.alicat:
-                try: self.alicat.flow_off()
-                except Exception: pass
-            self._exp_progress.setVisible(False)
-            self._exp_progress.setRange(0, 0)
-            self._start_btn.setEnabled(True)
-            self._stop_run_timer()
-            self._set_status("Experiment timed out — gas flow turned off", CLR_RED)
+        if not self.pressure_data['experiment_active']:
+            return
+        self._mark_run_stopped("GUI watchdog: no end-of-move message from the Portenta "
+                               "within the expected time + 30 s")
+        if self.arduino_connected and self.arduino:
+            try: self.arduino.send_stop()
+            except Exception: pass
+        self._on_movement_complete()
 
     # ─────────────────────────────────────────────────────────────────────────
     # Logic — Motor
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _pressure_off(self):
+    def _pressure_off(self, reason: str = "STOP EVERYTHING pressed"):
         """Emergency stop — halt everything that moves and cut the gas.
 
         Each device is attempted independently so a failure on one (or one
         simply not being connected) can't prevent the others from stopping.
+        `reason` is recorded against the run if one is in progress.
         """
         stopped = []
         self._auto_trigger_cancel("Pressure Off")
+        self._mark_run_stopped(reason)
 
         # Traverse motor (Portenta)
         if self.arduino_connected and self.arduino:
@@ -5218,6 +5507,71 @@ class AtomisationApp(QMainWindow):
             self._set_status(f"EMERGENCY STOP — {', '.join(stopped)} off", CLR_RED)
         else:
             self._set_status("Emergency stop — nothing connected to stop", CLR_ORANGE)
+        # The Portenta answers STOP with MOVEMENT_COMPLETE only while a move is
+        # running. With no move (speed 0 run, the 0.5 s before the move starts,
+        # a dead reader) nothing would end the run, so end it here if that
+        # message has not arrived within 1.5 s.
+        # Started once: a second stop (e.g. the cut-off firing again) must not
+        # keep pushing it back.
+        if self.pressure_data['experiment_active'] and not self._stop_fallback_timer.isActive():
+            self._stop_fallback_timer.start(1500)
+
+    def _end_run_after_stop(self):
+        if self.pressure_data['experiment_active']:
+            self._log("No end-of-move message after STOP — ending the run here.")
+            self._on_movement_complete()
+
+    def _mark_run_stopped(self, reason: str, early: bool = True):
+        """Record why the current run ended early (first reason wins)."""
+        if not self.pressure_data['experiment_active']:
+            return
+        if early:
+            self._move_stopped_early = True
+        if self._run_stop_reason is None:
+            if (self._run_conditions or {}).get('static'):
+                reason = f"static run (speed 0), ended by {reason}"
+            self._run_stop_reason = reason
+
+    def _on_front_limit(self, line: str):
+        """The board stopped at the front optical switch (absolute forward stop)."""
+        try:
+            self._front_limit_steps = int(line.split("pos=")[1].split()[0])
+        except (IndexError, ValueError):
+            self._front_limit_steps = None
+        pos = (f" at {self._front_limit_steps / 6800.0:.1f} mm"
+               if self._front_limit_steps is not None else "")
+        self._log(f"⚠ FRONT LIMIT SWITCH reached{pos} — the Portenta stopped the traverse.")
+        self._flash_log_border(CLR_RED)
+        if self.pressure_data['experiment_active']:
+            self._mark_run_stopped(f"front limit switch reached{pos}")
+            self._pressure_off(f"front limit switch reached{pos}")
+        else:
+            self._set_status(f"Front limit switch reached{pos} — traverse stopped. "
+                             "Re-home before the next run.", CLR_RED)
+
+    def _on_traverse_stall(self, line: str):
+        """Portenta: the traverse stopped moving for 2 s before its target."""
+        self._log(f"⚠ Traverse stalled: {line}")
+        self._mark_run_stopped(f"traverse stalled ({line.split(':', 1)[-1].strip()})")
+
+    def _on_switch_report(self, line: str):
+        """Reply to Check switches: 'SWITCHES: back=LOW front=LOW pos=123'."""
+        self._log(line)
+        front_high = "front=HIGH" in line
+        self._set_status(
+            "Front switch reads HIGH (blocked, or unplugged) — forward motion is "
+            "blocked" if front_high else "Front switch reads LOW (clear)",
+            CLR_RED if front_high else CLR_GREEN)
+
+    def _on_portenta_error(self, line: str):
+        """A move the Portenta refused, or a failed homing: say so, and end a run
+        that is waiting for a move that will never come."""
+        self._log(f"⚠ Portenta: {line}")
+        self._set_status(f"Portenta: {line}", CLR_RED)
+        if line.startswith("HOMING_FAILED"):
+            self._homed_dot.setStyleSheet(f"color:{CLR_RED}; font-size:10px;")
+        elif self.pressure_data['experiment_active']:
+            self._pressure_off(f"the Portenta refused the move ({line[6:].strip()})")
 
     def _home_motor(self):
         if not self._require_arduino(): return
@@ -5229,16 +5583,14 @@ class AtomisationApp(QMainWindow):
         self._update_travel_bar()
         self._set_status("Homing…")
 
-    def _start_cleaning(self):
+    def _check_switches(self):
+        """Ask the Portenta for both limit switches; the reply is logged by the reader."""
         if not self._require_arduino(): return
-        self.cleaning_in_progress = not self.cleaning_in_progress
-        if self.cleaning_in_progress:
-            self._clean_btn.setText("⏹  Stop Clean")
-            self.arduino.send_motor_command(200, 10)
-            self._set_status("Cleaning in progress")
-        else:
-            self._clean_btn.setText("🧼  Clean")
-            self._set_status("Cleaning stopped")
+        try:
+            self.arduino.ser.write(b"SWITCHES:\n")
+            self._log("Asked the Portenta for the limit switch states…")
+        except Exception as e:
+            self._set_status(f"Could not ask for switch states: {e}", CLR_RED)
 
     def _move_motor(self):
         if not self._require_arduino(): return
@@ -5279,9 +5631,10 @@ class AtomisationApp(QMainWindow):
             self._set_status("Already at home position", CLR_ORANGE)
             return
         self._jogging = True
+        self._jog_held = True
         self._move_btn.setEnabled(False)
         self._home_btn.setEnabled(False)
-        self._clean_btn.setEnabled(False)
+        self._switches_btn.setEnabled(False)
         cmd = f"JOG:{speed};DIR:{direction}\n"
         self.arduino.ser.write(cmd.encode())
         log_serial(f"Sent: {cmd.strip()}")
@@ -5289,7 +5642,11 @@ class AtomisationApp(QMainWindow):
         self._set_status(f"Jogging {label} at {speed} steps/s — release to stop")
 
     def _jog_stop(self):
-        if not self._jogging: return
+        # Keyed on the button being held, not on _jogging: a periodic
+        # ARDUINO_READY read just after the press used to clear _jogging, so the
+        # release sent nothing and the jog ran on to the board's limit.
+        if not self._jog_held: return
+        self._jog_held = False
         if not self.arduino or not self.arduino.ser: return
         self.arduino.ser.write(b"STOP\n")
         log_serial("Sent: STOP")
@@ -5299,13 +5656,17 @@ class AtomisationApp(QMainWindow):
         self._jogging = False
         self._move_btn.setEnabled(True)
         self._home_btn.setEnabled(True)
-        self._clean_btn.setEnabled(True)
+        self._switches_btn.setEnabled(True)
         self._set_status("Jog stopped")
 
     def _on_jog_pos(self, steps: int):
         mm = max(0.0, min(self.MAX_MOTOR_MM, steps / 6800.0))
         self.cumulative_distance = mm
         self._update_travel_bar()
+        # Soft limit, enforced here as well as on the board
+        if self._jog_held and steps / 6800.0 >= self.MAX_MOTOR_MM:
+            self._jog_stop()
+            self._set_status(f"Jog stopped at the {self.MAX_MOTOR_MM} mm travel limit", CLR_ORANGE)
 
     def _update_travel_bar(self, distance=None):
         d = distance if distance is not None else self.cumulative_distance
@@ -5789,9 +6150,7 @@ class AtomisationApp(QMainWindow):
             # Mid-experiment: write into the active run folder
             cine_path    = os.path.join(run_folder, "shadowgraph", "raw", "CINE",
                                         f"recording_{ts}.cine")
-            tiff_prefix  = os.path.join(run_folder, "shadowgraph", "raw", "TIFFs", "frame")
             tiff_dir     = os.path.join(run_folder, "shadowgraph", "raw", "TIFFs")
-            analysis_dir = os.path.join(run_folder, "shadowgraph", "analysis")
         else:
             # Manual trigger — create a new run folder with the same structure
             _now   = datetime.now()
@@ -5809,9 +6168,7 @@ class AtomisationApp(QMainWindow):
                 os.makedirs(os.path.join(_run_folder, _sub), exist_ok=True)
             cine_path    = os.path.join(_run_folder, "shadowgraph", "raw", "CINE",
                                         f"recording_{ts}.cine")
-            tiff_prefix  = os.path.join(_run_folder, "shadowgraph", "raw", "TIFFs", "frame")
             tiff_dir     = os.path.join(_run_folder, "shadowgraph", "raw", "TIFFs")
-            analysis_dir = os.path.join(_run_folder, "shadowgraph", "analysis")
             # Update the save path label to show where this capture went
             QTimer.singleShot(0, self,
                 lambda p=_run_folder: self._cam_save_lbl.setText(f"Saving to: {p}"))
@@ -5819,7 +6176,7 @@ class AtomisationApp(QMainWindow):
         frame_range = (-pre_frames, post_frames - 1) if pre_frames > 0 else None
 
         def _do_trigger():
-            import shutil, glob as _glob
+            import glob as _glob
             try:
                 QTimer.singleShot(0, self, lambda: self._cam_arm_status_lbl.setText("Triggering…"))
                 self.phantom.trigger()
@@ -6287,10 +6644,10 @@ class AtomisationApp(QMainWindow):
         self._log(f"── Full Analyse Cine: stride {stride}, "
                   f"{'reusing the existing analysis in ' + str(run) if reuse else 'new Trial folder'} ──")
         self._run_ai_chain(cine_path, run_dir=str(run) if reuse else None,
-                           tag="Trial", images="all", stride=stride,
+                           images="all", stride=stride,
                            reuse=reuse, save_to_log=False)
 
-    def _run_ai_chain(self, cine_path, run_dir=None, tag="Trial", images="extremes",
+    def _run_ai_chain(self, cine_path, run_dir=None, images="extremes",
                       stride=None, reuse=False, save_to_log=True):
         """
         Run process_capture in a worker thread, streaming its log to the panel.
@@ -6308,7 +6665,6 @@ class AtomisationApp(QMainWindow):
         analysis at that stride. save_to_log=False (Full Analyse Cine) keeps
         the results out of the master log.
         """
-        import threading
 
         self._ai_code_on_path()
         if stride is None:
@@ -6321,12 +6677,11 @@ class AtomisationApp(QMainWindow):
 
         def _worker():
             try:
-                from pathlib import Path as _P
                 from process_capture import process_capture, next_trial_dir
                 target = run_dir
                 if target is None:
                     target = next_trial_dir(
-                        _P(find_lacie_drive()) / "Experiments")
+                        Path(find_lacie_drive()) / "Experiments")
                 self._log_queue.put(f"run folder: {target}\n")
 
                 _t_chain = time.time()
@@ -6371,7 +6726,6 @@ class AtomisationApp(QMainWindow):
     @staticmethod
     def _phantom_frame_to_pixmap(frame) -> 'QPixmap':
         """Convert a pyphantom numpy frame (any bit depth) to a display QPixmap."""
-        import numpy as np
         # Normalise to uint8 — Phantom outputs 12-bit packed in uint16
         if frame.dtype != np.uint8:
             f_min, f_max = int(frame.min()), int(frame.max())
@@ -7074,7 +7428,6 @@ class AtomisationApp(QMainWindow):
         self._log(f"── Cone analysis started ({os.path.basename(raw_path)}) ──")
 
         def _analyse():
-            import io as _io
 
             class _TeeStream:
                 def __init__(self, gui_stream, buf):
@@ -7084,17 +7437,16 @@ class AtomisationApp(QMainWindow):
                 def flush(self):
                     self._g.flush()
                 def isatty(self): return False
-                def fileno(self): raise _io.UnsupportedOperation("fileno")
+                def fileno(self): raise io.UnsupportedOperation("fileno")
 
-            _buf    = _io.StringIO()
+            _buf    = io.StringIO()
             _stream = _GuiLogStream(self._log_queue)
             _tee    = _TeeStream(_stream, _buf)
             self._tl_stdout.set(_tee)
             self._tl_stderr.set(_tee)
             try:
-                from pathlib import Path as _Path
                 angle, annotated_bgr, _debug = detect_cone_angle(
-                    _Path(raw_path), top_crop_ratio=top_crop)
+                    Path(raw_path), top_crop_ratio=top_crop)
             except Exception as e:
                 def _on_err(e=e):
                     self._cone_angle_lbl.setText(f"Analysis error: {e}")
@@ -7285,7 +7637,8 @@ class AtomisationApp(QMainWindow):
                        "  • Motor Speed (steps/s)\n"
                        "  • Motor Travel (mm)")
             return
-        if self.cumulative_distance + distance > self.MAX_MOTOR_MM:
+        static = speed <= 0          # speed 0: gas + bubbler + logging, no traverse move
+        if not static and self.cumulative_distance + distance > self.MAX_MOTOR_MM:
             remaining = self.MAX_MOTOR_MM - self.cumulative_distance
             self._set_status("Travel limit would be exceeded!", CLR_RED)
             self._warn("Travel Limit",
@@ -7293,7 +7646,25 @@ class AtomisationApp(QMainWindow):
                        f"Only {remaining:.1f} mm of travel remains.\n"
                        "Home the motor to reset.")
             return
-        auto_plan = self._auto_trigger_check(distance, speed)
+        # Pressure must be live: a connected Alicat that has gone quiet means the
+        # setpoint may never arrive and nothing is watching the pressure.
+        if self.alicat_connected and not self._alicat_live():
+            self._warn("Alicat not responding",
+                       "The Alicat is connected but not sending readings.\n\n"
+                       "Reconnect the MFC on the Hardware tab before starting.")
+            return
+        if self._cutoff_bar is not None and not self._alicat_live():
+            self._warn("Pressure cut-off has no readings",
+                       f"The pressure cut-off is set ({self._cutoff_bar:g} barA) but there are "
+                       "no live Alicat readings, so it could not fire.\n\n"
+                       "Connect the MFC, or switch the cut-off off, before starting.")
+            return
+        if static:
+            auto_plan = None
+            if self._auto_trig_chk.isChecked():
+                self._log("Auto-trigger skipped: speed 0 has no end of test to time it from.")
+        else:
+            auto_plan = self._auto_trigger_check(distance, speed)
         if auto_plan == "cancel":
             return
 
@@ -7303,6 +7674,13 @@ class AtomisationApp(QMainWindow):
         self.pressure_data['camera_windows'] = []
         self._last_cone_path = None   # reset so we only capture this experiment's image
         self._last_ai_results = None  # ditto: never carry a previous run's D32 into this row
+        self._run_stop_reason = None
+        self._move_stopped_early = False
+        self._front_limit_steps = None
+        self._last_move_pct = 0
+        # The run is recorded with THESE conditions, however often it is re-saved
+        # and whatever is typed for the next run in the meantime.
+        self._run_conditions = self._snapshot_run_conditions()
 
         # ── Create run folder eagerly ──────────────────────────────────────────
         # Kept so the spreadsheets can stamp the moment the experiment STARTED
@@ -7343,25 +7721,33 @@ class AtomisationApp(QMainWindow):
         self._last_tiff_dir = None  # reset so previous experiment's CSV doesn't bleed over
 
         self._start_btn.setEnabled(False)
-        self._exp_progress.setRange(0, 100)
+        self._exp_progress.setRange(0, 0 if static else 100)    # busy bar: no end to count to
         self._exp_progress.setValue(0)
         self._exp_progress.setVisible(True)
-        self._set_status("Experiment running…", CLR_ACCENT)
+        self._set_status("Static run (speed 0) — runs until STOP EVERYTHING" if static
+                         else "Experiment running…", CLR_ACCENT)
         self._run_start_time = time.time()
         self._run_elapsed_timer.start()
 
         if self.alicat_connected and self.alicat:
             self.alicat.set_flow(flow)
-        # Send motor command 500 ms later without blocking the UI
-        QTimer.singleShot(500, lambda: self.arduino.send_motor_command(speed, distance))
         self._pre_move_cumulative   = self.cumulative_distance
-        self._pending_move_distance = distance
-        # cumulative_distance is finalised in _on_movement_complete so the travel bar fills live
+        if static:
+            # No move, so no MOVEMENT_COMPLETE and no watchdog: the run ends with
+            # STOP EVERYTHING (or the pressure cut-off).
+            self._pending_move_distance = 0.0
+            self._log("Speed 0: no traverse move. Gas, bubbler and logging run until "
+                      "STOP EVERYTHING.")
+        else:
+            # Send motor command 500 ms later without blocking the UI
+            QTimer.singleShot(500, lambda: self.arduino.send_motor_command(speed, distance))
+            self._pending_move_distance = distance
+            # cumulative_distance is finalised in _on_movement_complete so the travel bar fills live
 
-        # Start watchdog: if serial reader dies, the gas would stay on forever without this
-        _steps_per_mm = 6800
-        _move_time_ms = int((distance * _steps_per_mm / speed + 30) * 1000)
-        self._experiment_watchdog.start(_move_time_ms)
+            # Start watchdog: if serial reader dies, the gas would stay on forever without this
+            _steps_per_mm = 6800
+            _move_time_ms = int((distance * _steps_per_mm / speed + 30) * 1000)
+            self._experiment_watchdog.start(_move_time_ms)
 
         # Camera: armed/triggered from the Camera tab, or by itself near the end of
         # the test when "Auto-trigger at end of test" is ticked
@@ -7490,6 +7876,34 @@ class AtomisationApp(QMainWindow):
         if on_done:
             on_done(False, str(e))
 
+    def _snapshot_run_conditions(self) -> dict:
+        """The run conditions as they are in the widgets NOW. Taken at Start, so
+        re-saving a run (e.g. to add Notes) records what was actually run, not
+        whatever has since been typed for the next one."""
+        try:
+            static = float(self._speed_entry.text() or 0) <= 0
+        except ValueError:
+            static = False
+        return {
+            'orifice':      self._orifice_combo.currentText(),
+            'speed_str':    self._speed_entry.text(),
+            'distance_str': "0" if static else self._distance_entry.text(),
+            'bubbler_str':  self._bubbler_height_entry.text().strip(),
+            'rpm_str':      self._rpm_entry.text().strip(),
+            'flow_entry':   self._flow_entry.text(),
+            'fps_text':     self._cam_fps.text(),
+            # Snapshot the GLR and the densities it came from. _write_excel runs
+            # on the save worker and must not read widgets, and recording the
+            # densities means a GLR in an old sheet can always be traced back to
+            # the numbers that produced it.
+            'glr':          self._compute_glr(),
+            'rho_liquid':   self._rho_liquid_entry.text(),
+            'rho_gas':      self._rho_gas_entry.text(),
+            'fluid_tag':    self._fluid_tag_entry.text(),
+            'gas_tag':      self._gas_tag_entry.text(),
+            'static':       static,
+        }
+
     def _collect_save_job(self) -> dict:
         """Everything the save reads from the GUI or from run state, read NOW on
         the GUI thread. _write_excel touches nothing else of self's mutable
@@ -7507,7 +7921,9 @@ class AtomisationApp(QMainWindow):
         snap = {k: (list(v) if isinstance(v, list) else v)
                 for k, v in self._last_experiment_snapshot.items()}
         flows = snap.get('flows', [])
-        flow_entry = self._flow_entry.text()
+        # The conditions of the run being saved (taken at its Start); live values
+        # only for a save with no run behind it.
+        cond = self._run_conditions or self._snapshot_run_conditions()
         f_range_file = f"{max(flows):.0f}sccm" if flows else None
 
         # ── Resolve run folder (created at Start Experiment, or now as fallback) ──
@@ -7526,35 +7942,18 @@ class AtomisationApp(QMainWindow):
             self._run_folder = run_dir
 
         return {
+            **cond,
             'lacie':        lacie,
             'now':          now,
-            'orifice':      self._orifice_combo.currentText(),
-            'notes':        self._notes_text.toPlainText(),
-            'speed_str':    self._speed_entry.text(),
-            'distance_str': self._distance_entry.text(),
-            'bubbler_str':  self._bubbler_height_entry.text().strip(),
-            'rpm_str':      self._rpm_entry.text().strip(),
-            'flow_entry':   flow_entry,
-            'fps_text':     self._cam_fps.text(),
+            'notes':        self._notes_text.toPlainText(),     # live: typed after the run
+            'run_status':   (f"STOPPED: {self._run_stop_reason}" if self._run_stop_reason
+                             else "complete") if self._run_conditions else "",
             'ai':           dict(self._last_ai_results or {}),
             'snap':         snap,
             'run_dir':      run_dir,
             'last_tiff_dir': self._last_tiff_dir,
             'px_per_mm':    self._get_px_per_mm(),
             'last_cone_path': self._last_cone_path,
-            # Snapshot the GLR and the densities it came from. _write_excel runs
-            # on the save worker and must not read widgets, and recording the
-            # densities means a GLR in an old sheet can always be traced back to
-            # the numbers that produced it.
-            'glr':          self._compute_glr(),
-            'rho_liquid':   (self._rho_liquid_entry.text()
-                             if hasattr(self, "_rho_liquid_entry") else ""),
-            'rho_gas':      (self._rho_gas_entry.text()
-                             if hasattr(self, "_rho_gas_entry") else ""),
-            'fluid_tag':    (self._fluid_tag_entry.text()
-                             if hasattr(self, "_fluid_tag_entry") else ""),
-            'gas_tag':      (self._gas_tag_entry.text()
-                             if hasattr(self, "_gas_tag_entry") else ""),
         }
 
     def _write_excel(self, job: dict):
@@ -7694,7 +8093,7 @@ class AtomisationApp(QMainWindow):
                       'Fluid', 'Liquid density (kg/m3)',
                       'Gas', 'Gas density (kg/m3)',
                       'Pressure Range (barA)', 'Speed (steps/s)', 'Motor Travel (mm)',
-                      'FPS', 'Notes'],
+                      'FPS', 'Notes', 'Run status'],
             'Value': [ts_str, orifice, bubbler_str or 'NOT RECORDED',
                       rpm_str or 'NOT RECORDED', f_range_str, glr_val,
                       job.get('fluid_tag') or 'NOT RECORDED',
@@ -7702,9 +8101,13 @@ class AtomisationApp(QMainWindow):
                       job.get('gas_tag') or 'NOT RECORDED',
                       job.get('rho_gas') or 'NOT SET',
                       p_range_str,
-                      speed_str, distance_str, fps_val, notes],
+                      speed_str, distance_str, fps_val, notes,
+                      job.get('run_status') or 'NOT RECORDED'],
         }
-        with pd.ExcelWriter(ind_path, engine='openpyxl') as writer:
+        # Written to a temporary file and swapped in, so a crash or a drive
+        # dropout mid-write leaves the previous run_summary intact.
+        _ind_tmp = _tmp_path(ind_path)
+        with pd.ExcelWriter(_ind_tmp, engine='openpyxl') as writer:
             pd.DataFrame(meta).to_excel(writer, sheet_name='Metadata', index=False)
             if press_df is not None:
                 press_df.to_excel(writer, sheet_name='Pressure', index=False)
@@ -7723,6 +8126,7 @@ class AtomisationApp(QMainWindow):
                     _fl_img.width  = flow_img_width
                     _fl_img.height = DISPLAY_H
                     _ws.add_image(_fl_img, f'{get_column_letter(_col)}{_anchor_row}')
+        _commit_tmp(_ind_tmp, ind_path)
 
         # ── Compute lamella thickness value for master_log ────────────────
         import csv as _csv_mod, re as _re
@@ -8011,7 +8415,12 @@ class AtomisationApp(QMainWindow):
             'D32 (um)':              d32_val,
             'Atomised (%)':          atom_val,
             'Avg Lamella Thickness': _lamella_cell_val,
-            'Notes':                 notes,
+            # A stopped run is flagged where it is seen: at the front of its
+            # Notes. (run_summary.xlsx has its own "Run status" field; its
+            # Notes stay untouched because the Taguchi app reads them.)
+            'Notes':                 (f"⚠ {job['run_status']}\n{notes}".rstrip()
+                                      if str(job.get('run_status', '')).startswith("STOPPED")
+                                      else notes),
         }
         for name, col in _col.items():
             cell = ws.cell(row=row_num, column=col)
@@ -8072,7 +8481,10 @@ class AtomisationApp(QMainWindow):
             else:
                 ws.cell(row=row_num, column=_col_idx).value = 'NO DATA AVAILABLE'
 
-        wb.save(master_path)
+        # master_log holds every run (~83 MB): never write it in place. Save to
+        # a temporary file beside it and swap it in, so a crash or a LaCie
+        # dropout mid-write leaves the previous master_log intact.
+        _replace_atomically(master_path, wb.save)
         return ind_path, master_path, run_dir
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -8083,6 +8495,16 @@ class AtomisationApp(QMainWindow):
         return os.path.join(os.path.dirname(__file__), "camera_settings.json")
 
     def _load_camera_settings(self):
+        # Setting widgets fires their save signals (Run AI analysis, the cone
+        # spinboxes, …); saving half-way through a load wrote defaults over the
+        # values not loaded yet (last flow, Alicat port, cut-off, lamella model).
+        self._loading_settings = True
+        try:
+            self._load_camera_settings_inner()
+        finally:
+            self._loading_settings = False
+
+    def _load_camera_settings_inner(self):
         try:
             with open(self._settings_path()) as f:
                 s = json.load(f)
@@ -8203,6 +8625,8 @@ class AtomisationApp(QMainWindow):
         return f"{now.strftime('%H%M%S')}_" + "_".join(parts)
 
     def _save_camera_settings(self):
+        if getattr(self, "_loading_settings", False):
+            return
         try:
             # Read existing px_per_mm so it's preserved even if called before calibration
             try:
@@ -8253,8 +8677,10 @@ class AtomisationApp(QMainWindow):
                 "lamella_arch":       getattr(self, "_lamella_arch",       "smp"),
                 "lamella_on":         getattr(self, "_lamella_on",         False),
             }
-            with open(self._settings_path(), "w") as f:
-                json.dump(s, f, indent=2)
+            def _write(tmp):
+                with open(tmp, "w") as f:
+                    json.dump(s, f, indent=2)
+            _replace_atomically(self._settings_path(), _write)
         except Exception as e:
             print(f"[WARNING] Could not save camera settings: {e}")
 
@@ -8275,8 +8701,6 @@ class AtomisationApp(QMainWindow):
         return (f"Saving to: {base}/{today.strftime('%Y/%m/%d')}/{{HHMMSS}}_Manual/")
 
     def _excel_save_path_hint(self):
-        if self._run_folder:
-            return os.path.join(self._run_folder, "run_summary.xlsx")
         lacie = find_lacie_drive()
         if lacie:
             return os.path.join(lacie, "Experiments", "YYYY", "MM", "DD",
@@ -8328,14 +8752,11 @@ class AtomisationApp(QMainWindow):
             f"color:{c}; font-size:12px; background:transparent;")
 
     def keyPressEvent(self, event):
+        # Space (camera trigger) is handled by _SpaceTriggerFilter: a focused
+        # button takes Space before it ever reaches this method.
         focus = self.focusWidget()
         in_text_field = isinstance(focus, (QLineEdit, QTextEdit, QPlainTextEdit))
         if not in_text_field:
-            if event.key() == Qt.Key.Key_Space:
-                if self._cam_trigger_btn.isEnabled():
-                    self._cam_trigger()
-                event.accept()  # always consume space — prevents focused buttons activating
-                return
             if event.key() == Qt.Key.Key_C and self._cone_capture_btn.isEnabled():
                 self._cone_capture()
                 event.accept()
@@ -8343,9 +8764,28 @@ class AtomisationApp(QMainWindow):
         super().keyPressEvent(event)
 
     def closeEvent(self, event):
+        busy = []
+        if self.pressure_data['experiment_active']:
+            busy.append("an experiment is running (closing stops the traverse, "
+                        "bubbler and gas)")
+        if not self._cam_save_progress.isHidden():
+            busy.append("the camera is saving a capture (closing will cut it short)")
+        if busy:
+            ans = QMessageBox.question(
+                self, "Close Atomisation Control?",
+                "Close now?\n\n• " + "\n• ".join(busy),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            if ans != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
         self.serial_reading_active = False
         self._live_feed_timer.stop()
-        if self.arduino:     self.arduino.disconnect()
+        if self.arduino:
+            # Closing the port does not stop the board: halt the traverse first.
+            try: self.arduino.send_stop()
+            except Exception: pass
+            self.arduino.disconnect()
         if self.rpm_arduino:
             try: self.rpm_arduino.send_stop()
             except Exception: pass
@@ -8364,8 +8804,41 @@ class AtomisationApp(QMainWindow):
         ex = getattr(self, "_excel_executor", None)
         if ex is not None:
             ex.shutdown(wait=True)
-        plt.close('all')
         super().closeEvent(event)
+
+
+class _SpaceTriggerFilter(QObject):
+    """Space = camera trigger, anywhere in the main window except while typing.
+
+    Installed on the QApplication so it sees the key BEFORE the focused widget:
+    a QPushButton with focus treats Space as a click, so handling Space in the
+    window's keyPressEvent let it re-press whatever button was last clicked
+    (Spin, Set Flow, Home, STOP EVERYTHING) instead of firing the camera.
+    Press and release are both swallowed so no button half-activates. Dialogs
+    are left alone (Space still presses their buttons)."""
+
+    _TEXT_INPUTS = (QLineEdit, QTextEdit, QPlainTextEdit, QAbstractSpinBox)
+
+    def __init__(self, window):
+        super().__init__(window)
+        self._window = window
+
+    def eventFilter(self, obj, event):
+        et = event.type()
+        if et not in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
+            return False
+        if event.key() != Qt.Key.Key_Space:
+            return False
+        if QApplication.activeWindow() is not self._window:
+            return False
+        focus = QApplication.focusWidget()
+        if isinstance(focus, self._TEXT_INPUTS) or (
+                isinstance(focus, QComboBox) and focus.isEditable()):
+            return False
+        if et == QEvent.Type.KeyPress and not event.isAutoRepeat():
+            if self._window._cam_trigger_btn.isEnabled():
+                self._window._cam_trigger()
+        return True
 
 
 class _OpaqueTooltipFilter(QObject):

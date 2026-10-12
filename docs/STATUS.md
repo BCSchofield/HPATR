@@ -1,6 +1,6 @@
 # STATUS — real-data droplet pipeline and Taguchi study
 
-**Last updated: 2026-10-12 (Mac: CCD plan complete, Phase 7 committed 2ebc9f0; Mac light-mode theme fix; batch bugs 1-2, goal-ramp bug, feed floor 2,000 steps/s; mean diameter now a headline response and the default size goal; GUI_Clean auto-trigger at end of test and pressure cut-off (both untried on the rig); next is the 33-run CCD day).** This is the live state of the work. Claude keeps it current
+**Last updated: 2026-10-12 (Mac: CCD plan complete, Phase 7 committed 2ebc9f0; Mac light-mode theme fix; batch bugs 1-2, goal-ramp bug, feed floor 2,000 steps/s; mean diameter now a headline response and the default size goal; GUI_Clean auto-trigger at end of test and pressure cut-off (both untried on the rig); GUI_Clean review fixes + front limit switch firmware (uncommitted, needs flashing and a switch check on the rig); next is the 33-run CCD day).** This is the live state of the work. Claude keeps it current
 (see "How this file is maintained" at the bottom). History, evidence and full reasoning are in
 `docs/archive/HANDOFF_real_data_pipeline_LEGACY.md` (frozen 2026-10-07, newest section first).
 
@@ -387,6 +387,22 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
 
 ## Known bugs, not fixed
 
+GUI_Clean (review 2026-10-12, Mac). FIXED the same day (uncommitted, offscreen-tested, NOT yet on the rig):
+Alicat reader death / silence, jog limits + front switch, Clean removed, close check, cut-off clearing,
+Space bar, speed 0, stopped runs marked, conditions recorded at Start, atomic writes, settings saved
+half-loaded, unused code, How To button + text (details under Recent changes). Still open (Ben's call):
+- STOP / cut-off within 0.5 s of Start does not cancel the delayed traverse command (Ben: leave).
+- AI auto-save writes into whichever run is current when the AI finishes (Ben: runs never overlap).
+- `_run_folder` never cleared: a manual trigger between runs writes into, and deletes the TIFFs of,
+  the previous run; Disarm during a camera save clears camera RAM (Ben: leave both).
+- Camera IP box is ignored (PhantomController.connect discovers); three volume calcs disagree (r=10 mm,
+  25.8 mL/72.5 mm, bore 20.27 mm: up to 13%); the Homed dot stays red after the board's own start-up
+  homing (the "Homing Complete" line is consumed during connect).
+- FREEZES (to do separately): cone webcam on the GUI thread at 10 Hz; `find_lacie_drive()` on the GUI
+  thread every 5 s and per keystroke; `log_serial` appends to the LaCie per serial line/command; the
+  83 MB master_log.xlsx rewrite holds the GIL ~10 s at every run end; Phantom live-feed conversion on
+  the GUI thread; ~30 setStyleSheet/s; console never trimmed.
+
 Taguchi_Analysis_UI (found in the 2026-10-06 batch):
 1. ~~One failed log write kills the worker~~ **FIXED 2026-10-11** (Mac, uncommitted): writes to the
    run log, events and state never fail a run or the worker (kept and retried); a run that fails with
@@ -519,6 +535,28 @@ made", "Bit depth", and the dated sections).
 
 ## Recent changes (newest first; trim to ~10 entries, older ones live in git history)
 
+- 2026-10-12 (Mac, NOT yet on the rig): **GUI_Clean safety + data fixes, and Portenta firmware.**
+  FIRMWARE (`src/gui/Pressure_Motor_Portenta.cpp`, compiles for Portenta H7 M7; MUST be flashed): the
+  front optical switch (pin 1, previously configured but never read) is now an ABSOLUTE forward stop:
+  3 consecutive HIGH reads halt any forward move, jog or homing back-off (`FRONT_LIMIT: pos=` then
+  MOVEMENT_COMPLETE / JOG_LIMIT); forward moves/jogs are refused while it reads HIGH; backward always
+  allowed. Assumes the back switch's polarity (HIGH = blocked); a disconnected switch reads HIGH and
+  blocks forward motion (fail-safe). New `SWITCHES:` command reports both switches (also at boot).
+  Soft limit 986000 steps (stale 13600-steps/mm figure = 145 mm) -> MAX_TRAVEL_STEPS = 493000 (72.5 mm).
+  GUI: Alicat health (frames stamped on the reader thread; no frame for 2 s or the reader dying ->
+  red alarm, cut-off shows NO DATA, STOP EVERYTHING mid-run, Set Flow / Start refused); FRONT_LIMIT,
+  traverse STALL_DETECTED, MOVEMENT_TIMEOUT, ERROR:/HOMING_FAILED handled; "Check switches" button
+  replaces Clean (removed); jog release always sends STOP and the GUI stops a jog at 72.5 mm; STOP
+  EVERYTHING ends the run itself if no MOVEMENT_COMPLETE within 1.5 s; the watchdog now stops the
+  traverse and SAVES the run; stopped runs: run_summary "Run status" = "STOPPED: <reason>" (else
+  "complete"), master_log Notes prefixed "⚠ STOPPED: ...", travel credited only as far as covered;
+  run conditions snapshotted at Start (re-saving Notes keeps them); speed 0 = static run (no move, no
+  watchdog, ends with STOP EVERYTHING); close asks while a run / camera save is in progress and sends
+  STOP to the traverse; clearing the cut-off box switches it off; Space handled by an app-level filter
+  (a focused button can no longer take it); run_summary, master_log and camera_settings.json written
+  to a temp file then os.replace; settings never saved part-way through loading; unused imports /
+  locals / attrs removed; How To button opens How To (index from count), text rewritten.
+  Checked offscreen (fake Portenta/Uno/Alicat, writes redirected to the scratchpad): 17 checks.
 - 2026-10-12 (Mac, NOT yet tried on the rig): **GUI_Clean pressure cut-off** box under Gas Flow Off
   (Hardware tab, Mass Flow Control card; 0-30 barA, empty/0 = off; remembered as `pressure_cutoff_bar`). Every
   Alicat frame (~0.2 s) compares the RAW barA reading (absolute, not the smoothed trace) with it; the
