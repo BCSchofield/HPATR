@@ -1,6 +1,6 @@
 # STATUS — real-data droplet pipeline and Taguchi study
 
-**Last updated: 2026-10-12 (lab PC: 33-run CCD day captured, all cines saved, run 33 stall flag cleared by hand; GUI_Clean camera save hardened after a lost auto-trigger capture (untried on the rig); STATUS commit refs fixed, tracked __pycache__ removed, front limit switch tested on the rig, emoji removed from GUI_Clean console messages, switch noise filter in firmware (needs flashing), GUI_Clean SCCM ramp + bubbler starts with Start Experiment (untried on the rig); Mac: CCD plan complete, Phase 7 committed 2ebc9f0; Mac light-mode theme fix; batch bugs 1-2, goal-ramp bug, feed floor 2,000 steps/s; mean diameter now a headline response and the default size goal; GUI_Clean auto-trigger at end of test and pressure cut-off (both untried on the rig); GUI_Clean review fixes + front limit switch firmware (committed 58f1b94; firmware flashed and switch-tested on the lab rig 2026-10-12, all passed); next is the 33-run CCD day).** This is the live state of the work. Claude keeps it current
+**Last updated: 2026-10-13 (home PC: CCD batch finished 33/33 at 2.2.0 and analysed once; the 0.5 mm block was gas-starved at a ~9.5 barA ceiling (see Recent changes and docs/notes/2026-10-13_CCD_day_explained.md); app bugs 3 (stale run list) and 6 (no atomised liquid flow on Python 3.9) found. 2026-10-12 home PC: python-pptx 1.0.2 installed in the Detectron env; CCD day checked on the LaCie: 33/33 cines + summaries, detects as a complete 4-factor CCF, quick self-test READY; batch not started. Lab PC: 33-run CCD day captured, all cines saved, run 33 valid (the GUI's stall check false-tripped; label removed); GUI_Clean camera save hardened after a lost auto-trigger capture (untried on the rig); STATUS commit refs fixed, tracked __pycache__ removed, front limit switch tested on the rig, emoji removed from GUI_Clean console messages, switch noise filter in firmware (needs flashing), GUI_Clean SCCM ramp + bubbler starts with Start Experiment (untried on the rig); Mac: CCD plan complete, Phase 7 committed 2ebc9f0; Mac light-mode theme fix; batch bugs 1-2, goal-ramp bug, feed floor 2,000 steps/s; mean diameter now a headline response and the default size goal; GUI_Clean auto-trigger at end of test and pressure cut-off (both untried on the rig); GUI_Clean review fixes + front limit switch firmware (committed 58f1b94; firmware flashed and switch-tested on the lab rig 2026-10-12, all passed); next is the 33-run CCD day).** This is the live state of the work. Claude keeps it current
 (see "How this file is maintained" at the bottom). History, evidence and full reasoning are in
 `docs/archive/HANDOFF_real_data_pipeline_LEGACY.md` (frozen 2026-10-07, newest section first).
 
@@ -347,7 +347,8 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
 4. **Fold in the Windows timings**: `9x3 Taguchi Repeats/_job/eta_calibration.json` +
    `_job/timings.csv` -> replace `eta.PRIORS_BY_OS["Windows"]` in `eta.py` with measured
    lo/typ/hi per stage. ~10 min, any time.
-5. **Install `python-pptx` on both Windows machines** (the Taguchi app's PowerPoint deck needs it;
+5. **Install `python-pptx` on the lab PC** (home PC DONE 2026-10-12: 1.0.2 + lxml 6.1.3 + XlsxWriter 3.2.9
+   into the Detectron env, numpy untouched at 2.0.2). (The Taguchi app's PowerPoint deck needs it;
    without it the publish still writes everything else and the report says why). Command Prompt:
    home PC `"C:\Users\BenSc\anaconda3\envs\Detectron\python.exe" -m pip install "python-pptx==1.0.2"`;
    lab PC `"C:\Users\55154111\AppData\Local\Programs\Python\Python311\python.exe" -m pip install "python-pptx==1.0.2"`.
@@ -392,6 +393,8 @@ GUI_Clean (review 2026-10-12, Mac). FIXED the same day (committed 58f1b94; firmw
 Alicat reader death / silence, jog limits + front switch, Clean removed, close check, cut-off clearing,
 Space bar, speed 0, stopped runs marked, conditions recorded at Start, atomic writes, settings saved
 half-loaded, unused code, How To button + text (details under Recent changes). Still open (Ben's call):
+- Bubbler stall check false-tripped on CCD run 33 (2026-10-12): reported a stall at 66 RPM, labelled the run
+  STOPPED, but the bubbler ran normally (Ben). Cause not looked at.
 - Traverse driver unpowered (rig safety switch off, 2026-10-12): the motor is limp, homing counts steps to
   its 1.1M-step limit and the GUI takes ~110 s to connect, then shows HOMING_FAILED "back switch never
   triggered". Check the safety switch / supply first. Proposed, not made: a driver check before homing
@@ -418,11 +421,23 @@ Taguchi_Analysis_UI (found in the 2026-10-06 batch):
 2. ~~A crash is reported as a contract violation with no Resume~~ **FIXED 2026-10-11**: a crash is now
    status **crashed** (exit 7), resumable, with its own message; old jobs written "halted" with no
    contract-violation run also read as crashed. Only a real contract violation reads "halted".
-3. The SELECTED RUNS summary ("N already measured") does not update while a batch runs.
+3. The SELECTED RUNS summary ("N already measured") does not update while a batch runs. **Worse, found
+   2026-10-13 (home PC, CCD day):** the run list's RunInfo (incl. `analysis.measured`) is read once when runs
+   are added and NEVER re-read when the batch finishes (`pane_runs` only reloads on a settings change; "+" on
+   the same folder skips runs "already in the list"). So Analyse in the same session as the batch skips every
+   run as "not measured yet" and refuses. Workaround: Batch tab, Clear, add the day folder again, Analyse.
+   Fix (not made): reload the run list when the batch finishes.
 4. After a crash the "already have results" dropdown showed "Re-measure only"; check the default
    (run sheet says "Use their existing results").
 5. 17 Windows-only test failures, all test-side (path separators, `os.getpgid`, symlinks needing
    admin, `?` in a fake run name, one GLR test). Self-test says READY regardless.
+6. **No atomised liquid flow on the home PC (found 2026-10-13, CCD day):** `covariates._gui_formula` imports
+   `GUI_Clean`, which imports `Trials/Cone_4.py`; Cone_4 uses `int | None` annotations, a TypeError on
+   Python 3.9 (the Detectron env), and GUI_Clean's guard catches only ImportError. So the GUI formula is
+   unavailable, `liquid_ml_min` is None, and `af_flow` ("Atomised liquid flow") has no values: "No fit", and
+   the throughput goal silently drops out of the desirability (the CCD best setting became atomised fraction
+   alone -> lowest feed). Recorded GLR is unaffected. Fine on Python >= 3.10 (Mac, lab PC). Fix (not made):
+   `except ImportError` -> `except Exception` at `GUI_Clean.py:74`, then re-Analyse.
 
 Response surface tab, found 2026-10-11 (tested on fakes: the 9x3 + 4 next-session runs on another day):
 - **Loading a next session with the original runs is not handled properly yet.** (a) Confirmation runs
@@ -540,14 +555,44 @@ made", "Bit depth", and the dated sections).
 
 ## Recent changes (newest first; trim to ~10 entries, older ones live in git history)
 
+- 2026-10-13 (home PC): **CCD day batch finished, 33/33 ok**, all sizer 2.2.0 with droplets_0.30 +
+  liquid_0.30. Output / job folder: `D:\Experiments\Taguchi\CCD\CCD 4-factor 12-10-2026\` (the LaCie's
+  `Experiments/Taguchi/CCD/...` on the Mac). 18:13 -> ~05:05, 7.9-36 min per run (median ~19 min); the
+  two longest (115412, 122239, ~36 min) were back to back. Next: Response surface tab Analyse (Ben).
+  **First Analyse (09:09-09:14, ~5 min on this PC):** atomised fraction is the only usable surface (R² 0.93,
+  predicted 0.62, LOF p 0.032): up with gas, RPM; down with feed, orifice; Orifice² and big RPM x Orifice /
+  Feed x Orifice interactions. Size and steadiness surfaces predict poorly (predicted R² < 0, strong LOF);
+  mean diameter barely moves (39.3 um, coefficients ~1 um). No curvature except in orifice. Best setting
+  11,000 / 900 / 3,000 / 0.5 (all edges) but driven by atomised fraction ALONE (bug 6 removed the flow goal;
+  mean diameter and CV dropped as weak). 0 rpm control 19.2% vs centres 17.3 +/- 1.1 and outside its PI
+  (pred 12.9). 0.8 mm check inside its PIs except peak pressure (5.2 vs 6.3 predicted).
+  **Read-only check of the gas traces: the whole 0.5 mm block was gas-starved.** P0 pinned at 9.2-9.6 barA
+  (a supply ceiling?) and the camera-window gas flow was 33-5,554 sccm against set points of 7,000-11,000
+  (delivered gas vs feed r = -0.92; more with rpm). Every 0.8/1.2/1.8 mm run got its set point. So the gas
+  factor is wrong for 10 runs, which drives the interactions, LOF and the 0.5 mm "best setting". Gas
+  expansion energy per kg liquid (GLR_delivered x RT ln(P0/Pa)) correlates with atomised fraction at
+  r = 0.83 over all 33 runs (set-point GLR 0.35). Rotation: no effect at 1.2 mm (0/100/500/900 rpm all
+  17-19%), +2.6 points at 1.8 mm. Full write-up, section by section of the deck, with the physics:
+  `docs/notes/2026-10-13_CCD_day_explained.md`. Next: find the pressure ceiling; fix Taguchi app bug 6;
+  re-analyse (a) without the 0.5 mm block and (b) with the delivered gas typed in.
+
+- 2026-10-12 (home PC, read-only on the data): **CCD day ready for the batch.** `D:\Experiments\2026\10\12\`
+  holds 33 runs, each one 13.93 GB cine (same size as 10/05: ~508 frames at stride 10) + run_summary.xlsx,
+  nothing analysed yet. All Run status "complete", 390 fps, bh 0.5, Notes "CCD run 1..33 <type>" in capture
+  order. The app's own loader + `rsm_detect` find a complete CCF, 4 factors: 16 corners, 10 faces, 5 centres
+  (31 in the fit), 0 rpm = outside (control), 0.8 mm = off-grid check, orifice the block factor (3 changes,
+  confounded with time), 3 drift pairs, full quadratic estimable (15 terms, 6 pure-error df, 10 LOF df), no
+  missing / extra points, no Notes conflicts. Achieved flow (max of the recorded range) at 11,000 sccm on the
+  0.5 mm block peaked at 11,421-11,782 in 3 of 4 runs (vs ~1-2% over elsewhere); the fit uses the setpoint. Quick self-test READY. Batch time on
+  this PC from the 9x3 timings: ~23-28 min/run, so ~13-15 h for 33.
+
 - 2026-10-12 (lab PC): **33-run CCD day captured.** All 33 runs in `E:\Experiments\2026\10\12\`
   (105301 … 151407), settings and order match the seed-1 sheet (`ben_plan()` in
   `tests/test_rsm_design.py`); every run has a full 13.93 GB cine. The two morning runs that lost their
-  cine (~10:36, 11:10) were deleted by Ben. Run 33 (0.8 mm check) was flagged "STOPPED: bubbler motor
-  stalled mid-run stalled at 66 RPM" by the GUI's stall check; Ben says the run was fine, so the flag
-  was removed by hand (run_summary Run status -> "complete", master_log Notes prefix removed; inline-XML
-  edit, images untouched). Worth knowing when reading run 33's RPM. Next: batch on Windows, then the
-  Response surface tab.
+  cine (~10:36, 11:10) were deleted by Ben. Run 33 (0.8 mm check) ran normally at 500 rpm and is a valid
+  run: the GUI's stall check false-tripped on it ("STOPPED: ... stalled at 66 RPM"; Ben confirmed no stall),
+  and that false label was removed (run_summary Run status "complete", master_log Notes clean; checked
+  2026-10-12 on the home PC). Next: batch on Windows, then the Response surface tab.
 
 - 2026-10-12 (lab PC, compiled only, NOT yet on the rig): **GUI_Clean lost auto-trigger capture.** A
   run's auto-trigger fired and logged "saving .cine", then failed ("Error — re-arm manually"); no .cine
