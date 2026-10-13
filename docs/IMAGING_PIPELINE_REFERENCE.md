@@ -142,7 +142,8 @@ The `.cine` is the **only irreplaceable file**; everything in stages 1–7 can b
   shadowgraph/raw/background_median.tiff    Stage 2: float32 per-pixel median
   shadowgraph/analysis/predictions.json     Stage 3: every detection with score >= 0.05
   shadowgraph/analysis/droplets_0.30/       Stage 4: summary.json, per_frame.csv,
-                                            droplet_sizes.csv, object_areas.csv, extreme PNGs
+                                            droplet_sizes.csv, object_areas.csv, extreme PNGs,
+                                            extreme_frames_more/ (PNGs + index.json/csv)
   shadowgraph/analysis/liquid_0.30/         Stage 5: classical_summary.json,
                                             classical_per_frame.csv, classical_components.csv
   shadowgraph/analysis/_sizer2.1.0/         2026-10-07 only: the 2.1.0 results moved aside
@@ -314,7 +315,8 @@ sizer reads 6.7% smaller than the model mask, typical of the ~0.86× area ratio 
 ### 6.3 Per frame and pooled outputs
 
 Per frame (`per_frame.csv`): in-focus and out-of-focus droplet counts, filament and blob counts,
-frame D32, and a **model-only** atomised fraction:
+frame D32, a **model-only** atomised fraction and (last column, since 2026-10-13)
+`mean_d_in_focus_um`, the mean of that frame's in-focus `droplet_sizes.csv` diameters:
 
 ```
 atomised_model = |U droplet masks| / (|U droplet| + |U filament| + |U blob|) * 100
@@ -337,6 +339,42 @@ Also: mean, SD (ddof = 1), min and max in-focus diameter; `diameter_method_count
 `sharpness_reclassified`; `d32_extreme_frames` / `atomised_extreme_frames` (extreme-frame PNGs:
 green = in focus, magenta = out of focus).
 
+**More extreme frames** (2026-10-13, Ben's request; `pick_more_extremes`): the frame with the
+**most in-focus droplets**, the **most droplets in total** (in + out of focus), and the **largest**
+and **smallest mean in-focus diameter**, the last two only among frames with at least **half the
+run's median in-focus count per frame, never fewer than 10** (`mean_floor`, `MIN_DROPLETS_FOR_MEAN`;
+Ben, 2026-10-13: a flat 10 picked thin frames whose mean swings by chance, e.g. 57.9 um from 17
+droplets on 130918, where a typical frame has 54; with fewer than 2 such frames both are left out and
+`note` says why; the floor used is written as `min_droplets_for_mean`). Ties go to the first
+frame. They are drawn exactly as the other extremes (`render_frame`, same caption: that frame's D32
+and **model-only** atomised %) into `droplets_<thr>/extreme_frames_more/<frame>.png`, one PNG per
+distinct frame, with `index.json`:
+
+```
+{"schema": 1, "min_droplets_for_mean": 10, "note": "",
+ "frames": [{"key": "most_in_focus", "label": "Most in-focus droplets", "frame": "frame_0483_n4829",
+             "image": "frame_0483_n4829.png", "value": 204, "unit": "in-focus droplets",
+             "droplets_in_focus": 204, "droplets_total": 439, "mean_d_um": 37.58, "d32_um": 53.42,
+             "atomised_pct": 31.73}, ...]}
+```
+
+keys / labels / units: `most_in_focus` / Most in-focus droplets / in-focus droplets;
+`most_total` / Most droplets in total / droplets; `mean_d_highest` / Largest mean diameter /
+um mean (in focus); `mean_d_lowest` / Smallest mean diameter / um mean (in focus). `index.csv` holds the
+same rows, and `summary.json` carries the list as `more_extreme_frames`. The folder is written in
+every image mode (`--images all` copies the flat PNGs; no images: `index.json` with `"image": null`).
+⚠ With a floor of 10 the mean-diameter extremes are usually **sparse** frames: on the CCD day the
+chosen frame had a median of 22-23 in-focus droplets, below half the run's median frame in 16-21 of
+33 runs. Read them as "what a sparse frame looks like", like the raw D32 extremes.
+
+**Back-fill without the model** (`render_more_extremes.py <run or folder of runs> [--thr 0.30]
+[--dry-run] [--force]`): picks the frames from the run's own `per_frame.csv` and `droplet_sizes.csv`
+with the same function, re-measures only those frames from `predictions.json` + 16-bit frames +
+background with measure_run's own per-frame code (`measure_frame`) and the run's provenance, and
+**refuses the run** unless each frame's in-focus / out-of-focus counts, D32, atomised % and mean
+diameter match its recorded row. Writes only `extreme_frames_more/` (via `.partial/` and a rename).
+Done for the 33 CCD runs on 2026-10-13: 33/33 passed the gate; ~3.5 s per run on the Mac.
+
 **Bootstrap CI** (`boot_ci`, `:368`; 2000 resamples, seed 0, percentile 2.5/97.5). Resample
 **frames** with replacement; each frame contributes its (Σd³, Σd²) pair, so a replicate D32 is
 Σ(Σd³)/Σ(Σd²) over the resampled frames. Only every `ci_stride`-th frame is resampled;
@@ -356,6 +394,26 @@ frames that have detections). All 508 frames of every 10/05 run had detections, 
 
 The model under-reads un-atomised liquid (a 28 × 28 mask head cannot draw a 100:1 thread; objects
 are cut at tile seams), so the denominator is re-measured classically on the whole frame.
+
+**Liquid stage 2.3.0 (2026-10-13): drops on the window, and volume.** `classical_summary.json` →
+`provenance.liquid_version`. Two passes: pass 1 measures every frame and builds a per-pixel persistence
+map of un-atomised liquid; pass 2 recomputes each frame's areas with the window mask taken out of
+numerator and denominator.
+- **Route A (a drop lands mid-run, so it is not in the background median):** a piece un-atomised in
+  ≥ 20% of frames (`--window-p`), ≤ 400 px across, aspect ≤ 3, flat-topped (≥ 60% within 70% of its peak
+  persistence: a drop on the glass sits still, a jet wobbles) is masked (grown 3 px) in every frame;
+  `classical_summary.window` lists the objects and the masked area.
+- **Route B (a drop present all run divides out of T, but the model still sees it on the raw frame):** an
+  out-of-focus non-droplet detection whose mean T is ≥ 0.97 (`--static-t`) is not liquid;
+  `static_pieces_not_counted`.
+- **Volume (secondary, `--volume`):** per frame `droplet_vol_mm3` (spheres), `total_liquid_vol_mm3`
+  (un-atomised pieces with a round cross-section, `liquid_volume.py`, OpenCV only), `atomised_vol_pct`;
+  pooled `atomised_vol_pct_pooled`. Ranks runs like the area fraction; scale good to about ±40%.
+- With `--static-t 0 --window-p 0 --no-volume` the output is bit-identical to 2.2.0 (checked on C20).
+- CCD day: C9 8.84 → 16.38%, C21 10.81 → 15.08%, C20 5.96 → 10.51%; runs without drops unchanged.
+  `remeasure_liquid.py` re-runs only this stage from the existing predictions (no inference; CPU; on the
+  Mac ~1.5 min per run, LaCie-read bound), archiving the old `liquid_0.30/` to `_liquid2.2.0/`. The app
+  refuses to mix liquid-stage versions.
 
 Detections used: all classes, `score >= 0.30`, **truncated included** (a union reassembles a split
 object). Per frame (`measure_frame`, `:265`):
@@ -440,12 +498,20 @@ volume, not flux): see §13.
 recomputes D32 and the atomised fraction and **refuses** the run if they disagree with the
 summaries (> 0.02 µm, > 0.002 points). The analysis refuses mixed `sizer_version`s.
 
+**"No spray" runs** (`stats.no_spray_reason`, 2026-10-13): a run whose atomised fraction is below the
+Settings tab's threshold (default **2%**, 0 = off) is a dribble. Its droplet **size** (D32, mean, median,
+D90, Dv50, the size spread) and droplet **steadiness** (count CV, near-empty %, frames below half,
+lag-1, spectra) are blanked in both analyses, every table and figure, and the deck's headlines; its
+atomised fraction, in-focus count, liquid CV, atomised liquid flow and peak pressure stay (near zero is
+the true answer there). The run is named in the warnings at the top of the report and in provenance.
+On the CCD day it catches C3 (0.19%) and C5 (0.45%); the next run up is 5.96%.
+
 **Responses** (`taguchi_analysis.RESPONSES`; all from the same frames):
 
 | response | definition | better |
 |---|---|---|
 | D32 in-focus | Σd³/Σd² over in-focus droplets | smaller |
-| Atomised fraction, classical | 100 Σdroplet_px / Σtotal_px | larger |
+| Atomised fraction by area, classical | 100 Σdroplet_px / Σtotal_px (projected area, not volume: see `definitions.md`) | larger |
 | Mean / median diameter | of in-focus droplet diameters | smaller |
 | D90 by count | 90th percentile of in-focus diameters | smaller |
 | In-focus droplets per frame | in-focus count / frames | larger |
@@ -481,16 +547,45 @@ and % by volume (Σd³); a condition pools its replicates' droplets (one populat
 **GLR** (`covariates.py`): treated as a covariate, not a factor (it is built from gas and liquid
 flow, so it is aliased with them): correlation and log–log power-law exponent per response.
 
+**Gas mass flux at the orifice** (`covariates.py`, added 2026-10-13): G = ṁ_gas / A, ṁ_gas = sccm × ρ_gas /
+6×10⁷ kg/s (ρ_gas the recorded gas density, as for GLR), A = π d²/4 of the run's orifice. The sccm is what the
+run got in the camera window (`operating.py`), else the workbook's achieved flow, else the set point. Also a
+covariate, not a factor (made from gas and orifice): same correlation and power-law exponent per response, and
+`fig_gas_flux` (log x, coloured by orifice, hollow = did not get its set gas), in the Taguchi and the
+response-surface outputs. Exit velocity equivalent = G / ρ_gas, for reading only: at a choked orifice the
+real exit is sonic and denser. Why: on the CCD day it ordered atomised fraction best of everything tried
+(Spearman +0.91; GLR −0.21). The exit orifice **length** (`run_summary.xlsx` *Orifice length (mm)*, written
+from 2026-10-13) and L/D are reported with it; runs with different lengths in one analysis raise a warning,
+since the length is not a factor and its effect would be mixed into the others.
+
+**Silicone film at the exit** (`orifice.py`, added 2026-10-13): G over the gas-only capacity at the
+camera-window P0, G_gas = Cd · P0 · √(γ/(R T)) · (2/(γ+1))^((γ+1)/(2(γ−1))) when choked (P0 ≥ 1.89 Pa; the
+subsonic isentropic form below), 20 °C, γ and R from the *Gas* tag, is the gas share α of the orifice area.
+Then u_L = Q_L / ((1 − α) A) (syringe flow) and, for an annular exit, h = (d/2)(1 − √α). Cd per insert from
+`orifice_cd.json` (1.0, "ideal (not measured)", until measured gas-only). A covariate (`film_um`), with
+`fig_film_thickness`, the diagram `fig_orifice_model`, a report section, the workbook sheet *Silicone film at
+exit* (diagram and maths beside the table) and deck slides, in both analyses. CCD day: Spearman −0.90 with
+atomised fraction over 31 spraying runs. P0 is read upstream, so α is underestimated; separated, frozen flow
+is assumed. **No-spray runs are left out of every covariate fit** (plotted as grey ×).
+
+**Added 2026-10-13:** atomised fraction by volume (estimated, liquid stage ≥ 2.3.0, secondary) and its
+flow index; in-focus droplets per frame in the size band (Settings, default 30–50 µm, half-open): how many
+droplets of the wanted size, a concentration, not a rate; droplets produced per second (all sizes and in the
+band), by mass balance: syringe flow × atomised fraction by volume ÷ π/6⟨d³⟩, a rate that does not fall when
+the spray speeds up (liquid stage ≥ 2.3.0; `run_metrics.mass_balance_rate`).
+
 **Extra responses** (`run_metrics.py`, the shared per-run data layer, cached in `<output>/cache/`):
 Dv50 (volume median, grouped-data interpolation across the pixel lattice's diameter cells), atomised
-liquid flow (mL/min × atomised fraction), frames below half the mean count, lag-1 correlation of the
+liquid flow index, area-based (syringe mL/min × atomised fraction by area: an index, not a measured flow), frames below half the mean count, lag-1 correlation of the
 droplet count, peak pressure: 14 responses, 42 factor tests on the 9x3.
 
 **Deliverables:** `taguchi_report.md`, `taguchi_analysis.xlsx`, `figures/` (main effects,
-contributions, per run, S/N, GLR, size spread by count and volume; plus `figures_extra.py`: size
+contributions, per run, S/N, GLR, gas mass flux, silicone film and the orifice model diagram, size spread
+by count and volume; plus `figures_extra.py`: size
 distributions and percentiles, per-run time series with pressure, liquid area, spectra, steadiness,
 drift, replicates, interaction plots, residual checks, correlations, liquid pieces, data quality, image
-galleries), `taguchi_deck.pptx` (`deck.py`, on Ben's template; needs python-pptx), optional `csv/` and
+galleries: `gallery_<c>` the classical least / most atomised frames, `gallery_more_<c>` the
+`extreme_frames_more/` frames, skipped for runs without one), `taguchi_deck.pptx` (`deck.py`, on Ben's template; needs python-pptx), optional `csv/` and
 `odd/` (odd-frame pack), and provenance (repo revision, sizer version, thresholds, bootstrap, bins).
 
 ---
@@ -505,6 +600,19 @@ For a central composite design (or any run set where a quadratic can be fitted).
   pairs, off-grid check runs and controls outside the region, point types, repeats, design type with
   missing points, hard-to-change block factor (confounded with time), Notes vs point type and order,
   estimability (rank + VIF > 50 = nearly aliased).
+- **Gas delivered and the operating regime** (`operating.py`, 2026-10-13): each run's `run_summary.xlsx`
+  → Pressure sheet gives the gas flow and P0 inside the camera window. **Flow-controlled**: ≥ 95% of the
+  set gas; **pressure-limited**: below that with P0 within 0.5 bar of the supply ceiling (Settings, default
+  9.5 barA); **gas short**: below that with lower pressure; **settled**: the window's median within 10% (or
+  100 sccm) of the 10 s before and of its own first half. Runs that did not get their set gas are, by
+  default, kept out of the fit (`RunPoint.excluded`) and reported in their own section with a main-effects
+  test among them; the Model page can instead fit them at the gas they got, or keep the set point. On the
+  CCD day all ten 0.5 mm runs are pressure-limited (33–5,554 sccm against 7,000–11,000) and every other
+  run flow-controlled. Figures: `fig_rsm_gas_delivered`, `fig_gas_traces`.
+- **Factor coding** (2026-10-13): `FactorLevels.log` codes a factor on ln(value) (Model page tick, default
+  the orifice); `decode()` is the inverse used everywhere. When runs are left out of the fit, the levels
+  are refitted to the fitted runs (`rsm_responses._recode`), so maps and the optimum stay in the fitted
+  span; settable levels outside it are not offered.
 - **Run-sheet builder** (`rsm_design.py`): face-centred CCD for 2–5 factors, optional half fraction,
   block factor with start/end repeats, extras, pressure-check first run, seeded order; rig limits gas
   12,000 sccm, 1,000 rpm, feed 2,000 to 12,000 steps/s.
@@ -569,7 +677,10 @@ back first (the app reads only `droplets_0.30` / `liquid_0.30`).
 5. **The 200 µm droplet ceiling (a settled design decision) is not enforced** in the code. Droplets
    > 200 µm carry 3–5% of in-focus volume and lower D32 by ~2 µm when removed (ranking unchanged).
 6. **Atomised fraction = projected area at one axial station, in snapshots.** Not volume, not
-   flux; depends on where the field of view is relative to the nozzle.
+   flux; depends on where the field of view is relative to the nozzle. One pixel of a round
+   ligament holds 5–15× the liquid of one pixel of droplet, so the area share overstates the
+   volume share, by a run-dependent amount. Labelled "by area" (and atomised liquid flow "index,
+   area-based") since 2026-10-13; a read-only area-vs-volume check on the CCD day is planned.
 7. **Classical liquid segmentation is not validated** against hand labels; the 0.70 seed and 0.95
    ceiling are reasoned, not calibrated.
 
@@ -617,7 +728,7 @@ results can be published sooner if items 9–11 are stated as limitations.
 | 5 | **Replace reject-by-shape with classify-by-shape; size by volume** (spheroids; ligaments from skeletons); report Dv50 beside D32; enforce or justify the droplet/blob boundary | non-spherical fragments measured, not discarded | code |
 | 6 | **Hand-label frames from the actual conditions, including 9000 sccm** (blind, with a control group: see memory `blind-labelling-needs-a-control`) | detection recall/precision per condition and size; whether detection bias tracks gas flow | ~1–2 sittings |
 | 7 | **Validate the classical liquid segmentation** against hand-labelled liquid masks | the atomised fraction's accuracy | labelling + scoring script |
-| 8 | **Measure velocity once** (windowed high-fps capture, PTV) | motion blur bound at 4 µs, decorrelation time, whether flux weighting is needed | one capture + analysis |
+| 8 | **Measure velocity once** (windowed high-fps capture, PTV). 2026-10-13: the 390 fps cines cannot give it (nothing pairs across 2.56 ms; the 4 µs blur bound is ≤ ~4 m/s and optical); the mass balance gives 4–8 m/s mean liquid speed, proportional to gas; transit decorrelation < 1 frame. Next: a 10-min exposure series (1/4/16/40 µs), then a windowed high-fps capture (~10 kfps on a 2.56 mm strip along the flow, 1 µs) of a 15-capture calibration set, or a double-pulsed backlight (`docs/VELOCITY_CAPTURE_PLAN.md`) | velocity, whether flux weighting is needed, whether fast droplets are lost to blur | exposure series: 10 min; PTV: one capture + analysis |
 | 9 | **Honest CIs:** block bootstrap or per-run `ci_stride` from the measured autocorrelation | per-run intervals | code; data already exist (pulsing analysis) |
 | 10 | **Randomised run order and replicates across days** in the next campaign; one RPM test (alternate 300/900 at fixed gas/liquid flow) | the RPM vs time-of-day confound; reproducibility | rig time |
 | 11 | **Fix and record the axial measurement station** (distance from the orifice); ideally 2–3 stations on one condition | interpretability of the atomised fraction | rig + metadata field |

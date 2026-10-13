@@ -43,15 +43,85 @@ STATIC_FRAC = 0.20                # a detection spot present in >= this share of
 STATIC_GRID_PX = 6
 
 # (key, label, direction, quantised) -- the extra responses the statistics analyse, in the
-# same shape as taguchi_analysis.RESPONSES. Kept to five on purpose: every extra response is
-# another chance of a false "significant" (the CCD plan's warning).
+# same shape as taguchi_analysis.RESPONSES. Kept few on purpose: every extra response is
+# another chance of a false "significant" (the CCD plan's warning). The two volume-based ones
+# (liquid stage 2.3.0, 2026-10-13) are SECONDARY: they rank runs like the area fraction but are
+# ~3x noisier and good to about +/-40% in scale; never a default goal. Runs measured before
+# 2.3.0 have no volume columns, so these are blank for them.
 EXTRA_RESPONSES = [
     ("dv50", "Dv50, volume median, in-focus (um)", "smaller", False),
-    ("af_flow", "Atomised liquid flow (mL/min)", "larger", False),
+    ("af_flow", "Atomised liquid flow index, area-based (mL/min)", "larger", False),
     ("thin_pct", "Frames below half the mean droplet count (%)", "smaller", False),
     ("lag1", "Droplet-count lag-1 correlation (pulsing)", "smaller", False),
     ("peak_bar", "Peak pressure (barA)", "smaller", False),
+    ("atom_vol", "Atomised fraction by volume, estimated (%)", "larger", False),
+    ("af_flow_vol", "Atomised liquid flow index, volume-based (mL/min)", "larger", False),
+    # how MANY droplets of the size you want, not just their size (Ben, 2026-10-13): mean diameter
+    # cannot tell 5 droplets at 40 um from 100,000. A CONCENTRATION (droplets in view per frame), not
+    # a production rate: it understates fast, high-gas sprays; the 2.2.0 sharpness rule removes more
+    # droplets at high gas; below 50 um sizes sit near the pixel lattice. Never a default goal.
+    ("band_per_frame", "In-focus droplets per frame in the size band", "larger", False),
+    # a production RATE by mass balance (2026-10-13; docs/notes/2026-10-13_droplet_rate_investigation.md):
+    # droplets made per second = syringe flow x atomised fraction BY VOLUME / mean in-focus droplet volume,
+    # pi/6 <d^3>. Unlike the per-frame counts it does not fall when the spray speeds up: on the CCD day the
+    # in-focus count was flat along the 1.2 mm gas axis while this doubled. Rests on the volume estimate
+    # (+/-40% absolute, ranking good) and on the in-focus sizes standing for every droplet; <d^3> leans on
+    # the largest, worst-sampled droplets. Liquid stage 2.3.0 only. Never a default goal.
+    ("rate", "Droplets produced per second, mass balance (estimated)", "larger", False),
+    ("rate_band", "Droplets produced per second in the size band, mass balance (estimated)", "larger", False),
 ]
+DEFAULT_BAND_UM = (30.0, 50.0)     # brackets the CCD day's mean (38-42 um); both edges fall between
+                                   # pixel-lattice diameters (7/8 and 19/20 px of area at 10 um/px)
+
+
+def band_counts(rec: dict | None, band=DEFAULT_BAND_UM):
+    """In-focus droplets per frame with lo <= d < hi (half-open, as size_bins), in the run's frame
+    order (frames with none count as 0), or None without the per-frame diameters."""
+    if not rec or rec.get("dia") is None or not rec.get("frames"):
+        return None
+    lo, hi = band
+    out = []
+    for f in rec["frames"]:
+        d = np.asarray(rec["dia"].get(f, []), float)
+        out.append(int(((d >= lo) & (d < hi)).sum()))
+    return np.array(out, float)
+
+
+def _rate_parts(rec: dict | None, band=DEFAULT_BAND_UM):
+    """Per frame, in the run's frame order: in-focus droplets, those in the band (lo <= d < hi) and their
+    sum of d^3 (um^3), or None without the per-frame diameters."""
+    if not rec or rec.get("dia") is None or not rec.get("frames"):
+        return None
+    lo, hi = band
+    n, nb, s3 = [], [], []
+    for f in rec["frames"]:
+        d = np.asarray(rec["dia"].get(f, []), float)
+        n.append(d.size)
+        nb.append(int(((d >= lo) & (d < hi)).sum()))
+        s3.append(float((d ** 3).sum()))
+    return np.array(n, float), np.array(nb, float), np.array(s3)
+
+
+def mass_balance_rate(ml_min, atom_vol_frac, count, s3_um3):
+    """Droplets produced per second: (mL/min -> mm^3/s) x atomised volume fraction / (pi/6 <d^3>), with
+    <d^3> = s3_um3 / count. Works on arrays (bootstrap replicates) as on scalars; 0 droplets -> nan."""
+    q = ml_min * 1000.0 / 60.0
+    with np.errstate(all="ignore"):
+        vbar_mm3 = np.pi / 6.0 * np.asarray(s3_um3, float) / np.asarray(count, float) * 1e-9
+        return q * np.asarray(atom_vol_frac, float) / np.where(vbar_mm3 > 0, vbar_mm3, np.nan)
+
+
+def _vol_per_frame(rec: dict | None):
+    """(droplet volume, total liquid volume) per frame in the run's frame order, or None when the
+    liquid stage did not write volumes (before 2.3.0)."""
+    if not rec or not rec.get("cpf"):
+        return None
+    try:
+        d = np.array([float(rec["cpf"][f]["droplet_vol_mm3"]) for f in rec["frames"]])
+        t = np.array([float(rec["cpf"][f]["total_liquid_vol_mm3"]) for f in rec["frames"]])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return d, t
 
 
 # ---- small helpers ------------------------------------------------------------------------------
@@ -428,7 +498,8 @@ def load_or_compute(run_dir: Path, thr: float, *, cache_dir: Path | None = None,
 
 # ---- the analysed values ------------------------------------------------------------------------
 
-def response_values(m: dict, rec: dict | None = None, n_boot: int = 0, seed: int = 0) -> dict:
+def response_values(m: dict, rec: dict | None = None, n_boot: int = 0, seed: int = 0,
+                    band=DEFAULT_BAND_UM) -> dict:
     """{key: value} for EXTRA_RESPONSES, plus `boot_<key>` replicate arrays (centred on the
     point estimate, like taguchi_analysis.bootstrap) where a frame bootstrap is meaningful:
     Dv50 and frames-below-half by resampling frames at the run's ci_stride; atomised liquid
@@ -438,7 +509,24 @@ def response_values(m: dict, rec: dict | None = None, n_boot: int = 0, seed: int
             "af_flow": (m.get("throughput") or {}).get("af_flow_ml_min"),
             "thin_pct": st.get("thin_pct"),
             "lag1": st.get("lag1"),
-            "peak_bar": m.get("peak_bar")}
+            "peak_bar": m.get("peak_bar"),
+            "atom_vol": None, "af_flow_vol": None, "band_per_frame": None, "rate": None, "rate_band": None}
+    bc = band_counts(rec, band or DEFAULT_BAND_UM)
+    if bc is not None and bc.size:
+        vals["band_per_frame"] = float(bc.mean())
+    vols = _vol_per_frame(rec)
+    if vols is not None and vols[1].sum() > 0:
+        vals["atom_vol"] = float(100.0 * vols[0].sum() / vols[1].sum())
+        ml = (m.get("throughput") or {}).get("liquid_ml_min")
+        vals["af_flow_vol"] = ml * vals["atom_vol"] / 100 if ml is not None else None
+    rp = _rate_parts(rec, band or DEFAULT_BAND_UM)
+    ml = (m.get("throughput") or {}).get("liquid_ml_min")
+    if vals["atom_vol"] is not None and ml is not None and rp is not None and rp[0].sum() > 0:
+        n_f, nb_f, s3_f = rp
+        r = float(mass_balance_rate(ml, vals["atom_vol"] / 100, n_f.sum(), s3_f.sum()))
+        if np.isfinite(r):
+            vals["rate"] = r
+            vals["rate_band"] = r * float(nb_f.sum() / n_f.sum())
     out = dict(vals)
     if not (n_boot and rec):
         return out
@@ -478,4 +566,25 @@ def response_values(m: dict, rec: dict | None = None, n_boot: int = 0, seed: int
                 out["boot_thin_pct"] = (reps - base + vals["thin_pct"]).tolist()
         if vals["af_flow"] is not None and rec.get("boot_atom") is not None and rec.get("atom"):
             out["boot_af_flow"] = (np.asarray(rec["boot_atom"]) * vals["af_flow"] / rec["atom"]).tolist()
+        if bc is not None and bc.size == len(frames) and n >= 2:
+            reps = (W @ bc) / W.sum(axis=1)
+            out["boot_band_per_frame"] = (reps - bc[pool].mean() + vals["band_per_frame"]).tolist()
+        if vals["atom_vol"] is not None and n >= 2:
+            dv, tv = vols
+            reps = 100.0 * (W @ dv) / np.where(W @ tv > 0, W @ tv, np.nan)
+            base = 100.0 * dv[pool].sum() / tv[pool].sum() if tv[pool].sum() > 0 else vals["atom_vol"]
+            out["boot_atom_vol"] = (reps - base + vals["atom_vol"]).tolist()
+            if vals["af_flow_vol"] is not None and vals["atom_vol"]:
+                out["boot_af_flow_vol"] = (np.asarray(out["boot_atom_vol"]) * vals["af_flow_vol"]
+                                           / vals["atom_vol"]).tolist()
+            if vals["rate"] is not None and rp is not None:
+                n_f, nb_f, s3_f = rp
+                frac = (W @ dv) / np.where(W @ tv > 0, W @ tv, np.nan)
+                reps = mass_balance_rate(ml, frac, W @ n_f, W @ s3_f)
+                base = float(mass_balance_rate(ml, dv[pool].sum() / tv[pool].sum(), n_f[pool].sum(),
+                                               s3_f[pool].sum())) if tv[pool].sum() > 0 else vals["rate"]
+                out["boot_rate"] = (reps - base + vals["rate"]).tolist()
+                share = (W @ nb_f) / np.where(W @ n_f > 0, W @ n_f, np.nan)
+                share0 = nb_f[pool].sum() / n_f[pool].sum() if n_f[pool].sum() > 0 else np.nan
+                out["boot_rate_band"] = (reps * share - base * share0 + vals["rate_band"]).tolist()
     return out

@@ -29,7 +29,8 @@ import pandas as pd
 
 from . import deck as deck_mod
 from . import figures, figures_extra, fsops, provenance, rsm_detect, rsm_figures, rsm_report, rsm_responses, size_bins, stats
-from .workbook import _style
+from . import tables
+from .workbook import FILM_SHEET, _style, annotate_film
 
 REPORT_NAME = "rsm_report.md"
 WORKBOOK_NAME = "rsm_analysis.xlsx"
@@ -40,9 +41,13 @@ METRICS_CACHE = "cache/run_metrics"
 
 SHEETS = (("Runs", "runs"), ("Fit summary", "fit_summary"), ("Coefficients", "coefficients"),
           ("Model comparison", "model_comparison"), ("Stationary points", "stationary_points"),
-          ("Best settings", "optimum"), ("Goals", "goals"), ("Constraints", "constraints"),
+          ("Best settings", "optimum"), ("Goals", "goals"), ("Goals used", "goal_status"),
+          ("Best observed runs", "best_observed"), ("Gas delivered", "gas_delivered"),
+          ("Pressure-limited effects", "limited_effects"), ("Constraints", "constraints"),
           ("Recommendations", "recommendations"), ("Next runs", "next_runs"), ("Predictions", "predictions"), ("Block repeats", "block_repeats"),
-          ("Correlations", "correlations"), ("Design checks", "design"))
+          ("Correlations", "correlations"), ("Design checks", "design"),
+          ("GLR context", "glr_context"), ("GLR trends", "glr_trends"),     # the covariates, from the shared analysis
+          ("Silicone film at exit", "film_at_exit"))
 
 Log = Callable[[str, str], None]
 
@@ -90,7 +95,7 @@ def _write_csv(path: Path, rows: list[dict]) -> Path:
     return path
 
 
-def _workbook(path: Path, data: dict, prov) -> Path:
+def _workbook(path: Path, data: dict, prov, figures_dir: Path | None = None) -> Path:
     import os
     tmp = path.with_name(f".{path.stem}.{os.getpid()}.tmp.xlsx")
     try:
@@ -102,6 +107,8 @@ def _workbook(path: Path, data: dict, prov) -> Path:
                 frame = pd.DataFrame(rows)
                 frame.to_excel(xw, sheet_name=name[:31], index=False)
                 _style(xw.sheets[name[:31]], frame)
+                if name == FILM_SHEET:
+                    annotate_film(xw.sheets[name], len(frame.columns), figures_dir)
             frame = pd.DataFrame(prov.rows(), columns=["Item", "Value"])
             frame.to_excel(xw, sheet_name="Provenance", index=False)
             _style(xw.sheets["Provenance"], frame)
@@ -114,7 +121,10 @@ def _workbook(path: Path, data: dict, prov) -> Path:
 def publish(design: rsm_detect.RsmDesign, output_dir: Path, models: list[ModelSpec], *, thr: float | None = None,
             goals: list | None = None, constraints: list | None = None, discrete: dict | None = None,
             shared_extras: bool = True, title: str = "Response-surface analysis",
-            progress: Callable[[int, int, str], None] | None = None, log: Log | None = None) -> RsmDeliverables:
+            progress: Callable[[int, int, str], None] | None = None, log: Log | None = None,
+            analysis_opts: stats.AnalysisOptions | None = None, limited: str = "exclude", log_scale: list | None = None,
+            bin_width: float = size_bins.DEFAULT_WIDTH_UM,
+            bin_max: float = size_bins.DEFAULT_MAX_UM) -> RsmDeliverables:
     log = log or (lambda text, level="info": None)
     output_dir = Path(output_dir)
     t0 = time.time()
@@ -130,10 +140,12 @@ def publish(design: rsm_detect.RsmDesign, output_dir: Path, models: list[ModelSp
             log(f"design: {f.text}", "warn")
 
     log("response surface: reading the measured runs ...", "info")
-    L = rsm_responses.load(det, design.base.runs, thr, output_dir / METRICS_CACHE, progress)
+    L = rsm_responses.load(det, design.base.runs, thr, output_dir / METRICS_CACHE, progress, opts=analysis_opts)
     d.loaded = L
     for name, why in L.skipped:
         log(f"response surface: skipping {name} ({why})", "warn")
+    for w in L.warnings:
+        log(f"response surface: {w}", "warn")
     if L.refused:
         d.refused = L.refused
         d.seconds = time.time() - t0
@@ -152,7 +164,7 @@ def publish(design: rsm_detect.RsmDesign, output_dir: Path, models: list[ModelSp
         log(f"response surface: fitting {m.name} ...", "info")
         R = step(f"model {m.name}", lambda m=m: rsm_responses.analyse(
             L, axis=m.axis, nuisance=m.nuisance, hold=m.hold, time_term=m.time_term, goals=goals,
-            constraints=constraints, discrete=discrete))
+            constraints=constraints, discrete=discrete, limited=limited, log=log_scale))
         if R is not None:
             d.models[m.name] = R
     if not d.models:
@@ -174,17 +186,18 @@ def publish(design: rsm_detect.RsmDesign, output_dir: Path, models: list[ModelSp
         base = copy.copy(design.base)
         base.rows = [dataclasses.replace(r, trial=None, repeat=None) for r in design.base.rows]
         shared = step("shared extras", lambda: stats.analyse(base, thr, None, False,
-                                                             metrics_cache=output_dir / METRICS_CACHE))
+                                                             metrics_cache=output_dir / METRICS_CACHE,
+                                                             opts=analysis_opts))
         if shared is not None and not shared.refused:
-            bins = step("size bins", lambda: size_bins.from_results(shared, size_bins.DEFAULT_WIDTH_UM,
-                                                                    size_bins.DEFAULT_MAX_UM))
+            bins = step("size bins", lambda: size_bins.from_results(shared, bin_width, bin_max))
             extra: list[str] = []
             figs = output_dir / FIGURES_DIR
             # everything the Taguchi publish draws that is not Taguchi-specific (main effects, contributions,
             # S/N, condition-mean interactions and the main-effects diagnostics are left out: the response-
             # surface fit and its checks replace them)
             d.figures += step("shared figures", lambda: figures_extra.make_all(shared, figs, extra)) or []
-            for fn in (lambda: figures.fig_per_run(shared, figs), lambda: figures.fig_glr(shared, figs)):
+            for fn in (lambda: figures.fig_per_run(shared, figs), lambda: figures.fig_glr(shared, figs),
+                       lambda: figures.covariate_figures(shared, figs)):
                 d.figures += step("shared figures", fn) or []
             if bins is not None:
                 d.figures += step("size spread", lambda: figures.fig_size_spread_count(bins, figs)
@@ -193,7 +206,8 @@ def publish(design: rsm_detect.RsmDesign, output_dir: Path, models: list[ModelSp
     prov = provenance.collect(shared, bins, output_dir) if shared is not None and not shared.refused else \
         provenance.Provenance(time.strftime("%Y-%m-%d %H:%M"), "unknown", False, [], L.thr, 0, 0, [], [])
 
-    text = step("report", lambda: rsm_report.build(d.models, prov, d.figures, title))
+    text = step("report", lambda: rsm_report.build(d.models, prov, d.figures, title,
+                                                    shared if shared is not None and not shared.refused else None))
     if text is not None:
         def put():
             path = output_dir / REPORT_NAME
@@ -203,7 +217,12 @@ def publish(design: rsm_detect.RsmDesign, output_dir: Path, models: list[ModelSp
             return path
         d.report = step("report", put)
     data = step("tables", lambda: rsm_report.tables(d.models)) or {}
-    d.workbook = step("workbook", lambda: _workbook(output_dir / WORKBOOK_NAME, data, prov))
+    if shared is not None and not shared.refused:
+        data["glr_context"] = step("tables", lambda: tables.glr_context(shared))
+        data["glr_trends"] = step("tables", lambda: tables.glr_trends(shared))
+        data["film_at_exit"] = step("tables", lambda: tables.film_at_exit(shared))
+    d.workbook = step("workbook", lambda: _workbook(output_dir / WORKBOOK_NAME, data, prov,
+                                                    output_dir / FIGURES_DIR))
     primary = next(iter(d.models.values()))
     d.csv = step("results CSV", lambda: _write_csv(output_dir / CSV_NAME, rsm_report.results_csv(primary)))
     from . import rsm_recommend

@@ -30,16 +30,57 @@ cd /Users/benschofield/Documents/GitHub/HPATR && /Users/benschofield/anaconda3/e
    whether to also fit without the nuisance factors to compare.
    **Goals** steer only the best setting and the next runs (not the fits or maps). Each response scores 0
    at **worst** and 1 at **best** (Maximise: worst below best; Minimise: worst above best; Hit a target:
-   best is the target and the score falls to 0 as far either side as worst is); blank = the range seen in
-   the runs. **Importance** weights the goals (all 1 = equal; e.g. atomised fraction 3, mean diameter 2).
+   best is the target and the score falls to 0 as far either side as worst is). A blank **worst** is the
+   worst run seen; a blank **best** is the best the fitted surface reaches inside the tested region (changed
+   2026-10-13: with the best RUN as the end, every setting predicted beyond it scored a flat 1, so the
+   optimiser could not tell them apart and stopped at the first it tried, e.g. feed 3,000 when maximising a
+   production rate that rises with feed). **Importance** weights the goals (all 1 = equal; e.g. atomised fraction 3, mean diameter 2).
+   **Droplet count in a size band** ("In-focus droplets per frame in the size band", band in Settings,
+   default 30–50 µm): maximise it to favour settings that make MANY droplets of the size you want, not
+   just droplets of that size. It is a per-frame concentration, and it overlaps with atomised fraction and
+   flow; give it a lower importance if all three are goals. **Droplets produced per second** (all sizes, or
+   in the band; "mass balance (estimated)") is the RATE version: syringe flow × atomised fraction by volume ÷
+   mean droplet volume. Unlike the per-frame count it does not drop when the gas speeds the spray up, so use
+   it instead of the count when gas flow is a factor; it rests on the volume estimate. **Atomised fraction
+   by volume** is secondary: use the area fraction as the headline.
+   **"No spray" runs**: a run below the Settings tab's no-spray threshold (default 2% atomised) is a
+   dribble; its droplet size and steadiness are left out of those fits (it stays in atomised fraction,
+   droplet count and the liquid responses), so a minimise-size goal cannot be won by a run that barely
+   sprays. The report names such runs at the top.
    The default goals: maximise atomised fraction and atomised liquid flow, minimise droplet-count CV and
    mean diameter (the size goal; D32 is mapped and reported but not a default goal). Set them
    before the first Analyse or change them later and press Analyse again; they are saved with the output.
    Goals that measure the same thing stack: D32, mean diameter and D90 all say "smaller droplets", so
    choosing all three triples the weight on size. Pick one per thing you care about. And a fraction goal
    alone (atomised %) rises as the liquid flow falls: keep **atomised liquid flow** as a goal if
-   throughput matters, or the best setting drifts to the lowest feed.
+   throughput matters, or the best setting drifts to the lowest feed. Both are **by projected area**
+   (labelled so since 2026-10-13): atomised liquid flow is the syringe mL/min × the area fraction, an
+   index for comparing runs, not a measured flow of droplets (`docs/definitions.md`). If the app cannot
+   compute it (the capture GUI's flow formula would not import), the Model page marks the row
+   "unavailable" and the report and console say so at the top: a goal on it would otherwise be dropped
+   without a word.
+   **Runs that did not get their set gas** (Model page): when the rig hits the supply pressure ceiling
+   (Settings, default 9.5 barA), a run's gas can fall far below its set point once the silicone reaches a
+   small orifice (the 0.5 mm block on 2026-10-12). The Design page's *Gas delivered* column shows what each
+   run got (⚠ = not its set point). By default such runs are **left out** of the surfaces and described in
+   their own report section, with a test of what controlled their gas there; *Fit them at the gas they
+   got* moves their gas factor to the measured flow (low gas then exists only at that orifice, so the two
+   cannot be separated); *Keep them at their set point* is the old behaviour.
+   **Log scale** (Model page, per factor; on by default for the orifice): the factor is fitted on
+   ln(value). The inserts 0.8 / 1.2 / 1.8 mm are a geometric series (×1.5), so they are evenly spaced only
+   on a log scale, and the pressure goes roughly as a power of the diameter. Maps, the best setting and
+   the next runs stay in mm. **Fitted span**: when runs are left out (e.g. a pressure-limited 0.5 mm block),
+   each factor's coding follows the runs actually fitted, so the surface and the best setting stay inside
+   them (orifice 1.2-1.8 mm, not 0.5-1.8); settable levels outside that span are not offered as the best
+   setting and the report says which.
+   **Which goals were used**: a goal is left out of the best setting when its surface cannot predict a new
+   run (predicted R² of the simplified model, the one that is mapped and optimised, below 0.5) or it has no
+   values; the report's Best settings table lists every goal you
+   set, used or not, and why. It also lists the **best runs as measured** (your goals scored on each run's
+   observed values, every run counted), so a good run the surface cannot describe still shows.
 4. **Analyse and next runs**: press **Analyse**; then **Open deck**, **Open report**, **Open next runs**.
+   A proposed run whose predicted peak pressure reaches the supply ceiling is flagged in the *Pressure
+   check* column: it would probably be pressure-limited.
    The recommendations for the next session are listed with their reasons.
 5. **Build a run sheet** (before a new experiment): type the factors and levels (or **Load the 33-run
    example**), **Build**, check the preview and summary, **Export run sheet to the output folder**. Once
@@ -207,8 +248,14 @@ What you get, in the output folder (`rsm_report.md`, `rsm_analysis.xlsx`, `rsm_r
 - **One fitted surface per response** (atomised fraction, D32, mean diameter, throughput, steadiness,
   peak pressure and the rest), the full quadratic and a simplified one (terms dropped highest order
   first, keeping a slope while its curve or interaction stays), with R², predicted R² and lack of fit.
-  A surface with predicted R² below 0.5 is flagged as not usable and is kept out of the best-settings
-  search.
+  A surface whose simplified model has predicted R² below 0.5 is flagged as not usable and is kept out of
+  the best-settings search. (The simplified model is judged, not the full quadratic: with few runs per term
+  the full model's leave-one-out predictions are all high-leverage extrapolations. On the CCD day with the
+  pressure-limited block out, 21 runs for 14 terms, atomised fraction read −0.28 full and 0.89 simplified.
+  Because the simplified model's terms were chosen on the same runs, its figure is somewhat optimistic.)
+  A factor that appears in none of the surfaces steering the best setting is **free**: no level of it
+  changes the score, so the best setting holds it at the design centre and the report says so; choose it
+  for another reason (throughput, steadiness, cost).
 - **Contour maps** laid out as the plan draws them: gas across, feed up, one panel per orifice, one map per
   RPM; the runs at each setting marked and the best setting starred. **3D surfaces** of the same, an
   **all-pairs** view (every pair of factors at the best setting), and a **profiler** (each factor swept
@@ -219,6 +266,21 @@ What you get, in the output folder (`rsm_report.md`, `rsm_analysis.xlsx`, `rsm_r
 - **Controls** against the centre runs (does rotation help: the 0 rpm run vs the five centres), **check
   and validation runs** against their 95% prediction intervals, and **drift** (centres over the day,
   block repeats).
+- **Gas mass flux at the orifice** (a covariate, as GLR is in the Taguchi analysis): every run against its
+  delivered gas mass flow per orifice area (kg/m²/s, from the gas it got in the camera window), coloured by
+  orifice and hollow where it did not get its set gas, so both regimes sit on one axis. On the CCD day it
+  ordered atomised fraction better than any set point (Spearman +0.91). It is not a factor: it is made from
+  the gas and the orifice, so it cannot be separated from them, and the surfaces stay on the set points. The
+  section also gives the exit orifice **length** and L/D where `run_summary.xlsx` records them (from
+  2026-10-13); if the runs used different lengths the report warns at the top, because the length is not in
+  the model and its effect is mixed into the others.
+- **Silicone film at the exit** (a covariate too): the measured gas flux over what gas alone could pass at the
+  camera-window P0 is the gas share α of the orifice; from it the silicone speed in the orifice,
+  u_L = Q_L / ((1 − α) A), and, for an annular exit, the film thickness h = (d/2)(1 − √α). On the CCD day the
+  film ordered atomised fraction best (Spearman −0.90; C7/C8 had the thinnest film, ~126 µm). The report, the
+  workbook sheet *Silicone film at exit* (per run, with the diagram and the maths beside it) and the deck (a
+  diagram slide before the gas flux slide) explain it. Cd is 1.0 until each insert is measured gas-only
+  (`orifice_cd.json`). No-spray runs are plotted but left out of every covariate fit.
 - The size, steadiness, quality figures and image sheets from the Taguchi analysis that are not
   Taguchi-specific, as an appendix.
 - Every slide in the deck says what it shows and how to read it, with the terms it uses defined.
@@ -238,7 +300,9 @@ the reason:
   named, so it can be checked on the rig first.
 - **Strengthen the model**, when it is weak (lack of fit, a goal surface that cannot predict new runs, a
   check run that missed): the runnable settings that most reduce the model's uncertainty, the first next
-  to any run that missed.
+  to any run that missed. Only sizes inside the fitted span are offered (a size outside it wins every pick
+  just by being far away); the text names the sizes held back and whether their runs were pressure-limited,
+  and says when a curve term (orifice²) needs a third size in the next design.
 - **Make a new insert**, only when the plan's three conditions all hold: the best point is at the 0.5 or
   1.8 mm edge, the orifice slope is still significant and improving there, and the 0.8 mm check run
   matched the model. The size is the next step by the same ratio (e.g. 1.8 → about 2.7 mm).

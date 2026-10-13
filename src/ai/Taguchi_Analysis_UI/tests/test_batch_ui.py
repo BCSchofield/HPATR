@@ -111,6 +111,20 @@ def test_run_batch_runs_in_the_background_and_reports_in_the_console(app, tmp):
         assert spec.verify_run_outputs(run, spec.RunSettings(), spec.default_options()) == []
 
 
+def test_the_run_list_is_re_read_when_the_batch_ends(app, tmp):
+    """Bug 3 (2026-10-13): the list read each run's 'measured?' once, when added, so an Analyse
+    straight after a batch refused every run as 'not measured yet'."""
+    tab = make_tab(app, tmp)
+    assert not any(r.analysis.measured for r in tab.runs_pane.all_runs())
+    tab.runs_pane.set_output_folder(tmp / "out", remember=False)
+    tab.runs_pane.run_btn.click()
+    pump(app, lambda: tab.controller.mode == "finished", what="the batch to finish")
+    pump(app, lambda: not tab.runs_pane._busy and all(r.analysis.measured for r in tab.runs_pane.all_runs()),
+         what="the run list to be re-read")
+    assert len(tab.runs_pane.all_runs()) == 3
+    assert "batch ended: re-reading 3 run(s)" in console(tab)
+
+
 def test_every_frame_tick_reaches_the_batch(app, tmp):
     tab = make_tab(app, tmp, n_runs=1)
     tab.runs_pane.set_output_folder(tmp / "out", remember=False)

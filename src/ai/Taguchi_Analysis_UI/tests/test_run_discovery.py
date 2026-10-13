@@ -421,7 +421,8 @@ def test_find_runs_now_picks_up_nobh_style_folders(root):
 def test_real_10_05_is_a_clean_9x3():
     runs = rd.load_runs(rd.find_runs([REAL_DAY]).runs, check_reuse=False)
     s = rd.summarise(runs)
-    assert (s.n_runs, s.n_conditions, s.n_errors, s.n_measured, s.n_days) == (27, 9, 0, 0, 1)
+    # all 27 measured since 2026-10-07 (2.1.0, then 2.2.0 on 10-08); this test predates that
+    assert (s.n_runs, s.n_conditions, s.n_errors, s.n_measured, s.n_days) == (27, 9, 0, 27, 1)
     assert set(s.replicates.values()) == {3}
     assert all(r.fps == 390.0 and r.runnable and r.issues == [] for r in runs), \
         [(r.name, r.issues) for r in runs if r.issues]

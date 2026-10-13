@@ -35,6 +35,7 @@ import numpy as np
 from . import fsops
 from . import rsm_design as rb
 from . import rsm_detect as rdet
+from . import rsm_responses as rr
 from . import rsm_stats as rs
 from .stats import f_sf
 
@@ -101,6 +102,21 @@ def predict_row(R, values: dict) -> tuple[dict, bool]:
     return preds, ext
 
 
+def pressure_check(R, preds: dict) -> str:
+    """A warning when a proposed run's predicted peak pressure reaches the supply ceiling: there the rig
+    becomes pressure-limited and the gas set point is no longer what the run gets (operating.py)."""
+    from .operating import NEAR_CEILING_BAR
+    opts = getattr(R.loaded, "opts", None)
+    if "peak_bar" not in preds or opts is None:
+        return ""
+    m = preds["peak_bar"][0]
+    ceiling = opts.supply_ceiling_bar
+    if m >= ceiling - NEAR_CEILING_BAR:
+        return (f"⚠ predicted peak {m:.1f} barA, at the {ceiling:g} barA supply ceiling: likely pressure-limited "
+                "(the gas may not reach its set point)")
+    return ""
+
+
 def _row(R, values: dict, label: str) -> RecRow:
     preds, ext = predict_row(R, values)
     return RecRow(values, label, preds, ext)
@@ -124,8 +140,7 @@ def _best_values(R, o, discrete, hold: dict | None = None) -> dict:
         if hold and k in hold:
             vals[k] = hold[k]
         else:
-            lo, hi = float(f.low), float(f.high)
-            vals[k] = snap(R, k, (lo + hi) / 2 + R.hold.get(k, 0.0) * (hi - lo) / 2, None)
+            vals[k] = snap(R, k, f.decode(R.hold.get(k, 0.0)), None)
     return vals
 
 
@@ -322,14 +337,54 @@ def new_ccd(R, discrete: dict | None, centres: int = 5) -> Recommendation | None
     return Recommendation("new_ccd", "Move the region: a new CCD around the best setting", why, rows, plan, sheet)
 
 
+def _held_back(R, discrete: dict | None) -> dict:
+    """Settable sizes of a fixed-size factor outside the FITTED span (factor key -> sizes). They are not
+    offered as runs to strengthen the model: a prediction there is an extrapolation, so its variance is
+    large only because it is far away (on the CCD day, 0.5 mm on the ln scale fitted to 1.2-1.8 mm codes
+    to -4.3 and would win every pick), and the runs there may not be flow-controlled at all."""
+    out = {}
+    for k, sizes in (discrete or {}).items():
+        if k not in _model_keys(R):
+            continue
+        f = _f(R, k)
+        far = [v for v in sizes if f.real_code(v) is not None and abs(f.real_code(v)) > 1 + rr.EXTRAPOLATION_TOL]
+        if far and len(far) < len(sizes):
+            out[k] = far
+    return out
+
+
+def _held_back_text(R, held: dict) -> str:
+    """'Orifice 0.5, 0.8 are outside the fitted span (1.2 to 1.8) and not offered: at 0.5 all 10 runs were
+    pressure-limited; 0.8 ran flow-controlled (151407)'."""
+    bits = []
+    for k, sizes in held.items():
+        f = _f(R, k)
+        why = []
+        for v in sizes:
+            at = [r for r in R.loaded.runs if r.point.values.get(k) is not None
+                  and math.isclose(float(r.point.values[k]), v, rel_tol=1e-6)]
+            lim = [r for r in at if r.op is not None and getattr(r.op, "not_delivered", False)]
+            if at and len(lim) == len(at):
+                why.append(f"at {v:g} all {len(at)} runs were pressure-limited")
+            elif at:
+                why.append(f"{v:g} ran {'flow-controlled' if not lim else 'partly flow-controlled'} ("
+                           + ", ".join(r.point.name[:6] for r in at if r not in lim) + ")")
+        bits.append(f"{f.label.split(' (')[0]} {', '.join(f'{v:g}' for v in sizes)} "
+                    f"{'is' if len(sizes) == 1 else 'are'} outside the fitted span ({float(f.low):g} to "
+                    f"{float(f.high):g}) and not offered" + (": " + "; ".join(why) if why else ""))
+    return ". ".join(bits)
+
+
 def _candidates(R, discrete: dict | None) -> list[dict]:
     """Settings that can be run, inside the region: 5 levels per continuous factor (the design levels and
-    the midpoints), the existing levels of fixed-size factors; nuisance factors at their levels."""
+    the midpoints), the existing levels of fixed-size factors inside the fitted span (_held_back);
+    nuisance factors at their levels."""
     axes = {}
+    held = _held_back(R, discrete)
     for k in _model_keys(R):
         f = _f(R, k)
         if discrete and k in discrete:
-            axes[k] = list(discrete[k])
+            axes[k] = [v for v in discrete[k] if v not in held.get(k, [])]
         elif k in R.nuisance:
             axes[k] = list(f.levels)
         else:
@@ -396,10 +451,15 @@ def augment(R, discrete: dict | None, n: int = 4) -> Recommendation | None:
         chosen.append(i)
         rows.append(_row(R, cands[i], f"Strengthen the model (prediction variance {lev[i]:.2f} before)"))
         M = M + np.outer(C[i], C[i])
+    held = _held_back_text(R, _held_back(R, discrete))
+    unest = [t for t in R.dropped_terms if t.endswith("^2") and rs.term_parents(t)[0] in _held_back(R, discrete)]
     return Recommendation("augment", "Strengthen the model where it is weakest",
                           "The model is weak here: " + "; ".join(reasons) + ". These runs are the settings that "
                           "most reduce the model's uncertainty (each one chosen where the current prediction is "
-                          "least certain, D-optimal), from settings that can actually be run.", rows)
+                          "least certain, D-optimal), from settings that can actually be run, inside the fitted "
+                          "span." + (f" {held}." if held else "")
+                          + (f" {', '.join(unest)} needs a third size inside the fitted runs, which these runs "
+                             "cannot give: plan it into the next design." if unest else ""), rows)
 
 
 def new_level(R, discrete: dict | None, alpha: float = 0.05) -> list[Recommendation]:
@@ -485,6 +545,7 @@ def table(R, recs: list[Recommendation], prefix: str = "CCD next run") -> list[d
                 d[f"predicted {lab}"] = round(m, 4)
                 d[f"{lab} 95% PI"] = f"{lo:.4g} to {hi:.4g}"
             d["extrapolated"] = "yes" if r.extrapolated else ""
+            d["pressure check"] = pressure_check(R, r.preds)
             d["Notes to type"] = f"{prefix} {n} {rec.kind}"
             rows.append(d)
     return rows

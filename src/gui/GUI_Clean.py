@@ -63,6 +63,25 @@ try:
 except ImportError:
     def find_lacie_drive(): return None
 
+# What a run actually got: the gas delivered and the upstream pressure, and so its regime
+# (flow-controlled / pressure-limited / gas short). The SAME code the analysis app uses
+# (src/ai/Taguchi_Analysis_UI/operating.py, numpy only), so the run_summary fields and the
+# app's numbers can never be defined differently.
+try:
+    from ai.Taguchi_Analysis_UI import operating as _operating
+except Exception:                                   # the GUI must start without it
+    _operating = None
+SUPPLY_CEILING_BAR = _operating.CEILING_BAR if _operating else 9.5   # the regulator's setting
+
+# Drops on the window, checked before a run against a clean reference (gui/window_check.py, numpy +
+# OpenCV, no Qt). Optional: the GUI starts without it.
+try:
+    from gui import window_check as _window_check
+except Exception:
+    _window_check = None
+GAS_SHORT_SHARE = 0.95       # flow below this share of the set point ...
+GAS_SHORT_HOLD_S = 3.0       # ... for this long is not a transient: say so
+
 # Cone_4.py lives in Trials/ relative to the repo root
 _TRIALS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "Trials")
 if _TRIALS_DIR not in sys.path:
@@ -71,7 +90,12 @@ CONE4_AVAILABLE = False
 try:
     from Cone_4 import detect_cone_angle
     CONE4_AVAILABLE = True
-except ImportError:
+except Exception:
+    # Not just ImportError: Cone_4's `int | None` annotations raise TypeError
+    # on Python 3.9 (the home PC's Detectron env), and that took this whole
+    # module down with it -- including the GLR / mL/min formula the Taguchi
+    # app imports, so atomised liquid flow silently vanished (Taguchi app
+    # bug 6, 2026-10-13). The cone detector is optional.
     pass
 
 # ── Optional SDKs ────────────────────────────────────────────────────────────
@@ -1599,7 +1623,140 @@ def _replace_atomically(path, write):
     _commit_tmp(tmp, path)
 
 
+def migrate_master_mean_diameter(ws) -> bool:
+    """Insert 'Mean Diameter (um)' between 'D32 (um)' and 'Atomised (%)' in a
+    master_log sheet still in the 17-column layout, moving every image from that
+    column rightwards one column with it (insert_cols moves cell values, never
+    images). Returns True if it changed the sheet; once the column is in, K reads
+    'Mean Diameter (um)' and this cannot fire twice. Module-level so a one-off
+    back-fill of an existing log uses exactly the GUI's migration."""
+    from openpyxl.utils import get_column_letter, column_index_from_string
+    if not (ws.cell(row=1, column=10).value == 'D32 (um)'
+            and ws.cell(row=1, column=11).value == 'Atomised (%)'):
+        return False
+    ws.insert_cols(11)
+    ws.cell(row=1, column=11).value = 'Mean Diameter (um)'
+    for _img in ws._images:
+        _anc = _img.anchor
+        if isinstance(_anc, str):
+            _m = re.match(r'^([A-Z]+)(\d+)$', _anc)
+            if _m and column_index_from_string(_m.group(1)) >= 11:
+                _new_col = get_column_letter(column_index_from_string(_m.group(1)) + 1)
+                _img.anchor = f'{_new_col}{_m.group(2)}'
+        elif hasattr(_anc, '_from'):
+            if _anc._from.col >= 10:   # 0-indexed: 10 == Excel col K
+                _anc._from.col += 1
+            if hasattr(_anc, 'to') and _anc.to and _anc.to.col >= 10:
+                _anc.to.col += 1
+    return True
+
+
+def migrate_master_orifice_length(ws) -> bool:
+    """Insert 'Orifice Length (mm)' after 'Orifice' in a master_log sheet in the 18-column layout
+    (B = Orifice, C = Bubbler Height), moving every image from column C rightwards one column with it.
+    Returns True if it changed the sheet; once the column is in, C reads 'Orifice Length (mm)' and this
+    cannot fire twice. Runs after migrate_master_mean_diameter, which keys on the layout before it."""
+    from openpyxl.utils import get_column_letter, column_index_from_string
+    if not (ws.cell(row=1, column=2).value == 'Orifice'
+            and ws.cell(row=1, column=3).value == 'Bubbler Height (mm)'):
+        return False
+    ws.insert_cols(3)
+    ws.cell(row=1, column=3).value = 'Orifice Length (mm)'
+    for _img in ws._images:
+        _anc = _img.anchor
+        if isinstance(_anc, str):
+            _m = re.match(r'^([A-Z]+)(\d+)$', _anc)
+            if _m and column_index_from_string(_m.group(1)) >= 3:
+                _new_col = get_column_letter(column_index_from_string(_m.group(1)) + 1)
+                _img.anchor = f'{_new_col}{_m.group(2)}'
+        elif hasattr(_anc, '_from'):
+            if _anc._from.col >= 2:    # 0-indexed: 2 == Excel col C
+                _anc._from.col += 1
+            if hasattr(_anc, 'to') and _anc.to and _anc.to.col >= 2:
+                _anc.to.col += 1
+    return True
+
+
+MASTER_RATE_BAND_UM = (20.0, 60.0)   # master_log's droplets/s column: the band kept after filtering (Ben, 2026-10-13)
+MASTER_RATE_HEADER = f"Droplets/s ({MASTER_RATE_BAND_UM[0]:g}-{MASTER_RATE_BAND_UM[1]:g} um)"
+
+
+def droplet_rate_band(results: dict, speed_steps_s, band=MASTER_RATE_BAND_UM):
+    """In-band droplets produced per second, by mass balance, exactly as the analysis app's
+    run_metrics.mass_balance_rate: syringe flow x atomised fraction BY VOLUME (liquid stage >= 2.3.0)
+    / (pi/6 <d^3>) over the run's in-focus droplets, x the in-focus share with lo <= d < hi. The
+    per-second comes from the syringe, not the camera, so the recording length does not enter. ''
+    when anything is missing (no AI results, an older liquid stage, speed 0)."""
+    import csv as _csv
+    import math as _math
+    try:
+        sps = float(speed_steps_s)
+        cls = results.get('_classical') or {}
+        vol_pct = float(cls['atomised_vol_pct_pooled'])
+        try:                                   # pooled from the per-frame volumes, as the app does (the
+            with open(os.path.join(cls['_liquid_dir'], 'classical_per_frame.csv'), newline='',
+                      encoding='utf-8') as fh:            # summary rounds to 3 dp)
+                rows = list(_csv.DictReader(fh))
+            tot = sum(float(r['total_liquid_vol_mm3']) for r in rows)
+            if tot > 0:
+                vol_pct = 100.0 * sum(float(r['droplet_vol_mm3']) for r in rows) / tot
+        except (KeyError, TypeError, ValueError, OSError):
+            pass
+        sizes = os.path.join(results['_measurement_dir'], 'droplet_sizes.csv')
+        with open(sizes, newline='', encoding='utf-8') as fh:
+            d = np.array([float(r['diameter_um']) for r in _csv.DictReader(fh) if r.get('in_focus') == '1'])
+    except (KeyError, TypeError, ValueError, OSError):
+        return ''
+    if sps <= 0 or d.size == 0:
+        return ''
+    q_mm3_s = _math.pi * (20.27 / 2) ** 2 * (sps / 6800)          # the GUI's syringe (GLR uses the same)
+    v_mean_mm3 = _math.pi / 6 * float((d ** 3).mean()) * 1e-9
+    share = float(((d >= band[0]) & (d < band[1])).mean())
+    return int(round(q_mm3_s * vol_pct / 100 / v_mean_mm3 * share))
+
+
+def migrate_master_droplet_rate(ws) -> bool:
+    """Insert the droplets/s column after 'Atomised (%)' in a master_log sheet in the 19-column layout
+    (M = Atomised, N = Avg Lamella Thickness), moving every image from column N rightwards with it.
+    Returns True if it changed the sheet; cannot fire twice. Runs after migrate_master_orifice_length."""
+    from openpyxl.utils import get_column_letter, column_index_from_string
+    if not (ws.cell(row=1, column=13).value == 'Atomised (%)'
+            and ws.cell(row=1, column=14).value == 'Avg Lamella Thickness'):
+        return False
+    ws.insert_cols(14)
+    ws.cell(row=1, column=14).value = MASTER_RATE_HEADER
+    for _img in ws._images:
+        _anc = _img.anchor
+        if isinstance(_anc, str):
+            _m = re.match(r'^([A-Z]+)(\d+)$', _anc)
+            if _m and column_index_from_string(_m.group(1)) >= 14:
+                _new_col = get_column_letter(column_index_from_string(_m.group(1)) + 1)
+                _img.anchor = f'{_new_col}{_m.group(2)}'
+        elif hasattr(_anc, '_from'):
+            if _anc._from.col >= 13:   # 0-indexed: 13 == Excel col N
+                _anc._from.col += 1
+            if hasattr(_anc, 'to') and _anc.to and _anc.to.col >= 13:
+                _anc.to.col += 1
+    return True
+
+
 # ── Main application window ───────────────────────────────────────────────────
+
+def as_number(text):
+    """A typed value as a NUMBER for the spreadsheets ('4000' -> 4000, '36.5' -> 36.5), so Excel can sort,
+    filter and plot it: a number written as text does neither (Ben, 2026-10-13: every speed and travel
+    in master_log was text). Anything that is not a plain number comes back unchanged ('', '1.2mm',
+    'NOT RECORDED')."""
+    if text is None or isinstance(text, bool) or isinstance(text, (int, float)):
+        return text
+    try:
+        f = float(str(text).strip())
+    except ValueError:
+        return text
+    if f != f or f in (float("inf"), float("-inf")):
+        return text
+    return int(f) if f.is_integer() else f
+
 
 def auto_trigger_plan(distance_mm, speed_sps, pre_s, post_s, *, steps_per_mm=6800,
                       motor_delay_s=0.5, buffer_s=2.0, arm_lead_s=1.0):
@@ -1747,6 +1904,9 @@ class AtomisationApp(QMainWindow):
         # Alicat health: time of the last frame (monotonic) and a latched alarm
         self._alicat_last_frame_t = None
         self._alicat_stale        = False
+        # Live gas regime (_update_gas_regime): when the flow first fell short, and the regime logged
+        self._gas_short_since     = None
+        self._gas_short_flagged   = None
 
         # Guard flag — set while the save-format checkboxes are being corrected
         # programmatically so the toggled handler doesn't recurse.
@@ -2190,6 +2350,21 @@ class AtomisationApp(QMainWindow):
         self._orifice_combo.addItems(["0.2mm","0.3mm","0.5mm","0.8mm","1mm","1.2mm","1.4mm","1.6mm","1.8mm","2mm"])
         self._orifice_combo.currentTextChanged.connect(self._save_camera_settings)
         nozzle_card.layout().addWidget(input_row("Orifice", self._orifice_combo, label_width=100))
+
+        # Hardware state like the bubbler height: it stays until the insert is changed.
+        self._orifice_len_entry = QLineEdit()
+        self._orifice_len_entry.setPlaceholderText("mm")
+        self._orifice_len_entry.setValidator(QDoubleValidator(0.0, 100.0, 2))
+        self._orifice_len_entry.setToolTip(
+            "<b>Orifice length (mm)</b><br>"
+            "Length of the exit orifice bore: the straight section of the insert. It changes "
+            "how the two-phase flow discharges (L/D), so update it whenever an insert with a "
+            "different length goes in.<br><br>"
+            "Recorded in run_summary.xlsx and master_log; the analysis app reports L/D and "
+            "warns if runs in one analysis have different lengths.")
+        self._orifice_len_entry.editingFinished.connect(self._save_camera_settings)
+        nozzle_card.layout().addWidget(
+            input_row("Orifice length", self._orifice_len_entry, label_width=100))
 
         # Hardware state, not a per-run setting: it persists between runs and is
         # only correct if you update it after physically moving the bubbler.
@@ -2835,8 +3010,14 @@ class AtomisationApp(QMainWindow):
         _sw,  self._mfc_setpt_lbl = _mfc_readout("Setpoint")
         _pw,  self._mfc_pres_lbl  = _mfc_readout("Pressure")
         _tw,  self._mfc_temp_lbl  = _mfc_readout("Temperature")
+        _rw,  self._mfc_regime_lbl = _mfc_readout("Gas regime")
+        self._mfc_regime_lbl.setToolTip(
+            "Flow-controlled: the gas is at its set point. PRESSURE-LIMITED: it has been more than 5% "
+            f"short for {GAS_SHORT_HOLD_S:g} s with the pressure at the supply ceiling (~{SUPPLY_CEILING_BAR:g} "
+            "barA): the silicone is choking the orifice and the set point is not what the run gets. "
+            "GAS SHORT: short with the pressure lower (check the supply and the Alicat).")
         mfrr.addWidget(_fw); mfrr.addWidget(_sw)
-        mfrr.addWidget(_pw); mfrr.addWidget(_tw); mfrr.addStretch()
+        mfrr.addWidget(_pw); mfrr.addWidget(_tw); mfrr.addWidget(_rw); mfrr.addStretch()
         c_mfc.layout().addWidget(mf_readout_row)
         vl.addWidget(c_mfc)
 
@@ -3248,6 +3429,52 @@ class AtomisationApp(QMainWindow):
                         apply_btn, self._cam_abort_btn, self._cam_arm_btn, self._cam_trigger_btn]:
                 btn.setEnabled(False)
 
+        # Window check card (drops on the window / lens, 2026-10-13)
+        c_win = card(w)
+        c_win.layout().addWidget(section_label("WINDOW CHECK"))
+        c_win.layout().addWidget(separator())
+        _win_desc = QLabel(
+            "A drop on the window is counted as un-atomised liquid (on the CCD day one cut a run's "
+            "atomised fraction from 10.5% to 6.0%). Wipe the window, save a clean reference with the "
+            "backlight on and nothing in view, and each Start Experiment compares the live view with it "
+            "and warns about new dark spots.")
+        _win_desc.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
+        _win_desc.setWordWrap(True)
+        c_win.layout().addWidget(_win_desc)
+        self._window_ref_lbl = QLabel(self._window_ref_text())
+        self._window_ref_lbl.setStyleSheet(f"color:{CLR_TEXT}; font-size:12px;")
+        self._window_ref_lbl.setWordWrap(True)
+        c_win.layout().addWidget(self._window_ref_lbl)
+        win_row = QWidget()
+        wrl = QHBoxLayout(win_row); wrl.setContentsMargins(0, 0, 0, 0); wrl.setSpacing(8)
+        self._window_chk = QCheckBox("Check at Start Experiment")
+        self._window_chk.setChecked(True)
+        self._window_chk.setStyleSheet(f"color:{CLR_TEXT}; font-size:12px;")
+        self._window_chk.setToolTip(
+            "<b>Check at Start Experiment</b><br>"
+            "Before the gas starts, grabs one live frame and compares it with the clean reference. "
+            "New dark spots (a drop, a smear) are shown boxed, and you choose to wipe first or start "
+            "anyway. The result goes into run_summary ('Window check (before run)'). Remembered "
+            "between sessions.")
+        self._window_chk.stateChanged.connect(self._save_camera_settings)
+        self._window_save_btn = ghost_button("Save clean reference")
+        self._window_save_btn.setToolTip(
+            "Keep the live view as the clean-window reference (on this PC). Do it after wiping the "
+            "window, backlight on, no spray, and again whenever the camera, lens or backlight moves.")
+        self._window_save_btn.clicked.connect(self._window_save_reference)
+        self._window_now_btn = ghost_button("Check now")
+        self._window_now_btn.setToolTip("Compare the live view with the clean reference now.")
+        self._window_now_btn.clicked.connect(self._window_check_now)
+        wrl.addWidget(self._window_chk)
+        wrl.addStretch()
+        wrl.addWidget(self._window_save_btn)
+        wrl.addWidget(self._window_now_btn)
+        c_win.layout().addWidget(win_row)
+        if not self.camera_available or _window_check is None:
+            self._window_save_btn.setEnabled(False)
+            self._window_now_btn.setEnabled(False)
+        vl.addWidget(c_win)
+
         # Full Analyse Cine card
         c_test = card(w)
         c_test.layout().addWidget(section_label("FULL ANALYSE CINE"))
@@ -3655,6 +3882,21 @@ class AtomisationApp(QMainWindow):
          "Mostly unbroken liquid — threads and lamellae, little droplet area."),
     )
 
+    # Four more (Ben, 2026-10-13), from measure_run's droplets_<thr>/extreme_frames_more/index.json
+    # (also back-filled for the CCD day by render_more_extremes.py). (index key, heading, what it shows)
+    MORE_EXTREME_PANELS = (
+        ("most_in_focus", "MOST IN-FOCUS DROPLETS",
+         "The frame where the most droplets were sharp enough to size."),
+        ("most_total", "MOST DROPLETS IN TOTAL",
+         "In focus and out of focus: the densest spray of the run."),
+        ("mean_d_lowest", "SMALLEST MEAN DIAMETER",
+         "Among frames with at least half the run's typical (median) count of in-focus droplets, "
+         "never fewer than 10, so a thin frame's chance mean is not 'the smallest'."),
+        ("mean_d_highest", "LARGEST MEAN DIAMETER",
+         "Among frames with at least half the run's typical count of in-focus droplets (never "
+         "fewer than 10): a thin frame that caught a few big drops is not 'the coarsest'."),
+    )
+
     def _build_extremes_tab(self):
         """Full-resolution views of the four extreme frames of the last run.
 
@@ -3736,6 +3978,28 @@ class AtomisationApp(QMainWindow):
             self._extreme_labels[(key, sub)] = (cap, img, path_lbl)
             vl.addWidget(c)
 
+        self._more_extreme_labels = {}     # index key -> (caption, image, path)
+        for key, heading, why in self.MORE_EXTREME_PANELS:
+            c = card()
+            c.layout().addWidget(section_label(heading))
+            why_lbl = QLabel(why)
+            why_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
+            why_lbl.setWordWrap(True)
+            c.layout().addWidget(why_lbl)
+            cap = QLabel("–")
+            cap.setStyleSheet(f"color:{CLR_TEXT}; font-size:12px; font-weight:600;")
+            cap.setWordWrap(True)
+            c.layout().addWidget(cap)
+            img = _FitImageLabel()
+            img.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
+            img.clearImage("not available")
+            c.layout().addWidget(img)
+            path_lbl = _ElidingLabel("")
+            path_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:10px;")
+            c.layout().addWidget(path_lbl)
+            self._more_extreme_labels[key] = (cap, img, path_lbl)
+            vl.addWidget(c)
+
         vl.addStretch()
         scroll.setWidget(w)
         return scroll
@@ -3801,6 +4065,7 @@ class AtomisationApp(QMainWindow):
             img.clearImage(f"image not found: {path}")
             path_lbl.setText(path or "")
 
+        self._update_more_extremes(results.get("_measurement_dir"))
         legend = ("orange = un-atomised liquid, green = in-focus droplet, magenta = out of "
                   "focus" if source == "classical pass" else
                   "green = in-focus droplet, magenta = out of focus")
@@ -3813,6 +4078,45 @@ class AtomisationApp(QMainWindow):
             self._extreme_hint.setText(
                 "Run finished but no marked-up images were found — "
                 "measure_run needs --images (process_capture passes it by default).")
+
+    def _update_more_extremes(self, mdir) -> int:
+        """The four count / mean-diameter extremes from <droplets dir>/extreme_frames_more/index.json;
+        the number of images shown. Runs measured before 2026-10-13 have no index (unless back-filled)."""
+        frames, note = {}, ""
+        folder = os.path.join(mdir, "extreme_frames_more") if mdir else None
+        try:
+            with open(os.path.join(folder, "index.json"), encoding="utf-8") as fh:
+                data = json.load(fh)
+            frames = {f["key"]: f for f in data.get("frames", []) if isinstance(f, dict) and f.get("key")}
+            note = data.get("note") or ""
+        except (OSError, ValueError, TypeError, AttributeError):
+            note = "measured before these frames were added"
+        shown = 0
+        for key, _heading, _why in self.MORE_EXTREME_PANELS:
+            cap, img, path_lbl = self._more_extreme_labels[key]
+            e = frames.get(key)
+            if not e:
+                cap.setText("– (not available for this run" + (f": {note}" if note else "") + ")")
+                img.clearImage("not available")
+                path_lbl.setText("")
+                continue
+            bits = [f"{e.get('value')} {e.get('unit', '')}".strip(),
+                    f"{e.get('droplets_in_focus', '?')} in focus, {e.get('droplets_total', '?')} in total"]
+            if e.get("mean_d_um") is not None:
+                bits.append(f"mean {e['mean_d_um']} µm")
+            if e.get("d32_um") is not None:
+                bits.append(f"D32 {e['d32_um']} µm")
+            cap.setText(f"{e.get('frame', '?')}   ·   " + "   ·   ".join(bits))
+            path = os.path.join(folder, e["image"]) if e.get("image") else None
+            pix = QPixmap(path) if path and os.path.exists(path) else None
+            if pix is not None and not pix.isNull():
+                img.setSourcePixmap(pix)
+                path_lbl.setText(f"{path}   ({pix.width()}×{pix.height()} full size)")
+                shown += 1
+            else:
+                img.clearImage(f"image not found: {path}" if path else "no image saved")
+                path_lbl.setText(path or "")
+        return shown
 
     def _build_cone_tab(self):
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
@@ -4141,8 +4445,10 @@ class AtomisationApp(QMainWindow):
             ("RUNNING AN EXPERIMENT", [
                 ("1. Set the conditions",
                  "Materials tab: fluid and gas densities plus the Fluid and Gas tags (the "
-                 "GLR is NOT SET without the densities). Nozzle: orifice, and bubbler "
-                 "height (hardware state, so only change it when you move the bubbler). "
+                 "GLR is NOT SET without the densities). Nozzle: orifice, orifice length "
+                 "(the exit bore's length: update it when an insert of another length goes "
+                 "in) and bubbler height (hardware states, so only change them when the "
+                 "hardware changes). "
                  "Hardware tab: target flow, RPM, Speed and Motor Travel. START does not "
                  "spin the bubbler: click Spin first."),
                 ("2. START EXPERIMENT",
@@ -4162,6 +4468,14 @@ class AtomisationApp(QMainWindow):
                  "Trigger in the bottom bar or on the Camera tab, or press Space. Works "
                  "only while the camera is armed. Space is ignored while you are typing in "
                  "a text box. Press C for a cone capture (cone webcam running)."),
+                ("5. Window check",
+                 "Camera tab, WINDOW CHECK. Wipe the window, backlight on, nothing in view, "
+                 "and click Save clean reference (again whenever the camera, lens or "
+                 "backlight moves). With Check at Start Experiment ticked, START compares "
+                 "the live view with it first: new dark spots (a drop on the window) are "
+                 "shown boxed, and you wipe and Start again or start anyway. The result is "
+                 "in run_summary.xlsx as 'Window check (before run)'. A drop on the window "
+                 "is measured as un-atomised liquid."),
             ]),
             ("END OF RUN", [
                 ("Automatic save",
@@ -4195,8 +4509,12 @@ class AtomisationApp(QMainWindow):
                 ("Extremes",
                  "Fills in when the AI finishes: the WHOLE RUN numbers (Run SMD, "
                  "atomised fraction, confidence), then the lowest and highest D32 and "
-                 "highest and lowest atomised-fraction frames. Green = in-focus droplet, "
-                 "magenta = out of focus, orange = un-atomised liquid."),
+                 "highest and lowest atomised-fraction frames, then the frames with the "
+                 "most in-focus droplets, the most droplets in total, and the smallest and "
+                 "largest mean diameter (among frames with at least half the run's typical "
+                 "count of in-focus droplets, never fewer than 10). "
+                 "Green = in-focus droplet, magenta = out of focus, orange = un-atomised "
+                 "liquid."),
                 ("Calibration (px/mm)",
                  "Start Feed and Use as Calibration Image, or Load from File. Scroll to "
                  "zoom, right-drag to pan, double-click to reset. Click two points a "
@@ -4706,6 +5024,9 @@ class AtomisationApp(QMainWindow):
         self._mfc_setpt_lbl.setText("–")
         self._mfc_pres_lbl.setText("–")
         self._mfc_temp_lbl.setText("–")
+        self._mfc_regime_lbl.setText("–")
+        self._gas_short_since = None
+        self._gas_short_flagged = None
         self._alicat_last_frame_t = None
         self._update_cutoff_status()
         self._set_status("Alicat MFC disconnected")
@@ -4812,8 +5133,45 @@ class AtomisationApp(QMainWindow):
         clr = CLR_GREEN if mass_flow > 0.5 else CLR_TEXT
         self._mfc_flow_lbl.setStyleSheet(f"color:{clr}; font-size:14px; font-weight:700;")
         self._check_pressure_cutoff(pressure)
+        self._update_gas_regime(pressure, mass_flow, setpoint)
         # The Alicat is the only source for the live graphs and the run log.
         self._record_alicat_sample(pressure, mass_flow)
+
+    def _update_gas_regime(self, pressure: float, flow: float, setpoint: float):
+        """Live: is the gas at its set point? A flow more than 5% short for GAS_SHORT_HOLD_S is not a
+        transient (the line filling, a ramp step): with the pressure at the supply ceiling the run is
+        PRESSURE-LIMITED (on 2026-10-12 every 0.5 mm run fell to 33-5,554 sccm against 7,000-11,000 once
+        the silicone arrived, and nobody could see it until the next day). Logged once per episode."""
+        now = time.monotonic()
+        if setpoint is None or setpoint < 100:
+            self._gas_short_since = None
+            self._mfc_regime_lbl.setText("–")
+            self._mfc_regime_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:14px; font-weight:700;")
+            return
+        short = flow < GAS_SHORT_SHARE * setpoint
+        if not short:
+            self._gas_short_since = None
+            if self._gas_short_flagged:
+                self._log(f"Gas back at its set point ({flow:.0f} of {setpoint:.0f} sccm).")
+                self._gas_short_flagged = None
+            self._mfc_regime_lbl.setText("flow-controlled")
+            self._mfc_regime_lbl.setStyleSheet(f"color:{CLR_GREEN}; font-size:14px; font-weight:700;")
+            return
+        if self._gas_short_since is None:
+            self._gas_short_since = now
+        if now - self._gas_short_since < GAS_SHORT_HOLD_S:
+            return                                             # may be a transient: wait
+        regime = ("PRESSURE-LIMITED" if pressure >= SUPPLY_CEILING_BAR - 0.5 else "GAS SHORT")
+        self._mfc_regime_lbl.setText(f"{regime} ({100 * flow / setpoint:.0f}% of set)")
+        self._mfc_regime_lbl.setStyleSheet(f"color:{CLR_ORANGE}; font-size:14px; font-weight:700;")
+        if self._gas_short_flagged != regime:
+            self._gas_short_flagged = regime
+            why = ("the pressure is at the supply ceiling: the silicone is choking the orifice, so this run is "
+                   "getting much less gas than set" if regime == "PRESSURE-LIMITED" else
+                   "the pressure is below the ceiling: check the gas supply and the Alicat")
+            self._log(f"⚠ {regime}: gas {flow:.0f} of {setpoint:.0f} sccm set for over "
+                      f"{GAS_SHORT_HOLD_S:g} s at {pressure:.2f} barA; {why}.")
+            self._flash_log_border(CLR_ORANGE)
 
     # ── Alicat health ────────────────────────────────────────────────────────
     # The Alicat is the only pressure source, so the cut-off is only as good as
@@ -5150,24 +5508,30 @@ class AtomisationApp(QMainWindow):
     # told a 2560x1600 user 6 min for a job that actually took 23.
     INFERENCE_S_PER_MEGAPIXEL = 1.25
 
-    # Canonical master_log.xlsx layout, A..Q. MASTER_HEADERS is stamped onto row 1
+    # Canonical master_log.xlsx layout, A..R. MASTER_HEADERS is stamped onto row 1
     # on every save, so a rename here reaches existing workbooks and a column added
     # by a migration cannot end up nameless or unstyled (which is how 'Mass Flow
     # Graph' ended up the only unbold, unfilled header in the file).
     # _write_excel finds every column by its NAME in this tuple -- never by
     # letter -- so adding a column here cannot misplace the images again.
-    # Shadowgraph (O) is sized for the 300 px images placed there; the cone (N)
-    # and the two graph columns (P, Q) are widened further from their actual
+    # Shadowgraph (P) is sized for the 300 px images placed there; the cone (O)
+    # and the two graph columns (Q, R) are widened further from their actual
     # rendered image sizes when those images exist.
-    MASTER_HEADERS = ('Timestamp', 'Orifice', 'Bubbler Height (mm)', 'Bubbler RPM',
+    # Mean Diameter (in-focus droplets, from summary.json like D32) added
+    # 2026-10-13 (Ben); migrate_master_mean_diameter() moves older logs to it.
+    # Orifice Length (C) added the same day (Ben: the exit orifice length
+    # sometimes changes); migrate_master_orifice_length() moves logs to it.
+    # Droplets/s (N, in-band droplets produced per second by mass balance,
+    # droplet_rate_band) the same day; migrate_master_droplet_rate().
+    MASTER_HEADERS = ('Timestamp', 'Orifice', 'Orifice Length (mm)', 'Bubbler Height (mm)', 'Bubbler RPM',
                       'Flow Range (sccm)', 'GLR', 'Pressure Range (barA)',
                       'Speed (steps/s)',
-                      'Motor Travel (mm)', 'D32 (um)', 'Atomised (%)',
-                      'Avg Lamella Thickness', 'Notes',
+                      'Motor Travel (mm)', 'D32 (um)', 'Mean Diameter (um)', 'Atomised (%)',
+                      MASTER_RATE_HEADER, 'Avg Lamella Thickness', 'Notes',
                       'Cone Image', 'Shadowgraph', 'Pressure Graph', 'Mass Flow Graph')
-    MASTER_COL_COUNT  = 17
-    MASTER_COL_LETTERS = 'ABCDEFGHIJKLMNOPQ'
-    MASTER_COL_WIDTHS = (20, 8, 16, 12, 18, 10, 18, 14, 12, 11, 12, 12, 35, 36.5, 43, 56, 56)
+    MASTER_COL_COUNT  = 20
+    MASTER_COL_LETTERS = 'ABCDEFGHIJKLMNOPQRST'
+    MASTER_COL_WIDTHS = (20, 8, 10, 16, 12, 18, 10, 18, 14, 12, 11, 12, 12, 14, 12, 35, 36.5, 43, 56, 56)
 
     # Header row style, matched to what the existing master_log.xlsx already uses:
     # theme-1 fill at 0.15 tint (dark grey) with bold white Calibri.
@@ -7823,6 +8187,119 @@ class AtomisationApp(QMainWindow):
             return True
         return clicked == keep_btn
 
+    # ── Window check: drops on the window / lens (2026-10-13) ────────────────
+    # A drop is measured as un-atomised liquid whenever it differs from the run's background median
+    # (it lands, grows, drips), so it is caught here, before the run: the live view against a reference
+    # taken when the window was clean (gui/window_check.py).
+
+    def _window_ref_text(self) -> str:
+        if _window_check is None:
+            return "Window check unavailable: gui/window_check.py did not import."
+        try:
+            frame, meta = _window_check.load_reference()
+        except Exception as e:
+            return f"Clean reference unreadable ({e}): save a new one."
+        if frame is None:
+            return "No clean reference yet: wipe the window, then Save clean reference."
+        h, w = frame.shape[:2]
+        return f"Clean reference: saved {meta.get('saved', '?')}, {w}×{h}."
+
+    def _window_grab(self):
+        """(one live frame, '') or (None, why not)."""
+        if not self.phantom or not self.phantom.is_connected:
+            return None, "the camera is not connected"
+        try:
+            return self.phantom.cam.get_live_image(), ""
+        except Exception as e:
+            return None, f"no live frame ({e})"
+
+    def _window_save_reference(self):
+        frame, why = self._window_grab()
+        if frame is None:
+            self._warn("Window check", f"No reference saved: {why}.")
+            return
+        try:
+            path = _window_check.save_reference(frame, note=f"exposure {self._cam_exp.text()} us")
+        except OSError as e:
+            self._warn("Window check", f"Could not save the reference:\n{e}")
+            return
+        self._window_ref_lbl.setText(self._window_ref_text())
+        self._log(f"Window check: clean reference saved ({path}).")
+        self._set_status("Clean window reference saved", CLR_GREEN)
+
+    def _window_compare(self):
+        """(WindowCheck, the live frame or None)."""
+        try:
+            ref, _meta = _window_check.load_reference()
+        except Exception as e:
+            return _window_check.WindowCheck(True, skipped=f"the reference is unreadable ({e})"), None
+        if ref is None:
+            return _window_check.WindowCheck(True, skipped="no clean reference saved"), None
+        frame, why = self._window_grab()
+        if frame is None:
+            return _window_check.WindowCheck(True, skipped=why), None
+        return _window_check.compare(frame, ref), frame
+
+    def _window_dialog(self, chk, frame, at_start: bool) -> bool:
+        """The live view with the new spots boxed. At Start: True = start anyway."""
+        dlg = QMessageBox(self)
+        dlg.setWindowTitle("Window check")
+        dlg.setText(f"{chk.text()[:1].upper()}{chk.text()[1:]} since the clean reference.\n\n"
+                    "A drop on the window is measured as un-atomised liquid and lowers the atomised "
+                    "fraction. Wipe or dry the window"
+                    + (", then Start again; or start anyway (run_summary records it)." if at_start else "."))
+        try:
+            dlg.setIconPixmap(self._phantom_frame_to_pixmap(_window_check.overlay(frame, chk, 640)))
+        except Exception:
+            pass                                            # the text says it all without the picture
+        start_btn = None
+        if at_start:
+            dlg.addButton("Cancel: wipe first", QMessageBox.ButtonRole.RejectRole)
+            start_btn = dlg.addButton("Start anyway", QMessageBox.ButtonRole.AcceptRole)
+        else:
+            dlg.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
+        dlg.setStyleSheet(f"""
+            QMessageBox {{ background-color: {CLR_PANEL}; color: {CLR_TEXT}; }}
+            QLabel {{ color: {CLR_TEXT}; font-size: 13px; }}
+            QPushButton {{
+                background-color: {CLR_INPUT}; color: {CLR_TEXT};
+                border: 1px solid {CLR_BORDER}; border-radius: 8px;
+                padding: 6px 20px; font-size: 13px;
+            }}
+            QPushButton:hover {{ background-color: {CLR_ACCENT}; color: white; }}
+        """)
+        dlg.exec()
+        return start_btn is not None and dlg.clickedButton() is start_btn
+
+    def _window_check_now(self):
+        if _window_check is None:
+            return
+        chk, frame = self._window_compare()
+        self._log(f"Window check: {chk.text()}")
+        if chk.skipped:
+            self._warn("Window check", f"Not checked: {chk.skipped}.")
+        elif chk.ok:
+            self._set_status("Window check: clean", CLR_GREEN)
+        else:
+            self._window_dialog(chk, frame, at_start=False)
+
+    def _window_check_at_start(self) -> bool:
+        """Before Start Experiment moves anything. False = the user chose to wipe first. The result is
+        kept for this run's run_summary ('Window check (before run)')."""
+        if _window_check is None or not self._window_chk.isChecked():
+            self._window_check_result = "off"
+            return True
+        chk, frame = self._window_compare()
+        self._window_check_result = chk.text()
+        self._log(f"Window check: {chk.text()}")
+        if chk.skipped or chk.ok:
+            return True
+        if self._window_dialog(chk, frame, at_start=True):
+            self._window_check_result = chk.text() + " (started anyway)"
+            return True
+        self._set_status("Start cancelled: wipe the window, then Start again", CLR_ORANGE)
+        return False
+
     def _start_experiment(self):
         if not self._require_arduino(): return
         if not self._check_standard_capture(): return
@@ -7896,6 +8373,12 @@ class AtomisationApp(QMainWindow):
                        "Connect it on the Hardware tab, or clear the RPM box for a run "
                        "without rotation.")
             return
+        if not self._window_check_at_start():
+            return
+        if not self._orifice_len_entry.text().strip():
+            # not a blocker: older inserts may not have been measured yet
+            self._log("Orifice length is empty (Nozzle card): this run records it as NOT RECORDED.")
+            self._set_status("Orifice length not set: recorded as NOT RECORDED", CLR_ORANGE)
         if static:
             auto_plan = None
             if self._auto_trig_chk.isChecked():
@@ -8125,6 +8608,7 @@ class AtomisationApp(QMainWindow):
             static = False
         return {
             'orifice':      self._orifice_combo.currentText(),
+            'orifice_length_str': self._orifice_len_entry.text().strip(),
             'speed_str':    self._speed_entry.text(),
             'distance_str': "0" if static else self._distance_entry.text(),
             'bubbler_str':  self._bubbler_height_entry.text().strip(),
@@ -8141,6 +8625,8 @@ class AtomisationApp(QMainWindow):
             'fluid_tag':    self._fluid_tag_entry.text(),
             'gas_tag':      self._gas_tag_entry.text(),
             'static':       static,
+            # what the window check said at this run's Start ('clean', '2 new dark spots ...', 'off')
+            'window_check': getattr(self, '_window_check_result', 'NOT RECORDED'),
         }
 
     def _collect_save_job(self) -> dict:
@@ -8195,6 +8681,33 @@ class AtomisationApp(QMainWindow):
             'last_cone_path': self._last_cone_path,
         }
 
+    @staticmethod
+    def _gas_fields(snap: dict, set_text) -> dict:
+        """run_summary Metadata: what the run actually got in its camera window (operating.py, the
+        analysis app's own definitions). 'Flow Range' is the max over the whole run, which on the
+        0.5 mm block on 2026-10-12 read 0-11,737 sccm for a run that got ~2,200 while the camera ran."""
+        keys = ('Gas delivered in camera window (sccm)', 'Gas delivered p10-p90 (sccm)',
+                'Upstream pressure in camera window (barA)', 'Gas regime', 'Gas settled')
+        if _operating is None:
+            return dict.fromkeys(keys, 'NOT RECORDED')
+        windows = snap.get('camera_windows') or []
+        if not windows or not snap.get('timestamps') or not snap.get('flows'):
+            return dict.fromkeys(keys, 'NO CAMERA WINDOW' if snap.get('timestamps') else 'NO GAS LOG')
+        try:
+            set_sccm = float(set_text) if set_text not in (None, '') else None
+        except (TypeError, ValueError):
+            set_sccm = None
+        tr = _operating.Trace(np.asarray(snap['timestamps'], float), np.asarray(snap['pressures'], float),
+                              np.asarray(snap['flows'], float), tuple(windows[0]))
+        op = _operating.classify(_operating.window_stats(tr), set_sccm, SUPPLY_CEILING_BAR)
+        if op.delivered_sccm is None:
+            return dict.fromkeys(keys, 'TOO FEW SAMPLES IN THE WINDOW')
+        return {keys[0]: round(op.delivered_sccm),
+                keys[1]: f"{op.delivered_p10:.0f}-{op.delivered_p90:.0f}",
+                keys[2]: round(op.p0_bar, 3) if op.p0_bar is not None else 'NOT RECORDED',
+                keys[3]: op.regime,
+                keys[4]: 'unknown' if op.settled is None else ('yes' if op.settled else 'NO')}
+
     def _write_excel(self, job: dict):
         """The file work of a save: run_summary.xlsx and the master_log row.
         Runs on the save worker -- reads only `job` and class constants, never
@@ -8211,6 +8724,8 @@ class AtomisationApp(QMainWindow):
         ts_str       = now.strftime("%Y-%m-%d %H:%M:%S")
 
         orifice      = job['orifice']
+        _olen        = job.get('orifice_length_str') or ''
+        orifice_len  = as_number(_olen) if _olen else 'NOT RECORDED'
         notes        = job['notes']
         speed_str    = job['speed_str']
         distance_str = job['distance_str']
@@ -8227,6 +8742,12 @@ class AtomisationApp(QMainWindow):
         # measure_run's model-only fraction.
         atom_val = (_ai.get('_classical') or {}).get('atomised_pct_pooled',
                                                       _ai.get('atomised_pct', ''))
+        # In-focus mean diameter, from the same summary.json as D32.
+        mean_val = _ai.get('droplet_d_mean_um', '')
+        if mean_val is None:
+            mean_val = ''
+        # In-band droplets produced per second (mass balance), a number; blank before the AI chain.
+        rate_val = droplet_rate_band(_ai, job.get('speed_str'))
 
         snap = job['snap']
         camera_windows = snap.get('camera_windows', [])
@@ -8322,26 +8843,28 @@ class AtomisationApp(QMainWindow):
             flows, 'Mass Flow (sccm)', '#30d158', f_range_str)
 
         fps_val = float(job['fps_text']) if job['fps_text'] else 1000.0
+        gas_fields = self._gas_fields(snap, job.get('flow_entry'))
         # 'NOT SET' rather than blank or 0: a missing density is a thing someone
         # forgot to enter, and that must not be mistaken for a measured ratio.
         _glr = job.get('glr')
         glr_val = round(_glr, 4) if isinstance(_glr, (int, float)) else 'NOT SET'
         meta = {
-            'Field': ['Timestamp', 'Orifice', 'Bubbler Height (mm)',
+            'Field': ['Timestamp', 'Orifice', 'Orifice length (mm)', 'Bubbler Height (mm)',
                       'Bubbler RPM', 'Flow Range (sccm)', 'GLR',
                       'Fluid', 'Liquid density (kg/m3)',
                       'Gas', 'Gas density (kg/m3)',
                       'Pressure Range (barA)', 'Speed (steps/s)', 'Motor Travel (mm)',
-                      'FPS', 'Notes', 'Run status'],
-            'Value': [ts_str, orifice, bubbler_str or 'NOT RECORDED',
-                      rpm_str or 'NOT RECORDED', f_range_str, glr_val,
+                      'FPS', 'Notes', 'Run status', 'Window check (before run)'] + list(gas_fields),
+            'Value': [ts_str, orifice, orifice_len, as_number(bubbler_str) if bubbler_str else 'NOT RECORDED',
+                      as_number(rpm_str) if rpm_str else 'NOT RECORDED', f_range_str, glr_val,
                       job.get('fluid_tag') or 'NOT RECORDED',
                       job.get('rho_liquid') or 'NOT SET',
                       job.get('gas_tag') or 'NOT RECORDED',
                       job.get('rho_gas') or 'NOT SET',
                       p_range_str,
-                      speed_str, distance_str, fps_val, notes,
-                      job.get('run_status') or 'NOT RECORDED'],
+                      as_number(speed_str), as_number(distance_str), fps_val, notes,
+                      job.get('run_status') or 'NOT RECORDED',
+                      job.get('window_check') or 'NOT RECORDED'] + list(gas_fields.values()),
         }
         # Written to a temporary file and swapped in, so a crash or a drive
         # dropout mid-write leaves the previous run_summary intact.
@@ -8543,6 +9066,15 @@ class AtomisationApp(QMainWindow):
                         if hasattr(_anc, 'to') and _anc.to and _anc.to.col >= 5:
                             _anc.to.col += 1
 
+            # ── Migrate to the mean-diameter format ─────────────────────────
+            # After GLR, for the same reason: it keys on the post-GLR layout
+            # (J = D32, K = Atomised) and puts Mean Diameter at K between them.
+            migrate_master_mean_diameter(ws)
+            # ── Migrate to the orifice-length format (after mean diameter) ──
+            migrate_master_orifice_length(ws)
+            # ── ... then the droplets/s column (after orifice length) ────────
+            migrate_master_droplet_rate(ws)
+
             _mf_col = self.MASTER_COL_COUNT
             if ws.cell(row=1, column=_mf_col).value != 'Mass Flow Graph':
                 ws.cell(row=1, column=_mf_col).value = 'Mass Flow Graph'
@@ -8644,15 +9176,18 @@ class AtomisationApp(QMainWindow):
         row_vals = {
             'Timestamp':             ts_str,
             'Orifice':               orifice,
-            'Bubbler Height (mm)':   bubbler_str or 'NOT RECORDED',
-            'Bubbler RPM':           rpm_str or 'NOT RECORDED',
+            'Orifice Length (mm)':   orifice_len,
+            'Bubbler Height (mm)':   as_number(bubbler_str) if bubbler_str else 'NOT RECORDED',
+            'Bubbler RPM':           as_number(rpm_str) if rpm_str else 'NOT RECORDED',
             'Flow Range (sccm)':     f_range_str,
             'GLR':                   glr_val,
             'Pressure Range (barA)': p_range_str,
-            'Speed (steps/s)':       speed_str,
-            'Motor Travel (mm)':     distance_str,
+            'Speed (steps/s)':       as_number(speed_str),
+            'Motor Travel (mm)':     as_number(distance_str),
             'D32 (um)':              d32_val,
+            'Mean Diameter (um)':    mean_val,
             'Atomised (%)':          atom_val,
+            MASTER_RATE_HEADER:      rate_val,
             'Avg Lamella Thickness': _lamella_cell_val,
             # A stopped run is flagged where it is seen: at the front of its
             # Notes. (run_summary.xlsx has its own "Run status" field; its
@@ -8771,6 +9306,9 @@ class AtomisationApp(QMainWindow):
             self._auto_trig_chk.blockSignals(True)     # no save half-way through loading
             self._auto_trig_chk.setChecked(bool(s.get("auto_trigger_end", False)))
             self._auto_trig_chk.blockSignals(False)
+            self._window_chk.blockSignals(True)
+            self._window_chk.setChecked(bool(s.get("window_check_at_start", True)))
+            self._window_chk.blockSignals(False)
             try:                        # a bad value must not stop the rest loading
                 _cut = float(s.get("pressure_cutoff_bar") or 0)
             except (TypeError, ValueError):
@@ -8797,6 +9335,7 @@ class AtomisationApp(QMainWindow):
             # Orifice — only restore a value the combo actually offers, so an old
             # or hand-edited settings file can't leave it blank.
             _orifice = s.get("orifice", "")
+            self._orifice_len_entry.setText(str(s.get("orifice_length_mm") or ""))
             if _orifice and self._orifice_combo.findText(_orifice) >= 0:
                 self._orifice_combo.blockSignals(True)
                 self._orifice_combo.setCurrentText(_orifice)
@@ -8905,10 +9444,13 @@ class AtomisationApp(QMainWindow):
                 "save_video":        self._cam_save_video_chk.isChecked(),
                 "save_tiffs":        self._cam_save_tiffs_chk.isChecked(),
                 "orifice":           self._orifice_combo.currentText(),
+                "orifice_length_mm": self._orifice_len_entry.text().strip(),
                 "bubbler_height_mm": self._bubbler_height_entry.text().strip(),
                 "run_ai_analysis":   self._pipeline_check.isChecked(),
                 "auto_trigger_end":  self._auto_trig_chk.isChecked()
                                      if hasattr(self, "_auto_trig_chk") else False,
+                "window_check_at_start": self._window_chk.isChecked()
+                                     if hasattr(self, "_window_chk") else True,
                 "pressure_cutoff_bar": getattr(self, "_cutoff_bar", None),
                 "gas_ramp_sccm_s":   getattr(self, "_flow_ramp", None),
                 "ai_stride":         self._get_ai_stride(),

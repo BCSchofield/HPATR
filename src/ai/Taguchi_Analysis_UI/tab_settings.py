@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 
 from . import pipeline_spec as spec
 from . import settings_defaults as sd
-from . import size_bins, theme
+from . import size_bins, stats, theme
 
 DEVICES = (("auto", None), ("cpu", "cpu"), ("cuda", "cuda"), ("mps", "mps"))
 
@@ -114,6 +114,9 @@ class SettingsTab(QWidget):
         self.log: Callable = lambda text, level="info": None
         self.bin_width = size_bins.DEFAULT_WIDTH_UM
         self.bin_max = size_bins.DEFAULT_MAX_UM
+        self.no_spray_pct = stats.NO_SPRAY_ATOM_PCT
+        self.ceiling_bar = sd.supply_ceiling().value
+        self.band = sd.count_band().value
         self.device_default: sd.Default | None = None
         self.model_default: sd.ModelInfo | None = None
         self._resolver = resolver or (lambda: (sd.device(), sd.model()))
@@ -162,8 +165,14 @@ class SettingsTab(QWidget):
         analysis.layout().addWidget(theme.section_label("ANALYSIS (used when you press Analyse)"))
         self.width = SettingRow("Size-bin width (µm)", self._edit(110))
         self.maxd = SettingRow("Size-bin maximum (µm)", self._edit(110))
+        self.no_spray = SettingRow("No spray below (atomised %)", self._edit(110))
         analysis.layout().addWidget(self.width)
         analysis.layout().addWidget(self.maxd)
+        analysis.layout().addWidget(self.no_spray)
+        self.ceiling = SettingRow("Supply pressure ceiling (barA)", self._edit(110))
+        analysis.layout().addWidget(self.ceiling)
+        self.band_row = SettingRow("Droplet count size band (µm)", self._edit(110))
+        analysis.layout().addWidget(self.band_row)
         form.addWidget(analysis)
         form.addStretch(1)
         scroll.setWidget(body)
@@ -186,6 +195,9 @@ class SettingsTab(QWidget):
         self.model.browse_btn.clicked.connect(self._browse_model)
         self.width.committed.connect(self._commit_bins)
         self.maxd.committed.connect(self._commit_bins)
+        self.no_spray.committed.connect(self._commit_no_spray)
+        self.ceiling.committed.connect(self._commit_ceiling)
+        self.band_row.committed.connect(self._commit_band)
         self.thr.reset_requested.connect(lambda: self._reset("thr"))
         self.stride.reset_requested.connect(lambda: self._reset("stride"))
         self.ci.reset_requested.connect(lambda: self._reset("ci"))
@@ -193,6 +205,9 @@ class SettingsTab(QWidget):
         self.model.reset_requested.connect(lambda: self._reset("model"))
         self.width.reset_requested.connect(lambda: self._reset("bins"))
         self.maxd.reset_requested.connect(lambda: self._reset("bins"))
+        self.no_spray.reset_requested.connect(lambda: self._reset("no_spray"))
+        self.ceiling.reset_requested.connect(lambda: self._reset("ceiling"))
+        self.band_row.reset_requested.connect(lambda: self._reset("band"))
 
         runs_pane.selection_changed.connect(self.refresh)
         runs_pane.settings_changed.connect(self.refresh)
@@ -252,6 +267,9 @@ class SettingsTab(QWidget):
         self.model.editor.setText(str(s.model_dir) if s.model_dir else "")
         self.width.editor.setText(f"{self.bin_width:g}")
         self.maxd.editor.setText(f"{self.bin_max:g}")
+        self.no_spray.editor.setText(f"{self.no_spray_pct:g}")
+        self.ceiling.editor.setText(f"{self.ceiling_bar:g}")
+        self.band_row.editor.setText(f"{self.band[0]:g}-{self.band[1]:g}")
 
     def refresh(self) -> None:
         """Notes, warnings and the edited tags, from the settings in force and the runs selected."""
@@ -295,6 +313,13 @@ class SettingsTab(QWidget):
         self.maxd.set_note(sd.bin_max().note)
         self.width.set_edited(self.bin_width != sd.bin_width().value)
         self.maxd.set_edited(self.bin_max != sd.bin_max().value)
+        self.no_spray.set_note(sd.no_spray_pct().note if self.no_spray_pct else
+                               "0: off, every run's droplet size and steadiness are reported")
+        self.no_spray.set_edited(self.no_spray_pct != sd.no_spray_pct().value)
+        self.ceiling.set_note(sd.supply_ceiling().note)
+        self.ceiling.set_edited(self.ceiling_bar != sd.supply_ceiling().value)
+        self.band_row.set_note(sd.count_band().note)
+        self.band_row.set_edited(tuple(self.band) != tuple(sd.count_band().value))
         self.images_note.setText("Per-frame images: extreme frames are always written; “every frame” is "
                                  "a tick on the Batch tab's output tree, not a setting.")
         n = self.n_edited()
@@ -303,7 +328,8 @@ class SettingsTab(QWidget):
         self.reset_all_btn.setEnabled(n > 0)
 
     def n_edited(self) -> int:
-        rows = (self.thr, self.stride, self.ci, self.device, self.model, self.width, self.maxd)
+        rows = (self.thr, self.stride, self.ci, self.device, self.model, self.width, self.maxd, self.no_spray,
+                self.ceiling, self.band_row)
         return sum(1 for r in rows if r.tag.text() == "edited")
 
     # ---- committing -----------------------------------------------------------------------------
@@ -384,6 +410,41 @@ class SettingsTab(QWidget):
         self.bins_changed.emit()
         self.refresh()
 
+    def _commit_no_spray(self) -> None:
+        try:
+            v = sd.parse_pct(self.no_spray.editor.text(), "no-spray threshold")
+        except sd.Invalid as exc:
+            self.no_spray.set_error(str(exc))
+            return
+        self.no_spray.set_error("")
+        self.no_spray_pct = v
+        self.refresh()
+
+    def _commit_ceiling(self) -> None:
+        try:
+            v = sd.parse_bar(self.ceiling.editor.text(), "supply pressure ceiling")
+        except sd.Invalid as exc:
+            self.ceiling.set_error(str(exc))
+            return
+        self.ceiling.set_error("")
+        self.ceiling_bar = v
+        self.refresh()
+
+    def _commit_band(self) -> None:
+        try:
+            v = sd.parse_band(self.band_row.editor.text(), "droplet count size band")
+        except sd.Invalid as exc:
+            self.band_row.set_error(str(exc))
+            return
+        self.band_row.set_error("")
+        self.band = v
+        self.refresh()
+
+    def analysis_options(self) -> stats.AnalysisOptions:
+        """What Analyse uses (both tabs), from the ANALYSIS card."""
+        return stats.AnalysisOptions(no_spray_atom_pct=self.no_spray_pct, supply_ceiling_bar=self.ceiling_bar,
+                                     band_um=tuple(self.band))
+
     # ---- resetting ---------------------------------------------------------------------------------
     def _reset(self, which: str) -> None:
         if which == "thr":
@@ -404,12 +465,25 @@ class SettingsTab(QWidget):
             self.bin_width, self.bin_max = size_bins.DEFAULT_WIDTH_UM, size_bins.DEFAULT_MAX_UM
             self.width.set_error("")
             self.bins_changed.emit()
+        elif which == "no_spray":
+            self.no_spray_pct = stats.NO_SPRAY_ATOM_PCT
+            self.no_spray.set_error("")
+        elif which == "ceiling":
+            self.ceiling_bar = sd.supply_ceiling().value
+            self.ceiling.set_error("")
+        elif which == "band":
+            self.band = sd.count_band().value
+            self.band_row.set_error("")
         self.fill_editors()
         self.refresh()
 
     def reset_all(self) -> None:
         self.bin_width, self.bin_max = size_bins.DEFAULT_WIDTH_UM, size_bins.DEFAULT_MAX_UM
-        for r in (self.thr, self.stride, self.ci, self.model, self.width):
+        self.no_spray_pct = stats.NO_SPRAY_ATOM_PCT
+        self.ceiling_bar = sd.supply_ceiling().value
+        self.band = sd.count_band().value
+        for r in (self.thr, self.stride, self.ci, self.model, self.width, self.no_spray, self.ceiling,
+                  self.band_row):
             r.set_error("")
         self.runs_pane.set_settings(replace(self.runs_pane.settings, score_thresh=None, stride=None,
                                             ci_stride=None, device=None, model_dir=None))

@@ -97,6 +97,9 @@ class FactorLevels:
     axial: tuple | None = None           # (low axial value, high axial value)
     special: dict = field(default_factory=dict)   # value -> AXIAL | CHECK | OUTSIDE
     numeric: bool = True
+    log: bool = False                    # code ln(value), not value (set by the analysis, 2026-10-13): the
+                                         # orifice inserts 0.8 / 1.2 / 1.8 are a geometric series, evenly
+                                         # spaced only on a log scale, and the pressure goes ~ a power of d
 
     @property
     def low(self):
@@ -106,23 +109,39 @@ class FactorLevels:
     def high(self):
         return self.levels[-1] if self.levels else None
 
+    def _t(self, v) -> float:
+        return math.log(float(v)) if self.log else float(v)
+
+    def _inv(self, u: float) -> float:
+        return math.exp(u) if self.log else u
+
     def design_code(self, v) -> float | None:
         """Low -1, middle 0, high +1, piecewise linear (uneven middle still at 0); beyond the
-        levels the nearest half extrapolates (an axial value -> +/- alpha)."""
+        levels the nearest half extrapolates (an axial value -> +/- alpha). On ln(v) for a log factor."""
         if v is None or not self.numeric or len(self.levels) < 2:
             return None
-        lo, hi, c = float(self.low), float(self.high), float(self.centre)
-        v = float(v)
+        if self.log and float(v) <= 0:
+            return None
+        lo, hi, c = self._t(self.low), self._t(self.high), self._t(self.centre)
+        v = self._t(v)
         if v >= c:
             return (v - c) / (hi - c) if hi > c else 0.0
         return (v - c) / (c - lo) if c > lo else 0.0
 
     def real_code(self, v) -> float | None:
-        """(v - mid-range) / half-range: what the fit uses (1.2 on 0.5 / 1.2 / 1.8 -> +0.08)."""
+        """(v - mid-range) / half-range: what the fit uses (1.2 on 0.5 / 1.2 / 1.8 -> +0.08); on ln(v) for a
+        log factor (1.2 on 0.8 / 1.8 -> 0.0)."""
         if v is None or not self.numeric or len(self.levels) < 2:
             return None
-        lo, hi = float(self.low), float(self.high)
-        return (float(v) - (lo + hi) / 2) / ((hi - lo) / 2)
+        if self.log and float(v) <= 0:
+            return None
+        lo, hi = self._t(self.low), self._t(self.high)
+        return (self._t(v) - (lo + hi) / 2) / ((hi - lo) / 2)
+
+    def decode(self, coded: float) -> float:
+        """Real code -> value (the inverse of real_code)."""
+        lo, hi = self._t(self.low), self._t(self.high)
+        return self._inv((lo + hi) / 2 + float(coded) * (hi - lo) / 2)
 
     def describe(self) -> str:
         lv = " / ".join(dz.norm(x).__str__() for x in self.levels)
@@ -153,10 +172,12 @@ class RunPoint:
     noted_kind: str | None = None
     noted_run: int | None = None
     flags: list = field(default_factory=list)
+    excluded: str | None = None          # set by the analysis, never by detection: why it is kept out of the
+                                         # fit although its kind is fitted (e.g. "pressure-limited: ...")
 
     @property
     def in_fit(self) -> bool:
-        return self.included and not self.validation and self.kind not in NOT_FITTED
+        return self.included and not self.validation and self.kind not in NOT_FITTED and not self.excluded
 
     @property
     def name(self) -> str:
@@ -759,9 +780,9 @@ def analyse(d: RsmDesign) -> Detected:
 
 def _decode(fl: FactorLevels, c: float):
     """Design code -> real value (inverse of design_code)."""
-    lo, hi, mid = float(fl.low), float(fl.high), float(fl.centre)
+    lo, hi, mid = fl._t(fl.low), fl._t(fl.high), fl._t(fl.centre)
     v = mid + c * ((hi - mid) if c >= 0 else (mid - lo))
-    return dz.norm(v)
+    return dz.norm(fl._inv(v))
 
 
 def _recommend(t: str, name: str, n_fit: int, counts: dict, est: Estimability | None) -> tuple[str, str]:

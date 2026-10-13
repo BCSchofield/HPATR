@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -50,10 +51,62 @@ import numpy as np
 
 from . import covariates
 from . import design as dz
+from . import operating
 from . import run_metrics
 from . import pipeline_spec as spec
 
 OUTLIER_Z = 3.0                 # standardised residual beyond which a replicate is flagged
+
+# ---- "no spray" runs (2026-10-13, Ben) ----------------------------------------------------------
+# A run whose atomised fraction is below this is a dribble, not a spray (CCD C3: 0.19%, a continuous
+# stream with a few stray specks). Its droplets are real, so a count gate does not catch it, but their
+# sizes describe specks, not atomisation: they bent every size surface and topped the deck's headlines
+# ("99% of C3's droplets below 50 um"), and a minimise-size goal would have rewarded the dribble.
+NO_SPRAY_ATOM_PCT = 2.0
+# blanked for a no-spray run: droplet SIZE and droplet STEADINESS. Atomised fraction, in-focus count,
+# liquid CV, atomised liquid flow and peak pressure keep their values: near zero is the true answer.
+NO_SPRAY_KEYS = ("d32", "d_mean", "d_median", "d90", "dv50", "cv_droplets", "intermit_pct", "thin_pct", "lag1")
+# the droplet parts of run_metrics' steadiness block (the liquid-area parts stay)
+_NO_SPRAY_STEADINESS = ("count_series", "count_mean", "count_cv", "thin_pct", "lag_r", "lag1", "slow_share_pct",
+                        "slow_peak_hz", "slow_share_noise_pct", "spectrum_hz", "spectrum")
+
+
+@dataclass(frozen=True)
+class AnalysisOptions:
+    """The analysis settings beyond the score threshold and size bins (Settings tab, ANALYSIS card)."""
+    no_spray_atom_pct: float = NO_SPRAY_ATOM_PCT
+    supply_ceiling_bar: float = operating.CEILING_BAR      # the gas regulator's setting: see operating.py
+    band_um: tuple = run_metrics.DEFAULT_BAND_UM            # the size band the droplet count counts
+
+
+def no_spray_reason(atom: float | None, opts: AnalysisOptions | None = None) -> str | None:
+    """Why this run is "no spray", or None if it sprays (or its atomised fraction is unknown)."""
+    limit = (opts or AnalysisOptions()).no_spray_atom_pct
+    if atom is None or not math.isfinite(atom) or atom >= limit:
+        return None
+    return f"atomised {atom:.2f}% < {limit:g}%"
+
+
+def _blank_no_spray(rec: dict, values: dict, ci: dict, metrics: dict, reason: str) -> dict:
+    """Blank a no-spray run's droplet size and steadiness everywhere they are read: the response
+    values, their CIs and bootstraps, the in-focus diameters (rec['no_spray'] makes
+    tables.in_focus_diameters and size_bins skip the run) and run_metrics' size block and droplet
+    steadiness. Returns the metrics to use (a copy; the cached file is untouched)."""
+    rec["no_spray"] = reason
+    for k in NO_SPRAY_KEYS:
+        values[k] = None
+        ci.pop(k, None)
+        for extra in (k, f"{k}_ci", f"boot_{k}"):
+            rec.pop(extra, None)
+    m = dict(metrics or {})
+    m["no_spray"] = reason
+    m["size"] = None
+    m["missing"] = {**(m.get("missing") or {}), "size": f"no spray ({reason})"}
+    if m.get("steadiness"):
+        m["steadiness"] = {k: v for k, v in m["steadiness"].items() if k not in _NO_SPRAY_STEADINESS}
+    if m.get("pressure"):
+        m["pressure"] = {k: v for k, v in m["pressure"].items() if k != "r_pressure_droplets"}
+    return m
 
 
 # ---- the F distribution -------------------------------------------------------------------
@@ -396,6 +449,7 @@ class Results:
     n_boot: int = 0
     seed: int = 0
     thr: float = 0.30
+    opts: AnalysisOptions = field(default_factory=AnalysisOptions)
 
     @property
     def n_conditions(self) -> int:
@@ -501,11 +555,12 @@ def multiple_comparisons(responses: dict[str, ResponseResult], factors) -> list[
 
 
 def load_measured_run(path: Path, info, thr: float, rng, do_bootstrap: bool, metrics_cache: Path | None,
-                      skipped: list, warnings: list):
+                      skipped: list, warnings: list, opts: AnalysisOptions | None = None):
     """One measured run, read the way every analysis reads it (Taguchi and response surface alike):
     load_run's nine responses with their self-consistency gates and frame bootstrap, then the shared
-    per-run data layer (run_metrics) and its five extra responses. Returns (rec, values, ci, context,
-    metrics), or None after recording why in `skipped`."""
+    per-run data layer (run_metrics) and its five extra responses, then the "no spray" gate (atomised
+    fraction below opts.no_spray_atom_pct blanks droplet size and steadiness). Returns (rec, values,
+    ci, context, metrics), or None after recording why in `skipped`."""
     ta = spec.rdc_module("taguchi_analysis")
     name = Path(path).name
     if info is not None and not info.analysis.measured:
@@ -516,6 +571,14 @@ def load_measured_run(path: Path, info, thr: float, rng, do_bootstrap: bool, met
     except RunLoadError as exc:
         skipped.append((name, f"cannot be read: {exc}"))
         return None
+    # the liquid stage that produced the atomised fraction (2.3.0 masks drops on the window, 2026-10-13)
+    try:
+        cs = json.loads((Path(rec["cl_dir"]) / "classical_summary.json").read_text(encoding="utf-8"))
+        rec["liquid_version"] = (cs.get("provenance") or {}).get("liquid_version") or "2.2.0 or earlier"
+        rec["liquid_window"] = cs.get("window")
+        rec["liquid_static"] = cs.get("static_pieces_not_counted")
+    except (OSError, ValueError, KeyError, TypeError):
+        rec["liquid_version"] = "unknown"
     context = covariates.run_context(info) if info is not None else None
     try:
         metrics = run_metrics.load_or_compute(path, thr, cache_dir=metrics_cache, rec=rec, context=context)
@@ -523,7 +586,7 @@ def load_measured_run(path: Path, info, thr: float, rng, do_bootstrap: bool, met
         metrics = {"missing": {"all": f"{type(exc).__name__}: {exc}"}}
         warnings.append(f"{name}: per-run metrics failed ({exc}); extra responses missing")
     extra = run_metrics.response_values(metrics, rec, getattr(ta, "N_BOOT", 0) if do_bootstrap else 0,
-                                        getattr(ta, "SEED", 0))
+                                        getattr(ta, "SEED", 0), band=(opts or AnalysisOptions()).band_um)
     for k, v in extra.items():
         if k.startswith("boot_"):
             arr = np.asarray(v, float)
@@ -534,13 +597,53 @@ def load_measured_run(path: Path, info, thr: float, rng, do_bootstrap: bool, met
             rec[k] = v
     values = {k: rec.get(k) for k, _l, _d, _q in responses_table()}
     ci = {k: tuple(rec[f"{k}_ci"]) for k in values if f"{k}_ci" in rec}
+    # what the run actually got (operating.py): gas delivered and P0 in the camera window, and its regime
+    rec["operating"] = operating.operating_point(Path(path) / "run_summary.xlsx", info.sccm if info else None,
+                                                 (opts or AnalysisOptions()).supply_ceiling_bar)
+    covariates.with_operating(context, rec["operating"])     # the gas flux from the gas it got in the window
+    reason = no_spray_reason(values.get("atom"), opts)
+    if reason:
+        metrics = _blank_no_spray(rec, values, ci, metrics, reason)
+        warnings.append(f"{name}: no spray ({reason}): its droplet size and steadiness are not reported "
+                        "(a dribble's few stray droplets say nothing about atomisation)")
     return rec, values, ci, context, metrics
+
+
+def mixed_liquid_versions(recs: list[dict]) -> str | None:
+    """A refusal when the runs' atomised fractions come from different liquid-stage versions (2.3.0 masks
+    drops on the window: C9 went from 8.8 to 16.4%), else None."""
+    groups: dict = {}
+    for r in recs:
+        groups.setdefault(r.get("liquid_version") or "unknown", []).append(str(r.get("run", "?"))[:6])
+    if len(groups) <= 1:
+        return None
+    return ("these runs' atomised fractions come from different liquid-stage versions ("
+            + "; ".join(f"{v}: {', '.join(n)}" for v, n in sorted(groups.items()))
+            + "), so they are not comparable: re-run the liquid stage on them all with one version "
+              "(AI/Real_Data_Code/remeasure_liquid.py)")
+
+
+def flow_warning(values: list[dict]) -> str | None:
+    """A loud warning when atomised liquid flow is missing for runs that have an atomised
+    fraction: without it the throughput goal drops out of the desirability without a word
+    (Taguchi app bug 6, 2026-10-13). `values`: each run's response values."""
+    have = [v for v in values if v.get("atom") is not None]
+    missing = [v for v in have if v.get("af_flow") is None]
+    if not missing:
+        return None
+    problem = covariates.formula_problem()
+    why = (f"the capture GUI's flow formula could not be imported ({problem})" if problem else
+           "no liquid density or silicone feed in those runs' run_summary.xlsx")
+    return (f"ATOMISED LIQUID FLOW IS MISSING for {len(missing)} of {len(have)} runs: {why}. "
+            "It has no values there, so any goal on it is dropped from the best setting.")
 
 
 def analyse(design: dz.Design, thr: float | None = None,
             progress: Callable[[int, int, str], None] | None = None,
-            do_bootstrap: bool = True, metrics_cache: Path | None = None) -> Results:
+            do_bootstrap: bool = True, metrics_cache: Path | None = None,
+            opts: AnalysisOptions | None = None) -> Results:
     """Load every analysable run in the design and run the statistics."""
+    opts = opts or AnalysisOptions()
     s = spec.effective(spec.RunSettings(score_thresh=thr))
     ta = spec.rdc_module("taguchi_analysis")
     a = dz.assign(design)
@@ -564,7 +667,7 @@ def analyse(design: dz.Design, thr: float | None = None,
             progress(i, len(todo), row.name)
         info = design.runs.get(row.path)
         loaded = load_measured_run(row.path, info, s.score_thresh, rng, do_bootstrap, metrics_cache,
-                                   skipped, warnings)
+                                   skipped, warnings, opts)
         if loaded is None:
             continue
         rec, values, ci, context, metrics = loaded
@@ -574,9 +677,25 @@ def analyse(design: dz.Design, thr: float | None = None,
                               ci, rec.get("sizer_version"), len(rec.get("frames", [])), rec,
                               context, metrics))
 
+    fw = flow_warning([r.values for r in runs])
+    if fw:
+        warnings.append(fw)
+    lw = covariates.orifice_length_warning([r.context for r in runs])
+    if lw:
+        warnings.append(lw)
+    short = [r for r in runs if (r.rec.get("operating") is not None and r.rec["operating"].not_delivered)]
+    if short:
+        warnings.append(f"{len(short)} run(s) did not get their set gas in the camera window (pressure-limited or "
+                        "gas short): their gas factor level is not what they got, so read their effects with care "
+                        "(the Response surface tab can leave them out): "
+                        + "; ".join(f"{r.name} ({r.rec['operating'].text()})" for r in short))
     results = Results(factors, runs, {}, skipped, warnings,
                       n_boot=getattr(ta, "N_BOOT", 0) if do_bootstrap else 0,
-                      seed=getattr(ta, "SEED", 0), thr=s.score_thresh)
+                      seed=getattr(ta, "SEED", 0), thr=s.score_thresh, opts=opts)
+    liq = mixed_liquid_versions([r.rec for r in runs])
+    if liq:
+        results.refused = liq
+        return results
     versions = {r.sizer_version for r in runs}
     if len(versions) > 1:
         groups = {}

@@ -1,9 +1,9 @@
 """report.py -- taguchi_report.md, written for someone reading it cold.
 
 Order: what was found (plain words) -> the design -> each response in full -> size spread ->
-GLR -> odd runs and what was left out -> how to read the statistics -> provenance. Every
-number comes from tables.py / stats.py; nothing is recomputed here, so the report cannot
-disagree with the workbook.
+GLR -> gas mass flux at the orifice -> silicone film at the exit -> odd runs and what was left
+out -> how to read the statistics -> provenance. Every number comes from tables.py / stats.py;
+nothing is recomputed here, so the report cannot disagree with the workbook.
 
 Significance wording is deliberately restrained: p < 0.05 is called "evidence", never "proof";
 with several dozen tests the report says how many false alarms to expect; and "not significant"
@@ -297,7 +297,8 @@ def _steadiness_section(results, figs: set[str]) -> str:
              _img(figs, "fig_steadiness", "Steadiness by condition"),
              _img(figs, "fig_spectra", "Droplet-count spectra"),
              _img(figs, "fig_series", "Droplets per frame and pressure through each capture"),
-             _img(figs, "fig_series_liquid", "Liquid area through each capture")]
+             _img(figs, "fig_series_liquid", "Liquid area through each capture"),
+             _img(figs, "fig_gas_traces", "Gas flow and upstream pressure through each run")]
     lines.append("**Condition means**\n")
     lines.append(md_table(["Condition", "Droplets/frame", "Count CV", "Frames < half mean %", "Lag-1 r",
                            "Slow share %", "Liquid CV", "Pressure CV %", "r(pressure, droplets)"],
@@ -426,14 +427,37 @@ def _condition_summary_section(results) -> str:
 
 
 def _gallery_section(results, figure_files) -> str:
-    gal = sorted(Path(p) for p in figure_files if Path(p).parent.name == "galleries")
-    if not gal:
+    files = sorted(Path(p) for p in figure_files if Path(p).parent.name == "galleries")
+    more = [p for p in files if p.stem.startswith("gallery_more_")]
+    gal = [p for p in files if p not in more]
+    if not files:
         return ""
-    lines = ["## Images\n",
-             "Each run's lowest- and highest-atomised frame (classical overlays: brown = un-atomised liquid, circles = "
-             "droplets), one sheet per condition:\n"]
-    lines += [f"- [{p.stem.replace('gallery_', '')}](figures/galleries/{p.name})" for p in gal]
+    lines = ["## Images\n"]
+    if gal:
+        lines += ["Each run's lowest- and highest-atomised frame (classical overlays: brown = un-atomised liquid, "
+                  "circles = droplets), one sheet per condition:\n"]
+        lines += [f"- [{p.stem.replace('gallery_', '')}](figures/galleries/{p.name})" for p in gal]
+    if more:
+        lines += [("\n" if gal else "") + "Each run's frame with the most in-focus droplets, the most droplets in "
+                  "total, and the smallest and largest mean in-focus diameter (among frames with at least 10 "
+                  "in-focus droplets), drawn as measured (model masks; green = in focus, magenta = out of focus), "
+                  "one sheet per condition:\n"]
+        lines += [f"- [{p.stem.replace('gallery_more_', '')}](figures/galleries/{p.name})" for p in more]
     return "\n".join(lines) + "\n"
+
+
+def _trend_table(results, keys) -> str:
+    labels = dict(covariates.COVARIATES)
+    rows = []
+    for (rk, ck), t in results.trends.items():
+        res = results.responses.get(rk)
+        if ck not in keys or res is None or t.r is None:
+            continue
+        ci = f"{fmt(t.exponent_ci95[0], 3)} to {fmt(t.exponent_ci95[1], 3)}" if t.exponent_ci95 else "\u2013"
+        rows.append([res.label, labels.get(ck, ck), t.n, f"{t.r:+.3f}", fmt_p(t.p), fmt(t.exponent, 3), ci,
+                     t.note])
+    return md_table(["Response", "Against", "Runs", "r", "p", "Power-law exponent", "Exponent 95% CI",
+                     "Note"], rows)
 
 
 def _glr_section(results, figs: set[str]) -> str:
@@ -454,17 +478,7 @@ def _glr_section(results, figs: set[str]) -> str:
     lines.append(f"> {covariates.CAVEAT}\n")
     if "fig_glr.png" in figs:
         lines.append("![Responses against GLR](figures/fig_glr.png)\n")
-    labels = dict(covariates.COVARIATES)
-    rows = []
-    for (rk, ck), t in results.trends.items():
-        res = results.responses.get(rk)
-        if res is None or t.r is None:
-            continue
-        ci = f"{fmt(t.exponent_ci95[0], 3)} to {fmt(t.exponent_ci95[1], 3)}" if t.exponent_ci95 else "\u2013"
-        rows.append([res.label, labels.get(ck, ck), t.n, f"{t.r:+.3f}", fmt_p(t.p), fmt(t.exponent, 3), ci,
-                     t.note])
-    lines.append(md_table(["Response", "Against", "Runs", "r", "p", "Power-law exponent", "Exponent 95% CI",
-                           "Note"], rows))
+    lines.append(_trend_table(results, covariates.GLR_KEYS))
     ctx = {}
     for r in results.runs:
         c = r.context
@@ -477,6 +491,116 @@ def _glr_section(results, figs: set[str]) -> str:
                               [[k, fmt(c.glr, 4), c.glr_source, fmt(c.liquid_ml_min, 4), c.fluid or "\u2013",
                                 c.gas or "\u2013", fmt(c.rho_liquid), fmt(c.rho_gas), fmt(c.achieved_sccm, 5),
                                 fmt(c.peak_pressure_bar)] for k, c in ctx.items()]))
+    return "\n".join(lines) + "\n"
+
+
+def gas_flux_section(results, figs: set[str]) -> str:
+    """'## Gas mass flux at the orifice' (covariates.py), with the orifice length and L/D. Also in the
+    response-surface report (rsm_report, from the shared analysis)."""
+    ctxs = [r.context for r in results.runs if r.context is not None]
+    lines = ["## Gas mass flux at the orifice\n",
+             "G = delivered gas mass flow / orifice area (kg/m\u00b2/s), from the gas each run got while the camera "
+             "ran where its pressure log has a camera window. It puts the orifice and the gas on one axis, and runs "
+             "that did and did not get their set gas together: on the CCD day of 2026-10-12 it ordered atomised "
+             "fraction better than any set point or measured pressure (Spearman +0.91; gas set point +0.35, GLR "
+             "\u22120.21). The exit velocity equivalent is G at the gas's standard density, for reading only: at a "
+             "choked small orifice the real exit velocity is sonic and the gas denser, so G is the honest "
+             "quantity. **No-spray runs are plotted (grey x) but left out of every covariate fit** (GLR, flux, "
+             "film): on the CCD day the two dribbles, at G 3 to 5, set most of the flux exponent. One exponent "
+             "is a summary, not a model: on the CCD day atomised fraction rose from 1.8 to 1.2 mm, sat near 20% "
+             "from about 150 to 400 m/s, and only two runs (0.5 mm, feed 3,000, 900 rpm) reached 35%.\n",
+             f"> {covariates.FLUX_CAVEAT}\n"]
+    with_flux = [c for c in ctxs if c.gas_flux is not None]
+    if with_flux:
+        src: dict = {}
+        for c in with_flux:
+            src[c.gas_flux_source] = src.get(c.gas_flux_source, 0) + 1
+        lines.append(f"{len(with_flux)} of {len(results.runs)} runs have a flux "
+                     f"({', '.join(f'{n} {s}' for s, n in sorted(src.items()))}). *camera window* = the median gas "
+                     f"in the camera window; *achieved (flow range)* = the top of the workbook's flow range (for a "
+                     f"run that choked, the flow before it did); *set point* = the folder name's.\n")
+    else:
+        why = next((c.flux_note for c in ctxs if c.flux_note), "")
+        lines.append(f"No run has a gas flux (**{why or 'no gas flow or orifice recorded'}**). Nothing was "
+                     f"guessed.\n")
+    groups = covariates.orifice_length_groups(ctxs)
+    if not groups:
+        lines.append("Orifice length is not recorded for these runs (run_summary.xlsx *Orifice length (mm)*, written "
+                     "by the capture GUI from 2026-10-13), so L/D is not known.\n")
+    else:
+        unrecorded = len(results.runs) - sum(n for _, n in groups)
+        lod = [c.l_over_d for c in ctxs if c.l_over_d is not None]
+        lines.append("Orifice length: " + ", ".join(f"{fmt(v, 3)} mm in {n} run(s)" for v, n in groups)
+                     + (f"; not recorded in {unrecorded}" if unrecorded else "")
+                     + (f". L/D {fmt(min(lod), 3)}" + (f" to {fmt(max(lod), 3)}" if max(lod) > min(lod) else "")
+                        if lod else "") + "."
+                     + (" **It differs between runs and is not a factor in the model, so its effect is mixed into "
+                        "the others.**" if len(groups) > 1 else
+                        " **Where it is not recorded it may have been different; it is not a factor in the model, so "
+                        "any effect of it is mixed into the others.**" if unrecorded else "") + "\n")
+    if "fig_gas_flux.png" in figs:
+        lines.append("![Responses against the gas mass flux at the orifice](figures/fig_gas_flux.png)\n")
+    lines.append(_trend_table(results, covariates.FLUX_KEYS))
+    rows = [r for r in tables.glr_context(results) if r["gas mass flux (kg/m2/s)"] is not None
+            or r["exit velocity equivalent (m/s)"] is not None]
+    if rows:
+        lines.append("\n**Per run** (every value is also in the workbook, *GLR context*)\n")
+        lines.append(md_table(["Run", "Condition", "Orifice mm", "Length mm", "L/D", "Gas used (sccm)", "From",
+                               "Regime", "G (kg/m\u00b2/s)", "Exit velocity equiv. (m/s)"],
+                              [[r["run"][:6], r["condition"], fmt(r["orifice (mm)"], 3),
+                                fmt(r["orifice length (mm)"], 3), fmt(r["L/D"], 3),
+                                fmt(r["gas for the flux (sccm)"], 5), r["gas flux source"], r["regime"] or "\u2013",
+                                fmt(r["gas mass flux (kg/m2/s)"], 4), fmt(r["exit velocity equivalent (m/s)"], 4)]
+                               for r in rows]))
+    return "\n".join(lines) + "\n"
+
+
+def film_section(results, figs: set[str]) -> str:
+    """'## Silicone film at the exit' (orifice.py): the gas share of the orifice, the silicone speed in it and
+    the annular film thickness, from the gas flux and the camera-window P0. Also in the response-surface
+    report."""
+    rows = tables.film_at_exit(results)
+    have = [r for r in rows if r["film h (um)"] is not None]
+    lines = ["## Silicone film at the exit\n"]
+    if not have:
+        why = next((r["note"] for r in rows if r["note"]), "")
+        lines.append(f"No run has a film estimate (**{why or 'no camera window'}**): it needs the gas and the "
+                     "upstream pressure from the camera window. Nothing was guessed.\n")
+        return "\n".join(lines) + "\n"
+    if "fig_orifice_model.png" in figs:
+        lines.append("![How the gas flux and the silicone film are estimated](figures/fig_orifice_model.png)\n")
+    lines += ["The measured gas flux G is compared with what gas alone could pass through the same orifice from "
+              "the camera-window upstream pressure P0. Their ratio is the gas share of the orifice area; the rest "
+              "is silicone, which with the syringe flow gives its speed in the orifice and, for an annular exit, "
+              "the film on the wall:\n",
+              "- G_gas(P0) = Cd · P0 · √(γ/(R T)) · (2/(γ+1))^((γ+1)/(2(γ−1))) when choked (P0 > 1.89 Pa), else "
+              "the subsonic isentropic form; T = 20 °C, γ and R from the run's gas",
+              "- α = G / G_gas(P0) (above 1 is clipped and flagged)",
+              "- u_L = Q_L / ((1 − α) A), Q_L the syringe flow",
+              "- h = (d/2)(1 − √α)\n"]
+    cds = sorted({r["Cd source"] for r in have})
+    lines.append(f"{len(have)} of {len(rows)} runs have a film estimate. Cd: {', '.join(cds)}"
+                 + (" (1.0 for every insert until each is measured gas-only, `orifice_cd.json`)"
+                    if cds == ["ideal (not measured)"] else "") + ".\n")
+    lines.append("> An estimate, not a measurement, and a covariate, not a factor (made from the gas, the "
+                 "pressure and the orifice). Caveats: a Cd of 0.8 would raise α by 25%; P0 is read upstream at the "
+                 "Alicat, so the nozzle pressure is lower and α is underestimated; it assumes separated, frozen "
+                 "flow with the gas choked in its share, and the real exit pattern (annular, slug, bubbly) is not "
+                 "observed. No-spray runs are plotted, not fitted.\n")
+    if "fig_film_thickness.png" in figs:
+        lines.append("![Responses against the silicone film thickness at the exit](figures/fig_film_thickness.png)\n")
+    lines.append(_trend_table(results, covariates.FILM_KEYS))
+    lines.append("\n**Per run** (every value is also in the workbook, *Silicone film at exit*, with the diagram and "
+                 "these notes)\n")
+    lines.append(md_table(["Run", "Condition", "Orifice mm", "P0 barA", "G (kg/m²/s)", "Gas-only (kg/m²/s)", "α",
+                           "Q_L mL/min", "u_L m/s", "Film µm", "Atomised %", "Regime", "Note"],
+                          [[r["run"][:6], r["condition"], fmt(r["orifice d (mm)"], 3), fmt(r["P0 (barA)"], 3),
+                            fmt(r["G (kg/m2/s)"], 4), fmt(r["gas-only capacity (kg/m2/s)"], 4),
+                            fmt(r["gas share alpha"], 3), fmt(r["Q_L (mL/min)"], 3), fmt(r["u_L (m/s)"], 3),
+                            fmt(r["film h (um)"], 3), fmt(r["atomised fraction (%)"], 3), r["regime"] or "\u2013",
+                            "no spray" + ("; " if r["note"] else "") + r["note"] if r["no spray"] else
+                            r["note"] or "\u2013"]
+                           for r in rows]))
     return "\n".join(lines) + "\n"
 
 
@@ -563,6 +687,8 @@ def build(results, bins, prov, findings=(), odd=None, figure_files=(), title: st
     body.append(_condition_summary_section(results))
     body.append(_gallery_section(results, figure_files))
     body.append(_glr_section(results, figs))
+    body.append(gas_flux_section(results, figs))
+    body.append(film_section(results, figs))
     body.append(_odd_section(results, odd))
     body.append(_left_out_section(results))
     body.append(_method_section(results))

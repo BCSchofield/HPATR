@@ -50,7 +50,8 @@ def world(truth, *, check_offset=0.0, seed=5):
         paths.append(run)
     design = rsm.from_runs(rd.load_runs(paths, check_reuse=False))
     L = rr.load(design.detect(), design.base.runs)
-    R = rr.analyse(L, goals=[rs.Goal("atom", "max", 0, 40)], discrete=INSERTS)
+    # the truth is planted in LINEAR orifice coding, so the fit is too (the default is a log scale, 2026-10-13)
+    R = rr.analyse(L, goals=[rs.Goal("atom", "max", 0, 40)], discrete=INSERTS, log=[])
     return d, R
 
 

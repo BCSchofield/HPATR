@@ -19,6 +19,8 @@ diameters load_run already holds, and stats' main-effects fit.
     fig_pieces              un-atomised liquid pieces: size distribution and count per frame
     fig_quality             sizer and data-quality checks per run, odd runs flagged
     galleries/gallery_<c>   each run's lowest- and highest-atomised classical frames (PNG only)
+    galleries/gallery_more_<c>  each run's most in-focus / most droplets / smallest and largest mean
+                            diameter frames, from droplets_<thr>/extreme_frames_more/ (PNG only)
 """
 from __future__ import annotations
 
@@ -213,7 +215,8 @@ def fig_series(results, out_dir: Path, only=None, name: str = "fig_series", form
             ax.tick_params(labelsize=6)
             _axes_style(ax)
             ax.set_title(f"{c}  {r.name[:6]}" + (f"   r(p, n) = {pr['r_pressure_droplets']:+.2f}"
-                                                  if pr.get("r_pressure_droplets") is not None else ""),
+                                                  if pr.get("r_pressure_droplets") is not None else "")
+                         + ("   no spray: droplets not shown" if (r.rec or {}).get("no_spray") else ""),
                          fontsize=7, loc="left")
             if j == 0:
                 ax.set_ylabel("droplets\n/ frame", fontsize=7)
@@ -623,57 +626,153 @@ def _extreme_frames(r, thr: float) -> list[tuple[str, Path, float | None]]:
     return out
 
 
-def gallery(results, cond: str, runs, out_dir: Path) -> Path | None:
+def _sheet(title: str, rows: list[list[tuple[int, Path, str]]], ncol: int, out_dir: Path, name: str) -> Path:
+    """A contact sheet: one row per run, each cell (column, image, caption) a thumbnail
+    GALLERY_WIDTH wide with its caption above."""
     from PIL import Image, ImageDraw, ImageFont
-    rows = [(r, _extreme_frames(r, results.thr)) for r in runs]
-    rows = [(r, ex) for r, ex in rows if ex]
-    if not rows:
-        return None
-    first = Image.open(rows[0][1][0][1])
+    first = Image.open(rows[0][0][1])
     w = GALLERY_WIDTH
     h = round(first.height * w / first.width)
     pad, head, cap = 8, 34, 22
-    sheet = Image.new("RGB", (2 * w + 3 * pad, head + len(rows) * (h + cap + pad) + pad), "white")
+    sheet = Image.new("RGB", (ncol * w + (ncol + 1) * pad, head + len(rows) * (h + cap + pad) + pad), "white")
     draw = ImageDraw.Draw(sheet)
     try:
         font = ImageFont.load_default(size=16)
         big = ImageFont.load_default(size=20)
     except TypeError:                                   # Pillow < 10.1: one fixed size
         font = big = ImageFont.load_default()
-    draw.text((pad, 8), f"{cond_name(results, cond, runs)}  ({_levels_caption(results)}):  lowest- and "
-                        f"highest-atomised frame of each run", fill="black", font=big)
-    for i, (r, ex) in enumerate(rows):
+    draw.text((pad, 8), title, fill="black", font=big)
+    for i, cells in enumerate(rows):
         y = head + i * (h + cap + pad)
-        for which, p, pct in ex:
-            col = 0 if which == "lowest" else 1
+        for col, p, label in cells:
             x = pad + col * (w + pad)
             with Image.open(p) as im:
                 sheet.paste(im.convert("RGB").resize((w, h), Image.Resampling.LANCZOS), (x, y + cap))
-            label = f"{r.name[:6]}  {which} atomised" + (f": {pct:.1f}%" if pct is not None else "") + f"  ({p.stem})"
             draw.text((x, y + 2), label, fill="black", font=font)
     out = Path(out_dir) / GALLERY_DIR
     out.mkdir(parents=True, exist_ok=True)
-    path = out / f"gallery_{cond}.png"
-    tmp = out / f".gallery_{cond}.png.tmp"
+    path = out / f"{name}.png"
+    tmp = out / f".{name}.png.tmp"
     sheet.save(tmp, format="PNG", optimize=True)
     fsops.replace(tmp, path)
     return path
 
 
+def gallery(results, cond: str, runs, out_dir: Path) -> Path | None:
+    rows = []
+    for r in runs:
+        rows.append([(0 if which == "lowest" else 1, p,
+                      f"{r.name[:6]}  {which} atomised" + (f": {pct:.1f}%" if pct is not None else "") + f"  ({p.stem})")
+                     for which, p, pct in _extreme_frames(r, results.thr)])
+    rows = [cells for cells in rows if cells]
+    if not rows:
+        return None
+    title = (f"{cond_name(results, cond, runs)}  ({_levels_caption(results)}):  lowest- and highest-atomised frame "
+             f"of each run")
+    return _sheet(title, rows, 2, out_dir, f"gallery_{cond}")
+
+
+# measure_run.py's MORE_EXTREMES_DIR and its index keys, in the order the sheet shows them.
+MORE_DIR = "extreme_frames_more"
+MORE_COLUMNS = (("most_in_focus", "most in focus", ""), ("most_total", "most in total", ""),
+                ("mean_d_lowest", "smallest mean", " um"), ("mean_d_highest", "largest mean", " um"))
+
+
+def _more_frames(r, thr: float) -> dict[str, tuple[Path, dict]]:
+    """{key: (image path, index entry)} from the run's droplets_<thr>/extreme_frames_more/index.json, for
+    entries whose image exists; {} for a run without one (measured before 2026-10-13, not back-filled)."""
+    meas = Path((r.rec or {}).get("meas_dir") or r.path / "shadowgraph" / "analysis" / f"droplets_{thr:.2f}")
+    d = meas / MORE_DIR
+    try:
+        frames = json.loads((d / "index.json").read_text(encoding="utf-8")).get("frames") or []
+    except (OSError, ValueError, AttributeError):
+        return {}
+    out = {}
+    for e in frames:
+        p = d / e["image"] if isinstance(e, dict) and e.get("image") else None
+        if p is not None and p.is_file():
+            out[e.get("key")] = (p, e)
+    return out
+
+
+def gallery_more(results, cond: str, runs, out_dir: Path) -> Path | None:
+    """Each run's frame with the most in-focus droplets, the most in total, and the smallest and largest mean
+    in-focus diameter (measure_run's drawing: model masks, green / magenta droplet rings)."""
+    rows = []
+    for r in runs:
+        ex = _more_frames(r, results.thr)
+        rows.append([(col, ex[k][0], f"{r.name[:6]}  {short}: {ex[k][1].get('value')}{unit}  ({ex[k][0].stem})")
+                     for col, (k, short, unit) in enumerate(MORE_COLUMNS) if k in ex])
+    rows = [cells for cells in rows if cells]
+    if not rows:
+        return None
+    title = (f"{cond_name(results, cond, runs)}  ({_levels_caption(results)}):  most in-focus droplets, most "
+             f"droplets in total, smallest and largest mean in-focus diameter, per run")
+    return _sheet(title, rows, len(MORE_COLUMNS), out_dir, f"gallery_more_{cond}")
+
+
 def galleries(results, out_dir: Path) -> list[Path]:
     out = []
     for c, rs in _conditions(results).items():
-        p = gallery(results, c, rs, out_dir)
-        if p is not None:
-            out.append(p)
+        for fn in (gallery, gallery_more):
+            p = fn(results, c, rs, out_dir)
+            if p is not None:
+                out.append(p)
     return out
 
 
 # ---- all of them ---------------------------------------------------------------------------------------
 
+def fig_gas_traces(results, out_dir: Path) -> list[Path]:
+    """Each run's upstream pressure (red, barA) and gas flow (blue, sccm) from Start to the end of the log,
+    camera window shaded (operating.py). Shows the moment the silicone arrived on a small orifice: the
+    pressure jumps to the supply ceiling and the gas collapses, and whether it had settled by the window."""
+    runs = [r for r in sorted(results.runs, key=lambda r: r.name)
+            if (r.rec or {}).get("operating") is not None and r.rec["operating"].trace.get("t")]
+    if not runs:
+        return []
+    ncol = 4 if len(runs) > 6 else max(1, len(runs))
+    nrow = int(math.ceil(len(runs) / ncol))
+    fig = Figure(figsize=(3.3 * ncol, 1.55 * nrow + 0.8))
+    axes = fig.subplots(nrow, ncol, squeeze=False)
+    for i, ax in enumerate(axes.flat):
+        if i >= len(runs):
+            ax.axis("off")
+            continue
+        r = runs[i]
+        op = r.rec["operating"]
+        tr = op.trace
+        t = np.array([np.nan if v is None else v for v in tr["t"]], float)
+        q = np.array([np.nan if v is None else v for v in tr["q"]], float)
+        p = np.array([np.nan if v is None else v for v in tr["p"]], float)
+        if tr.get("cam"):
+            ax.axvspan(tr["cam"][0], tr["cam"][1], color="#e5e5ea", zorder=0)
+        ax.plot(t, q, color="#0a84ff", linewidth=0.7)
+        if op.set_sccm:
+            ax.axhline(op.set_sccm, color="#0a84ff", linestyle=":", linewidth=0.7)
+        ax.tick_params(labelsize=6, colors="#0a84ff", axis="y")
+        ax.tick_params(labelsize=6, axis="x")
+        ax2 = ax.twinx()
+        ax2.plot(t, p, color="#ff453a", linewidth=0.8)
+        ax2.axhline(op.ceiling_bar, color="#ff453a", linestyle=":", linewidth=0.6)
+        ax2.tick_params(labelsize=6, colors="#ff453a")
+        ax2.set_ylim(0, max(op.ceiling_bar * 1.08, float(np.nanmax(p)) * 1.05 if np.isfinite(p).any() else 10))
+        ax.set_ylim(0, max(float(np.nanmax(q)) if np.isfinite(q).any() else 1, op.set_sccm or 0) * 1.1)
+        for side in ("top",):
+            ax.spines[side].set_visible(False)
+            ax2.spines[side].set_visible(False)
+        mark = {"pressure-limited": "  PRESSURE-LIMITED", "gas short": "  GAS SHORT"}.get(op.regime, "")
+        ax.set_title(f"{r.condition}  {r.name[:6]}{mark}" + ("  not settled" if op.settled is False else ""),
+                     fontsize=7, loc="left", color="#c0392b" if mark else "black")
+    fig.suptitle("Gas flow (blue, sccm; dotted = set point) and upstream pressure (red, barA; dotted = supply "
+                 "ceiling) through each run; grey = camera window", fontsize=9, y=0.995)
+    fig.tight_layout(rect=(0, 0, 1, 0.985 if nrow > 3 else 0.95))
+    return _save(fig, out_dir, "fig_gas_traces")
+
+
 FIGURES = (fig_size_distribution, fig_size_percentiles, fig_series, fig_series_liquid, fig_spectra,
            fig_steadiness, fig_drift, fig_replicates, fig_interactions, fig_diagnostics, fig_correlations,
-           fig_pieces, fig_quality, galleries)
+           fig_pieces, fig_quality, galleries, fig_gas_traces)
 
 
 def make_all(results, out_dir: Path, problems: list[str] | None = None) -> list[Path]:

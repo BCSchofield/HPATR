@@ -51,6 +51,8 @@ Usage:
 import argparse
 import csv
 import json
+import math
+import shutil
 import sys
 import time
 from collections import Counter, defaultdict
@@ -80,6 +82,7 @@ MAGENTA = (200, 0, 200)
 ORANGE = (0, 165, 255)
 BLUE = (255, 120, 0)
 BLACK = (0, 0, 0)
+DROPLET_RING_PX = 10         # droplet outline offset (--droplet-ring)
 
 
 def real_data_root() -> Path:
@@ -366,6 +369,76 @@ def union_area(rles):
     return float(mask_util.area(mask_util.merge(rles))) if rles else 0.0
 
 
+def transmission(sb_dir, stem, bg):
+    """T = 16-bit frame / background, or None when the frame is missing."""
+    raw = cv2.imread(str(Path(sb_dir) / f"{stem}.tiff"), cv2.IMREAD_UNCHANGED)
+    return None if raw is None else raw.astype(np.float32) / np.maximum(bg, 1.0)
+
+
+def measure_frame(T, dets, focus_max, split_um=SPLIT_UM, core_estimator="robust",
+                  sizer=True, sharpness_rule=False, keep_drawn=False):
+    """Every kept detection of ONE frame: droplets focus-split and sized, liquid
+    unioned per class. The body of main()'s per-frame loop, lifted out so
+    render_more_extremes.py re-measures a frame with exactly this code.
+
+    Returns a dict:
+        focus_a / oof_a    sized droplet areas (px), in / out of focus
+        fil_a / blob_a     model areas (px) of each filament / blob instance
+        a_drop / a_fil / a_blob   per-class union areas (px)
+        atom (%), d32 (um, in-focus only)
+        methods (Counter of diameter methods), reclassified (int)
+        drawn              render_frame items; empty unless keep_drawn
+    """
+    focus_a, oof_a = [], []
+    fil_a, blob_a = [], []
+    rle_drop, rle_fil, rle_blob = [], [], []
+    drawn = []
+    methods = Counter()
+    n_reclassified = 0
+    for d in dets:
+        mb, bx, by, bh, bw = det_crop(d)
+        if not mb.any():
+            continue
+        cid = d["category_id"]
+        if cid == DROPLET:
+            md = measure_droplet(T, d, focus_max, split_um=split_um,
+                                 core_estimator=core_estimator, sizer=sizer,
+                                 crop=(mb, bx, by, bh, bw),
+                                 sharpness_rule=sharpness_rule)
+            if md is None:
+                continue
+            sharp = md["in_focus"]
+            n_reclassified += md["reclassified"]
+            # the SIZED area, not the model's, when the sizer ran
+            (focus_a if sharp else oof_a).append(md["area_px"])
+            methods[md["method"]] += 1
+            # rle_drop is unconditional: an out-of-focus droplet is still
+            # atomised liquid, so the atomised fraction never sees focus.
+            rle_drop.append(d["segmentation"])
+            colour = GREEN if sharp else MAGENTA
+        elif cid == FILAMENT:
+            rle_fil.append(d["segmentation"])
+            fil_a.append(d["area"])
+            colour = ORANGE
+        else:
+            rle_blob.append(d["segmentation"])
+            blob_a.append(d["area"])
+            colour = BLUE
+        # Crop only; render_frame builds the frame-sized mask if it draws.
+        if keep_drawn:
+            drawn.append((d, mb, bx, by, bh, bw, colour))
+
+    a_drop = union_area(rle_drop)
+    a_fil = union_area(rle_fil)
+    a_blob = union_area(rle_blob)
+    total = a_drop + a_fil + a_blob
+    return {"focus_a": focus_a, "oof_a": oof_a, "fil_a": fil_a, "blob_a": blob_a,
+            "a_drop": a_drop, "a_fil": a_fil, "a_blob": a_blob,
+            "atom": (a_drop / total * 100) if total else float("nan"),
+            "d32": d32(focus_a), "methods": methods,
+            "reclassified": n_reclassified, "drawn": drawn}
+
+
 def boot_ci(values_fn, items, n_boot, seed=0):
     """Percentile bootstrap. Returns (lo, hi) at 95%."""
     if len(items) < 2:
@@ -441,6 +514,143 @@ def render_frame(view_path, items, f_d32, atom, droplet_ring, out_path):
     cv2.imwrite(str(out_path), canvas)
 
 
+# ============================================================================
+# MORE EXTREME FRAMES (2026-10-13)
+#
+# Beside the D32 / atomised extremes: the frame with the most in-focus
+# droplets, the most droplets in total, and the largest / smallest MEAN
+# in-focus diameter. Drawn into droplets_<thr>/extreme_frames_more/ with an
+# index.json the capture GUI and the Taguchi app read. Chosen here, from the
+# per-frame rows, so measure_run and render_more_extremes.py (the back-fill
+# for runs measured before this existed) pick the same frames.
+# ============================================================================
+
+MORE_EXTREMES_DIR = "extreme_frames_more"
+# A frame's mean diameter is only an extreme worth looking at with a sample
+# behind it: one speck must not be "the smallest mean". The floor is half the
+# run's median in-focus count per frame, never below MIN_DROPLETS_FOR_MEAN
+# (Ben, 2026-10-13). With a flat 10, the largest-mean frame was usually a thin
+# one that caught a few big drops: on 130918 (median 54 a frame) it was 57.9 um
+# from 17 droplets, where a frame's mean swings +/-4 um by chance; at half the
+# median it is 55.1 um from 34. The same idea as the D32 extremes' guard.
+MIN_DROPLETS_FOR_MEAN = 10
+MEAN_FLOOR_SHARE = 0.5
+MORE_EXTREMES = (            # key, label, unit -- the GUI reads these as written
+    ("most_in_focus", "Most in-focus droplets", "in-focus droplets"),
+    ("most_total", "Most droplets in total", "droplets"),
+    ("mean_d_highest", "Largest mean diameter", "um mean (in focus)"),
+    ("mean_d_lowest", "Smallest mean diameter", "um mean (in focus)"),
+)
+MORE_INDEX_FIELDS = ("key", "label", "frame", "image", "value", "unit", "droplets_in_focus",
+                     "droplets_total", "mean_d_um", "d32_um", "atomised_pct")
+
+
+def csv_um(area_px):
+    """A droplet's diameter exactly as droplet_sizes.csv writes it."""
+    return round(float(equiv_um(area_px)), 3)
+
+
+def frame_mean_d(diameters_um):
+    """Mean in-focus diameter of one frame (um) from its droplet_sizes.csv
+    diameters; NaN for a frame without one. fsum, so the answer does not
+    depend on the order the diameters are read back in."""
+    return math.fsum(diameters_um) / len(diameters_um) if len(diameters_um) else float("nan")
+
+
+def _num(v, nd):
+    v = float(v)
+    return round(v, nd) if np.isfinite(v) else None
+
+
+def mean_floor(rows) -> int:
+    """In-focus droplets a frame needs for its mean diameter to count as an
+    extreme: MEAN_FLOOR_SHARE of the run's median per frame, at least
+    MIN_DROPLETS_FOR_MEAN."""
+    if not rows:
+        return MIN_DROPLETS_FOR_MEAN
+    med = float(np.median([int(r["droplets_in_focus"]) for r in rows]))
+    return max(MIN_DROPLETS_FOR_MEAN, int(math.ceil(MEAN_FLOOR_SHARE * med)))
+
+
+def pick_more_extremes(rows, mean_d, floor=None):
+    """(frames, note) for the four extra extremes.
+
+    `rows` are per_frame rows in frame order (frame, droplets_in_focus,
+    droplets_out_of_focus, d32_in_focus_um, atomised_pct); `mean_d` maps frame
+    -> mean in-focus diameter. Ties go to the first frame in frame order
+    (max/min keep the first). The two mean entries are left out, and `note`
+    says why, when fewer than 2 frames have `floor` in-focus droplets
+    (default mean_floor(rows))."""
+    if not rows:
+        return [], "no frames measured"
+    floor = mean_floor(rows) if floor is None else floor
+    meta = {k: (label, unit) for k, label, unit in MORE_EXTREMES}
+
+    def entry(key, r, value):
+        label, unit = meta[key]
+        n_in, n_out = int(r["droplets_in_focus"]), int(r["droplets_out_of_focus"])
+        return {"key": key, "label": label, "frame": r["frame"], "image": None,
+                "value": value, "unit": unit, "droplets_in_focus": n_in,
+                "droplets_total": n_in + n_out,
+                "mean_d_um": _num(mean_d.get(r["frame"], float("nan")), 2),
+                "d32_um": _num(r["d32_in_focus_um"], 2),
+                "atomised_pct": _num(r["atomised_pct"], 3)}
+
+    def total(r):
+        return int(r["droplets_in_focus"]) + int(r["droplets_out_of_focus"])
+
+    top_in = max(rows, key=lambda r: int(r["droplets_in_focus"]))
+    top_all = max(rows, key=total)
+    frames = [entry("most_in_focus", top_in, int(top_in["droplets_in_focus"])),
+              entry("most_total", top_all, total(top_all))]
+    ok = [r for r in rows if int(r["droplets_in_focus"]) >= floor
+          and np.isfinite(mean_d.get(r["frame"], float("nan")))]
+    note = ""
+    if len(ok) >= 2:
+        hi = max(ok, key=lambda r: mean_d[r["frame"]])
+        lo = min(ok, key=lambda r: mean_d[r["frame"]])
+        frames += [entry("mean_d_highest", hi, _num(mean_d[hi["frame"]], 2)),
+                   entry("mean_d_lowest", lo, _num(mean_d[lo["frame"]], 2))]
+    else:
+        note = (f"mean-diameter extremes left out: {len(ok)} frame(s) have >= "
+                f"{floor} in-focus droplets, 2 needed")
+    return frames, note
+
+
+def print_more_extremes(frames, note):
+    for e in frames:
+        print(f"  {e['label']:26s} {e['frame']:>22}  {e['value']:>7} {e['unit']:<20s}"
+              f"  ({e['droplets_in_focus']} in focus of {e['droplets_total']})")
+    if note:
+        print(f"  ({note})")
+
+
+def write_more_extremes(out_dir, frames, note, draw=None, floor=MIN_DROPLETS_FOR_MEAN):
+    """droplets_<thr>/extreme_frames_more/: one PNG per distinct frame whose
+    entry names an image (drawn by `draw(stem, path)`), plus index.json and
+    index.csv. Built in a .partial folder and renamed, so a folder that exists
+    is complete; a previous one is replaced."""
+    final = Path(out_dir) / MORE_EXTREMES_DIR
+    part = Path(out_dir) / f"{MORE_EXTREMES_DIR}.partial"
+    if part.exists():
+        shutil.rmtree(part)
+    part.mkdir(parents=True)
+    if draw is not None:
+        for stem in dict.fromkeys(e["frame"] for e in frames if e["image"]):
+            draw(stem, part / f"{stem}.png")
+    index = {"schema": 1, "min_droplets_for_mean": floor,
+             "note": note, "frames": frames}
+    (part / "index.json").write_text(json.dumps(index, indent=2), encoding="utf-8")
+    with open(part / "index.csv", "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=MORE_INDEX_FIELDS)
+        w.writeheader()
+        w.writerows({k: e[k] for k in MORE_INDEX_FIELDS} for e in frames)
+    if final.exists():
+        shutil.rmtree(final)
+    part.rename(final)
+    return final
+
+
 DROPLET_BIN_UM = 25.0
 
 # Matplotlib hex equivalents of the BGR constants above, so a histogram bar
@@ -474,9 +684,9 @@ def write_distributions(out_dir, per_focus, per_oof, per_fil, per_blob):
         w.writerow(["frame", "diameter_um", "in_focus"])
         for s in stems:
             for a in per_focus.get(s, []):
-                w.writerow([s, round(float(equiv_um(a)), 3), 1])
+                w.writerow([s, csv_um(a), 1])
             for a in per_oof.get(s, []):
-                w.writerow([s, round(float(equiv_um(a)), 3), 0])
+                w.writerow([s, csv_um(a), 0])
 
     obj_csv = out_dir / "object_areas.csv"
     with open(obj_csv, "w", newline="", encoding="utf-8") as f:
@@ -625,7 +835,7 @@ def main():
                     help="redraw size_histograms.png from the CSVs already in "
                          "--out-dir and exit. Measures nothing, so changing the "
                          "figure costs seconds instead of a full re-measurement.")
-    ap.add_argument("--droplet-ring", type=int, default=10)
+    ap.add_argument("--droplet-ring", type=int, default=DROPLET_RING_PX)
     ap.add_argument("--n-boot", type=int, default=2000)
     ap.add_argument("--ci-stride", type=int, default=1, metavar="N",
                     help="use every Nth frame for the CONFIDENCE INTERVAL only. The "
@@ -685,6 +895,7 @@ def main():
     per_frame_fil_areas = {}
     per_frame_blob_areas = {}
     all_focus_areas = []
+    per_frame_mean_d = {}        # mean in-focus diameter, for the more-extremes pick
     # extremes mode: which frames to draw is only known once every frame is
     # measured, so hold each frame's crops (small) and draw afterwards.
     pending_images = {}
@@ -692,69 +903,37 @@ def main():
     for img_id in sorted(by_img):
         stem = name_by_id[img_id]
         dets = by_img[img_id]
-        raw = cv2.imread(str(sb_dir / f"{stem}.tiff"), cv2.IMREAD_UNCHANGED)
-        if raw is None:
+        T = transmission(sb_dir, stem, bg)
+        if T is None:
             sys.exit(f"no 16-bit frame for {stem} under {sb_dir}")
-        T = raw.astype(np.float32) / np.maximum(bg, 1.0)
 
-        focus_a, oof_a = [], []
-        fil_a, blob_a = [], []
-        rle_drop, rle_fil, rle_blob = [], [], []
-        drawn = []
-        for d in dets:
-            mb, bx, by, bh, bw = det_crop(d)
-            if not mb.any():
-                continue
-            cid = d["category_id"]
-            if cid == DROPLET:
-                md = measure_droplet(T, d, args.focus_max, split_um=args.split_um,
-                                     core_estimator=args.core_estimator,
-                                     sizer=not args.no_sizer,
-                                     crop=(mb, bx, by, bh, bw),
-                                     sharpness_rule=args.sharpness_rule)
-                if md is None:
-                    continue
-                sharp = md["in_focus"]
-                n_reclassified += md["reclassified"]
-                # the SIZED area, not the model's, when the sizer ran
-                (focus_a if sharp else oof_a).append(md["area_px"])
-                methods[md["method"]] += 1
-                # rle_drop is unconditional: an out-of-focus droplet is still
-                # atomised liquid, so the atomised fraction never sees focus.
-                rle_drop.append(d["segmentation"])
-                colour = GREEN if sharp else MAGENTA
-            elif cid == FILAMENT:
-                rle_fil.append(d["segmentation"])
-                fil_a.append(d["area"])
-                colour = ORANGE
-            else:
-                rle_blob.append(d["segmentation"])
-                blob_a.append(d["area"])
-                colour = BLUE
-            # Crop only; render_frame builds the frame-sized mask if it draws.
-            if args.images:
-                drawn.append((d, mb, bx, by, bh, bw, colour))
-
-        a_drop = union_area(rle_drop)
-        a_fil = union_area(rle_fil)
-        a_blob = union_area(rle_blob)
-        total = a_drop + a_fil + a_blob
-        atom = (a_drop / total * 100) if total else float("nan")
-        f_d32 = d32(focus_a)
+        fr = measure_frame(T, dets, args.focus_max, split_um=args.split_um,
+                           core_estimator=args.core_estimator, sizer=not args.no_sizer,
+                           sharpness_rule=args.sharpness_rule, keep_drawn=bool(args.images))
+        focus_a, oof_a, fil_a, blob_a = fr["focus_a"], fr["oof_a"], fr["fil_a"], fr["blob_a"]
+        a_drop, a_fil, a_blob = fr["a_drop"], fr["a_fil"], fr["a_blob"]
+        atom, f_d32, drawn = fr["atom"], fr["d32"], fr["drawn"]
+        methods.update(fr["methods"])
+        n_reclassified += fr["reclassified"]
+        mean_d = frame_mean_d([csv_um(a) for a in focus_a])
+        per_frame_mean_d[stem] = mean_d
 
         lo, hi = boot_ci(d32, focus_a, args.n_boot)
         rows.append({
             "frame": stem,
             "droplets_in_focus": len(focus_a),
             "droplets_out_of_focus": len(oof_a),
-            "filaments": len(rle_fil),
-            "blobs": len(rle_blob),
+            "filaments": len(fil_a),
+            "blobs": len(blob_a),
             "d32_in_focus_um": round(f_d32, 2),
             "d32_ci_lo": round(lo, 2), "d32_ci_hi": round(hi, 2),
             "atomised_pct": round(atom, 3),
             "droplet_area_px": round(a_drop, 1),
             "filament_area_px": round(a_fil, 1),
             "blob_area_px": round(a_blob, 1),
+            # Appended LAST so a reader by position is unaffected (none reads by
+            # position; checked 2026-10-13). From droplet_sizes.csv's diameters.
+            "mean_d_in_focus_um": round(mean_d, 2),
         })
         per_frame_focus_areas[stem] = focus_a
         per_frame_atom_parts[stem] = (a_drop, a_fil, a_blob)
@@ -770,7 +949,7 @@ def main():
             pending_images[stem] = (drawn, f_d32, atom)
 
         print(f"  {stem:>24}  focus {len(focus_a):4d}  oof {len(oof_a):4d}  "
-              f"fil {len(rle_fil):3d}  blob {len(rle_blob):2d}   "
+              f"fil {len(fil_a):3d}  blob {len(blob_a):2d}   "
               f"D32 {f_d32:6.1f}   atom {atom:6.2f}%")
 
     # ---- pooled over the run ----
@@ -929,6 +1108,19 @@ def main():
         print(f"\n  ratio highest/lowest: {ratio:.2f}x -- the frame-to-frame swing"
               f"\n  the pooled number is averaging over.")
 
+    # The four more extremes (most in-focus, most in total, largest / smallest
+    # mean diameter), chosen by the function render_more_extremes.py shares.
+    more_floor = mean_floor(rows)
+    more, more_note = pick_more_extremes(rows, per_frame_mean_d, more_floor)
+    for e in more:
+        e["image"] = f"{e['frame']}.png" if args.images else None
+    if len(with_d32) < 2:
+        print("\n" + "=" * 74)
+        print("EXTREME FRAMES -- go and look at these")
+        print("=" * 74)
+    print(f"\n  more extremes ({MORE_EXTREMES_DIR}/):")
+    print_more_extremes(more, more_note)
+
     csv_path = out_dir / "per_frame.csv"
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
@@ -1015,6 +1207,9 @@ def main():
             "lowest": _atom_extreme(by_atom[0]),
             "highest": _atom_extreme(by_atom[-1]),
         } if len(by_atom) >= 2 else None),
+        # Most in-focus / most in total / largest and smallest mean diameter;
+        # the same list as extreme_frames_more/index.json's "frames".
+        "more_extreme_frames": more,
     }
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2))
 
@@ -1036,6 +1231,20 @@ def main():
                          f_d32, atom, args.droplet_ring, out_dir / f"{stem}.png")
             n_images += 1
 
+    # extreme_frames_more/ whatever the image mode: index.json always, PNGs
+    # when images are drawn. 'all' has drawn every frame flat already, so its
+    # PNGs are copies; 'extremes' draws them from the held crops.
+    def _draw_more(stem, path):
+        if args.images == "all":
+            shutil.copyfile(out_dir / f"{stem}.png", path)
+            return
+        drawn, f_d32, atom = pending_images[stem]
+        render_frame(val / "frames" / "8bit" / f"{stem}.png", drawn,
+                     f_d32, atom, args.droplet_ring, path)
+
+    more_dir = write_more_extremes(out_dir, more, more_note,
+                                   _draw_more if args.images else None, more_floor)
+
     drop_csv, obj_csv, png = write_distributions(
         out_dir, per_frame_focus_areas, per_frame_oof_areas,
         per_frame_fil_areas, per_frame_blob_areas)
@@ -1049,6 +1258,8 @@ def main():
         print(f"           {png.name}")
     if args.images:
         print(f"           {n_images} images ({args.images}) in {out_dir}")
+    print(f"           {more_dir.name}/  ({len({e['frame'] for e in more if e['image']})} "
+          f"images + index.json)")
 
 
 if __name__ == "__main__":

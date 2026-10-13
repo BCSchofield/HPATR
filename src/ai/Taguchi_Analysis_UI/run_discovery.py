@@ -52,6 +52,10 @@ WORKBOOK_FIELDS = (          # RunInfo attribute, workbook field, label
     ("orifice_mm", "Orifice", "orifice"),
     ("bubbler_height", "Bubbler Height (mm)", "bubbler height"),
 )
+# The exit orifice's LENGTH: written by GUI_Clean from 2026-10-13 (a number, or NOT RECORDED); every run
+# captured before that lacks it. Not a factor and not in the folder name, so it is not in WORKBOOK_FIELDS
+# (an older run must not warn about it); covariates.py reports it and warns when it differs between runs.
+ORIFICE_LENGTH = "Orifice length (mm)"
 
 
 def parse_run_name(name: str) -> dict[str, float | None] | None:
@@ -209,6 +213,7 @@ class RunInfo:
     rpm: float | None = None                # workbook value, else folder name
     sps: float | None = None
     orifice_mm: float | None = None
+    orifice_length_mm: float | None = None   # workbook only; None when not recorded (every run before 2026-10-13)
     bubbler_height: float | None = None
     sources: dict[str, str] = field(default_factory=dict)   # attribute -> "name" | "workbook"
     cine: Path | None = None
@@ -398,6 +403,7 @@ def _apply_metadata(info: RunInfo) -> None:
     fps = meta.get("FPS")
     info.fps = fps.number if fps is not None else None
     info.flow_achieved_sccm = _meta_number(info, "Flow Range (sccm)")
+    info.orifice_length_mm = _meta_number(info, ORIFICE_LENGTH)
 
     ts = meta.get("Timestamp")
     if ts is not None and ts.text:

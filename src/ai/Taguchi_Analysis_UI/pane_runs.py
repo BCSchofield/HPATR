@@ -328,7 +328,15 @@ class RunsPane(QWidget):
         else:
             self.settings_changed.emit()
 
-    def _reload_runs(self) -> None:
+    def refresh_runs(self, reason: str) -> None:
+        """Re-read every loaded run's folder (measured? reusable?) in the background. Called
+        when a batch finishes: the list is otherwise read only when runs are added, so an
+        Analyse straight after a batch saw every run as "not measured yet" and refused
+        (Taguchi app bug 3, 2026-10-13)."""
+        if self._runs or self._busy:
+            self._reload_runs(reason)
+
+    def _reload_runs(self, reason: str = "settings changed") -> None:
         if self._busy:
             self._reload_again = True              # re-read once the scan in progress has landed
             return
@@ -336,7 +344,7 @@ class RunsPane(QWidget):
         self.add_btn.setEnabled(False)
         s = spec.effective(self.settings)
         paths = list(self._runs)
-        self.log(f"settings changed: re-reading {len(paths)} run(s) "
+        self.log(f"{reason}: re-reading {len(paths)} run(s) "
                  f"(threshold {s.score_thresh:g}, stride {s.stride}) ...")
 
         def work() -> None:

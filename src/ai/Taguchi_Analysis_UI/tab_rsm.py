@@ -9,7 +9,8 @@ A thin view over the response-surface modules, sharing the Batch tab's run selec
                       Notes check), the findings, and the block factor. Saved to rsm_design.json.
     Model             each factor's role (surface factor, nuisance: slope, nuisance: slope and curve,
                       left out), the levels that can be set (e.g. the orifice inserts), the goals
-                      (aim, ramp ends -- blank = the range seen in the data -- importance), a time
+                      (aim, ramp ends -- blank worst = the worst run seen, blank best = the best the surface
+                      reaches -- importance), a time
                       term, and whether to also fit without the nuisance factors (to compare).
                       Saved to rsm_model.json.
     Analyse           runs rsm_publish on a thread: report, workbook, CSV, deck, figures, next runs;
@@ -45,13 +46,15 @@ from . import rsm_design as rb
 from . import rsm_detect as rdet
 from . import rsm_publish as rp
 from . import rsm_responses as rr
-from . import stats, theme
+from . import covariates, operating, stats, theme
 
 MODEL_FILENAME = "rsm_model.json"
 GUIDE = Path(__file__).resolve().parents[3] / "docs" / "RSM_GUIDE.md"
 ROLES = (("surface", "Surface factor (mapped)"), ("nuisance-linear", "Nuisance: slope only"),
          ("nuisance-quadratic", "Nuisance: slope and curve"), ("out", "Left out (pooled into the error)"))
 AIMS = (("max", "Maximise"), ("min", "Minimise"), ("target", "Hit a target"), ("ignore", "Not a goal"))
+LIMITED_CHOICES = (("exclude", "Leave them out (own section)"), ("delivered", "Fit them at the gas they got"),
+                   ("set", "Keep them at their set point"))
 KIND_COLOURS = {rdet.CORNER: theme.CLR_TEXT, rdet.FACE: theme.CLR_TEXT, rdet.CENTRE: "#8be9a8",
                 rdet.AXIAL: theme.CLR_TEXT, rdet.EDGE: theme.CLR_TEXT, rdet.CHECK: theme.CLR_ORANGE,
                 rdet.OUTSIDE: theme.CLR_ORANGE, rdet.OTHER: theme.CLR_RED, rdet.MISSING: theme.CLR_RED}
@@ -71,8 +74,9 @@ def goal_for_fit(g: dict) -> dict:
     """A Model-page goal {key, aim, worst, best, importance} as rsm_responses.resolve_goals takes it.
     "worst" scores 0 and "best" scores 1 whatever the aim: maximise ramps up from worst to best,
     minimise down from worst to best (so its low end is best), and a target scores 1 at best, falling
-    to 0 at the same distance on either side as worst is. A blank end is the range seen in the runs
-    (a blank target: the middle of the ramp). Saved files from before 2026-10-11 used low/high for
+    to 0 at the same distance on either side as worst is. A blank worst is the worst run seen; a blank best
+    is the best the fitted surface reaches in the tested region (rsm_responses.reach_surface); a blank
+    target is the middle of the ramp. Saved files from before 2026-10-11 used low/high for
     the same two columns."""
     aim = g.get("aim", "max")
     worst = g.get("worst", g.get("low"))
@@ -186,10 +190,20 @@ class RsmController(QObject):
 
 # ---- the tab ------------------------------------------------------------------------------------------------
 
+class _GasBridge(QObject):
+    read = Signal(object)                 # {run path: OperatingPoint} read off the UI thread
+
+
 class RsmTab(QWidget):
     def __init__(self, runs_pane, parent=None) -> None:
         super().__init__(parent)
         self.runs_pane = runs_pane
+        # gas delivered per run (operating.py), read in the background for the Design page; keyed on the
+        # run_summary's path and modification time, so an edited or re-saved workbook is read again
+        self._ops: dict = {}
+        self._ops_reading = False
+        self._gas_bridge = _GasBridge()
+        self._gas_bridge.read.connect(self._on_gas_read)
         self.design = rdet.RsmDesign(dz.detect([]))
         self.detected: rdet.Detected | None = None
         self.output_dir: Path | None = None
@@ -199,6 +213,8 @@ class RsmTab(QWidget):
         self._pending = False
         self.log = lambda text, level="info": None
         self.batch_busy = lambda: False
+        self.analysis_provider = lambda: None          # Settings tab: stats.AnalysisOptions (None = defaults)
+        self.bins_provider = lambda: None              # Settings tab: (bin width, bin maximum) in um
         self.ask_yes = lambda text: QMessageBox.question(self, "Response surface", text) == \
             QMessageBox.StandardButton.Yes
         self.controller = RsmController(self)
@@ -268,9 +284,13 @@ class RsmTab(QWidget):
         lay = QVBoxLayout(w)
         self.model_note = _note("")
         lay.addWidget(self.model_note)
-        self.roles_table = QTableWidget(0, 3)
+        self.roles_table = QTableWidget(0, 4)
         self.roles_table.setHorizontalHeaderLabels(["Factor", "Role in the model", "Levels that can be set "
-                                                                                   "(blank = any value)"])
+                                                                                   "(blank = any value)", "Log scale"])
+        self.roles_table.horizontalHeaderItem(3).setToolTip(
+            "Fit this factor on ln(value). On by default for the orifice: the inserts 0.8 / 1.2 / 1.8 mm are a "
+            "geometric series (evenly spaced only on a log scale), and on the CCD day a log scale predicted the "
+            "0.8 mm check's pressure best. Maps and settings stay in the factor's own units.")
         self.roles_table.verticalHeader().setVisible(False)
         self.roles_table.setStyleSheet(_table_css())
         self.roles_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -283,10 +303,28 @@ class RsmTab(QWidget):
             opts.addWidget(c)
         opts.addStretch(1)
         lay.addLayout(opts)
+        lim = QHBoxLayout()
+        lim.addWidget(QLabel("Runs that did not get their set gas (pressure-limited):"))
+        self.limited_combo = QComboBox()
+        for key, text in LIMITED_CHOICES:
+            self.limited_combo.addItem(text, key)
+        self.limited_combo.setToolTip(
+            "A run whose gas flow in the camera window was under 95% of its set point (the rig hit the supply "
+            "pressure ceiling, e.g. the 0.5 mm block on 2026-10-12). Its set point does not describe it.\n"
+            "Leave out: kept out of the surfaces, reported in their own section (default).\n"
+            "Fit at the gas they got: the gas factor is moved to the measured flow (low gas then exists only "
+            "at the small orifice, so the two cannot be separated).\n"
+            "Keep at the set point: the old behaviour, for comparison.")
+        self.limited_combo.currentIndexChanged.connect(self._save_model)
+        lim.addWidget(self.limited_combo)
+        lim.addStretch(1)
+        lay.addLayout(lim)
         lay.addWidget(_note("Goals for the best setting (desirability): each response scores 0 at its worst value and "
                             "1 at its best (Maximise: worst below best; Minimise: worst above best; Hit a target: "
-                            "best is the target, and the score falls to 0 as far either side as worst is). Blank = "
-                            "the range seen in the runs. Importance weights each goal (1 = equal). Goals only steer "
+                            "best is the target, and the score falls to 0 as far either side as worst is). Blank worst = "
+                            "the worst run seen; blank best = the best the fitted surface reaches in the tested "
+                            "region (so Maximise never tops out at the best run seen). Importance weights each goal "
+                            "(1 = equal). Goals only steer "
                             "the best setting and the next runs; set them any time and press Analyse again."))
         self.goals_table = QTableWidget(0, 5)
         self.goals_table.setHorizontalHeaderLabels(["Response", "Aim", "0 at (worst)", "1 at (best)", "Importance"])
@@ -449,9 +487,60 @@ class RsmTab(QWidget):
                 out[str(m.point.row.path)] = (m.status, m.note, m.row.run if m.row else None)
         return out
 
+    # ---- gas delivered (Design page) ---------------------------------------------------------------------------
+    @staticmethod
+    def _gas_key(p) -> tuple:
+        x = Path(p.row.path) / "run_summary.xlsx"
+        try:
+            return str(x), x.stat().st_mtime_ns
+        except OSError:
+            return str(x), None
+
+    def _gas_text(self, p) -> tuple[str, str]:
+        """(cell text, tooltip) for a point's gas delivered, '…' while it is being read."""
+        op = self._ops.get(self._gas_key(p))
+        if op is None:
+            return "…", "reading the run's pressure log"
+        set_sccm = p.values.get("sccm")
+        if set_sccm is not None:
+            op = operating.reclassify(op, set_sccm)
+        if op.delivered_sccm is None:
+            return "–", op.note
+        mark = {"pressure-limited": "⚠ ", "gas short": "⚠ "}.get(op.regime, "")
+        return (f"{mark}{op.delivered_sccm:,.0f} ({op.regime})",
+                op.text() + (f"\n10th-90th percentile in the camera window: {op.delivered_p10:,.0f}-"
+                             f"{op.delivered_p90:,.0f} sccm" if op.delivered_p10 is not None else "")
+                + ("\nNot settled: still changing when the camera ran" if op.settled is False else ""))
+
+    def _read_gas(self, det) -> None:
+        if self._ops_reading or det is None:
+            return
+        todo = [p for p in det.points if self._gas_key(p) not in self._ops]
+        if not todo:
+            return
+        self._ops_reading = True
+        ceiling = getattr(self.analysis_provider() or stats.AnalysisOptions(), "supply_ceiling_bar",
+                          operating.CEILING_BAR)
+
+        def work() -> None:
+            got = {}
+            for p in todo:
+                key = self._gas_key(p)
+                got[key] = operating.operating_point(Path(key[0]), p.values.get("sccm"), ceiling)
+            self._gas_bridge.read.emit(got)
+
+        threading.Thread(target=work, name="rsm-gas", daemon=True).start()
+
+    def _on_gas_read(self, got: dict) -> None:
+        self._ops_reading = False
+        self._ops.update(got)
+        if self.detected is not None:
+            self._fill_design_table(self.detected)
+
     def _fill_design_table(self, det) -> None:
         factors = det.factors if det else []
-        heads = ["Use", "Run", "Point type", "Block"] + [f.label for f in factors] + ["Validation", "Sheet", "Check"]
+        heads = ["Use", "Run", "Point type", "Block"] + [f.label for f in factors] + \
+                ["Gas delivered (sccm)", "Validation", "Sheet", "Check"]
         matches = self._matches()
         self._building = True
         self.table.blockSignals(True)
@@ -490,15 +579,20 @@ class RsmTab(QWidget):
                     item.setData(ROLE_PATH + 1, f.key)
                     if f.key in p.row.overrides:
                         item.setForeground(QBrush(QColor(theme.CLR_ACCENT)))
-                cell(4 + len(factors), "", "kept out of the fit and predicted instead", check=p.validation)
+                gtext, gtip = self._gas_text(p)
+                gitem = cell(4 + len(factors), gtext, gtip)
+                if gtext.startswith("⚠"):
+                    gitem.setForeground(QBrush(QColor(theme.CLR_ORANGE)))
+                cell(5 + len(factors), "", "kept out of the fit and predicted instead", check=p.validation)
                 status, note, run_no = matches.get(str(p.row.path), ("", "", None))
-                cell(5 + len(factors), (f"run {run_no}: " if run_no else "") + status, note)
-                cell(6 + len(factors), "; ".join(p.flags), "; ".join(p.flags))
+                cell(6 + len(factors), (f"run {run_no}: " if run_no else "") + status, note)
+                cell(7 + len(factors), "; ".join(p.flags), "; ".join(p.flags))
             self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
             self.table.horizontalHeader().setSectionResizeMode(len(heads) - 1, QHeaderView.ResizeMode.Stretch)
         finally:
             self.table.blockSignals(False)
             self._building = False
+        self._read_gas(det)
 
     def _fill_findings(self, det) -> None:
         self.findings.clear()
@@ -541,7 +635,7 @@ class RsmTab(QWidget):
         col = item.column()
         if col == 0:
             row.included = item.checkState() == Qt.CheckState.Checked
-        elif col == 4 + n_f:
+        elif col == 5 + n_f:                    # Validation (4 + n_f is Gas delivered, read-only)
             if item.checkState() == Qt.CheckState.Checked:
                 self.design.validation.add(row.path)
             else:
@@ -607,7 +701,8 @@ class RsmTab(QWidget):
                 vals = sorted(set(f.levels) | {v for v, kind in f.special.items() if kind == rdet.CHECK})
                 discrete[f.key] = ", ".join(f"{v:g}" for v in vals)
         goals = [{"key": k, "aim": d, "worst": None, "best": None, "importance": 1.0} for k, d in rr.DEFAULT_GOALS]
-        return {"roles": roles, "discrete": discrete, "compare": compare, "time": False, "goals": goals}
+        return {"roles": roles, "discrete": discrete, "compare": compare, "time": False, "goals": goals,
+                "limited": "exclude", "log": [f.key for f in det.factors if f.key == "orifice"]}
 
     def _fill_model(self, det) -> None:
         if det is None or not det.factors:
@@ -641,15 +736,29 @@ class RsmTab(QWidget):
                 lv.setPlaceholderText("e.g. 0.5, 0.8, 1.2, 1.8")
                 lv.editingFinished.connect(self._save_model)
                 self.roles_table.setCellWidget(i, 2, lv)
+                lg = QCheckBox()
+                # a model saved before the log option (2026-10-13) gets the default: orifice on a log scale
+                lg.setChecked(f.key in m.get("log", ["orifice"]))
+                lg.setEnabled(bool(f.numeric) and all(float(v) > 0 for v in f.levels))
+                lg.toggled.connect(self._save_model)
+                self.roles_table.setCellWidget(i, 3, lg)
             self.compare_check.setChecked(bool(m.get("compare")))
             self.time_check.setChecked(bool(m.get("time")))
+            self.limited_combo.setCurrentIndex(max(0, self.limited_combo.findData(m.get("limited", "exclude"))))
             table = stats.responses_table()
             self.goals_table.blockSignals(True)
             self.goals_table.setRowCount(len(table))
             goals = {g["key"]: g for g in m.get("goals", [])}
+            flow_problem = covariates.formula_problem()
             for i, (key, label, direction, _q) in enumerate(table):
                 g = goals.get(key)
                 it = QTableWidgetItem(label)
+                if key == "af_flow" and flow_problem:
+                    # say so where the goal is chosen, not only after Analyse
+                    it.setText(f"⚠ {label}: unavailable on this PC")
+                    it.setToolTip("The capture GUI's flow formula could not be imported "
+                                  f"({flow_problem}), so there is no liquid mL/min and this "
+                                  "response has no values: a goal on it would be dropped.")
                 it.setFlags(Qt.ItemFlag.ItemIsEnabled)
                 it.setData(ROLE_PATH, key)
                 self.goals_table.setItem(i, 0, it)
@@ -671,13 +780,17 @@ class RsmTab(QWidget):
         """The Model page as a dict (what is saved and what Analyse uses)."""
         if self.detected is None:
             return self.model
-        roles, discrete = {}, {}
+        roles, discrete, log = {}, {}, []
         for i, f in enumerate(self.detected.factors):
             roles[f.key] = self.roles_table.cellWidget(i, 1).currentData()
             text = self.roles_table.cellWidget(i, 2).text().strip()
             if text:
                 discrete[f.key] = text
+            lg = self.roles_table.cellWidget(i, 3)
+            if lg is not None and lg.isChecked():
+                log.append(f.key)
         goals = []
+        labels = {k: lab for k, lab, _d, _q in stats.responses_table()}
         for i in range(self.goals_table.rowCount()):
             aim = self.goals_table.cellWidget(i, 1)
             if aim is None or aim.currentData() == "ignore":
@@ -689,10 +802,13 @@ class RsmTab(QWidget):
                     vals[field] = _num(item.text() if item else "")
                 except ValueError:
                     vals[field] = None
-            goals.append({"key": self.goals_table.item(i, 0).data(ROLE_PATH), "aim": aim.currentData(),
-                          "label": self.goals_table.item(i, 0).text(), **vals})
+            key = self.goals_table.item(i, 0).data(ROLE_PATH)
+            # the response's own label, not the cell text (which may carry an "unavailable" mark)
+            goals.append({"key": key, "aim": aim.currentData(),
+                          "label": labels.get(key, self.goals_table.item(i, 0).text()), **vals})
         return {"roles": roles, "discrete": discrete, "compare": self.compare_check.isChecked(),
-                "time": self.time_check.isChecked(), "goals": goals}
+                "time": self.time_check.isChecked(), "goals": goals,
+                "limited": self.limited_combo.currentData() or "exclude", "log": log}
 
     def _save_model(self, *_a) -> None:
         if self._building:
@@ -723,7 +839,9 @@ class RsmTab(QWidget):
         for k, text in m["discrete"].items():
             discrete[k] = [float(x) for x in text.replace(";", ",").split(",") if x.strip()]
         goals = [goal_for_fit(g) for g in m["goals"]]
-        return models, {"goals": goals or None, "discrete": discrete or None}
+        return models, {"goals": goals or None, "discrete": discrete or None,
+                        "limited": m.get("limited", "exclude"),
+                        "log_scale": list(m["log"]) if "log" in m else None}
 
     # ---- the Analyse page --------------------------------------------------------------------------------------
     def analyse_blocker(self) -> str | None:
@@ -766,6 +884,12 @@ class RsmTab(QWidget):
             return
         self.controller.log = self.log
         thr = spec.effective(self.runs_pane.settings).score_thresh
+        aopts = self.analysis_provider()
+        if aopts is not None:
+            opts = {**opts, "analysis_opts": aopts}
+        bins = self.bins_provider()
+        if bins is not None:
+            opts = {**opts, "bin_width": bins[0], "bin_max": bins[1]}
         self.controller.start(self.design, self.output_dir, models=models, thr=thr,
                               title="Response-surface analysis", **opts)
 

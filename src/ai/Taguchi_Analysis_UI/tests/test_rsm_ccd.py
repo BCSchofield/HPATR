@@ -78,7 +78,7 @@ def test_the_settable_optimum_uses_an_insert_that_exists(day):
 
 def test_weak_surfaces_are_kept_out_of_the_best_settings_search(day):
     R = day["R"]
-    weak = [k for k in ("cv_droplets", "d32") if R.fits[k].full.r2_pred < 0.5]
+    weak = [k for k in ("cv_droplets", "d32") if R.fits[k].r2_pred_used < 0.5]
     assert {g.key for g in R.goals}.isdisjoint(weak)
     if weak:
         assert any("left out of the best-settings search" in w for w in R.warnings)

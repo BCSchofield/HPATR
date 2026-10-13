@@ -17,12 +17,20 @@ needs_lacie = pytest.mark.skipif(not REAL_DAY.is_dir(), reason="LaCie not mounte
 FIRST = fakes.REAL_10_05[0][0]
 
 
+# what the PIPELINE adds to a run after capture; the fakes model the capture as the rig writes it
+# (the real 10/05 runs have been measured since this test was written, 2026-10-07)
+_PIPELINE_MADE = re.compile(r"^shadowgraph/(analysis/|raw/(frames/|background_median\.tiff|"
+                            r"extraction_metadata\.json|frame_runs\.json|instances\.json))")
+
+
 def _tree(root: Path) -> set[str]:
     """Relative paths, dirs marked with a trailing slash. The cine's own file
     name is masked: its time legitimately differs run to run."""
     out = set()
     for p in sorted(root.rglob("*")):
         rel = p.relative_to(root).as_posix() + ("/" if p.is_dir() else "")
+        if _PIPELINE_MADE.match(rel) and rel != "shadowgraph/analysis/":
+            continue
         out.add(re.sub(r"recording_\d{6}\.cine$", "recording_<hhmmss>.cine", rel))
     return out
 

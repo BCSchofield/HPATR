@@ -237,6 +237,16 @@ def bin_max() -> Default:
     return Default(size_bins.DEFAULT_MAX_UM, "this app's own default: one open-ended bin above it")
 
 
+# ---- "no spray" runs (this app's own feature, 2026-10-13) --------------------------------------------------
+
+def no_spray_pct() -> Default:
+    from .stats import NO_SPRAY_ATOM_PCT
+    return Default(NO_SPRAY_ATOM_PCT, "this app's own default: a run below this atomised fraction is a dribble, so its "
+                                      "droplet size and steadiness are not reported (its atomised %, droplet count "
+                                      "and liquid figures still are). On the CCD day it catches C3 (0.19%) and C5 "
+                                      "(0.45%); the next run up is 5.96%")
+
+
 # ---- parsing what the user types ----------------------------------------------------------------------------
 
 class Invalid(ValueError):
@@ -267,6 +277,53 @@ def parse_ci_stride(text: str) -> int | None:
     """Blank or 'auto' -> None (the pipeline decides per run)."""
     t = text.strip().lower()
     return None if t in ("", "auto") else parse_positive_int(t)
+
+
+def supply_ceiling() -> Default:
+    from .operating import CEILING_BAR, NEAR_CEILING_BAR
+    return Default(CEILING_BAR, "the gas regulator's setting upstream of the Alicat (Ben, 2026-10-13). A run whose gas "
+                                f"fell below 95% of its set point with P0 within {NEAR_CEILING_BAR:g} bar of this is "
+                                "pressure-limited; recommendations predicted that close to it are flagged")
+
+
+def count_band() -> Default:
+    from .run_metrics import DEFAULT_BAND_UM
+    lo, hi = DEFAULT_BAND_UM
+    return Default(DEFAULT_BAND_UM, f"this app's own default, {lo:g}-{hi:g} um: brackets the CCD day's mean diameter "
+                                    "(38-42 um). The response counts in-focus droplets per frame in this band "
+                                    "(lo <= d < hi): how many of the size you want, not just their size")
+
+
+def parse_band(text: str, what: str = "size band") -> tuple:
+    import re as _re
+    parts = [p for p in _re.split(r"\s*(?:-|–|,|to)\s*", text.strip()) if p]
+    try:
+        lo, hi = (float(p) for p in parts)
+    except ValueError:
+        raise Invalid(f"{what}: two sizes in um, e.g. 30-50") from None
+    if not (math.isfinite(lo) and math.isfinite(hi)) or lo < 0 or hi <= lo:
+        raise Invalid(f"{what}: the lower size first, both 0 or more, e.g. 30-50")
+    return lo, hi
+
+
+def parse_bar(text: str, what: str) -> float:
+    try:
+        v = float(text)
+    except ValueError:
+        raise Invalid(f"{what}: a pressure in barA, e.g. 9.5") from None
+    if not math.isfinite(v) or not 1 < v <= 50:
+        raise Invalid(f"{what}: above 1 barA (atmosphere) and at most 50")
+    return v
+
+
+def parse_pct(text: str, what: str) -> float:
+    try:
+        v = float(text)
+    except ValueError:
+        raise Invalid(f"{what}: a percentage, e.g. 2") from None
+    if not math.isfinite(v) or not 0 <= v < 100:
+        raise Invalid(f"{what}: from 0 (off) to below 100")
+    return v
 
 
 def parse_um(text: str, what: str) -> float:

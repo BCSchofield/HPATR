@@ -244,6 +244,186 @@ frames on Trial_1 did this. The GUI flags them inline rather than hiding them.
 **This is the weak response.** It measures at ±15% against D32's ±2%, and
 cannot reliably rank runs. Use D32 as the primary Taguchi response.
 
+### What the area fraction assumes (added 2026-10-13)
+
+The quoted figure is the **classical** fraction (`classical_liquid.py`, labelled
+"Atomised fraction **by area**, classical (%)" since 2026-10-13):
+Σ droplet px / Σ total liquid px over every analysed frame. Reading it as "the
+share of the liquid that atomised" assumes the projected-area share in the
+camera window equals the **mass** share of the whole flow. Three things break
+that:
+
+1. **Area is not volume.** A sphere carries 2d/3 of depth per pixel of projected
+   area (~27 µm for a 40 µm droplet); a round ligament or stream of thickness D
+   carries πD/4 (~390 µm for 0.5 mm). One pixel of un-atomised liquid holds
+   5–15× more liquid than one pixel of droplet, so the area fraction overstates
+   the atomised volume share, by a different amount in each run (thicker pieces
+   at low gas). Volume can be rebuilt from the 2D image by slicing (Blaisot &
+   Yon 2005, *Exp. Fluids* 39:977, §3.4, after Daves et al. 1993).
+2. **A frame shows what is present, not what flows.** Slow, heavy pieces stay in
+   view for more frames than fast droplets, so they are over-counted against
+   their flux. Image and flux distributions agree only if size and velocity are
+   uncorrelated (Blaisot & Yon §4.5 checked this with a PDPA before comparing).
+3. **One window at one distance.** Atomisation continues downstream, so the
+   fraction depends on where the field of view sits (record the axial station).
+
+Fine for **ranking** runs only if those biases are similar across runs.
+
+## Gas delivered and the operating regime (added 2026-10-13, `operating.py`)
+
+**Gas delivered**: the median gas flow (Alicat, sccm) inside the camera window, from `run_summary.xlsx`
+→ Pressure (`flows_sccm` between `cam_start_1` and `cam_end_1`), with its 10th–90th percentiles. **P0**:
+the median upstream pressure (barA) over the same window.
+
+- **Flow-controlled**: gas delivered ≥ 95% of the set point.
+- **Pressure-limited**: gas delivered < 95% of the set point and P0 within 0.5 bar of the supply ceiling
+  (the regulator setting, default 9.5 barA). Once the silicone reaches a small orifice, two-phase choking
+  needs more pressure than the supply gives, and the gas falls to what the orifice can pass at the
+  ceiling: the set point is no longer an input; feed and rpm decide the gas.
+- **Gas short**: gas delivered < 95% of the set point with P0 well below the ceiling (cause unknown).
+- **Settled**: the camera-window median within 10% (or 100 sccm) of the median over the 10 s before the
+  window, and the window's second half within the same of its first half (medians, because a pressure-
+  limited run pulses).
+
+## Gas mass flux at the orifice, exit velocity equivalent, orifice length (added 2026-10-13, `covariates.py`)
+
+    G (kg/m²/s) = ṁ_gas / A,   ṁ_gas = sccm × ρ_gas / 6×10⁷ (kg/s),   A = π d² / 4
+
+**Gas mass flux G**: the gas mass flow through the exit orifice per unit orifice area. The sccm is the gas
+the run **got**: the camera-window median (gas delivered, above) where the pressure log has a camera window,
+else the top of the workbook's flow range, else the set point (the report counts which). ρ_gas is the run's
+recorded *Gas density (kg/m3)* (1.145 for N₂ at the Alicat's 25 °C standard), the one GLR uses; with none
+recorded there is no flux (not guessed). d is the run's orifice. Example: 9,000 sccm through 1.2 mm at 1.145
+kg/m³ gives 152 kg/m²/s; C7 of the CCD day, 5,370 sccm through 0.5 mm, 522 kg/m²/s.
+
+**Exit velocity equivalent** = G / ρ_gas (m/s): the flux at standard density, for reading only. At a choked
+small orifice the real exit velocity is sonic and the gas there denser than standard, so this is not the
+jet's speed; G is the honest quantity.
+
+It is a **covariate, not a factor** (like GLR): it is made from the gas flow and the orifice, so it is
+aliased with them and a trend with it cannot be separated from them. The response-surface factors stay the
+set points. Reported as each response's correlation and log–log power-law exponent against G, and a figure
+coloured by orifice with hollow points for runs that did not get their set gas, so both regimes share one
+axis. Why: on the CCD day (31 spraying runs) it ordered atomised fraction best (Spearman +0.91; P0 +0.83,
+gas set point +0.35, GLR −0.21); `docs/notes/2026-10-13_phase12_physical_variables.md`.
+
+**Orifice length / L/D**: the exit orifice's length (mm), from `run_summary.xlsx` → Metadata *Orifice length
+(mm)*, written by the capture GUI from 2026-10-13 (no earlier run has it); L/D = length / diameter.
+**Hidden-factor warning**: when the runs of one analysis record different lengths (more than 0.05 mm apart),
+or only some record it, the analysis warns at the top (Taguchi and response surface alike): the length is
+not a factor in the model, so its effect is mixed into the others.
+
+## Silicone film at the exit: gas share, silicone speed, film thickness, Cd (added 2026-10-13, `orifice.py`)
+
+The measured gas flux G (above) is compared with what gas **alone** could pass through the same orifice from
+the camera-window upstream pressure P0 to atmosphere (Pa = 1.01325 barA), T = 20 °C, γ and R from the run's
+*Gas* tag (nitrogen 1.4 / 296.8 J/kg/K, air 1.4 / 287.05, CO₂ 1.29 / 188.9; unknown: air, and the note says
+so):
+
+    choked (Pa/P0 ≤ (2/(γ+1))^(γ/(γ−1)), i.e. P0 ≥ 1.89 Pa for γ 1.4):
+        G* = P0 √(γ/(R T)) (2/(γ+1))^((γ+1)/(2(γ−1)))
+    subsonic, r = Pa/P0:
+        G = P0 √(2γ/((γ−1) R T) [r^(2/γ) − r^((γ+1)/γ)])
+    G_gas(P0) = Cd × that
+
+- **Gas share α** = G / G_gas(P0): the share of the orifice area the gas occupies (clipped to 0–1; above 1 is
+  flagged "measured gas exceeds the ideal gas-only capacity: check P0/Cd"). The rest, 1 − α, is silicone.
+- **Silicone speed in the orifice** u_L = Q_L / ((1 − α) A), Q_L the syringe flow (positive displacement, so in
+  steady running it is the silicone leaving the nozzle).
+- **Film thickness at the exit** h = (d/2)(1 − √α): the silicone film on the wall if the exit is annular (gas
+  core, film on the wall). An estimate, not a measurement; a covariate, not a factor.
+- Only runs with a camera window have it (P0 and G from the same 13 s).
+
+Example, CCD C7 (0.5 mm, N₂, P0 9.18 barA, 5,370 sccm, feed 3,000 steps/s = 8.54 mL/min): G = 522, G_gas = 2,131
+kg/m²/s (choked), α = 0.245, u_L = 0.96 m/s, h = 126 µm. A 1.2 mm centre run (9,000 sccm, P0 3.08): α 0.21,
+u_L 0.21 m/s, h 323 µm. On the CCD day the film ordered atomised fraction best (Spearman −0.90 over the 31
+spraying runs); C7/C8 had the thinnest film of the day.
+
+**Cd (discharge coefficient)**, per insert, gas only, in `src/ai/Taguchi_Analysis_UI/orifice_cd.json`
+(written by `AI/Real_Data_Code/orifice_cd.py`, `docs/ORIFICE_CD_TEST.md`). Looked up by diameter (within
+0.01 mm) and, when both the run and the entry record one, by length (within 0.05 mm). Until an insert is
+measured its Cd is 1.0 and the outputs say **ideal (not measured)**; a Cd of 0.8 would raise α by 25%.
+
+| Insert d (mm) | Length (mm) | Cd | Measured |
+|---|---|---|---|
+| 0.5 | – | not measured (1.0 used) | – |
+| 0.8 | – | not measured (1.0 used) | – |
+| 1.2 | – | not measured (1.0 used) | – |
+| 1.8 | – | not measured (1.0 used) | – |
+
+Caveats: P0 is read upstream at the Alicat, so the nozzle pressure is lower and α is underestimated; the model
+assumes separated, frozen flow with the gas choked in its share; the real exit pattern (annular, slug, bubbly)
+is not observed.
+
+**No-spray runs and the covariate trends**: runs with no spray (atomised fraction below the Settings threshold)
+are left out of every covariate trend fit (GLR, gas flux, film) and plotted as a grey ×. On the CCD day the
+two dribbles (G 3 to 5 kg/m²/s) had set the flux exponent for atomised fraction to +0.86; without them it is
++0.36.
+
+## In-focus droplets per frame in the size band (`band_per_frame`, added 2026-10-13)
+
+The number of in-focus droplets per analysed frame with lo ≤ d < hi (half-open, as the size bins),
+counted from the same diameters as D32 and averaged over every analysed frame (a frame with none counts
+as 0). The band is a Settings value, default **30–50 µm**. Mean diameter cannot tell 5 droplets at 40 µm
+from 100,000; this can. Caveats: it is a **concentration** (droplets in view per frame), not a production
+rate, so it understates fast, high-gas sprays; the 2.2.0 sharpness rule removes more droplets at high gas;
+below 50 µm sizes sit near the pixel lattice. It overlaps with atomised fraction and atomised liquid flow
+(all rise when more liquid becomes droplets): lower its importance if all three are goals.
+
+## Droplets produced per second, mass balance (`rate`, `rate_band`; liquid stage ≥ 2.3.0, added 2026-10-13)
+
+A production **rate**, not a concentration:
+
+    rate      = Q_L × (atomised fraction by volume) / (π/6 ⟨d³⟩)
+    rate_band = rate × (share of in-focus droplets with lo ≤ d < hi)
+
+- Q_L is the syringe flow (mm³/s).
+- ⟨d³⟩ is over every in-focus droplet of the run.
+- The band is the same Settings band as `band_per_frame`.
+
+**Why.** A per-frame count is the rate × the time each droplet spends in view × the in-focus share, so a
+faster spray reads lower for the same production. On the CCD day the liquid's residence time in the
+field fell in proportion to the gas flow (1.4–2.8 ms). Along the 1.2 mm gas axis the in-focus count
+stayed flat while this rate doubled (`docs/notes/2026-10-13_droplet_rate_investigation.md`).
+
+**Assumptions:**
+
+- the volume estimate (±40% absolute; the ranking is good);
+- the in-focus sizes stand for every droplet;
+- ⟨d³⟩ leans on the largest, worst-sampled droplets, so the rate inherits their noise.
+
+Blank without volumes (an earlier liquid stage) or without the liquid flow. Never a default goal. It
+overlaps with atomised fraction and flow (all rise when more liquid becomes droplets).
+
+## Atomised fraction by volume, estimated (`atom_vol`, liquid stage ≥ 2.3.0)
+
+Σ droplet volume / Σ liquid volume over every analysed frame (pooled): droplets as spheres of the same
+projected area, un-atomised pieces as bodies with a round cross-section (`liquid_volume.py`). SECONDARY:
+it ranks runs like the area fraction (CCD day Spearman 0.88 on flow-controlled runs) at about a quarter
+of its scale, doubles the gas effect, is ~3× noisier, and its absolute scale is good to about ±40%. Blank
+for runs measured with an earlier liquid stage. `af_flow_vol` = syringe mL/min × this.
+
+## "No spray" run (added 2026-10-13)
+
+A run whose atomised fraction (by area) is below the Settings tab's threshold, default **2%**. It is a
+dribble: a near-continuous stream with a few stray specks. Those specks are real droplets, so no
+minimum-count rule catches it (CCD C3 still had 1,876 in-focus droplets), but their sizes describe stray
+specks, not atomisation. So its droplet size (D32, mean, median, D90, Dv50, size spread) and droplet
+steadiness (count CV, near-empty %, frames below half the mean, lag-1, spectra) are not reported; its
+atomised fraction, in-focus droplet count, liquid-area CV, atomised liquid flow and peak pressure are.
+
+## Atomised liquid flow index, area-based (`af_flow`)
+
+    atomised liquid flow (mL/min) = liquid flow (mL/min) × atomised fraction by area / 100
+
+The liquid flow is the syringe's, from the feed: steps/s ÷ 6,800 steps/mm ×
+322.7 mm² (20.27 mm bore), e.g. 4,000 steps/s = 11.39 mL/min. It is computed
+with the capture GUI's own formula (`covariates.glr_working` imports
+`GUI_Clean.AtomisationApp._glr_working`); if that import fails the analysis now
+says so in capitals instead of silently dropping the response (Taguchi app bug
+6, 2026-10-13). Because it multiplies by the **area** fraction, it carries every
+bias above: an **index** for comparing runs, not a measured mL/min of droplets.
+
 ## Size distributions (`droplet_sizes.csv`, `object_areas.csv`)
 
 **Every individual object's size, one row each** — as opposed to the aggregates
@@ -265,6 +445,31 @@ overlap. For area share use the atomised fraction, which unions them.
 
 Regenerate the figure with `measure_run.py --replot --out-dir <dir>`; it reads
 the CSVs and measures nothing.
+
+## Frame mean diameter and the "more" extreme frames (`extreme_frames_more/`)
+
+    mean_d_in_focus_um (per frame) = mean of that frame's in-focus diameter_um in droplet_sizes.csv
+
+The last column of `per_frame.csv` since 2026-10-13. It picks two of the four
+frames in `droplets_<thr>/extreme_frames_more/` (`index.json`, read by the
+capture GUI and the app's `gallery_more_<c>` sheets):
+
+- **Most in-focus droplets** / **Most droplets in total** (in + out of focus):
+  the frame with the highest count.
+- **Largest / Smallest mean diameter**: the highest / lowest
+  `mean_d_in_focus_um`, among frames with at least half the run's median
+  in-focus count per frame, never fewer than 10 (`mean_floor`;
+  `MIN_DROPLETS_FOR_MEAN`; Ben, 2026-10-13). A flat 10 picked thin frames that
+  caught a few big drops by chance: on 130918 the largest mean was 57.9 um from
+  17 droplets, against 55.1 um from 34 at half the median (54). The floor used
+  is in index.json `min_droplets_for_mean`. Fewer than 2 such frames: both left
+  out, `note` says why.
+
+Ties go to the first frame. Each entry carries that frame's counts, mean, D32
+and **model-only** atomised % (not the quoted classical one). These are for
+looking at, never for ranking runs: one frame is not a run. (With the first
+floor, a flat 10, the mean-diameter frames were usually sparse ones -- CCD day
+median 22-23 in-focus droplets -- hence the half-median floor.)
 
 ## Classical un-atomised liquid (`classical_liquid.py`)
 
@@ -377,11 +582,14 @@ droplet list, and turns ~500M operations per run into ~2M
 
     ci_stems = stems[::ci_stride]                    measure_run.py:343
 
-Consecutive frames are **not independent samples** — liquid crosses the field of
-view in ~20 ms, so at 500 fps frames fewer than ~10 apart contain physically the
-same droplets. Bootstrapping them as if independent reports the precision of a
-sample you do not have: duplicating 20 frames ten times adds zero information
-yet narrows the interval 3.2x.
+Consecutive frames were assumed **not to be independent samples**, because liquid
+was thought to cross the field in ~20 ms. **Measured 2026-10-13, it crosses in
+under one frame interval** (see *Decorrelation time* below). So the stride guards
+against **pulsing** (intermittency), not against the same droplets being seen
+twice. The principle still holds wherever frames are correlated: bootstrapping
+correlated frames as if independent reports the precision of a sample you do not
+have (duplicating 20 frames ten times adds zero information yet narrows the
+interval 3.2x).
 
 Too-narrow intervals make `compare_runs.py` declare differences real that are
 not — the dangerous direction — so the stopgap is to bootstrap a strided
@@ -393,19 +601,29 @@ A proper block bootstrap remains outstanding.
 
 **How long until a frame is a genuinely new sample of the spray.**
 
-Currently taken as **~20 ms**, from: 20.5 mm field of view ÷ ~1 m/s liquid
-velocity.
+**Transit: under one frame interval (2.56 ms at 390 fps). Measured 2026-10-13.**
+The figure used before, ~20 ms, came from a 20.5 mm field ÷ ~1 m/s, and both
+inputs were wrong. The flow runs down the image's **short** side (11.52 mm), and
+the liquid moves at several m/s. Evidence, CCD day (2026-10-12), 1.2 mm insert,
+7,000–11,000 sccm (`docs/notes/2026-10-13_droplet_rate_investigation.md`):
 
-**This is INFERRED, not measured, and the default stride rests on it.** The
-velocity comes from "features show shape, not streaks at 10 µs exposure", which
-bounds velocity from **above** only — 0.3 m/s would also show no streaking. So
-it bounds decorrelation from *below*, and stride 10 may be smaller than needed.
-It also counts transit time only: atomisation is intermittent (per-frame
-atomised fraction ranged 0.62%–100% on Trial_1), and if the pulsing is slower
-than 20 ms then intermittency, not transit, sets the real figure.
+- **Frame to frame, nothing pairs.** Cross-correlation, blob matching and
+  persistence on consecutive full-rate frames all sit at the level of unrelated
+  frames. The same code locks on to the slow C3 dribble, so the null is real.
+- **Mass balance.** Liquid volume in view ÷ syringe flow gives a mean residence
+  time of 1.4–2.8 ms (≈ 4–8 m/s). It falls in proportion to the gas flow.
 
-Both are directly measurable by cross-correlating frames. Worth doing — it
-decides whether a condition costs 23 minutes or 4 hours.
+So at 390 fps **every frame is a fresh sample of droplets**. What still couples
+analysed frames is **intermittency** (pulsing): per-frame atomised fraction and
+count swing on time scales the count autocorrelation (lag-1, spectra) measures.
+This is how to read the stride and the CI:
+
+- **`--ci-stride` 10 (25.6 ms) is conservative for transit**, but not
+  necessarily for pulsing.
+- **The right fix is still a block bootstrap**, with the block length set by
+  the measured count autocorrelation.
+- **A lag-1 correlation between analysed frames is pulsing**, never the same
+  droplets seen twice.
 
 ## Separability
 

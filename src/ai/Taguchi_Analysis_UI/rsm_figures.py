@@ -78,11 +78,13 @@ def _hold_sets(R) -> list[dict]:
 
 
 def _optimum_at(R, fixed_real: dict, model_key: str = "reduced"):
-    """The desirability optimum over the surface factors NOT in fixed_real (the rest held there)."""
-    free = [k for k in R.axis if k not in fixed_real]
-    if not free:
+    """The desirability optimum over the surface factors NOT in fixed_real (the rest held there). Factors no
+    steering surface depends on (R.free) are held at the centre, as in rsm_responses.analyse."""
+    held_free = [k for k in getattr(R, "free", []) if k not in fixed_real]
+    search = [k for k in R.axis if k not in fixed_real and k not in held_free]
+    if not search:
         return None
-    fixed = {k: _f(R, k).real_code(v) for k, v in fixed_real.items()}
+    fixed = {k: _f(R, k).real_code(v) for k, v in fixed_real.items()} | {k: 0.0 for k in held_free}
     for k in R.nuisance:
         fixed.setdefault(k, R.hold.get(k, 0.0))
     if "time" in R.terms:
@@ -91,7 +93,10 @@ def _optimum_at(R, fixed_real: dict, model_key: str = "reduced"):
             and (k in {g.key for g in R.goals} or k in {c.key for c in R.constraints})}
     if not live or not R.goals:
         return None
-    return rs.optimise(live, R.goals, {k: (-1.0, 1.0) for k in free}, fixed, R.constraints)
+    o = rs.optimise(live, R.goals, {k: (-1.0, 1.0) for k in search}, fixed, R.constraints)
+    if o is not None:
+        o.coded.update({k: 0.0 for k in held_free})
+    return o
 
 
 @dataclass
@@ -539,6 +544,57 @@ def fig_validation(R, out_dir: Path, keys=HEADLINE) -> list[Path]:
     return _save(fig, out_dir, "fig_rsm_validation")
 
 
+REGIME_MARKERS = {"flow-controlled": "o", "pressure-limited": "X", "gas short": "s", "unknown": "."}
+
+
+def fig_gas_delivered(R, out_dir: Path) -> list[Path]:
+    """Gas delivered in the camera window (median, bar = p10-p90) against the set point, coloured by the
+    orifice (or the last other factor), marked by regime; the line is delivered = set, dashed 95% of it."""
+    runs = [r for r in R.loaded.runs if r.op is not None and r.op.delivered_sccm is not None and r.op.set_sccm]
+    if not runs:
+        return []
+    keys = [f.key for f in R.loaded.detected.factors if f.key != "sccm"]
+    ck = "orifice" if "orifice" in keys else (keys[-1] if keys else None)
+    levels = sorted({r.point.row.value(ck) for r in runs}, key=lambda v: (v is None, v)) if ck else [None]
+    colours = {v: FACTOR_COLOURS[i % len(FACTOR_COLOURS)] for i, v in enumerate(levels)}
+    fig = Figure(figsize=(6.4, 5.0))
+    ax = fig.subplots()
+    top = max(max(r.op.set_sccm for r in runs), max(r.op.delivered_p90 or r.op.delivered_sccm for r in runs)) * 1.08
+    ax.plot([0, top], [0, top], color=GREY, linewidth=0.8)
+    ax.plot([0, top], [0, 0.95 * top], color=GREY, linewidth=0.8, linestyle="--")
+    rng = np.random.default_rng(0)
+    for r in runs:
+        op, v = r.op, r.point.row.value(ck) if ck else None
+        x = op.set_sccm * (1 + rng.uniform(-0.012, 0.012))          # small jitter: set points repeat
+        if op.delivered_p10 is not None and op.delivered_p90 is not None:
+            ax.vlines(x, op.delivered_p10, op.delivered_p90, color=colours[v], linewidth=1, alpha=0.6)
+        ax.scatter(x, op.delivered_sccm, color=colours[v], marker=REGIME_MARKERS.get(op.regime, "o"), s=46,
+                   edgecolor="black", linewidth=0.4, zorder=3)
+    from matplotlib.lines import Line2D
+    handles = [Line2D([], [], color=colours[v], marker="o", linestyle="", label=f"{_short(_f(R, ck).label)} {v:g}"
+                      if isinstance(v, (int, float)) else str(v)) for v in levels] if ck else []
+    handles += [Line2D([], [], color="black", marker=m, linestyle="", label=k) for k, m in REGIME_MARKERS.items()
+                if any(r.op.regime == k for r in runs)]
+    ax.legend(handles=handles, fontsize=7, frameon=False, loc="upper left")
+    ax.set_xlim(0, top)
+    ax.set_ylim(0, top)
+    ax.set_xlabel("gas set point (sccm)")
+    ax.set_ylabel("gas delivered in the camera window (sccm)")
+    ax.set_title("Gas delivered against set (bar: 10th-90th percentile in the window; dashed: 95% of set)",
+                 fontsize=8, loc="left")
+    _axes_style(ax)
+    fig.tight_layout()
+    return _save(fig, out_dir, "fig_rsm_gas_delivered")
+
+
+def mapped_responses(R) -> list[str]:
+    """Responses that get maps: every goal that was set (used or not: its title says why when its surface is
+    unusable), then the headline ones, lag-1 and peak pressure. A goal outside the headline list (e.g. the
+    droplet production rate, Ben's throughput goal, 2026-10-13) had no maps in the deck before."""
+    goals = [s.key for s in getattr(R, "goal_status", None) or []] or [g.key for g in R.goals]
+    return [k for k in dict.fromkeys(goals + list(HEADLINE) + ["lag1", "peak_bar"]) if k in R.fits]
+
+
 def make_all(models: dict, out_dir: Path, problems: list | None = None, map_keys=None,
              layout: MapLayout | None = None) -> list[Path]:
     """models: name -> RsmResults; the FIRST is the primary model the maps are drawn from."""
@@ -546,7 +602,7 @@ def make_all(models: dict, out_dir: Path, problems: list | None = None, map_keys
         return []
     R = next(iter(models.values()))
     L = layout or map_layout(R)
-    map_keys = map_keys or [k for k in list(HEADLINE) + ["lag1", "peak_bar"] if k in R.fits]
+    map_keys = map_keys or mapped_responses(R)
     jobs = [(f"contour {k}", lambda k=k: fig_contour(R, k, out_dir, L)) for k in map_keys]
     jobs += [(f"surface {k}", lambda k=k: fig_surface(R, k, out_dir, L)) for k in map_keys]
     jobs += [(f"pairs {k}", lambda k=k: fig_pairs(R, k, out_dir)) for k in map_keys]
@@ -554,7 +610,8 @@ def make_all(models: dict, out_dir: Path, problems: list | None = None, map_keys
              ("drift", lambda: fig_drift(R, out_dir)),
              ("fit checks", lambda: fig_fit_checks(R, out_dir)),
              ("model comparison", lambda: fig_model_compare(models, out_dir)),
-             ("validation", lambda: fig_validation(R, out_dir))]
+             ("validation", lambda: fig_validation(R, out_dir)),
+             ("gas delivered", lambda: fig_gas_delivered(R, out_dir))]
     out = []
     for label, fn in jobs:
         try:

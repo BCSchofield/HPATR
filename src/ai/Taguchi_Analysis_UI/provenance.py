@@ -56,6 +56,7 @@ class Provenance:
             ("Inference device", self.device),
             ("Per-frame images", self.images_mode),
             ("Size bin edges (µm)", edges),
+            *self.extras.items(),
             ("Runs analysed", str(self.n_runs)),
             ("Host", f"{self.host}; Python {self.python}"),
         ]
@@ -85,4 +86,19 @@ def collect(results, bins, output_dir: Path) -> Provenance:
         p.stride = str(st["stride"]) if st.get("stride") is not None else "pipeline default"
     if op.get("images"):
         p.images_mode = "every frame" if op["images"] == "all" else "extreme frames only"
+    liq = sorted({str((r.rec or {}).get("liquid_version") or "unknown") for r in results.runs})
+    if liq:
+        win = [r.name[:6] for r in results.runs if ((r.rec or {}).get("liquid_window") or {}).get("objects")]
+        stat = sum(int((r.rec or {}).get("liquid_static") or 0) for r in results.runs)
+        p.extras["Liquid stage"] = (", ".join(liq)
+                                    + (f"; drops on the window masked in {len(win)} run(s): {', '.join(win)}"
+                                       if win else "")
+                                    + (f"; {stat} static out-of-focus pieces not counted" if stat else ""))
+    opts = getattr(results, "opts", None)
+    if opts is not None:
+        dry = [r.name for r in results.runs if (r.rec or {}).get("no_spray")]
+        p.extras["Droplet count size band (um)"] = f"{opts.band_um[0]:g} to {opts.band_um[1]:g} (lo <= d < hi)"
+        p.extras["No spray below (atomised %)"] = (
+            (f"{opts.no_spray_atom_pct:g}" if opts.no_spray_atom_pct else "off")
+            + (f"; {len(dry)} run(s) flagged, size and steadiness not reported: {', '.join(dry)}" if dry else ""))
     return p

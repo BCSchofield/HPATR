@@ -62,8 +62,18 @@ def per_run(results) -> list[dict]:
         row["GLR source"] = c.glr_source if c else "missing"
         row["frames"] = r.frames
         row["sizer version"] = r.sizer_version or "pre-2.0.0"
+        op = (r.rec or {}).get("operating")
+        row["gas delivered (sccm)"] = None if op is None or op.delivered_sccm is None else round(op.delivered_sccm)
+        row["regime"] = op.regime if op is not None else ""
+        row["note"] = no_spray_note(r)
         rows.append(row)
     return rows
+
+
+def no_spray_note(r) -> str:
+    """'no spray: size not reported (...)' for a run stats flagged as a dribble, else ''."""
+    why = (r.rec or {}).get("no_spray")
+    return f"no spray: size not reported ({why})" if why else ""
 
 
 def design_matrix(results) -> list[dict]:
@@ -151,15 +161,48 @@ def size_bins_rows(bins, measure: str, by: str = "run") -> list[dict]:
 
 
 def glr_context(results) -> list[dict]:
+    """Each run's covariates and where they came from: GLR, and the gas mass flux at the orifice with the
+    orifice's diameter, length and L/D."""
     rows = []
     for r in _sorted_runs(results):
         c = r.context or covariates.RunContext()
+        op = (r.rec or {}).get("operating")
         rows.append({"run": r.name, "condition": r.condition, "GLR": _r(c.glr, 5),
                      "GLR source": c.glr_source, "GLR (achieved gas flow)": _r(c.glr_achieved, 5),
                      "liquid flow (mL/min)": _r(c.liquid_ml_min, 4), "fluid": c.fluid, "gas": c.gas,
                      "liquid density (kg/m3)": c.rho_liquid, "gas density (kg/m3)": c.rho_gas,
                      "achieved gas flow (sccm)": _r(c.achieved_sccm, 2),
-                     "peak pressure (barA)": c.peak_pressure_bar, "note": c.note})
+                     "peak pressure (barA)": c.peak_pressure_bar, "note": c.note,
+                     "orifice (mm)": c.orifice_mm, "orifice length (mm)": c.orifice_length_mm,
+                     "L/D": _r(c.l_over_d, 4), "gas for the flux (sccm)": _r(c.flux_sccm, 1),
+                     "gas flux source": c.gas_flux_source, "gas mass flux (kg/m2/s)": _r(c.gas_flux, 2),
+                     "exit velocity equivalent (m/s)": _r(c.exit_velocity_std, 2),
+                     "regime": op.regime if op is not None else "", "flux note": c.flux_note})
+    return rows
+
+
+def film_at_exit(results) -> list[dict]:
+    """Each run's gas flux and orifice split (covariates.py / orifice.py): the 'Silicone film at exit' sheet
+    and the report's per-run table. Every run is listed; one without a camera window has no split."""
+    rows = []
+    for r in _sorted_runs(results):
+        c = r.context or covariates.RunContext()
+        op = (r.rec or {}).get("operating")
+        rows.append({"run": r.name, "condition": r.condition, "orifice d (mm)": c.orifice_mm,
+                     "orifice length (mm)": c.orifice_length_mm, "L/D": _r(c.l_over_d, 4),
+                     "Cd used": c.cd, "Cd source": c.cd_source, "gas properties": c.gas_model,
+                     "P0 (barA)": _r(c.p0_bar, 3), "gas delivered (sccm)": _r(c.flux_sccm, 1),
+                     "gas flux source": c.gas_flux_source, "G (kg/m2/s)": _r(c.gas_flux, 2),
+                     "exit velocity equivalent (m/s)": _r(c.exit_velocity_std, 2),
+                     "gas-only capacity (kg/m2/s)": _r(c.gas_only_flux, 2),
+                     "choked": None if c.choked is None else ("yes" if c.choked else "no"),
+                     "gas share alpha": _r(c.gas_share, 4),
+                     "silicone area share": _r(1 - c.gas_share, 4) if c.gas_share is not None else None,
+                     "Q_L (mL/min)": _r(c.liquid_ml_min, 4), "u_L (m/s)": _r(c.u_liquid_m_s, 4),
+                     "film h (um)": _r(c.film_um, 1), "atomised fraction (%)": _r(r.values.get("atom"), 3),
+                     "regime": op.regime if op is not None else "",
+                     "no spray": "yes" if (r.rec or {}).get("no_spray") else "",
+                     "note": "; ".join(x for x in (c.film_note, c.flux_note) if x)})
     return rows
 
 
@@ -216,13 +259,17 @@ def _size_row(d) -> dict:
 
 
 def in_focus_diameters(r) -> np.ndarray:
+    """The run's in-focus diameters; none for a "no spray" run (its few droplets are stray specks)."""
+    if (r.rec or {}).get("no_spray"):
+        return np.empty(0)
     dia = (r.rec or {}).get("dia") or {}
     parts = [np.asarray(v, float) for v in dia.values() if len(v)]
     return np.concatenate(parts) if parts else np.empty(0)
 
 
 def size_percentiles(results) -> list[dict]:
-    return [{"run": r.name, "condition": r.condition, **_size_row(in_focus_diameters(r))}
+    return [{"run": r.name, "condition": r.condition, **_size_row(in_focus_diameters(r)),
+             **({"note": no_spray_note(r)} if no_spray_note(r) else {})}
             for r in _sorted_runs(results)]
 
 
@@ -230,7 +277,10 @@ def size_percentiles_by_condition(results) -> list[dict]:
     """Each condition's replicates POOLED as one population (as size_bins does), not averaged."""
     rows = []
     for c, rs in _conditions(results).items():
-        pooled = np.concatenate([in_focus_diameters(r) for r in rs]) if rs else np.empty(0)
+        rs = [r for r in rs if not (r.rec or {}).get("no_spray")]
+        if not rs:
+            continue
+        pooled = np.concatenate([in_focus_diameters(r) for r in rs])
         rows.append({"condition": c, **_cond_levels(results, rs), "runs": len(rs), **_size_row(pooled)})
     return rows
 
@@ -256,7 +306,7 @@ def steadiness(results) -> list[dict]:
                      "gas-flow CV (%)": _r(pr.get("gas_flow_cv_pct"), 4),
                      "r pressure vs droplets": _r(pr.get("r_pressure_droplets"), 4),
                      "peak pressure (barA)": _r((r.metrics or {}).get("peak_bar"), 5),
-                     "note": pr.get("note", "")})
+                     "note": "; ".join(x for x in (no_spray_note(r), pr.get("note", "")) if x)})
     return rows
 
 
@@ -414,6 +464,7 @@ def all_tables(results, bins) -> dict[str, list[dict]]:
         "size_bins_volume_by_condition": size_bins_rows(bins, "volume", "condition"),
         "glr_context": glr_context(results),
         "glr_trends": glr_trends(results),
+        "film_at_exit": film_at_exit(results),
         "replicate_outliers": outliers(results),
         "condition_summary": condition_summary(results),
         "size_percentiles": size_percentiles(results),

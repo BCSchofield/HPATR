@@ -50,24 +50,27 @@ class AnalysisController(QObject):
 
     # ---- run ---------------------------------------------------------------------------------
     def start(self, design, output_dir: Path, *, thr: float | None, options: dict,
-              bin_width: float = size_bins.DEFAULT_WIDTH_UM, bin_max: float = size_bins.DEFAULT_MAX_UM) -> bool:
+              bin_width: float = size_bins.DEFAULT_WIDTH_UM, bin_max: float = size_bins.DEFAULT_MAX_UM,
+              analysis_opts=None) -> bool:
         if self.busy:
             return False
         snapshot = copy.deepcopy(design)
         self.busy, self.progress_text, self.started_at = True, "starting", time.time()
         self.changed.emit()
-        threading.Thread(target=self._work, args=(snapshot, Path(output_dir), thr, dict(options), bin_width, bin_max),
+        threading.Thread(target=self._work, args=(snapshot, Path(output_dir), thr, dict(options), bin_width, bin_max,
+                                                  analysis_opts),
                          name="taguchi-analysis", daemon=True).start()
         return True
 
-    def _work(self, design, output_dir: Path, thr, options, bin_width, bin_max) -> None:
+    def _work(self, design, output_dir: Path, thr, options, bin_width, bin_max, analysis_opts=None) -> None:
         def progress(i: int, n: int, name: str) -> None:
             self.progress_text = f"run {i}/{n}"
             self.log(f"analysis: run {i}/{n}  {name}", "info")
 
         try:
+            kw = {"analysis_opts": analysis_opts} if analysis_opts is not None else {}
             result = self.publish_fn(design, output_dir, thr=thr, options=options, bin_width=bin_width,
-                                     bin_max=bin_max, progress=progress, log=self.log)
+                                     bin_max=bin_max, progress=progress, log=self.log, **kw)
         except Exception as exc:                          # noqa: BLE001 -- shown to the user
             result = pub.Deliverables(output_dir)
             result.problems.append(f"analysis crashed: {type(exc).__name__}: {exc}")

@@ -223,5 +223,5 @@ def test_real_10_05_loads_into_the_pane_as_a_clean_9x3(app, pane):
     load(app, pane, [REAL_DAY])
     assert pane.list.count() == 27 and len(pane.included_runs()) == 27
     assert pane.summary_label.text() == \
-        "27 runs · 9 conditions × 3 replicates · 0 already measured"
+        "27 runs · 9 conditions × 3 replicates · 27 already measured"     # measured since 2026-10-07
     assert not any("ERROR" in m or "warn" in m for m in pane.messages), pane.messages

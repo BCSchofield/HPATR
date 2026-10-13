@@ -96,6 +96,15 @@ def test_the_model_defaults_for_a_ccd(ccd):
     models, opts = ccd.models_and_options()
     assert len(models) == 1 and opts["discrete"] == {"orifice": [0.5, 0.8, 1.2, 1.8]}
     assert {g["key"] for g in opts["goals"]} == {"atom", "af_flow", "cv_droplets", "d_mean"}     # mean diameter, not D32
+    # 2026-10-13: orifice on a log scale and pressure-limited runs left out, by default
+    assert m["log"] == ["orifice"] and opts["log_scale"] == ["orifice"] and opts["limited"] == "exclude"
+    row = next(i for i in range(ccd.roles_table.rowCount()) if ccd.roles_table.item(i, 0).text().startswith("Orifice"))
+    ccd.roles_table.cellWidget(row, 3).setChecked(False)
+    assert ccd.models_and_options()[1]["log_scale"] == []
+    ccd.roles_table.cellWidget(row, 3).setChecked(True)
+    ccd.limited_combo.setCurrentIndex(ccd.limited_combo.findData("delivered"))
+    assert ccd.models_and_options()[1]["limited"] == "delivered"
+    ccd.limited_combo.setCurrentIndex(ccd.limited_combo.findData("exclude"))
 
 
 def test_a_validation_tick_leaves_the_fit_and_is_saved(app, ccd):

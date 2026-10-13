@@ -60,6 +60,33 @@ never get below -- on frame_0122_n1219, 44% of the reported un-atomised area was
 model mask rather than classical measurement. Restricting it to out-of-focus
 detections keeps only what the classical pass genuinely cannot reach.
 
+DROPS ON THE WINDOW (liquid stage 2.3.0, 2026-10-13)
+-----------------------------------------------------
+A drop of silicone on the glass is not spray, but it was being counted as
+un-atomised liquid, by two routes (docs/notes/2026-10-13_area_vs_volume_and_window.md):
+
+  A. A drop that LANDS mid-run is in under half the frames, so it is not in the
+     background median and the classical pass counts it in every frame after it
+     lands (CCD C9: +7 points of atomised fraction once removed). Fix: a WINDOW
+     MASK from a first pass over every frame: a piece of un-atomised liquid that
+     sits on the same pixels in >= WINDOW_P of the frames, is compact, and is
+     flat-topped in that persistence map (a drop on the glass does not move; a
+     jet or stream wobbles and fades at its edges) is masked out of numerator and
+     denominator in EVERY frame. The masked area is recorded.
+  B. A drop present all run IS in the median and divides out of T (C20: T 0.998
+     in its core), but the model, which runs on the un-normalised frame, still
+     detects it, and with T ~ 1 it always passes the out-of-focus test, so its
+     whole mask went into the denominator (41% of C20's un-atomised liquid). Fix:
+     an out-of-focus non-droplet detection whose mean T is >= STATIC_T has nothing
+     left after background division and is not liquid in this frame.
+
+VOLUME (secondary, 2.3.0)
+-------------------------
+Per frame, the droplet and total liquid VOLUME (liquid_volume.py: droplets as
+spheres, un-atomised pieces with a round cross-section) for a volume-based
+atomised fraction. The AREA fraction stays the headline: volume ranks runs like
+area but is ~3x noisier and its absolute scale is good to about +/-40%.
+
 Usage:
     python classical_liquid.py --root <run>            # all frames
     python classical_liquid.py --root <run> --limit 20
@@ -80,6 +107,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from pycocotools import mask as mask_util  # noqa: E402
+import liquid_volume  # noqa: E402
 from measure_run import (  # noqa: E402
     det_crop, px_to_mm2, equiv_um, d32, annotate, ring_contours,
     measure_droplet, sizer_version, SPLIT_UM,
@@ -93,6 +121,16 @@ CEILING_THR = 0.95   # bounds region growing only -- never an edge itself
 MIN_AREA = 20        # px; below this nothing can carry a measurement
 DROPLET_COVER = 0.50
 DROPLET_MAX_EXTENT = 100
+
+# ---- liquid stage 2.3.0 (2026-10-13): drops on the window, and volume -----------------
+LIQUID_VERSION = "2.3.0"   # 2.2.0 = sizer 2.2.0's liquid stage, before these
+STATIC_T = 0.97            # route B: an out-of-focus model piece with mean T >= this is gone
+                           # after background division (real out-of-focus liquid: 0.70-0.95)
+WINDOW_P = 0.20            # route A: un-atomised in at least this share of frames ...
+WINDOW_MAX_EXTENT = 400    # ... compact: at most this many px across (4 mm) ...
+WINDOW_ASPECT = 3.0        # ... and not long and thin (a stream is) ...
+WINDOW_PLATEAU = 0.60      # ... and flat-topped: this share of it within 70% of its peak persistence
+WINDOW_GROW = 3            # px added round a window object (its edge flickers frame to frame)
 
 
 def hysteresis(T, seed_thr=SEED_THR, ceiling=CEILING_THR, min_area=MIN_AREA):
@@ -223,10 +261,17 @@ def model_masks(dets, T, focus_max, args_ref=None):
     Restricting the union to OUT-OF-FOCUS detections keeps the part the
     classical pass genuinely cannot reach (t_min > focus_max, unseedable by
     construction) and nowhere else -- so where classical has an answer, it wins.
+
+    STATIC PIECES (2.3.0): an out-of-focus non-droplet detection whose mean T is
+    >= static_t (args_ref.static_t, default STATIC_T; 0 = off) is a drop on the
+    window that the background division has already removed: the model still
+    sees it on the raw frame, but there is no liquid left there. Counted in
+    model_masks.last_static.
     """
     drop = np.zeros(T.shape, bool)
     oof = np.zeros(T.shape, bool)
-    n_half = n_model = 0
+    n_half = n_model = n_static = 0
+    static_t = getattr(args_ref, "static_t", STATIC_T) if args_ref is not None else STATIC_T
     for d in dets:
         mb, bx, by, bh, bw = det_crop(d)
         if not mb.any():
@@ -256,22 +301,31 @@ def model_masks(dets, T, focus_max, args_ref=None):
             else:
                 drop[by:by + bh, bx:bx + bw] |= mb
                 n_model += 1
-        elif T[by:by + bh, bx:bx + bw][mb].min() > focus_max:
-            oof[by:by + bh, bx:bx + bw] |= mb
+        else:
+            tin = T[by:by + bh, bx:bx + bw][mb]
+            if tin.min() > focus_max:
+                if static_t and float(tin.mean()) >= static_t:
+                    n_static += 1               # nothing there after background division
+                else:
+                    oof[by:by + bh, bx:bx + bw] |= mb
     model_masks.last_counts = (n_half, n_model)
+    model_masks.last_static = n_static
     return drop, oof
 
 
-def measure_frame(T, dets, args):
-    """One frame -> (row, component_areas_px, focus_d, oof_d, unatom_mask).
-
-    `liquid` is the full classical mask and is what the ratio uses. `kept` has
-    already-detected droplets removed and is only for the size distribution --
-    an isolated droplet is still liquid and must stay in the denominator.
-    """
+def frame_masks(T, dets, args):
+    """(liquid, droplet mask, out-of-focus un-atomised mask) for one frame."""
     liquid, _ = hysteresis(T, args.seed, args.ceiling, args.min_area)
     dmask, oof_unatom = model_masks(dets, T, args.focus_max, args)
+    return liquid, dmask, oof_unatom
 
+
+def area_part(liquid, dmask, oof_unatom, args, exclude=None, volume=False):
+    """The area (and optionally volume) half of a frame's row, its un-atomised
+    component areas and its un-atomised mask. `exclude`: pixels taken out of
+    numerator AND denominator (the window mask), or None."""
+    if exclude is not None:
+        liquid, dmask, oof_unatom = liquid & ~exclude, dmask & ~exclude, oof_unatom & ~exclude
     # True union: nothing counted twice, and droplets are a subset of total by
     # construction, so un-atomised can never go negative.
     total = liquid | dmask if args.classical_only else liquid | dmask | oof_unatom
@@ -284,7 +338,28 @@ def measure_frame(T, dets, args):
 
     n, lab, stats, _ = cv2.connectedComponentsWithStats(kept.astype(np.uint8), 8)
     comp_areas = [int(stats[i, cv2.CC_STAT_AREA]) for i in range(1, n)]
+    unatom = total & ~dmask
+    part = {
+        "total_liquid_px": total_px,
+        "droplet_px": droplet_px,
+        "unatomised_px": unatom_px,
+        "atomised_pct": round(100.0 * droplet_px / total_px, 3) if total_px else float("nan"),
+        "n_components": n_kept,
+        "n_droplet_components_dropped": n_drop,
+    }
+    if volume:
+        mm3 = (UM_PER_PX * 1e-3) ** 3               # one px^3 in mm^3
+        dv = liquid_volume.droplet_volume_px3(dmask) * mm3
+        uv = liquid_volume.body_volume_px3(unatom, fill=dmask) * mm3
+        part["droplet_vol_mm3"] = round(dv, 9)
+        part["total_liquid_vol_mm3"] = round(dv + uv, 9)
+        part["atomised_vol_pct"] = round(100.0 * dv / (dv + uv), 3) if dv + uv > 0 else float("nan")
+    return part, comp_areas, unatom
 
+
+def droplet_part(T, dets, args):
+    """(in-focus areas, out-of-focus areas) of the frame's droplets, from measure_run's
+    shared measure_droplet. Independent of the window mask."""
     # Droplet focus AND sizing come from measure_run.measure_droplet -- the one
     # shared implementation. This file used to recompute the focus test itself,
     # twice, and the copies drifted: 85.58 um here against 85.57 um there for the
@@ -308,22 +383,79 @@ def measure_frame(T, dets, args):
         if md is None:
             continue
         (focus_a if md["in_focus"] else oof_a).append(md["area_px"])
+    return focus_a, oof_a
 
-    row = {
-        "total_liquid_px": total_px,
-        "droplet_px": droplet_px,
-        "unatomised_px": unatom_px,
-        "atomised_pct": round(100.0 * droplet_px / total_px, 3) if total_px else float("nan"),
+
+def _row(part, focus_a, oof_a):
+    return {
+        "total_liquid_px": part["total_liquid_px"],
+        "droplet_px": part["droplet_px"],
+        "unatomised_px": part["unatomised_px"],
+        "atomised_pct": part["atomised_pct"],
         "d32_in_focus_um": round(d32(focus_a), 2) if focus_a else float("nan"),
         "droplets_in_focus": len(focus_a),
         "droplets_out_of_focus": len(oof_a),
-        "n_components": n_kept,
-        "n_droplet_components_dropped": n_drop,
+        "n_components": part["n_components"],
+        "n_droplet_components_dropped": part["n_droplet_components_dropped"],
+        **{k: part[k] for k in ("droplet_vol_mm3", "total_liquid_vol_mm3", "atomised_vol_pct") if k in part},
     }
-    return row, comp_areas, focus_a, oof_a, (total & ~dmask)
 
 
-def draw_frame(view8, dets, T, unatom, row, args):
+def measure_frame(T, dets, args, exclude=None):
+    """One frame -> (row, component_areas_px, focus_d, oof_d, unatom_mask).
+
+    `liquid` is the full classical mask and is what the ratio uses. `kept` has
+    already-detected droplets removed and is only for the size distribution --
+    an isolated droplet is still liquid and must stay in the denominator.
+    One pass, no window mask unless one is given (main() makes it from all frames).
+    """
+    liquid, dmask, oof_unatom = frame_masks(T, dets, args)
+    part, comp_areas, unatom = area_part(liquid, dmask, oof_unatom, args, exclude,
+                                         volume=getattr(args, "volume", False))
+    focus_a, oof_a = droplet_part(T, dets, args)
+    return _row(part, focus_a, oof_a), comp_areas, focus_a, oof_a, unatom
+
+
+def window_mask(persistence, n_frames, args=None):
+    """Route A: drops that landed on the window. `persistence`: per pixel, the number of frames
+    in which it was un-atomised liquid. A piece is a window object if its peak persistence
+    (95th percentile) is >= WINDOW_P, it is compact (<= WINDOW_MAX_EXTENT px across, aspect
+    <= WINDOW_ASPECT) and flat-topped (>= WINDOW_PLATEAU of it within 70% of its peak): a drop
+    on the glass sits still; a jet or stream wobbles and fades at its edges. Returns (mask or
+    None, [(x, y, w, h, area_px, peak persistence, plateau share)]) of the objects found."""
+    if not n_frames:
+        return None, []
+    p_min = getattr(args, "window_p", WINDOW_P) if args is not None else WINDOW_P
+    if not p_min:
+        return None, []
+    P = persistence.astype(np.float32) / float(n_frames)
+    cand = (P >= 0.5 * p_min).astype(np.uint8)
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(cand, 8)
+    out = np.zeros(P.shape, bool)
+    found = []
+    for i in range(1, n):
+        x0, y0, w, h, a = (int(stats[i, k]) for k in range(5))
+        if a < MIN_AREA or max(w, h) > WINDOW_MAX_EXTENT or max(w, h) > WINDOW_ASPECT * max(1, min(w, h)):
+            continue
+        comp = lab[y0:y0 + h, x0:x0 + w] == i
+        p = P[y0:y0 + h, x0:x0 + w][comp]
+        peak = float(np.percentile(p, 95))
+        if peak < p_min:
+            continue
+        plateau = float((p >= 0.7 * peak).mean())
+        if plateau < WINDOW_PLATEAU:
+            continue
+        out[y0:y0 + h, x0:x0 + w] |= comp
+        found.append((x0, y0, w, h, a, round(peak, 3), round(plateau, 3)))
+    if not found:
+        return None, []
+    if WINDOW_GROW:
+        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * WINDOW_GROW + 1, 2 * WINDOW_GROW + 1))
+        out = cv2.dilate(out.astype(np.uint8), k) > 0
+    return out, found
+
+
+def draw_frame(view8, dets, T, unatom, row, args, window=None):
     """Un-atomised liquid FILLED, droplets outlined on top, one image.
 
     The fill is the classically-measured un-atomised mask -- literally the
@@ -360,6 +492,10 @@ def draw_frame(view8, dets, T, unatom, row, args):
         else:
             cnts, _ = cv2.findContours(full, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         cv2.drawContours(canvas, cnts, -1, GREEN if sharp else MAGENTA, 2)
+    if window is not None and window.any():
+        # the masked window drops, outlined in blue: not counted in either measure
+        cnts, _ = cv2.findContours(window.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cv2.drawContours(canvas, cnts, -1, (255, 130, 10), 2)
     annotate(canvas, row["d32_in_focus_um"], row["atomised_pct"])
     return canvas
 
@@ -399,6 +535,14 @@ def main():
                          "draws every frame. Implies --images.")
     ap.add_argument("--images", action="store_true",
                     help="write a marked-up full-res PNG per frame")
+    ap.add_argument("--static-t", type=float, default=STATIC_T,
+                    help="out-of-focus model pieces with mean T at or above this are drops already "
+                         "divided out of the frame, not liquid (2.3.0; 0 = off)")
+    ap.add_argument("--window-p", type=float, default=WINDOW_P,
+                    help="mask still, compact drops on the window that are un-atomised in at least "
+                         "this share of frames (2.3.0; 0 = off)")
+    ap.add_argument("--volume", action=argparse.BooleanOptionalAction, default=True,
+                    help="per-frame droplet and total liquid volume (2.3.0; secondary measure)")
     ap.add_argument("--limit", type=int, default=None, help="first N frames only")
     ap.add_argument("--frames", nargs="*", default=None,
                     help="measure only these frame stems")
@@ -447,6 +591,14 @@ def main():
         img_dir.mkdir(exist_ok=True)
     held = {}        # extremes mode: keep what drawing needs, decide afterwards
 
+    # PASS 1: every frame's masks (kept bit-packed: ~0.9 MB per frame) and droplet
+    # sizes, and the persistence of un-atomised liquid at each pixel. A drop that
+    # landed on the window can only be told from spray across the whole run.
+    shape = bg.shape
+    packed = []          # (stem, img_id, liquid, dmask, oof) packed
+    sizes = {}           # stem -> (focus areas, out-of-focus areas)
+    persistence = np.zeros(shape, np.uint16)
+    n_static = 0
     for k, img_id in enumerate(ids, 1):
         stem = stem_by_id[img_id]
         raw16 = cv2.imread(str(raw / "frames" / "16bit" / f"{stem}.tiff"), cv2.IMREAD_UNCHANGED)
@@ -455,30 +607,56 @@ def main():
             continue
         T = raw16.astype(np.float32) / np.maximum(bg, 1.0)
         dets = by_img.get(img_id, [])
-        row, comps, fa, oa, unatom = measure_frame(T, dets, args)
+        liquid, dmask, oof = frame_masks(T, dets, args)
+        n_static += getattr(model_masks, "last_static", 0)
+        sizes[stem] = droplet_part(T, dets, args)
+        total = liquid | dmask if args.classical_only else liquid | dmask | oof
+        persistence += (total & ~dmask)
+        packed.append((stem, img_id, np.packbits(liquid), np.packbits(dmask), np.packbits(oof)))
+        if k % 25 == 0 or k == len(ids):
+            el = time.time() - t0
+            print(f"  pass 1  {k:4}/{len(ids)}  {el:5.1f}s  ({el / k:.2f} s/frame)")
+    if not packed:
+        sys.exit("no frames measured")
+
+    window, window_objects = window_mask(persistence, len(packed), args)
+    window_px = int(window.sum()) if window is not None else 0
+    if window_objects:
+        print(f"  window: {len(window_objects)} still drop(s) on the glass masked, {window_px:,} px "
+              f"({100.0 * window_px / window.size:.2f}% of the frame)")
+    if n_static:
+        print(f"  {n_static} out-of-focus model piece(s) with nothing left after background division "
+              f"(mean T >= {args.static_t:g}) not counted as liquid")
+
+    # PASS 2: areas (and volumes) with the window masked out of both measures.
+    npx = shape[0] * shape[1]
+    unpack = lambda b: np.unpackbits(b)[:npx].reshape(shape).astype(bool)
+    t1 = time.time()
+    for k, (stem, img_id, lq, dm, of) in enumerate(packed, 1):
+        liquid, dmask, oof = unpack(lq), unpack(dm), unpack(of)
+        part, comps, unatom = area_part(liquid, dmask, oof, args, exclude=window, volume=args.volume)
+        fa, oa = sizes[stem]
+        row = _row(part, fa, oa)
         row["frame"] = stem
         rows.append(row)
         all_comps.extend((stem, a) for a in comps)
         focus_all.extend(fa)
         oof_all.extend(oa)
-
         if draw_all:
-            view8 = cv2.imread(str(raw / "frames" / "8bit" / f"{stem}.png"),
-                               cv2.IMREAD_UNCHANGED)
-            if view8 is not None:
+            view8 = cv2.imread(str(raw / "frames" / "8bit" / f"{stem}.png"), cv2.IMREAD_UNCHANGED)
+            raw16 = cv2.imread(str(raw / "frames" / "16bit" / f"{stem}.tiff"), cv2.IMREAD_UNCHANGED)
+            if view8 is not None and raw16 is not None:
+                T = raw16.astype(np.float32) / np.maximum(bg, 1.0)
                 cv2.imwrite(str(img_dir / f"{stem}.png"),
-                            draw_frame(view8, dets, T, unatom, row, args))
+                            draw_frame(view8, by_img.get(img_id, []), T, unatom, row, args, window))
         elif draw_extremes:
             # which frames are extreme is only known once every frame is
             # measured, so hold the cheap inputs and draw at the end
-            held[stem] = (dets, unatom, row)
-
-        if k % 25 == 0 or k == len(ids):
-            el = time.time() - t0
-            print(f"  {k:4}/{len(ids)}  {el:5.1f}s  ({el / k:.2f} s/frame)")
-
-    if not rows:
-        sys.exit("no frames measured")
+            held[stem] = (by_img.get(img_id, []), unatom, row)
+        if k % 100 == 0 or k == len(packed):
+            el = time.time() - t1
+            print(f"  pass 2  {k:4}/{len(packed)}  {el:5.1f}s  ({el / k:.2f} s/frame)")
+    del packed
 
     # THE ATOMISED EXTREMES BELONG TO THIS PASS. measure_run also records
     # "atomised_extreme_frames", but it picks them from its MODEL-ONLY atomised
@@ -525,7 +703,7 @@ def main():
                                cv2.IMREAD_UNCHANGED)
             T_e = raw16.astype(np.float32) / np.maximum(bg, 1.0)
             cv2.imwrite(str(img_dir / f"{stem}.png"),
-                        draw_frame(view8, dets_e, T_e, unatom_e, row_e, args))
+                        draw_frame(view8, dets_e, T_e, unatom_e, row_e, args, window))
         if extremes:
             print(f"  atomised extremes: {extremes['lowest']['frame']} "
                   f"(lowest {extremes['lowest']['atomised_pct']:.2f}%), "
@@ -549,6 +727,11 @@ def main():
               "atomised_pct", "d32_in_focus_um", "droplets_in_focus",
               "droplets_out_of_focus", "n_components",
               "n_droplet_components_dropped"]
+    if args.volume:
+        fields += ["droplet_vol_mm3", "total_liquid_vol_mm3", "atomised_vol_pct"]
+    tot_v = sum(r.get("total_liquid_vol_mm3", 0.0) for r in rows)
+    drp_v = sum(r.get("droplet_vol_mm3", 0.0) for r in rows)
+    pooled_v = 100.0 * drp_v / tot_v if tot_v else float("nan")
     with open(out_dir / "classical_per_frame.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=fields)
         w.writeheader()
@@ -582,6 +765,13 @@ def main():
                                        "otherwise (out of focus or below split)",
             "classical_only": args.classical_only,
             "um_per_px": UM_PER_PX,
+            "liquid_version": LIQUID_VERSION,
+            "static_t": args.static_t,
+            "window_p": args.window_p,
+            "window_rule": (f"un-atomised in >= {args.window_p:g} of frames, <= {WINDOW_MAX_EXTENT} px "
+                            f"across, aspect <= {WINDOW_ASPECT:g}, plateau >= {WINDOW_PLATEAU:g}, "
+                            f"grown {WINDOW_GROW} px") if args.window_p else "off",
+            "volume": bool(args.volume),
         },
         "definitions": {
             "atomised_pct": "union(model droplets) / union(classical liquid, model droplets, "
@@ -595,9 +785,25 @@ def main():
             "caveat": "seed T<=0.70 IS the focus gate, so the classical mask is in-focus "
                       "liquid. Out-of-focus droplets enter via the union with the model's "
                       "masks; out-of-focus un-atomised liquid is not measured.",
+            "window": "2.3.0: drops on the window are not liquid. Still, compact pieces present "
+                      "in >= window_p of frames are masked out of both measures in every frame; "
+                      "out-of-focus model pieces with mean T >= static_t (gone after background "
+                      "division) are not counted.",
+            "atomised_vol_pct": "2.3.0, SECONDARY: droplet volume (spheres) / total liquid volume "
+                                "(un-atomised pieces with a round cross-section, liquid_volume.py). "
+                                "Ranks runs like the area fraction; its absolute scale is good to "
+                                "about +/-40%.",
         },
         "frames": len(rows),
         "atomised_pct_pooled": round(pooled, 3),
+        "atomised_vol_pct_pooled": (round(pooled_v, 3) if args.volume and tot_v else None),
+        "total_liquid_vol_mm3": round(tot_v, 6) if args.volume else None,
+        "droplet_vol_mm3": round(drp_v, 6) if args.volume else None,
+        "window": {"objects": [dict(zip(("x", "y", "w", "h", "area_px", "peak_persistence", "plateau"), o))
+                               for o in window_objects],
+                   "masked_px": window_px,
+                   "masked_pct_of_frame": round(100.0 * window_px / (shape[0] * shape[1]), 3)},
+        "static_pieces_not_counted": n_static,
         "d32_in_focus_um": round(pooled_d32, 2) if focus_all else None,
         "droplets_in_focus": len(focus_all),
         "droplets_out_of_focus": len(oof_all),
@@ -683,6 +889,8 @@ def main():
     print(f"  frames                 {len(rows)}")
     print(f"  D32 (in-focus)         {pooled_d32:.1f} um   [from the model, unchanged]")
     print(f"  atomised (pooled)      {pooled:.3f} %   [classical denominator]")
+    if args.volume:
+        print(f"  atomised by volume     {pooled_v:.3f} %   [secondary, +/-40% in scale]")
     print(f"  total liquid           {tot:,} px")
     print(f"  un-atomised            {tot - drp:,} px")
     print(f"  un-atomised components {len(areas):,}")

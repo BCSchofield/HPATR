@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "note": "Discharge coefficients of the exit orifice inserts, gas only, measured with AI/Real_Data_Code/orifice_cd.py (docs/ORIFICE_CD_TEST.md). cd null = not measured yet: 1.0 (ideal) is used and the outputs say so.",
+  "inserts": [
+    {"diameter_mm": 0.5, "length_mm": null, "cd": null, "cd_sd": null, "n_points": 0, "measured": "", "source": ""},
+    {"diameter_mm": 0.8, "length_mm": null, "cd": null, "cd_sd": null, "n_points": 0, "measured": "", "source": ""},
+    {"diameter_mm": 1.2, "length_mm": null, "cd": null, "cd_sd": null, "n_points": 0, "measured": "", "source": ""},
+    {"diameter_mm": 1.8, "length_mm": null, "cd": null, "cd_sd": null, "n_points": 0, "measured": "", "source": ""}
+  ]
+}

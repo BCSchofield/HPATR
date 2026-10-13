@@ -145,6 +145,42 @@ def test_the_glr_formula_really_is_the_guis(monkeypatch):
     assert cv.glr_working(3000, 4000, 1070, 1.145)["glr"] == pytest.approx(0.2819, abs=5e-5)
 
 
+def test_a_failing_gui_import_is_reported_not_swallowed(monkeypatch):
+    """Bug 6 (2026-10-13): on Python 3.9 GUI_Clean failed to import (Cone_4's `int | None`), so
+    there was no mL/min and atomised liquid flow vanished without a word."""
+    assert cv.formula_problem() is None                  # imports fine here
+    ok = [{"atom": 17.0, "af_flow": 2.0}, {"atom": 0.2, "af_flow": 0.02}]
+    assert stats.flow_warning(ok) is None
+    assert stats.flow_warning([{"atom": None, "af_flow": None}]) is None    # nothing to compute it from
+
+    def broken():
+        cv._GUI_FORMULA_ERROR = "TypeError: unsupported operand type(s) for |"
+        return None
+    monkeypatch.setattr(cv, "_gui_formula", broken)
+    assert "TypeError" in cv.formula_problem()
+    w = stats.flow_warning([{"atom": 17.0, "af_flow": None}, {"atom": 15.0, "af_flow": 1.9}])
+    assert w.startswith("ATOMISED LIQUID FLOW IS MISSING for 1 of 2 runs")
+    assert "could not be imported (TypeError" in w and "dropped from the best setting" in w
+
+
+def test_the_gui_module_imports_even_if_the_cone_detector_cannot(monkeypatch):
+    """GUI_Clean must survive any failure in the optional Cone_4 import, not only ImportError."""
+    import importlib, sys, types
+    from src.ai.Taguchi_Analysis_UI import paths
+    paths.ensure_src_on_path()
+    bad = types.ModuleType("Cone_4")
+    def boom(name):
+        raise TypeError("unsupported operand type(s) for |: 'type' and 'NoneType'")
+    bad.__getattr__ = boom                                   # `from Cone_4 import ...` raises TypeError
+    monkeypatch.setitem(sys.modules, "Cone_4", bad)
+    sys.modules.pop("gui.GUI_Clean", None)
+    try:
+        G = importlib.import_module("gui.GUI_Clean")
+        assert G.CONE4_AVAILABLE is False and hasattr(G.AtomisationApp, "_glr_working")
+    finally:
+        sys.modules.pop("gui.GUI_Clean", None)
+
+
 def test_trend_recovers_a_known_power_law_and_correlation():
     x = [0.2, 0.3, 0.4, 0.6, 0.8]
     y = [2 * v ** 0.5 for v in x]

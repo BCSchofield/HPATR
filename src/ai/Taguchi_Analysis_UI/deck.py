@@ -84,6 +84,17 @@ DEFINE = {
            "and a small spread together.",
     "GLR": "GLR: gas-to-liquid mass-flow ratio; it combines the gas and liquid flows, so it is a trend, not a factor.",
     "power law": "Power law: the fit y = a·GLRᵇ; b is the exponent.",
+    "gas flux": "Gas mass flux G: delivered gas mass flow / orifice area (kg/m²/s), at the gas the run got; made "
+                "from the gas flow and the orifice, so it is a trend, not a factor.",
+    "exit velocity": "Exit velocity equivalent: G at the gas's standard density (m/s); at a choked orifice the real "
+                     "exit is sonic and denser, so it is a scale for G, not the jet's speed.",
+    "power law G": "Power law: the fit y = a·Gᵇ; b is the exponent.",
+    "gas share": "Gas share α: measured gas flux / what gas alone could pass at the measured P0 (Cd × the ideal "
+                 "choked flux); the share of the orifice area the gas occupies.",
+    "film": "Film thickness h: (d/2)(1 − √α), the silicone film on the orifice wall if the exit is annular; an "
+            "estimate, not a measurement.",
+    "Cd": "Cd (discharge coefficient): real / ideal gas-only flow of an insert; 1.0 until measured gas-only.",
+    "no spray": "No spray: atomised fraction below the Settings threshold (default 2%); plotted, not fitted.",
     "r": "r (Pearson): linear correlation, −1 to +1.",
     "count CV": "Droplet-count CV: SD / mean of the droplets per frame (all droplets).",
     "thin": "Frames below half: % of frames with fewer than half the run's mean droplet count.",
@@ -299,6 +310,12 @@ DESCRIBE = {
     "fig_per_run": "Every run's value with its frame-bootstrap 95% CI, grouped by condition.",
     "fig_sn": "Taguchi signal-to-noise ratio by factor level (higher is better).",
     "fig_glr": "Each run against its gas-to-liquid ratio, with the power-law fit.",
+    "fig_gas_flux": "Each run against the gas mass flux at the orifice (log scale), coloured by orifice; hollow = "
+                    "did not get its set gas.",
+    "fig_film_thickness": "Each run against the estimated silicone film thickness at the exit, coloured by orifice; "
+                          "hollow = did not get its set gas.",
+    "fig_orifice_model": "The model behind the gas flux and the silicone film: the orifice along and across, and "
+                         "the equations.",
     "fig_size_spread_count": "Share of each run's in-focus droplets per size bin.",
     "fig_size_spread_volume": "Share of each run's liquid volume per size bin.",
     "fig_size_distribution": "Number and volume distributions per condition, and cumulative volume.",
@@ -307,6 +324,7 @@ DESCRIBE = {
     "fig_spectra": "Welch spectrum of the droplet count per frame, per replicate.",
     "fig_series": "Droplets per frame through each capture, with the logged pressure.",
     "fig_series_liquid": "Liquid area per frame through each capture.",
+    "fig_gas_traces": "Gas flow and upstream pressure through each run, with the camera window shaded.",
     "fig_drift": "Responses against capture time, coloured by condition.",
     "fig_replicates": "Replicates per condition with the 95% CI of the condition mean.",
     "fig_interactions": "Condition means for each pair of factors.",
@@ -315,6 +333,7 @@ DESCRIBE = {
     "fig_pieces": "Un-atomised liquid pieces: size distribution, count per frame, largest piece.",
     "fig_quality": "Sizer and data-quality checks per run; red = far from the other runs.",
     "gallery": "Each run's least and most atomised frame (classical overlays).",
+    "gallery_more": "Each run's busiest frames and its smallest and largest mean droplet diameter frames.",
 }
 
 
@@ -445,6 +464,95 @@ def tw_glr(results):
             defs("GLR", "power law", "r", "p"), "")
 
 
+def tw_gas_flux(results):
+    trends = [(k, results.trends[(k, "gas_flux")]) for k in report.HEADLINE
+              if (k, "gas_flux") in results.trends and results.trends[(k, "gas_flux")].r is not None]
+    if not trends:
+        return "Gas mass flux at the orifice", "", defs("gas flux"), ""
+    bits = [f"{_label(results, k)}: r = {t.r:+.2f}, {_p(t.p)}"
+            + (f", exponent {t.exponent:+.2f}" if t.exponent is not None else "") for k, t in trends]
+    k, t = max(trends, key=lambda kt: abs(kt[1].r))
+    used = [r for r in results.runs if r.context is not None and r.context.gas_flux is not None]
+    orifices = sorted({r.context.orifice_mm for r in used if r.context.orifice_mm})
+    short = [r for r in used if (r.rec or {}).get("operating") is not None and r.rec["operating"].not_delivered]
+    dribbles = max(len(tt.excluded) for _k, tt in trends)
+    return (f"{_label(results, k)} {'rises' if t.r > 0 else 'falls'} with the gas mass flux at the orifice "
+            f"(r = {t.r:+.2f})",
+            "Each run against its delivered gas mass flow per orifice area"
+            + (f", coloured by orifice ({', '.join(f'{o:g}' for o in orifices)} mm)" if orifices else "")
+            + (f"; hollow: {len(short)} run(s) that did not get their set gas, at the gas they got" if short else "")
+            + ". " + "; ".join(bits) + "."
+            + (f" {dribbles} no-spray run(s) (grey x) are plotted but not fitted: dribbles at almost no gas would "
+               "otherwise set the exponent." if dribbles else ""),
+            defs("gas flux", "exit velocity", "power law G", "r", "p", "no spray"), "")
+
+
+def has_rate(results) -> bool:
+    """Any run with a mass-balance production rate (needs the liquid stage's volumes, >= 2.3.0)."""
+    return any((r.values or {}).get("rate") is not None for r in results.runs)
+
+
+def rate_cards(results) -> list[tuple[str, str]]:
+    """The 'How droplets per second are estimated' slide (Ben, 2026-10-13): run_metrics.mass_balance_rate."""
+    lo, hi = getattr(getattr(results, "opts", None), "band_um", None) or run_metrics.DEFAULT_BAND_UM
+    return [
+        ("1. Silicone in", "The syringe flow from the motor steps: pi (20.27 mm / 2)^2 x steps/s / 6,800 steps/mm. "
+                           "The syringe is positive displacement, so in steady running it is the silicone leaving "
+                           "the nozzle."),
+        ("2. Share made into droplets", "The atomised fraction BY VOLUME: droplet volume / all liquid volume over "
+                                        "every analysed frame (droplets as spheres, un-atomised pieces with a round "
+                                        "cross-section; liquid stage 2.3.0)."),
+        ("3. Volume of a typical droplet", "pi/6 x the mean of d^3 over every in-focus droplet of the run (the big "
+                                           "ones dominate it). Droplets per second = (1) x (2) / (3)."),
+        (f"4. In the band ({lo:g}-{hi:g} um)", f"x the share of in-focus droplets from {lo:g} um up to (not "
+                                               f"including) {hi:g} um. Droplets too small to detect are not counted; "
+                                               "out-of-focus ones are assumed to share the in-focus size mix."),
+        ("Why not the per-frame count", "A count is how many are in view: a faster spray clears the view sooner and "
+                                        "reads lower for the same production. The mass balance needs no speed, so "
+                                        "the recording length and frame rate drop out."),
+        ("Caveats", "The volume estimate is good to about +/-40% absolute (rankings much better); repeats can differ "
+                    "by tens of %. It assumes the run was steady while the camera recorded. A velocity capture "
+                    "can check it independently."),
+    ]
+
+
+def tw_orifice_model(results):
+    """The diagram slide, just before the gas flux one."""
+    have = [r.context for r in results.runs if r.context is not None and r.context.film_um is not None]
+    cds = sorted({c.cd_source for c in have})
+    cd = ("Cd = 1.0 (ideal) for every insert until each is measured gas-only." if cds == ["ideal (not measured)"]
+          else f"Cd: {', '.join(cds)}." if cds else "")
+    return ("How the gas flux and the silicone film are estimated",
+            "G is the gas each run got in the camera window per orifice area. Compared with what gas alone could "
+            "pass at the measured P0, it gives the gas share of the orifice, the silicone speed in it and the film "
+            "on the wall.",
+            defs("Cd"), "",
+            "α = G / G_gas(P0) is the gas share of the orifice; 1 − α is silicone. u_L = Q_L / ((1 − α) A), Q_L "
+            "the syringe flow. h = (d/2)(1 − √α) for an annular exit. Assumes separated, frozen flow with the gas "
+            "choked in its share, 20 °C. P0 is read upstream, so α is underestimated. " + cd)
+
+
+def tw_film_thickness(results):
+    trends = [(k, results.trends[(k, "film_um")]) for k in report.HEADLINE
+              if (k, "film_um") in results.trends and results.trends[(k, "film_um")].r is not None]
+    if not trends:
+        return "Silicone film at the exit", "", defs("film"), ""
+    bits = [f"{_label(results, k)}: r = {t.r:+.2f}, {_p(t.p)}"
+            + (f", exponent {t.exponent:+.2f}" if t.exponent is not None else "") for k, t in trends]
+    k, t = max(trends, key=lambda kt: abs(kt[1].r))
+    used = [r for r in results.runs if r.context is not None and r.context.film_um is not None]
+    thin = min(used, key=lambda r: r.context.film_um) if used else None
+    dribbles = max(len(tt.excluded) for _k, tt in trends)
+    return (f"{_label(results, k)} {'rises' if t.r > 0 else 'falls'} with the silicone film thickness at the exit "
+            f"(r = {t.r:+.2f})",
+            "Each run against its estimated film on the orifice wall, coloured by orifice; hollow = did not get its "
+            "set gas. " + "; ".join(bits) + "."
+            + (f" Thinnest film: {thin.name[:6]} ({thin.context.orifice_mm:g} mm, {thin.context.film_um:.0f} µm)."
+               if thin is not None and thin.context.orifice_mm else "")
+            + (f" {dribbles} no-spray run(s) plotted, not fitted." if dribbles else ""),
+            defs("film", "gas share", "power law", "r", "p", "no spray"), "")
+
+
 def _bins_run_share(bins, measure: str, *, below=None, above=None) -> dict[str, float]:
     keep = [i for i, (lo, hi) in enumerate(zip(bins.edges[:-1], bins.edges[1:]))
             if (below is not None and hi <= below) or (above is not None and lo >= above)]
@@ -520,6 +628,19 @@ def tw_size_percentiles(results):
             f"Narrowest: {_with_driver(results, per, lo['condition'])}. Largest Dv90: "
             f"{cond_text(results, d90['condition'])}, {d90['Dv90 (um)']:.0f} µm.",
             defs("Dv", "span"), "Replicates of one condition should sit together.")
+
+
+def tw_gas(results):
+    """The gas each run got (operating.py): how many did not get their set point."""
+    ops = [(r, (r.rec or {}).get("operating")) for r in results.runs]
+    ops = [(r, o) for r, o in ops if o is not None and o.delivered_sccm is not None]
+    short = [(r, o) for r, o in ops if o.not_delivered]
+    title = (f"{len(short)} of {len(ops)} runs did not get their set gas" if short else
+             "Every run got its set gas" if ops else "Gas flow and pressure through each run")
+    desc = ("Gas (blue) and upstream pressure (red) from Start; grey = camera window; dotted = set point and "
+            "supply ceiling. " + ("Short: " + "; ".join(f"{r.name[:6]} {o.text()}" for r, o in short) + "."
+                                  if short else ""))
+    return title, desc, "", "A run that hits the supply ceiling is pressure-limited: its set gas is not what it got."
 
 
 def _steady(results, col):
@@ -763,6 +884,65 @@ def tw_gallery(results, c: str):
             "frame with the lowest atomised fraction; right: the highest.")
 
 
+def tw_gallery_more(results, c: str):
+    bits = []
+    for r in _conds(results).get(c, []):
+        ex = figures_extra._more_frames(r, results.thr)
+        vals = [f"{short} {ex[k][1].get('value')}{unit}" for k, short, unit in figures_extra.MORE_COLUMNS if k in ex]
+        if vals:
+            bits.append(f"{r.name[:6]}: " + ", ".join(vals))
+    return (f"{cond_text(results, c)}: busiest frames and mean-diameter extremes", "; ".join(bits) + ".",
+            defs("D10"),
+            "Drawn as measured (measure_run): circles = droplets (green in focus, magenta out of focus), orange = "
+            "filaments, blue = blobs. Columns: most in-focus droplets, most droplets in total, smallest and largest "
+            "mean in-focus diameter (only frames with at least half the run's median count of in-focus droplets, "
+            "never fewer than 10, compete for the mean). The "
+            "atomised % printed on each frame is the model-only figure, not the classical one quoted.")
+
+
+MORE_GRID = (("most_in_focus", "Most in-focus droplets"), ("most_total", "Most droplets in total"),
+             ("mean_d_lowest", "Smallest mean diameter"), ("mean_d_highest", "Largest mean diameter"))
+
+
+def tw_more_run(results, r):
+    """(title, [(image, caption)] in grid order, notes) for one run's busiest and mean-diameter extreme
+    frames (measure_run's extreme_frames_more/), or None when the run has none."""
+    ex = figures_extra._more_frames(r, results.thr)
+    if not ex:
+        return None
+    cells = []
+    for key, label in MORE_GRID:
+        if key not in ex:
+            continue
+        img, e = ex[key]
+        n_in, n_tot = e.get("droplets_in_focus"), e.get("droplets_total")
+        if key.startswith("mean_d"):
+            what = f"{e.get('value')} µm from {n_in} in-focus droplets"
+        elif key == "most_total":
+            what = f"{n_tot} droplets ({n_in} in focus)"
+        else:
+            what = f"{n_in} in-focus droplets"
+        cells.append((img, f"{label}: {what}   ({img.stem.split('_n')[0]})"))
+    notes = (f"{r.name}. Drawn as measured (measure_run): circles = droplets (green in focus, magenta out of "
+             "focus), orange = filaments, blue = blobs. Top: the frame with the most in-focus droplets and the one "
+             "with the most droplets in total. Bottom: the smallest and largest mean in-focus diameter, among "
+             "frames with at least half the run's median count of in-focus droplets (never fewer than 10), so a "
+             "thin frame's chance mean cannot win. The mean uses in-focus droplets only. The atomised % printed "
+             "on each frame is the model-only figure, not the classical one quoted.")
+    return f"{cond_text(results, r.condition)}, {r.name[:6]}: busiest and mean-diameter frames", cells, notes
+
+
+def more_grid_slides(d, results) -> int:
+    """One 2x2 slide per run with extreme_frames_more/, in condition order; the number added."""
+    n = 0
+    for c, runs in _conds(results).items():
+        for r in runs:
+            spec = tw_more_run(results, r)
+            if spec is not None and d.grid(*spec):
+                n += 1
+    return n
+
+
 def caveats(results) -> list[tuple[str, str]]:
     out = []
     n = len(results.multiple)
@@ -798,6 +978,24 @@ def caveats(results) -> list[tuple[str, str]]:
 def _rgb(c):
     from pptx.dml.color import RGBColor
     return RGBColor(*c)
+
+
+GRID_PX, GRID_JPEG_QUALITY = 1000, 88     # a 2x2 frame is ~3.2 in wide: 1000 px is ~300 dpi there
+
+
+def _slide_jpeg(path: Path):
+    """The frame scaled to GRID_PX wide as an in-memory JPEG. The full-size PNGs are ~4 MB each, so
+    33 runs x 4 frames put the CCD deck at 457 MB (2026-10-13); this keeps it to a few hundred kB each."""
+    import io
+    from PIL import Image
+    with Image.open(path) as im:
+        im = im.convert("RGB")
+        if im.width > GRID_PX:
+            im = im.resize((GRID_PX, round(im.height * GRID_PX / im.width)), Image.Resampling.LANCZOS)
+        buf = io.BytesIO()
+        im.save(buf, format="JPEG", quality=GRID_JPEG_QUALITY, optimize=True)
+    buf.seek(0)
+    return buf
 
 
 class _Deck:
@@ -986,6 +1184,30 @@ class _Deck:
         s.notes_slide.notes_text_frame.text = "\n\n".join(t for t in (detail, how, notes, terms) if t)
         return True
 
+    def grid(self, title: str, cells: list, notes: str = "") -> bool:
+        """Up to four frames in a 2x2 grid filling the slide under the title, each with a one-line caption
+        above it. 16:9 frames make a 16:9 grid, so the height sets the size (~3.3 in per frame)."""
+        from PIL import Image
+        from pptx.util import Inches
+        cells = [(Path(img), cap) for img, cap in cells if Path(img).is_file()][:4]
+        if not cells:
+            return False
+        s = self._slide(title)
+        with Image.open(cells[0][0]) as im:
+            aspect = im.width / im.height
+        top, bottom, cap_h, gap = 1.05, 5.18, 0.2, 0.1
+        ih = (bottom - top - 2 * cap_h - gap) / 2
+        iw = min(ih * aspect, (9.0 - gap) / 2)
+        ih = iw / aspect
+        left = 0.5 + (9.0 - (2 * iw + gap)) / 2
+        for i, (img, cap) in enumerate(cells):
+            x = left + (i % 2) * (iw + gap)
+            y = top + (i // 2) * (cap_h + ih + gap)
+            self._text(s, x, y, iw, cap_h, cap, 8.5, bold=True, colour=INK)
+            s.shapes.add_picture(_slide_jpeg(img), Inches(x), Inches(y + cap_h), Inches(iw), Inches(ih))
+        s.notes_slide.notes_text_frame.text = notes
+        return True
+
     def table(self, title: str, header: list[str], rows: list[list], detail: str = "", terms: str = "",
               accent=TEAL) -> None:
         from pptx.util import Inches, Pt
@@ -1069,6 +1291,11 @@ def build(path: Path, results, bins, prov, figures_dir: Path, title: str = "Tagu
     d.figure(tw_per_run(results), figs / "fig_per_run.png", ORANGE)
     d.figure(tw_sn(results), figs / "fig_sn.png", ORANGE)
     d.figure(tw_glr(results), figs / "fig_glr.png", ORANGE)
+    d.figure(tw_orifice_model(results), figs / "fig_orifice_model.png", ORANGE)
+    d.figure(tw_gas_flux(results), figs / "fig_gas_flux.png", ORANGE)
+    d.figure(tw_film_thickness(results), figs / "fig_film_thickness.png", ORANGE)
+    if has_rate(results):
+        d.cards("How droplets per second are estimated", rate_cards(results), ORANGE)
 
     # droplet size
     d.figure(tw_spread_count(results, bins), figs / "fig_size_spread_count.png", TEAL)
@@ -1089,6 +1316,7 @@ def build(path: Path, results, bins, prov, figures_dir: Path, title: str = "Tagu
                                                 formats=("png",))
         if files:
             d.figure(tw_series_liquid(results, part), files[0], PURPLE)
+    d.figure(tw_gas(results), figs / "fig_gas_traces.png", ORANGE)
 
     # drift, replicates, interactions
     d.figure(tw_drift(results), figs / "fig_drift.png", GREY)
@@ -1138,8 +1366,11 @@ def build(path: Path, results, bins, prov, figures_dir: Path, title: str = "Tagu
     # appendix: images
     gal = [(c, figs / figures_extra.GALLERY_DIR / f"gallery_{c}.png") for c in conds]
     gal = [(c, p) for c, p in gal if p.is_file()]
-    if gal:
-        d.section("Appendix: images", "Each run's least and most atomised frame, one slide per condition.")
+    more = any(figures_extra._more_frames(r, results.thr) for r in results.runs)
+    if gal or more:
+        d.section("Appendix: images", "Each condition's least and most atomised frames, then each run's busiest "
+                                      "and mean-diameter frames in a 2x2 grid.")
         for c, p in gal:
             d.figure(tw_gallery(results, c), p, GREY)
+        more_grid_slides(d, results)
     return d.save(path)

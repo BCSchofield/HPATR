@@ -74,7 +74,7 @@ def test_takeaways_match_what_was_built_in(world):
     """The synthetic campaign's gas flow drives droplet size and atomisation; RPM does nothing."""
     _, slides = _slides(world["res"].deck)
     titles = [s["title"] for s in slides]
-    assert "Gas flow drives D32 in-focus, mean diameter and atomised fraction" in titles, titles
+    assert "Gas flow drives D32 in-focus, mean diameter and atomised fraction by area" in titles, titles
     assert not any("RPM drives" in t for t in titles)
     caveats = " ".join(slides[-1]["texts"])
     n = len(world["res"].results.multiple)
@@ -106,6 +106,73 @@ def test_every_figure_is_in_the_deck_with_a_description(world):
             texts = [sh.text_frame.text for sh in s.shapes if sh.has_text_frame and sh.text_frame.text.strip()]
             assert len(texts) >= 3, texts                        # title, description, footer
             assert s.has_notes_slide and s.notes_slide.notes_text_frame.text.strip()
+
+
+def test_the_gas_flux_figure_is_drawn_and_has_its_slide(world):
+    """Phase 12 (2026-10-13): the gas mass flux at the orifice, beside GLR, with a description."""
+    figs = world["root"] / "out" / "figures"
+    assert (figs / "fig_gas_flux.png").is_file() and deck._describe(figs / "fig_gas_flux.png") == \
+        deck.DESCRIBE["fig_gas_flux"]
+    _, slides = _slides(world["res"].deck)
+    titles = [s["title"] for s in slides]
+    i = next(i for i, t in enumerate(titles) if "with the gas mass flux at the orifice" in t)
+    assert slides[i]["pics"] == 1 and titles[i - 1] == "How the gas flux and the silicone film are estimated"
+    assert "with GLR" in titles[i - 2] and slides[i - 1]["pics"] == 1
+    text = " ".join(slides[i]["texts"])
+    assert "coloured by orifice (1.2 mm)" in text and "Gas mass flux G:" in text
+
+
+@pytest.fixture(scope="module")
+def logged():
+    """The same campaign with GUI_Clean pressure logs (a camera window), so every run has P0 and a film."""
+    from src.ai.Taguchi_Analysis_UI.tests.test_gas_regimes import add_pressure_log
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        runs = fakes.make_measured_l9x3(root / "src")
+        for i, run in enumerate(runs):
+            sccm = float(run.name.split("_")[1][:-4])
+            add_pressure_log(run, sccm, sccm, 1.4 + sccm / 4000, seed=i)
+        design = dz.detect(rd.load_runs(rd.find_runs([root / "src" / "2026"]).runs, check_reuse=False))
+        res = publish.publish(design, root / "out")
+        assert res.ok, res.problems
+        yield {"root": root, "res": res}
+
+
+def test_the_film_figure_and_the_model_diagram_are_on_slides_in_order(logged):
+    """2026-10-13: the diagram just before the gas flux slide, the film slide after it, each with a
+    description; the workbook's film sheet carries the diagram and the maths beside its table."""
+    import hashlib
+    import openpyxl
+    from pptx import Presentation
+    figs = logged["root"] / "out" / "figures"
+    for name in ("fig_orifice_model", "fig_gas_flux", "fig_film_thickness"):
+        assert (figs / f"{name}.png").is_file() and deck._describe(figs / f"{name}.png") == deck.DESCRIBE[name]
+    _, slides = _slides(logged["res"].deck)
+    titles = [s["title"] for s in slides]
+    i = titles.index("How the gas flux and the silicone film are estimated")
+    assert "with the gas mass flux at the orifice" in titles[i + 1]
+    assert "with the silicone film thickness at the exit" in titles[i + 2]
+    assert all(slides[j]["pics"] == 1 for j in (i, i + 1, i + 2))
+    assert "Film thickness h:" in " ".join(slides[i + 2]["texts"])
+    prs = Presentation(str(logged["res"].deck))
+    embedded = {hashlib.sha256(sh.image.blob).hexdigest() for s in prs.slides for sh in s.shapes
+                if sh.shape_type == 13}
+    for name in ("fig_orifice_model", "fig_film_thickness"):
+        assert hashlib.sha256((figs / f"{name}.png").read_bytes()).hexdigest() in embedded
+    wb = openpyxl.load_workbook(logged["root"] / "out" / "taguchi_analysis.xlsx")
+    ws = wb["Silicone film at exit"]
+    head = [c.value for c in ws[1]]
+    assert {"Cd used", "Cd source", "P0 (barA)", "gas-only capacity (kg/m2/s)", "gas share alpha",
+            "u_L (m/s)", "film h (um)", "atomised fraction (%)", "regime"} <= set(head)
+    assert len(ws._images) == 1
+    text = [c.value for row in ws.iter_rows() for c in row if isinstance(c.value, str)]
+    assert any(t.startswith("How the gas flux and the silicone film are estimated") for t in text)
+    assert any("ideal (not measured)" in t for t in text)
+    rows = [dict(zip(head, [c.value for c in r])) for r in ws.iter_rows(min_row=2, max_row=28)]
+    assert len(rows) == 27 and all(r["film h (um)"] and 0 < r["gas share alpha"] < 1 for r in rows)
+    report = (logged["root"] / "out" / "taguchi_report.md").read_text(encoding="utf-8")
+    assert "## Silicone film at the exit" in report and "](figures/fig_orifice_model.png)" in report
+    assert "27 of 27 runs have a film estimate. Cd: ideal (not measured)" in report
 
 
 def test_a_figure_that_was_not_drawn_drops_its_slide(world, tmp_path):

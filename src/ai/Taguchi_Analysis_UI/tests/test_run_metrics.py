@@ -158,7 +158,13 @@ def test_analyse_carries_the_extra_responses(tmp):
     design = dz.detect(rd.load_runs(runs, thr=0.30))
     res = stats.analyse(design, 0.30, metrics_cache=tmp / "cache")
     keys = [k for k, *_ in stats.responses_table()]
-    assert keys[-5:] == ["dv50", "af_flow", "thin_pct", "lag1", "peak_bar"]
+    assert keys[-10:] == ["dv50", "af_flow", "thin_pct", "lag1", "peak_bar", "atom_vol", "af_flow_vol",
+                          "band_per_frame", "rate", "rate_band"]
+    assert res.responses["band_per_frame"].anova is not None
+    # the fakes' liquid stage predates 2.3.0: no volume columns, so the volume responses (and the mass-balance
+    # rate, which needs the volume fraction) are blank
+    for k in ("atom_vol", "rate", "rate_band"):
+        assert all(r.values[k] is None for r in res.runs) and res.responses[k].degenerate, k
     for k in ("dv50", "af_flow"):
         assert res.responses[k].anova is not None, k
     # the fakes put exactly 50 droplets in every frame and one pressure range in every workbook,
@@ -183,3 +189,116 @@ def test_real_run_matches_the_pulsing_analysis():
     assert st["liquid_cv"] == pytest.approx(1.39151, abs=1e-4)
     assert p["r_pressure_droplets"] == pytest.approx(0.72678, abs=1e-4)
     assert p["gas_flow_cv_pct"] == pytest.approx(0.95240, abs=1e-4)
+
+
+def test_the_volume_fraction_is_pooled_from_the_per_frame_volumes(tmp):
+    """Liquid stage 2.3.0 writes droplet_vol_mm3 / total_liquid_vol_mm3 per frame; the response is the
+    pooled ratio (not an average of per-frame ratios), with a frame bootstrap like the others."""
+    import csv
+    run = fakes.make_measured_l9x3(tmp, seed=4, n_frames=10)[0]
+    cpf = run / "shadowgraph" / "analysis" / "liquid_0.30" / "classical_per_frame.csv"
+    rows = list(csv.DictReader(open(cpf, newline="", encoding="utf-8")))
+    rng = np.random.default_rng(1)
+    for r in rows:
+        tv = float(rng.uniform(1.0, 3.0))
+        r["total_liquid_vol_mm3"], r["droplet_vol_mm3"] = tv, tv * float(rng.uniform(0.02, 0.08))
+        r["atomised_vol_pct"] = 100 * r["droplet_vol_mm3"] / tv
+    with open(cpf, "w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=list(rows[0]))
+        w.writeheader()
+        w.writerows(rows)
+    info = rd.load_run_info(run, check_reuse=False)
+    rec, values, ci, _ctx, _m = stats.load_measured_run(run, info, 0.30, np.random.default_rng(0), True,
+                                                        tmp / "cache", [], [])
+    want = 100 * sum(float(r["droplet_vol_mm3"]) for r in rows) / sum(float(r["total_liquid_vol_mm3"]) for r in rows)
+    assert values["atom_vol"] == pytest.approx(want)
+    lo, hi = ci["atom_vol"]
+    assert lo <= values["atom_vol"] <= hi
+    if values["af_flow"] is not None:
+        assert values["af_flow_vol"] == pytest.approx(values["af_flow"] * values["atom_vol"] / values["atom"])
+
+
+def test_the_band_count_is_half_open_and_counts_empty_frames():
+    rec = {"frames": ["f0", "f1", "f2"], "dia": {"f0": [29.99, 30.0, 40.0, 49.99, 50.0, 80.0], "f1": [35.0]}}
+    assert rm.band_counts(rec, (30.0, 50.0)).tolist() == [3.0, 1.0, 0.0]     # f2 has no droplets: 0
+    v = rm.response_values({}, rec, band=(30.0, 50.0))
+    assert v["band_per_frame"] == pytest.approx(4 / 3)
+    assert rm.response_values({}, rec, band=(45.0, 90.0))["band_per_frame"] == pytest.approx(3 / 3)
+    assert rm.band_counts(None) is None
+
+
+def test_the_band_reaches_the_value_through_the_loader_and_is_bootstrapped(tmp):
+    run = fakes.make_measured_l9x3(tmp, seed=5, n_frames=10)[0]
+    info = rd.load_run_info(run, check_reuse=False)
+    get = lambda band, boot=True: stats.load_measured_run(run, info, 0.30, np.random.default_rng(0), boot,
+                                                          tmp / "cache", [], [], stats.AnalysisOptions(band_um=band))
+    rec, values, ci, _c, _m = get((30.0, 50.0))
+    n_in = sum(((np.asarray(d) >= 30) & (np.asarray(d) < 50)).sum() for d in rec["dia"].values())
+    assert values["band_per_frame"] == pytest.approx(n_in / len(rec["frames"]))
+    lo, hi = ci["band_per_frame"]
+    assert lo <= values["band_per_frame"] <= hi
+    wide = get((0.0, 1000.0), boot=False)[1]["band_per_frame"]
+    assert wide > values["band_per_frame"] and wide == pytest.approx(values["per_frame"])  # every in-focus droplet
+
+
+def test_the_mass_balance_rate_by_hand():
+    """Droplets produced per second = syringe flow x atomised volume fraction / (pi/6 <d^3>)
+    (docs/notes/2026-10-13_droplet_rate_investigation.md). 6 mL/min = 100 mm^3/s; 5% atomised;
+    droplets of 40 um (3.35e-5 mm^3) -> 149,208 per second."""
+    v40 = np.pi / 6 * 40.0 ** 3 * 1e-9
+    assert float(rm.mass_balance_rate(6.0, 0.05, 1, 40.0 ** 3)) == pytest.approx(100 * 0.05 / v40)
+    assert np.isnan(rm.mass_balance_rate(6.0, 0.05, 0, 0.0))                 # no droplets: no rate
+    rec = {"frames": ["f0", "f1"], "dia": {"f0": [40.0, 40.0, 80.0], "f1": [40.0]},
+           "cpf": {"f0": {"droplet_vol_mm3": 0.01, "total_liquid_vol_mm3": 0.1},
+                   "f1": {"droplet_vol_mm3": 0.0, "total_liquid_vol_mm3": 0.1}}}
+    m = {"throughput": {"liquid_ml_min": 6.0}}
+    v = rm.response_values(m, rec, band=(30.0, 50.0))
+    d = np.array([40.0, 40.0, 80.0, 40.0])
+    want = 100 * 0.05 / (np.pi / 6 * (d ** 3).mean() * 1e-9)               # 0.01 / 0.2 = 5% by volume
+    assert v["atom_vol"] == pytest.approx(5.0)
+    assert v["rate"] == pytest.approx(want)
+    assert v["rate_band"] == pytest.approx(want * 3 / 4)                    # 3 of 4 droplets in 30-50 um
+    # needs the volumes (liquid stage 2.3.0) and the liquid flow
+    assert rm.response_values(m, {k: rec[k] for k in ("frames", "dia")})["rate"] is None
+    assert rm.response_values({}, rec)["rate"] is None
+
+
+def test_the_rate_does_not_fall_when_the_spray_speeds_up():
+    """The point of it: twice as fast, half the droplets in view per frame and half the liquid in view,
+    the same atomised share; the per-frame count halves, the rate does not."""
+    rng = np.random.default_rng(2)
+    def run(n_per_frame, liquid):
+        frames = [f"f{i}" for i in range(50)]
+        dia = {f: rng.normal(40, 6, n_per_frame) for f in frames}
+        cpf = {f: {"droplet_vol_mm3": 0.1 * liquid, "total_liquid_vol_mm3": liquid} for f in frames}
+        return rm.response_values({"throughput": {"liquid_ml_min": 11.39}}, {"frames": frames, "dia": dia, "cpf": cpf})
+    slow, fast = run(40, 2.0), run(20, 1.0)
+    assert fast["band_per_frame"] < 0.6 * slow["band_per_frame"]
+    assert fast["rate"] == pytest.approx(slow["rate"], rel=0.05)
+
+
+def test_the_rate_reaches_the_value_through_the_loader_and_is_bootstrapped(tmp):
+    import csv
+    run = fakes.make_measured_l9x3(tmp, seed=6, n_frames=12)[0]
+    cpf = run / "shadowgraph" / "analysis" / "liquid_0.30" / "classical_per_frame.csv"
+    rows = list(csv.DictReader(open(cpf, newline="", encoding="utf-8")))
+    rng = np.random.default_rng(3)
+    for r in rows:
+        tv = float(rng.uniform(1.0, 3.0))
+        r["total_liquid_vol_mm3"], r["droplet_vol_mm3"] = tv, tv * float(rng.uniform(0.02, 0.08))
+        r["atomised_vol_pct"] = 100 * r["droplet_vol_mm3"] / tv
+    with open(cpf, "w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=list(rows[0]))
+        w.writeheader()
+        w.writerows(rows)
+    info = rd.load_run_info(run, check_reuse=False)
+    rec, values, ci, ctx, _m = stats.load_measured_run(run, info, 0.30, np.random.default_rng(0), True,
+                                                       tmp / "cache", [], [])
+    if getattr(ctx, "liquid_ml_min", None) is None:
+        pytest.skip("the fake run has no liquid flow")
+    d = np.concatenate([np.asarray(x, float) for x in rec["dia"].values()])
+    want = rm.mass_balance_rate(ctx.liquid_ml_min, values["atom_vol"] / 100, d.size, (d ** 3).sum())
+    assert values["rate"] == pytest.approx(float(want))
+    for k in ("rate", "rate_band"):
+        lo, hi = ci[k]
+        assert lo <= values[k] <= hi

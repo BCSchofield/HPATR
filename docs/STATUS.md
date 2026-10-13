@@ -1,6 +1,6 @@
 # STATUS — real-data droplet pipeline and Taguchi study
 
-**Last updated: 2026-10-13 (home PC: CCD batch finished 33/33 at 2.2.0 and analysed once; the 0.5 mm block was gas-starved at a ~9.5 barA ceiling (see Recent changes and docs/notes/2026-10-13_CCD_day_explained.md); app bugs 3 (stale run list) and 6 (no atomised liquid flow on Python 3.9) found. 2026-10-12 home PC: python-pptx 1.0.2 installed in the Detectron env; CCD day checked on the LaCie: 33/33 cines + summaries, detects as a complete 4-factor CCF, quick self-test READY; batch not started. Lab PC: 33-run CCD day captured, all cines saved, run 33 valid (the GUI's stall check false-tripped; label removed); GUI_Clean camera save hardened after a lost auto-trigger capture (untried on the rig); STATUS commit refs fixed, tracked __pycache__ removed, front limit switch tested on the rig, emoji removed from GUI_Clean console messages, switch noise filter in firmware (needs flashing), GUI_Clean SCCM ramp + bubbler starts with Start Experiment (untried on the rig); Mac: CCD plan complete, Phase 7 committed 2ebc9f0; Mac light-mode theme fix; batch bugs 1-2, goal-ramp bug, feed floor 2,000 steps/s; mean diameter now a headline response and the default size goal; GUI_Clean auto-trigger at end of test and pressure cut-off (both untried on the rig); GUI_Clean review fixes + front limit switch firmware (committed 58f1b94; firmware flashed and switch-tested on the lab rig 2026-10-12, all passed); next is the 33-run CCD day).** This is the live state of the work. Claude keeps it current
+**Last updated: 2026-10-13 (Mac: CCD follow-up plan approved, `docs/notes/2026-10-13_CCD_followup_plan.md`, 12 phases; phase 1 done: app bugs 3 and 6 fixed, atomised fraction / flow relabelled "by area"; phase 2 done: "no spray" runs (atomised < 2%) have size and steadiness blanked; phase 3 done: gas regimes (pressure-limited runs left out of the surfaces by default, own section), goals used/dropped and best observed runs in Best settings; F2/H1 checks done (window drops in 8 runs; volume ranks like area); liquid stage 2.3.0 built (window drops masked, volume) and being re-run on the Mac for the CCD day, old outputs archived to _liquid2.2.0/; phase 4 done: band-count response (in-focus droplets per frame, 30-50 um, Settings); phase 5 done: GUI_Clean live gas regime + run_summary gas fields (rig check pending); phase 6 done: orifice on a log scale, fitted span when runs are left out; master_log gains a Mean Diameter column and the 33 CCD rows now hold D32, mean and atomised % (atomised % updated to liquid 2.3.0 at 15:30, backup kept); liquid 2.3.0 re-run done 33/33; phase 8 done (rate: count is a concentration, gas speeds the liquid up, cines cannot give velocity; docs/notes/2026-10-13_droplet_rate_investigation.md); phase 9 done (CCD re-analysed: in the flow-controlled region atomised fraction = gas + orifice only, predicted R2 0.89; best ~10,700 sccm on 1.2 mm; the 35% runs are pressure-limited 0.5 mm; docs/notes/2026-10-13_CCD_reanalysis.md); three RSM bugs found and fixed in the re-analysis (goal gate on the wrong model, strengthen runs outside the fitted span, free factors reported as edge optima); opt-in mass-balance rate responses added (`rate`, `rate_band`: droplets produced per second, all sizes / in the band); velocity capture plan written: `docs/VELOCITY_CAPTURE_PLAN.md` (exposure series ~20 min, then a 15-capture calibration set, ~3.5 h, on a narrow strip at ~10 kfps, 1 us; PCC check of rows-vs-width first). Earlier 2026-10-13, home PC: CCD batch finished 33/33 at 2.2.0 and analysed once; the 0.5 mm block was gas-starved at a ~9.5 barA ceiling (see Recent changes and docs/notes/2026-10-13_CCD_day_explained.md); app bugs 3 (stale run list) and 6 (no atomised liquid flow on Python 3.9) found. 2026-10-12 home PC: python-pptx 1.0.2 installed in the Detectron env; CCD day checked on the LaCie: 33/33 cines + summaries, detects as a complete 4-factor CCF, quick self-test READY; batch not started. Lab PC: 33-run CCD day captured, all cines saved, run 33 valid (the GUI's stall check false-tripped; label removed); GUI_Clean camera save hardened after a lost auto-trigger capture (untried on the rig); STATUS commit refs fixed, tracked __pycache__ removed, front limit switch tested on the rig, emoji removed from GUI_Clean console messages, switch noise filter in firmware (needs flashing), GUI_Clean SCCM ramp + bubbler starts with Start Experiment (untried on the rig); Mac: CCD plan complete, Phase 7 committed 2ebc9f0; Mac light-mode theme fix; batch bugs 1-2, goal-ramp bug, feed floor 2,000 steps/s; mean diameter now a headline response and the default size goal; GUI_Clean auto-trigger at end of test and pressure cut-off (both untried on the rig); GUI_Clean review fixes + front limit switch firmware (committed 58f1b94; firmware flashed and switch-tested on the lab rig 2026-10-12, all passed); next is the 33-run CCD day).** This is the live state of the work. Claude keeps it current
 (see "How this file is maintained" at the bottom). History, evidence and full reasoning are in
 `docs/archive/HANDOFF_real_data_pipeline_LEGACY.md` (frozen 2026-10-07, newest section first).
 
@@ -328,7 +328,19 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
 
 ## Next steps, in order
 
-0. **The 33-run 4-factor CCD day** (gas 7000/9000/11000, RPM 100/500/900, feed 3000/4000/5000,
+0. **CCD follow-up plan** (approved 2026-10-13; `docs/notes/2026-10-13_CCD_followup_plan.md`), phase-gated:
+   1 bugs 3 + 6 and the "by area" relabel (DONE 2026-10-13); 2 "no spray" runs (atomised < 2%: size and
+   steadiness blanked; DONE 2026-10-13); 3 gas regimes (pressure-limited runs out of the fit, own section; best observed runs;
+   goals used / dropped shown in Best settings; DONE 2026-10-13); 4 band-count response (in-focus droplets per frame,
+   30-50 um; DONE); 5 GUI_Clean regime indicator + logging (DONE, rig check pending); 6 orifice on a log scale
+   (DONE); 7 area vs volume atomised fraction + window-droplet check H1 (DONE; liquid stage 2.3.0 built and
+   re-run 33/33); 8 rate investigation (DONE: report, Ben to decide on a mass-balance rate response and a
+   10-min exposure series); 9 re-analyse the CCD day (DONE: `Taguchi/CCD/CCD 4-factor 12-10-2026 reanalysis
+   13-10-2026/`); 10 more extreme frames (DONE: back-filled for the 33 CCD runs, floor half the median); 11 window /
+   lens droplets (DONE: GUI pre-run window check, rig test pending); 12 GLR + measured pressure (opinion given:
+   keep set points, add gas exit mass flux as a covariate; `docs/notes/2026-10-13_phase12_physical_variables.md`).
+   Then ONE commit, after Ben has reviewed the differences.
+   Done: **The 33-run 4-factor CCD day** (gas 7000/9000/11000, RPM 100/500/900, feed 3000/4000/5000,
    orifice 0.5/1.2/1.8; orifice blocks, 5 centres, block repeats, 0 rpm control, 0.8 mm check).
    Before it: try the remaining GUI_Clean fixes on the rig (front limit switch firmware DONE 2026-10-12;
    still untried: cut-off, auto-trigger, static run, Alicat alarm). Ben practises the Response surface tab on the 9x3 copy (`docs/RSM_GUIDE.md`, "Using
@@ -382,8 +394,10 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
   benchmark). The 2026-10-07 diagnosis explained its gas gradient as real shape change (less round
   fragments at high gas), not crowding, but ~2/3 of the resulting D32 gas effect is selection. The
   9000 sccm hand-labelling that would measure its error rate there has still not been done.
-- **Decorrelation time (~20 ms) is inferred, not measured**, and the stride default rests on it.
-  Measurable from any stride-1 capture (adjacent-frame cross-correlation).
+- **Decorrelation time: transit is under one frame (2.56 ms), measured 2026-10-13** (was assumed ~20 ms).
+  Consecutive 390 fps frames share no droplets; liquid residence time in the field is 1.4–2.8 ms.
+  What still couples frames is pulsing; the stride-10 CI is conservative for transit, and a block
+  bootstrap on the measured count autocorrelation is still the proper fix.
 - **Old L9 (10/01) is sizer 2.0.0** and not directly comparable to the 27 runs on atomised
   fraction. Re-measuring it is ~41 s/run if ever needed.
 
@@ -425,8 +439,10 @@ Taguchi_Analysis_UI (found in the 2026-10-06 batch):
    2026-10-13 (home PC, CCD day):** the run list's RunInfo (incl. `analysis.measured`) is read once when runs
    are added and NEVER re-read when the batch finishes (`pane_runs` only reloads on a settings change; "+" on
    the same folder skips runs "already in the list"). So Analyse in the same session as the batch skips every
-   run as "not measured yet" and refuses. Workaround: Batch tab, Clear, add the day folder again, Analyse.
-   Fix (not made): reload the run list when the batch finishes.
+   run as "not measured yet" and refuses. **FIXED 2026-10-13 (Mac):** the Batch tab re-reads the run list
+   whenever a batch stops running (`pane_runs.refresh_runs`, console "batch ended: re-reading N run(s)");
+   test `test_the_run_list_is_re_read_when_the_batch_ends`. The SELECTED RUNS summary during a batch is
+   still not live (minor).
 4. After a crash the "already have results" dropdown showed "Re-measure only"; check the default
    (run sheet says "Use their existing results").
 5. 17 Windows-only test failures, all test-side (path separators, `os.getpgid`, symlinks needing
@@ -436,8 +452,11 @@ Taguchi_Analysis_UI (found in the 2026-10-06 batch):
    Python 3.9 (the Detectron env), and GUI_Clean's guard catches only ImportError. So the GUI formula is
    unavailable, `liquid_ml_min` is None, and `af_flow` ("Atomised liquid flow") has no values: "No fit", and
    the throughput goal silently drops out of the desirability (the CCD best setting became atomised fraction
-   alone -> lowest feed). Recorded GLR is unaffected. Fine on Python >= 3.10 (Mac, lab PC). Fix (not made):
-   `except ImportError` -> `except Exception` at `GUI_Clean.py:74`, then re-Analyse.
+   alone -> lowest feed). Recorded GLR is unaffected. Fine on Python >= 3.10 (Mac, lab PC). **FIXED
+   2026-10-13 (Mac):** GUI_Clean's Cone_4 guard catches any exception; and if the formula still cannot be
+   imported, both analyses now say so in capitals (console, top of the report) and the Model page marks the
+   atomised liquid flow row "unavailable" (`covariates.formula_problem`, `stats.flow_warning`). The home PC
+   needs `git pull`; then re-Analyse there to get atomised liquid flow.
 
 Response surface tab, found 2026-10-11 (tested on fakes: the 9x3 + 4 next-session runs on another day):
 - **Loading a next session with the original runs is not handled properly yet.** (a) Confirmation runs
@@ -554,6 +573,238 @@ made", "Bit depth", and the dated sections).
 - Give Ben exact paste-able commands with absolute paths and the real interpreter.
 
 ## Recent changes (newest first; trim to ~10 entries, older ones live in git history)
+
+- 2026-10-13 (Mac): **Silicone film at the exit, a covariate; flux and film in the workbooks and decks.** New
+  `orifice.py` (gas properties by the run's Gas tag, ideal gas-only flux choked/subsonic, Cd lookup from the new
+  `orifice_cd.json` -- all Cd null = ideal 1.0 until the test -- and the split: gas share alpha, silicone speed u_L,
+  annular film h). Covariate film_um beside GLR and the flux; fig_film_thickness, fig_orifice_model (a diagram with
+  the maths); a "Silicone film at exit" workbook sheet in both publishes (per-run table, the diagram beside it, the
+  maths and caveats in text); report sections; deck slides "How the gas flux and the silicone film are estimated"
+  + flux + film (Taguchi and CCD). No-spray runs are now left out of every covariate FIT (GLR, flux, film) but
+  plotted (grey x): the flux exponent on atomised fraction is +0.36 [0.29, 0.42] without the two dribbles (was
+  +0.86); film exponent -0.46, r -0.76; Spearman film -0.90 / flux +0.91 over 31 spraying runs. CCD re-analysis
+  re-published (deck slides 58-60). `orifice_cd.py` now uses `orifice.py`'s formula (one source). Tests:
+  test_gas_flux +6, test_deck +1, test_gas_regimes +1; full suite 851 passed. The 9x3 Taguchi output was not
+  re-published (its runs do have gas logs and camera windows, but are still liquid stage 2.2.0).
+
+- 2026-10-13 (Mac): **Orifice Cd test ready; lamella AI found and compared.** New `AI/Real_Data_Code/orifice_cd.py`
+  (steady gas steps from gas-only runs' logs -> Cd per insert, choked steps preferred, subsonic fallback flagged,
+  optional line-loss run, `--write` updates `src/ai/Taguchi_Analysis_UI/orifice_cd.json`) and the rig procedure
+  `docs/ORIFICE_CD_TEST.md` (Speed 0 static run, gas ladder 2,000-12,000 sccm, Notes "CD TEST ..."). Gas alone
+  chokes 0.5 mm (from ~4,000 sccm) and 0.8 mm (10-12k); 1.2 mm is subsonic only (needs the line-loss run); 1.8 mm
+  cannot be measured this way (<= 1.07 barA). Tests: test_orifice_cd (2). The lamella AI's only batch output
+  (`Lamella/Tester_Tiffs/Output_Tester/lamella_thickness.csv`, 36 frames) is from
+  `2026/06/25/133838_NNoNozzle_5.0BAR` (0.5 mm add-on + 1.2 mm orifice, feed 4,000, ~2.65 barA): ~0.38 mm of
+  silicone per wall, against 0.31-0.35 mm from the annular estimate for the CCD 1.2 mm runs at similar pressure
+  (phase-12 note).
+
+- 2026-10-13 (Mac): **Orifice length recorded (GUI_Clean).** Nozzle card: "Orifice length" (mm, hardware state like
+  bubbler height, remembered; a non-blocking reminder at Start when empty). run_summary Metadata gains
+  'Orifice length (mm)' (a number, or NOT RECORDED); master_log gains 'Orifice Length (mm)' as column C (19 columns,
+  A..S) via `migrate_master_orifice_length()`, which runs on the next save after the mean-diameter migration.
+  Checked with a full offscreen save against a COPY of the live master_log: header right, the new row's values
+  are numbers, all 292 existing images moved one row down and one column right, old rows blank in C. The lab PC's
+  log migrates itself on its first save after `git pull`.
+- 2026-10-13 (Mac): **Gas mass flux at the orifice, a covariate (phase 12 decision).** `covariates.py`: per run
+  G = delivered gas mass flow / orifice area (kg/m2/s; camera-window gas > achieved > set point; the run's recorded
+  gas density, none guessed), its standard-density exit velocity equivalent, orifice length and L/D (from
+  run_summary 'Orifice length (mm)', read back from a GUI_Clean-written file: OK). Trends beside GLR; new
+  fig_gas_flux (coloured by orifice, hollow = did not get its set gas, velocity on a top axis), report section,
+  deck slides (Taguchi and RSM; the RSM report now takes the shared analysis), workbook sheets. Loud warning when
+  runs in one analysis have different orifice lengths (a hidden factor), softer when only some record it. CCD day:
+  C7 522, C8 537, 0.8 mm 342, 1.2 mm 152, 1.8 mm 68 kg/m2/s; atomised fraction r = +0.85. Tests: test_gas_flux (7)
+  + 2; full suite 841 passed. Open: the two no-spray dribbles (G 3-5) dominate the power-law exponent (+0.86);
+  Ben to say whether no-spray runs leave the covariate fits (recommended).
+
+- 2026-10-13 (Mac): **Throughput is the objective; goal ramps reach the surface; master_log droplets/s.**
+  Ben: the spray is collected and size-filtered, so the target is in-band droplets produced per second; band
+  **20-60 um**. (1) Fix: a goal's blank "1 at (best)" is now the best its fitted surface reaches in the tested region
+  (`rsm_responses.reach_surface`, `RsmResults.surface_best`; report note; Model-page text; RSM_GUIDE), not the best
+  run seen. Before, every setting predicted beyond the best run scored a flat 1 and the optimiser stopped at the
+  first it tried (10,740 sccm; then feed 3,000 when maximising a rate that rises with feed), which also killed
+  the steepest-ascent and new-CCD suggestions. Tests in test_gas_regimes (+2). (2) Throughput analysis, 20-60 um,
+  goals in-band rate x3 + atomised fraction x1 (`Taguchi/CCD/Rec CCD 4 factor 20-60um/`, `reanalyse_ccd.py
+  --model --band`): best 11,000 sccm / 100 rpm / feed 5,000 / 1.2 mm, predicted 288k in-band droplets/s;
+  steepest ascent to 12,000 / 0-50 rpm / feed 5,200-5,300 (~330k/s, extrapolated); suggested next CCD gas
+  8-12k, rpm 0-800, feed 4,000-6,000. Best measured: C7 280k/s (0.5 mm ceiling recipe), but its twin C8 gave 187k/s.
+  (3) master_log: new column N "Droplets/s (20-60 um)" (`MASTER_RATE_BAND_UM`, `droplet_rate_band`,
+  `migrate_master_droplet_rate`; 20 columns A..T), written as a NUMBER by GUI_Clean after the AI chain (same maths
+  as the app, matches it to the whole droplet); the 33 CCD rows back-filled (C7 280,194); backup in
+  `Logs/Backups/master_log BACKUP 2026-10-13 before droplets per s.xlsx`. The live log is now 20 columns:
+  **the lab PC must `git pull` BEFORE its next capture** -- the old GUI stamps its 17-column headers and would
+  write rows into the wrong columns.
+  Decks: every goal response now gets map slides (`rsm_figures.mapped_responses`: goals, then the headline
+  responses, lag-1, pressure; the rate goal had none), and a "How droplets per second are estimated" cards slide
+  (`deck.rate_cards`, both decks, when any run has a rate). 20-60 um deck: 157 slides, rate maps 4-8, the
+  explanation 67. Full suite 858 passed.
+
+- 2026-10-13 (Mac): **Phase 10, more extreme frames.** `measure_run.py`: per-frame body now `measure_frame()`;
+  `pick_more_extremes()` / `write_more_extremes()` add the frames with the most in-focus droplets, the most droplets
+  in total and the largest / smallest mean in-focus diameter (frames with >= `MIN_DROPLETS_FOR_MEAN` = 10 in-focus
+  droplets) into `droplets_<thr>/extreme_frames_more/` (PNGs + index.json / index.csv), summary.json
+  `more_extreme_frames`, per_frame.csv gains `mean_d_in_focus_um` as its last column; everything else byte-identical
+  (checked on 105301). Back-fill without the model: new `render_more_extremes.py` (re-measures only the chosen
+  frames from predictions.json, gate against per_frame.csv, writes via .partial/): all 33 CCD runs done, 33/33
+  passed, ~2 min, only the new folders written. App: `figures_extra.gallery_more()` (galleries/gallery_more_<c>.png,
+  4 columns), in the Taguchi and RSM reports and decks. GUI_Clean Extremes tab shows the four. Tests:
+  test_more_extremes (16); full suite 832 passed. DECIDED (Ben, 2026-10-13): the mean-diameter extremes' floor is
+  half the run's median in-focus count per frame, never below 10 (`mean_floor`; was a flat 10, which picked thin
+  frames: 130918's largest mean 57.9 um from 17 droplets -> now 55.1 um from 34). All 33 CCD runs redrawn (gates
+  passed; the chosen frames now have a median 35-42 droplets behind them, was 22-23); index.json records the floor.
+  test_more_extremes +1. Decks (Taguchi and CCD): these frames are now one 2x2 slide PER RUN (most in focus, most in
+  total / smallest, largest mean; `deck._Deck.grid`, `tw_more_run`, `more_grid_slides`), filling the slide below the
+  title (3.2 x 1.8 in per frame; 16:9 frames make a 16:9 grid, so the height sets it), captions with the counts and
+  means, the legend and the floor rule in the notes; the per-condition strip stays in the report. CCD deck: 150
+  slides, grids 118-150 (grid frames embedded as 1000 px JPEGs, `deck._slide_jpeg`: the full-size PNGs had put the
+  deck at 457 MB, now ~54 MB). Ben's own run with the recommended goals (atomised x3, in-band rate x2, D32 x1, CV x1,
+  mean diameter not a goal): `Taguchi/CCD/Rec CCD 4 factor/` -> best 11,000 sccm / 100 rpm / feed ~4,100 / 1.2 mm
+  (the rpm from a weak rpm x orifice term in the rate, p 0.03), best observed 125754; re-published headless with its
+  own model (`reanalyse_ccd.py --model`). Confirmed: the per-frame mean uses in-focus droplets only. test_more_extremes +1. No
+  `pipeline_spec.OUTPUTS` entry for the folder yet.
+
+- 2026-10-13 (Mac): **Phase 11 (window drops, GUI side) and master_log numbers.** New `src/gui/window_check.py`
+  (numpy + OpenCV, no Qt): live frame / clean reference, normalised by its median, smoothed; a spot = a piece
+  < 0.90 of the clean window, >= 400 px, with a core < 0.80. Set on the CCD backgrounds: C20's drop reads 0.15 at
+  its core; consecutive clean backgrounds read clean. GUI_Clean Camera tab "WINDOW CHECK" card (Save clean
+  reference to ~/.hpatr/window_reference.npz, Check now, "Check at Start Experiment", remembered); Start
+  Experiment checks before anything moves, shows new spots boxed, "Cancel: wipe first" / "Start anyway";
+  run_summary gains "Window check (before run)"; How To updated; every run sheet's summary now says to wipe or dry
+  the window before every run (`rsm_design.BEFORE_EVERY_RUN`). Tests: test_window_check (10). Offscreen-tested with
+  a fake camera; NOT yet on the rig (thresholds may need tuning there). Phase 10 GUI side: the Extremes tab gains
+  four panels (most in-focus, most total, smallest / largest mean diameter) read from
+  `droplets_<thr>/extreme_frames_more/index.json`. master_log: GUI_Clean now writes Speed, Motor Travel, Bubbler
+  RPM and Bubbler Height as NUMBERS (`as_number`; they were text from the entry boxes) in master_log and
+  run_summary; the existing 263 text cells (Speed 132, Travel 131) converted and swapped in at 16:0x (backup
+  `Logs/Backups/master_log BACKUP 2026-10-13 before numbers.xlsx`; re-audited: no numbers stored as text outside Notes). Phase 12 evidence and opinion: `docs/notes/2026-10-13_phase12_physical_variables.md`
+  (gas exit mass flux orders both regimes, Spearman +0.91; GLR -0.21; P0 a symptom; keep set points as factors,
+  add the flux as a covariate).
+
+- 2026-10-13: **Gas flow can go to 12,000 sccm** (Ben): 11,000 was the CCD day's top set point, chosen for
+  headroom. Already the app's `rsm_design.RIG_LIMITS` and GUI_Clean's entry range; the next design should use
+  it (atomised fraction and the production rate still rising at 11,000).
+- 2026-10-13 (Mac): **CCD follow-up, phases 8 and 9; three RSM fixes; liquid 2.3.0 re-run.**
+  Liquid stage 2.3.0 re-run on the Mac for all 33 CCD runs (45 min, 0 failed; 2.2.0 outputs kept in
+  `<run>/shadowgraph/analysis/_liquid2.2.0/`): atomised % rose in 10 runs (window drops / static pieces),
+  e.g. C20 5.96 -> 10.51, C9 8.84 -> 16.38. (8) Rate, read-only (`docs/notes/2026-10-13_droplet_rate_investigation.md`):
+  mass balance gives the liquid's residence time in the field, 1.4-2.8 ms (4-8 m/s), falling in proportion to
+  gas; along the 1.2 mm gas axis the in-focus count is flat while the production rate doubles, so count goals
+  under-reward gas (rate vs concentration Spearman 0.84); the 390 fps cines cannot give velocity (nothing pairs
+  across 2.56 ms; 4 us blur bound <= ~4 m/s, optical); definitions.md decorrelation section corrected (transit
+  < 1 frame). Ben to decide: a mass-balance rate response, and a 10-min exposure series on the rig. (9) CCD
+  re-analysed headless into `Taguchi/CCD/CCD 4-factor 12-10-2026 reanalysis 13-10-2026/`
+  (`docs/notes/2026-10-13_CCD_reanalysis.md`): 21 flow-controlled runs in the fit; atomised fraction = gas (+) and
+  orifice (-, ln) only, simplified predicted R2 0.89, no lack of fit; rpm and feed free there; 0 rpm control =
+  centres; best ~10,700 sccm, 1.2 mm; 0.8 mm check below the ln extrapolation (orifice^2 needs 0.8 in the next
+  design); pressure-limited block: set gas no effect, rpm +741 and feed -1,960 sccm delivered; C7/C8 (35%) are the
+  day's best and pressure-limited. Fixed (tests in test_gas_regimes): the goal gate now judges the SIMPLIFIED
+  model's predicted R2 (`ResponseFit.used` / `r2_pred_used`, `weak_goals`; the full quadratic read -0.28 at 21
+  runs / 14 terms and dropped every goal); "Strengthen the model" runs stay inside the fitted span and say which
+  sizes were held back and why; factors no steering surface uses (`free_factors`, `RsmResults.free`) are held at
+  the centre and named, not reported as edge optima (the optimiser had returned its first grid value). master_log:
+  the 33 atomised % cells with 2.3.0 values are prepared and checked (only column L, 26 cells change; 292 images
+  byte-identical) at `scratchpad/mlog/master_log_23.xlsx`, backup `Logs/master_log BACKUP 2026-10-13 before liquid
+  2.3.0.xlsx` made. Copied in at Ben's go-ahead after Excel had re-saved the file on close (cells unchanged;
+  Excel had stored identical images once, 91 -> 27 MB); the update was re-applied to that file, only column L
+  changed (26 cells), all 292 image positions kept. **Opt-in mass-balance rate responses** (`run_metrics`:
+  `rate`, `rate_band`, `mass_balance_rate`; syringe flow x atomised fraction by volume / pi/6 <d^3>, with a frame
+  bootstrap; blank before liquid 2.3.0): a rate that does not fall when gas speeds the spray up. Tests in
+  test_run_metrics (+3).
+
+- 2026-10-13 (Mac): **CCD follow-up, phases 5 and 6.** (5) GUI_Clean: a live "Gas regime" readout beside the
+  MFC values (flow-controlled / PRESSURE-LIMITED / GAS SHORT after > 5% short for 3 s; logged once per
+  episode, orange log border), and run_summary Metadata gains "Gas delivered in camera window (sccm)", its
+  p10-p90, "Upstream pressure in camera window (barA)", "Gas regime", "Gas settled", computed with the
+  analysis app's own `operating.py` (imported by the GUI; numpy only). Offscreen-tested; NOT yet on the
+  rig. (6) Orifice on a log scale: `FactorLevels.log` + `decode()`, Model page "Log scale" tick per factor
+  (default orifice; older saved models get the default), passed as `log_scale`. Found and fixed with it:
+  with the pressure-limited runs left out, the coding still spanned 0.5-1.8 mm, so the optimiser searched
+  (and could recommend) unfitted orifices; now the levels refit to the fitted runs (1.2-1.8) and settable
+  levels outside the span are not offered (warning names them). Tests: test_gas_regimes (+2),
+  test_tab_rsm (Model page), test_rsm_recommend's linear-world fixture now asks for linear coding.
+
+- 2026-10-13 (Mac): **Liquid stage 2.3.0** (`classical_liquid.py`, new `liquid_volume.py`,
+  `remeasure_liquid.py`). Two passes: a persistence map of un-atomised liquid, then areas with a WINDOW
+  MASK (still, compact, flat-topped pieces un-atomised in >= 20% of frames: drops that landed mid-run);
+  out-of-focus model pieces with mean T >= 0.97 are not liquid (drops already divided out); per-frame
+  volumes (OpenCV only: the Windows env does not promise scipy / scikit-image) for a SECONDARY
+  volume-based atomised fraction. Rules off = bit-identical to 2.2.0 (C20, 508 frames). Tests:
+  `test_liquid_stage.py` (12). App: refuses mixed liquid-stage versions; responses "Atomised fraction by
+  volume, estimated" and "Atomised liquid flow index, volume-based" (blank before 2.3.0); provenance row.
+  **CCD day re-run on the Mac** (~45 min, 3 at a time, LaCie-read bound): each run's `liquid_0.30/` moved
+  intact to `shadowgraph/analysis/_liquid2.2.0/liquid_0.30/` first; droplets_0.30 and raw untouched.
+  Spot checks before the run: C9 8.84 → 16.38%, C21 10.81 → 15.08%, C20 5.96 → 10.51%. The master_log's
+  33 atomised % cells still hold the 2.2.0 values (to update after the re-run, with Ben's OK).
+- 2026-10-13 (Mac): **CCD follow-up, phase 4: droplet count in a size band.** Response "In-focus droplets
+  per frame in the size band" (`band_per_frame`; lo <= d < hi, default 30-50 um, Settings "Droplet count
+  size band"; frame bootstrap); not a default goal. `stats.AnalysisOptions.band_um`. Also: the Response
+  surface tab now uses the Settings size bins (it used the defaults). Docs: definitions, RSM_GUIDE,
+  IMAGING_PIPELINE_REFERENCE.
+
+- 2026-10-13 (Mac, read-only, sub-agent; numbers re-checked): **F2 area vs volume and H1 window drops on the
+  CCD day** (`docs/notes/2026-10-13_area_vs_volume_and_window.md`). Masks rebuilt with `classical_liquid`
+  match `classical_per_frame.csv` on 16,764 / 16,764 frames. **Volume vs area:** ρ 0.84 (all), 0.88
+  (flow-controlled); volume ≈ 0.24-0.27 × area (un-atomised pieces carry ~235 um of depth per pixel,
+  droplets ~50 um); no effect changes sign, but the gas effect doubles and rpm / feed fall below noise;
+  volume is 3× noisier and its scale model-dependent (round vs ribbon ×1.6). **Window drops**, 8 runs, two
+  routes: (A) a drop lands mid-run, so it is not in the background median and is counted as liquid from
+  then on (C9 +7.2 points, C21 +4.0, C2r2 +3.5, C4, C10r2); (B) a drop in the median all run divides out
+  of T but re-enters through the MODEL's out-of-focus non-droplet union, because T ≈ 1 always passes the
+  out-of-focus test (C20: 41% of its un-atomised pixels; C6). Candidate fixes: (a) drop out-of-focus
+  non-droplet detections with mean T ≥ 0.97 (C20 5.6 → 15.1% on the sample), (b) a persistence mask or
+  rolling background. Volume is ~10× more sensitive to window drops, so a window fix must precede any
+  volume response. Liquid-stage re-run: ~31 min for the day on Windows (+ volume add-on). **Decided (Ben):
+  both window fixes (a) mean-T >= 0.97 rule and (b) persistent + still mask, plus volume as a SECONDARY
+  response, in one liquid-stage change; re-run on the Mac (CPU only, ~45 min), old outputs archived.**
+
+- 2026-10-13 (Mac): **CCD follow-up, phase 3: gas regimes and best settings.** New `operating.py` reads each
+  run's Pressure sheet (gas + P0 in the camera window, 10 s before it, the whole-run trace) and classifies it:
+  flow-controlled (>= 95% of set), pressure-limited (below, with P0 within 0.5 bar of the supply ceiling,
+  new Settings field, default 9.5 barA), gas short, unknown; "settled" from medians (pulsing defeats a
+  straight-line trend). Real CCD day, read-only: all ten 0.5 mm runs pressure-limited, the other 23
+  flow-controlled; not settled: C1, C2 (both runs), C4, C9. Both analyses carry it (`rec["operating"]`); the
+  Taguchi per-run table gains gas delivered + regime and a warning. Response surface: Model page "Runs that
+  did not get their set gas" = Leave them out (default; `RunPoint.excluded`, not predicted, not drift pairs)
+  / Fit them at the gas they got / Keep at set point. Report: "Gas delivered and the operating regime"
+  section (per-run table, `fig_rsm_gas_delivered`, `fig_gas_traces`) with the not-delivered runs' own
+  table and a main-effects fit among them ("what controlled them"); Best settings lists EVERY goal set,
+  used or left out and why (the first CCD analysis silently used atomised alone); "Best runs as measured"
+  (goals on observed values, every run counted); headline bullets for both; recommended runs get a
+  "Pressure check" when their predicted peak pressure reaches the ceiling. Design page: "Gas delivered"
+  column, read in the background. Workbook sheets: Goals used, Best observed runs, Gas delivered,
+  Pressure-limited effects. Tests: `test_gas_regimes.py` (11: thresholds, settled, a log read from a
+  workbook, a simulated CCD day with a pressure-limited 0.5 mm block in all three modes).
+
+- 2026-10-13 (Mac): **CCD follow-up, phase 2: "no spray" runs.** A run below the Settings tab's new
+  "No spray below (atomised %)" (default 2, 0 = off) is a dribble: `stats.load_measured_run` blanks its
+  droplet size (D32, mean, median, D90, Dv50) and droplet steadiness (count CV, near-empty %, thin %,
+  lag-1) with their CIs and bootstraps, and the droplet parts of its run_metrics (size block, count series,
+  spectra, r pressure-vs-droplets; the cache file is untouched). Atomised %, in-focus count, liquid CV,
+  atomised liquid flow and peak pressure stay. Size tables, size bins and the deck's spread / Dv50 / span /
+  pulsing headlines skip it; per-run tables and `rsm_results.csv` carry a "no spray" note; the report
+  names it at the top; provenance records the threshold and the runs. Settings reach both tabs through
+  a new `stats.AnalysisOptions` (phase 4's size band will ride on it). Real CCD day, read-only: exactly
+  C3 (112022, 0.19%) and C5 (113349, 0.45%) are flagged. Tests: `test_no_spray.py` (5, incl. a full
+  response-surface publish with C3's setting as a dribble) + Settings tab.
+
+- 2026-10-13 (Mac): **CCD follow-up, phase 1.** Taguchi app bugs 3 (run list re-read after a batch) and 6
+  (GUI_Clean survives a failing Cone_4 import; missing atomised liquid flow is now reported loudly, and
+  marked on the Model page) fixed, with tests. Labels: "Atomised fraction **by area**, classical (%)" and
+  "Atomised liquid flow **index, area-based** (mL/min)" (keys unchanged, saved goals still work); the
+  assumptions and three biases (area is not volume, concentration is not flux, one window) are in
+  `docs/definitions.md`. **master_log:** new column "Mean Diameter (um)" at K, between D32 and Atomised (%);
+  GUI_Clean writes it from summary.json's `droplet_d_mean_um` on every save (blank when the AI has not run)
+  and migrates older logs itself (`migrate_master_mean_diameter`, images move one column right). The LaCie
+  master_log was migrated and the 33 CCD rows filled with D32 / mean / atomised % from each run's
+  summary.json + classical_summary.json (they match rsm_results.csv to 0.005); backup beside it:
+  `Experiments/Logs/master_log BACKUP 2026-10-13 before mean column.xlsx`. 292 images byte-identical,
+  each moved one column right; offscreen-tested on an old and a new log. Its two colour scales sit on I
+  (Motor Travel) and J (D32); left as they were. The first CCD analysis had goals atomised (3), mean
+  diameter (2) and count CV (1) set, but used atomised alone: the other two were dropped as unusable
+  surfaces (predicted R² < 0.5) and the Best settings section did not say so (fix in phase 3).
+  Tests: full suite 763, 758 passed first time; the 5 failures were 2 expected (deck title now "...by
+  area"; the no-GLR fake campaign now also warns that atomised liquid flow is missing) and 3 stale
+  real-data expectations written on 10/05, before those runs were measured (now 27 measured; the fake
+  run-tree test compares only what the rig writes). All 5 updated and passing.
 
 - 2026-10-13 (home PC): **CCD day batch finished, 33/33 ok**, all sizer 2.2.0 with droplets_0.30 +
   liquid_0.30. Output / job folder: `D:\Experiments\Taguchi\CCD\CCD 4-factor 12-10-2026\` (the LaCie's

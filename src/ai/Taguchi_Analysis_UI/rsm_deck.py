@@ -15,6 +15,7 @@ from pathlib import Path
 
 from . import deck as dk
 from . import figures_extra, rsm_report, tables
+from . import rsm_responses as rr
 
 DEFINE = dict(dk.DEFINE)
 DEFINE.update({
@@ -124,9 +125,11 @@ def tw_response(R, key: str, what: str):
     f = fr.full
     name = _short(fr.label)
     s = rsm_report.stationary_points(R, key)
-    weak = f.r2_pred is not None and f.r2_pred < 0.5
+    r2p = fr.r2_pred_used                      # the simplified model's: what the maps draw
+    weak = r2p is not None and r2p < rr.USABLE_R2_PRED
+    r2p_s = "–" if r2p is None else f"{r2p:.2f}"
     if what == "contour":
-        title = f"{name}: {_shape_phrase(R, key)}" if not weak else f"{name}: no usable surface (predicted R² {f.r2_pred:.2f})"
+        title = f"{name}: {_shape_phrase(R, key)}" if not weak else f"{name}: no usable surface (predicted R² {r2p_s})"
     elif s is not None:
         where = ", ".join(f"{rsm_report.num(R.decode(k, c))} {rsm_report._flabel(R, k).split('(')[-1].rstrip(')')}"
                           for k, c in s.coded.items())
@@ -136,7 +139,7 @@ def tw_response(R, key: str, what: str):
     else:
         title = f"{name} in 3D"
     lof = f.lof
-    detail = (f"R² {f.r2:.2f}, predicted R² {f.r2_pred:.2f}"
+    detail = (f"R² {f.r2:.2f}, predicted R² {r2p_s} (simplified model)"
               + ("" if lof is None or lof.p is None else f", lack of fit p = {lof.p:.2g}") + ". "
               + (rsm_report.stationary_text(R, key, s) if s is not None else ""))
     holds = ", ".join(f"{_short(_f(R, k))} " + "/".join(f"{x:g}" for x in next(fl.levels for fl in
@@ -150,7 +153,7 @@ def tw_response(R, key: str, what: str):
             short = {"saddle": f" A saddle centred at {where}: the best values are on the edges.",
                      "maximum": f" Highest at {where}.", "minimum": f" Lowest at {where}."}.get(
                 s.kind.split(" (")[0], "") + ("" if s.inside or not s.kind else " (outside the range)")
-        detail = (f"R² {f.r2:.2f}, predicted R² {f.r2_pred:.2f}"
+        detail = (f"R² {f.r2:.2f}, predicted R² {r2p_s} (simplified model)"
                   + ("" if lof is None or lof.p is None else f", lack of fit p = {lof.p:.2g}") + "." + short)
         terms = defs("contour", *(("nuisance",) if R.nuisance else ()))
     else:
@@ -195,9 +198,9 @@ def tw_fit(R):
     rows = []
     for k in rsm_report.HEADLINE:
         fr = R.fits.get(k)
-        if fr is not None and fr.full is not None and fr.full.r2_pred is not None:
+        if fr is not None and fr.full is not None and fr.r2_pred_used is not None:
             lof = fr.full.lof
-            rows.append(f"{_short(fr.label)}: predicted R² {fr.full.r2_pred:.2f}"
+            rows.append(f"{_short(fr.label)}: predicted R² {fr.r2_pred_used:.2f}"
                         + ("" if lof is None or lof.p is None else f", lack of fit p = {lof.p:.2g}"))
     bad = [k for k in rsm_report.HEADLINE if k in R.fits and R.fits[k].full is not None and R.fits[k].full.lof
            is not None and R.fits[k].full.lof.p is not None and R.fits[k].full.lof.p < rsm_report.ALPHA]
@@ -275,8 +278,7 @@ def build(path: Path, models: dict, prov, figures_dir: Path, title: str = "Respo
     from . import rsm_figures as rf
     lay = rf.map_layout(R)
     all_figs = {p.name for p in figs.glob("*.png")}
-    for k in [k for k in list(rsm_report.HEADLINE) + ["lag1", "peak_bar"]
-              if k in R.fits and R.fits[k].full is not None]:                # no fit (e.g. constant): no slides
+    for k in [k for k in rf.mapped_responses(R) if R.fits[k].full is not None]:   # no fit (constant): no slides
         for stem in rsm_report._stems(all_figs, f"fig_rsm_contour_{k}"):
             t, det_, terms, notes, how = tw_response(R, k, "contour")
             lvl = stem[len(f"fig_rsm_contour_{k}"):].lstrip("_")
@@ -355,18 +357,40 @@ def build(path: Path, models: dict, prov, figures_dir: Path, title: str = "Respo
     if data["predictions"]:
         d.figure(("Runs kept out of the fit against their prediction intervals", "", defs("PI"), ""),
                  figs / "fig_rsm_validation.png", dk.GREY)
+    gas = data.get("gas_delivered") or []
+    nd = [g for g in gas if g["regime"] in ("pressure-limited", "gas short")]
+    if gas:
+        d.figure(((f"{len(nd)} of {len(gas)} runs did not get their set gas" if nd else
+                   "Every run got its set gas"),
+                  ("Gas delivered in the camera window against the set point. "
+                   + (f"Pressure-limited at the supply ceiling: {', '.join(g['run'][:6] for g in nd)}; "
+                      + {"exclude": "kept out of the surfaces (own section in the report).",
+                         "delivered": "fitted at the gas they got.",
+                         "set": "fitted at their set gas, which they did not get."}[R.limited_mode]
+                      if nd else "")), "", "Bar: 10th-90th percentile of the gas flow in the window."),
+                 figs / "fig_rsm_gas_delivered.png", dk.ORANGE)
+        d.figure(("Pressure and gas through each run",
+                  "Gas (blue) and upstream pressure (red) from Start; grey = camera window. On a small orifice the "
+                  "pressure jumps to the supply ceiling when the silicone arrives and the gas collapses.", "", ""),
+                 figs / "fig_gas_traces.png", dk.ORANGE)
     d.cards("Caveats before reading too much into this",
             [(c.split(":")[0].split(" (")[0][:40] if ":" in c[:50] else c.split(",")[0][:40], c)
              for c in rsm_report.caveats(models)], dk.YELLOW)
 
     if shared is not None and shared.runs:
         d.section("Appendix: the shared figures", "Everything the Taguchi deck shows that is not Taguchi-specific: every "
-                                                  "run, GLR, droplet size, steadiness, pieces, data quality, images. "
-                                                  "Conditions are the distinct settings (C1, C2, ...).")
+                                                  "run, GLR, gas flux and silicone film, droplet size, steadiness, "
+                                                  "pieces, data quality, images. Conditions are the distinct settings "
+                                                  "(C1, C2, ...).")
         parts = figs / dk.SLIDE_FIG_DIR
         conds = list(dk._conds(shared))
         d.figure(dk.tw_per_run(shared), figs / "fig_per_run.png", dk.ORANGE)
         d.figure(dk.tw_glr(shared), figs / "fig_glr.png", dk.ORANGE)
+        d.figure(dk.tw_orifice_model(shared), figs / "fig_orifice_model.png", dk.ORANGE)
+        d.figure(dk.tw_gas_flux(shared), figs / "fig_gas_flux.png", dk.ORANGE)
+        d.figure(dk.tw_film_thickness(shared), figs / "fig_film_thickness.png", dk.ORANGE)
+        if dk.has_rate(shared):
+            d.cards("How droplets per second are estimated", dk.rate_cards(shared), dk.ORANGE)
         if bins is not None:
             d.figure(dk.tw_spread_count(shared, bins), figs / "fig_size_spread_count.png", dk.TEAL)
             d.figure(dk.tw_spread_volume(shared, bins), figs / "fig_size_spread_volume.png", dk.TEAL)
@@ -399,4 +423,5 @@ def build(path: Path, models: dict, prov, figures_dir: Path, title: str = "Respo
             p = figs / figures_extra.GALLERY_DIR / f"gallery_{c}.png"
             if p.is_file():
                 d.figure(dk.tw_gallery(shared, c), p, dk.GREY)
+        dk.more_grid_slides(d, shared)
     return d.save(path)

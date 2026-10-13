@@ -27,6 +27,7 @@ SHEETS = (                               # (sheet name <= 31 chars, table key, a
     ("Size bins volume by condition", "size_bins_volume_by_condition", False),
     ("GLR context", "glr_context", False),
     ("GLR trends", "glr_trends", False),
+    ("Silicone film at exit", "film_at_exit", False),
     ("Replicate outliers", "replicate_outliers", False),
     ("Condition summary", "condition_summary", False),
     ("Size percentiles", "size_percentiles", False),
@@ -79,7 +80,37 @@ def _style(ws, frame: pd.DataFrame) -> None:
                 cell.data_type = "s"                   # text that looks like a formula stays text
 
 
-def write(path: Path, results, bins, prov, timings: list[dict] | None = None) -> Path:
+FILM_SHEET = "Silicone film at exit"
+DIAGRAM = "fig_orifice_model.png"
+
+
+def annotate_film(ws, n_cols: int, figures_dir: Path | None) -> None:
+    """To the right of the per-run table on the film sheet: the model diagram (when it was drawn) and, below
+    it, the maths and assumptions in plain text (orifice.EXPLANATION)."""
+    from openpyxl.styles import Alignment, Font
+    from openpyxl.utils import get_column_letter
+    from . import orifice
+    col = n_cols + 2
+    letter = get_column_letter(col)
+    row = 1
+    png = Path(figures_dir) / DIAGRAM if figures_dir else None
+    if png is not None and png.is_file():
+        from openpyxl.drawing.image import Image
+        img = Image(str(png))
+        scale = 820 / img.width
+        img.width, img.height = int(img.width * scale), int(img.height * scale)
+        ws.add_image(img, f"{letter}1")
+        row = int(img.height / 20) + 3                  # default rows are 20 px
+    ws.column_dimensions[letter].width = 120            # about the image's width; longer lines run on to the right
+    for i, line in enumerate(orifice.EXPLANATION):
+        cell = ws.cell(row=row + i, column=col, value=line)
+        cell.alignment = Alignment(wrap_text=False, vertical="top")   # wrapped text in default-height rows
+        if i == 0 or line.endswith(":"):                             # shows one line in Excel
+            cell.font = Font(bold=True)
+
+
+def write(path: Path, results, bins, prov, timings: list[dict] | None = None,
+          figures_dir: Path | None = None) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     data = tables.all_tables(results, bins)
@@ -98,6 +129,8 @@ def write(path: Path, results, bins, prov, timings: list[dict] | None = None) ->
             for name, frame in sheets:
                 frame.to_excel(xw, sheet_name=name[:31], index=False)
                 _style(xw.sheets[name[:31]], frame)
+                if name == FILM_SHEET:
+                    annotate_film(xw.sheets[name], len(frame.columns), figures_dir)
         try:
             fsops.replace(tmp, path)            # retried for a few seconds, then: Excel has it open
         except PermissionError:

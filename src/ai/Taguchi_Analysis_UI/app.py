@@ -70,6 +70,10 @@ class BatchTab(QWidget):
         self.controller.changed.connect(self.refresh_buttons)
         # repaint the status line the moment the batch changes state, not up to 1 s later
         self.controller.changed.connect(self.console.repaint_status)
+        # when a batch stops running (finished, stopped, failed), re-read the run list so the
+        # runs it measured read as measured (bug 3: Analyse refused them as "not measured yet")
+        self._batch_was_live = False
+        self.controller.changed.connect(self._reread_runs_after_batch)
         self.runs_pane.output_changed.connect(
             lambda: self.controller.attach(self.runs_pane.output_folder()))
         self.runs_pane.selection_changed.connect(self.refresh_buttons)
@@ -83,6 +87,12 @@ class BatchTab(QWidget):
         remembered = self.runs_pane.remembered_output_folder()
         if remembered:
             self.runs_pane.set_output_folder(remembered, remember=False)
+
+    def _reread_runs_after_batch(self) -> None:
+        live = self.controller.mode in LIVE
+        if self._batch_was_live and not live and self.controller.mode != "starting":
+            self.runs_pane.refresh_runs("batch ended")
+        self._batch_was_live = live
 
     # ---- readiness + buttons ------------------------------------------------------
     def set_preflight(self, report) -> None:
@@ -252,6 +262,9 @@ class MainWindow(QMainWindow):
         self.settings_tab = SettingsTab(self.batch_tab.runs_pane)
         self.settings_tab.log = self.batch_tab.console.log
         self.taguchi_tab.bins_provider = lambda: (self.settings_tab.bin_width, self.settings_tab.bin_max)
+        self.taguchi_tab.analysis_provider = self.settings_tab.analysis_options
+        self.rsm_tab.analysis_provider = self.settings_tab.analysis_options
+        self.rsm_tab.bins_provider = lambda: (self.settings_tab.bin_width, self.settings_tab.bin_max)
         tabs.addTab(self.settings_tab, "  Settings  ")
         self.setCentralWidget(tabs)
 

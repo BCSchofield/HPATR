@@ -615,8 +615,10 @@ def test_a_campaign_with_no_glr_at_all_says_so_instead_of_counting_zero_runs(wor
     monkeypatch.setattr(covariates, "run_context",
                         lambda info: covariates.RunContext(note="no GLR in run_summary.xlsx and no densities"))
     res = stats.analyse(world["design"], do_bootstrap=False)
-    assert res.warnings == ["no run has a GLR (no GLR in run_summary.xlsx and no densities), "
-                            "so there is no GLR analysis."]
+    # no densities: no GLR and no mL/min, so atomised liquid flow is missing too, and says so (bug 6)
+    assert res.warnings[-1] == ("no run has a GLR (no GLR in run_summary.xlsx and no densities), "
+                                "so there is no GLR analysis.")
+    assert len(res.warnings) == 2 and res.warnings[0].startswith("ATOMISED LIQUID FLOW IS MISSING for 27 of 27")
     assert not any("other 0" in w for w in res.warnings)
 
 
@@ -653,7 +655,7 @@ def test_the_real_l9_published_end_to_end_matches_the_published_analysis():
         ws = openpyxl.load_workbook(out / "taguchi_analysis.xlsx")["ANOVA"]
         h = [c.value for c in ws[1]]
         rows = [dict(zip(h, [c.value for c in row])) for row in ws.iter_rows(min_row=2)]
-        for key, label in (("d32", "D32 in-focus (um)"), ("atom", "Atomised fraction, classical (%)")):
+        for key, label in (("d32", "D32 in-focus (um)"), ("atom", "Atomised fraction by area, classical (%)")):
             for f, flabel in (("sccm", "Gas flow (sccm)"), ("rpm", "Bubbler RPM"), ("sps", "Silicone (steps/s)")):
                 row = next(r for r in rows if r["response"] == label and r["source"] == flabel)
                 assert row["p"] == pytest.approx(pub["results"][key]["anova"][f]["p"], abs=1e-7)

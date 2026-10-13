@@ -1,0 +1,30 @@
+{
+ "low_7000": {
+  "n_frames": 60,
+  "faint_elongated_per_frame": 2.85,
+  "frac_within_20deg_of_flow_axis": 0.5321637426900585,
+  "frac_within_20deg_of_perpendicular": 0.06432748538011696,
+  "median_length_px": 8.548198151721133
+ },
+ "centre_9000": {
+  "n_frames": 60,
+  "faint_elongated_per_frame": 2.783333333333333,
+  "frac_within_20deg_of_flow_axis": 0.7125748502994012,
+  "frac_within_20deg_of_perpendicular": 0.017964071856287425,
+  "median_length_px": 8.037487174336619
+ },
+ "high_11000": {
+  "n_frames": 60,
+  "faint_elongated_per_frame": 2.35,
+  "frac_within_20deg_of_flow_axis": 0.6170212765957447,
+  "frac_within_20deg_of_perpendicular": 0.028368794326241134,
+  "median_length_px": 8.940500069669282
+ },
+ "dribble_C3": {
+  "n_frames": 70,
+  "faint_elongated_per_frame": 0.0,
+  "frac_within_20deg_of_flow_axis": null,
+  "frac_within_20deg_of_perpendicular": null,
+  "median_length_px": null
+ }
+}

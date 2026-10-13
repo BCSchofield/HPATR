@@ -123,9 +123,12 @@ def size_bins(per_run: list[tuple[str, str, object]], width_um: float = DEFAULT_
 
 def from_results(results, width_um: float = DEFAULT_WIDTH_UM, max_um: float = DEFAULT_MAX_UM
                  ) -> SizeBins:
-    """Size bins for the runs of a stats.Results (uses each run's load_run diameters)."""
+    """Size bins for the runs of a stats.Results (uses each run's load_run diameters). A "no spray"
+    run (stats.no_spray_reason) is left out: its few droplets are stray specks, not a spray."""
     per_run = []
     for r in results.runs:
+        if r.rec.get("no_spray"):
+            continue
         dia = r.rec.get("dia") or {}
         arrays = [np.asarray(v, dtype=float) for v in dia.values()]
         per_run.append((r.name, r.condition, np.concatenate(arrays) if arrays else np.empty(0)))

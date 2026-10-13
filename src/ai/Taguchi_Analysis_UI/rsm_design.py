@@ -461,7 +461,13 @@ def summary(sheet: Sheet) -> list[str]:
     if e is not None:
         out.append(f"full quadratic {'estimable' if e.usable else 'NOT usable'}: {e.n_params} terms, {e.n_fit} design runs, "
                    f"{e.df_pure_error} pure-error df, {e.df_lack_of_fit} lack-of-fit df")
+    out.append(BEFORE_EVERY_RUN)
     return out + sheet.findings
+
+
+# printed on every run sheet (2026-10-13): on the CCD day window drops cut 10 runs' atomised fraction
+BEFORE_EVERY_RUN = ("before EVERY run: wipe or dry the window (a drop on it is measured as un-atomised liquid); "
+                    "GUI_Clean's window check (Camera tab) compares the live view with a clean reference at Start")
 
 
 # ---- compare a built sheet with the captured runs ------------------------------------------------------------

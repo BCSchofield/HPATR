@@ -94,7 +94,7 @@ def parse_levels(name):
 #   key         label                                    direction  quantised?
 RESPONSES = [
     ("d32",       "D32 in-focus (um)",                   "smaller", False),
-    ("atom",      "Atomised fraction, classical (%)",    "larger",  False),
+    ("atom",      "Atomised fraction by area, classical (%)", "larger", False),
     ("d_mean",    "Mean diameter, in-focus (um)",        "smaller", False),
     ("d_median",  "Median diameter, in-focus (um)",      "smaller", True),
     ("d90",       "D90 by count, in-focus (um)",         "smaller", True),
@@ -381,7 +381,7 @@ def plot(runs, res, out):
         return
     fig, axes = plt.subplots(2, 3, figsize=(13, 7.5), sharey="row")
     for row, (key, title) in enumerate((("d32", "D32 in-focus (um)  [smaller is better]"),
-                                        ("atom", "Atomised fraction, classical (%)  [larger is better]"))):
+                                        ("atom", "Atomised fraction by area, classical (%)  [larger is better]"))):
         nt = res[key]["noise_test"]
         an = res[key]["anova"]
         for col, f in enumerate(FACTORS):

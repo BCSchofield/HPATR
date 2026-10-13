@@ -14,7 +14,9 @@ from pathlib import Path
 import numpy as np
 
 from . import rsm_detect as rdet
+from . import rsm_responses as rr
 from . import rsm_stats as rs
+from .operating import NEAR_CEILING_BAR as NEAR_CEILING
 from .report import fmt, fmt_p, md_table
 
 ALPHA = 0.05
@@ -24,7 +26,8 @@ NEXT_RUN_STEP = {"sccm": 100, "sps": 100, "rpm": 50, "orifice": None, "bh": 0.1}
 CSV_NAMES = {"atom": "af", "d32": "d32", "d_mean": "mean_d", "d_median": "median_d", "d90": "d90_count",
              "per_frame": "infocus_per_frame", "cv_droplets": "count_cv", "cv_liquid": "liquid_cv",
              "intermit_pct": "near_empty_pct", "dv50": "dv50", "af_flow": "af_flow", "thin_pct": "thin_pct",
-             "lag1": "lag1", "peak_bar": "peak_bar"}
+             "lag1": "lag1", "peak_bar": "peak_bar", "atom_vol": "af_vol", "af_flow_vol": "af_flow_vol",
+             "band_per_frame": "band_per_frame", "rate": "rate_per_s", "rate_band": "rate_band_per_s"}
 FACTOR_CSV = {"sccm": "gas_sccm", "sps": "feed_sps", "rpm": "rpm", "orifice": "orifice_mm", "bh": "bh_mm"}
 
 
@@ -136,8 +139,14 @@ def tables(models: dict) -> dict[str, list[dict]]:
     for r in sorted(R.loaded.runs, key=lambda r: (r.point.order, r.point.name)):
         row = {"run": r.point.name, "order": r.point.order, "hours": None if r.hours is None else round(r.hours, 4),
                "point type": rdet.KIND_TEXT.get(r.point.kind, r.point.kind),
-               "in fit": "yes" if r.point.in_fit else ("validation" if r.point.validation else "no"),
+               "in fit": "yes" if r.point.in_fit else ("validation" if r.point.validation else
+                                                       f"no ({r.op.regime})" if r.point.excluded else "no"),
                "block": r.point.block or ""}
+        op = r.op
+        row["gas delivered (sccm)"] = None if op is None or op.delivered_sccm is None else round(op.delivered_sccm)
+        row["P0 in camera window (barA)"] = None if op is None or op.p0_bar is None else round(op.p0_bar, 3)
+        row["regime"] = op.regime if op is not None else ""
+        row["settled"] = "" if op is None or op.settled is None else ("yes" if op.settled else "NO")
         for k in keys:
             row[_flabel(R, k)] = r.point.values.get(k)
         for k in keys:
@@ -226,6 +235,12 @@ def tables(models: dict) -> dict[str, list[dict]]:
                      "target": g.target, "importance": g.importance} for g in R.goals]
     out["constraints"] = [{"response": R.fits[c.key].label if c.key in R.fits else c.key, "at least": c.low,
                            "at most": c.high} for c in R.constraints]
+    out["goal_status"] = [{"response": s.label, "aim": {"max": "maximise", "min": "minimise"}.get(s.aim, "target"),
+                           "importance": s.importance, "used for the best setting": "yes" if s.used else "NO",
+                           "why": s.why} for s in R.goal_status]
+    out["gas_delivered"] = gas_rows(R)
+    out["limited_effects"] = limited_effect_rows(R)
+    out["best_observed"] = best_observed_rows(R)
 
     preds = []
     for key, fr in R.fits.items():
@@ -258,6 +273,106 @@ def tables(models: dict) -> dict[str, list[dict]]:
     return out
 
 
+def gas_section(R, T, figs: set) -> list[str]:
+    """'## Gas delivered': what each run got, its regime, and the runs that did not get their set gas."""
+    rows = T["gas_delivered"]
+    if not rows or not any(r["delivered (sccm)"] is not None for r in rows):
+        return []
+    L = ["## Gas delivered and the operating regime\n",
+         "The gas flow and upstream pressure inside each run's camera window (`run_summary.xlsx`, Pressure sheet). "
+         "**Flow-controlled**: the gas got at least 95% of its set point. **Pressure-limited**: it did not, with the "
+         f"pressure within {NEAR_CEILING:g} bar of the supply ceiling ({R.loaded.opts.supply_ceiling_bar:g} barA): "
+         "the silicone chokes the orifice and the gas falls to what it can pass at that pressure, so the set point no "
+         "longer describes the run. **Settled**: the window's median flow within 10% (or 100 sccm) of the 10 s before "
+         "it, and its two halves within the same.\n"]
+    L.append(_img(figs, "fig_rsm_gas_delivered", "Gas delivered against set"))
+    L.append(_img(figs, "fig_gas_traces", "Pressure and gas through each run"))
+    counts: dict = {}
+    for r in rows:
+        counts[r["regime"]] = counts.get(r["regime"], 0) + 1
+    L.append("Regimes: " + ", ".join(f"{n} {k}" for k, n in counts.items()) + ". Runs not settled when the camera "
+             f"ran: {', '.join(r['run'][:6] for r in rows if r['settled'] == 'NO') or 'none'}.\n")
+    nd = R.limited
+    if nd:
+        how = {"exclude": "They are **kept out of every surface** (the gas factor does not describe them) and "
+                          "described here instead.",
+               "delivered": "They are **fitted at the gas they got**, not their set point. Low gas then exists only "
+                            "where the rig was pressure-limited, so its effect cannot be separated from that "
+                            "orifice's.",
+               "set": "They are **fitted at their SET gas**, which they did not get: their gas factor is wrong."
+               }[R.limited_mode]
+        L.append(f"### Runs that did not get their set gas ({len(nd)})\n")
+        L.append(how + "\n")
+        fac = [f.key for f in R.loaded.detected.factors]
+        resp = [k for k in ("atom", "per_frame", "af_flow", "d_mean") if k in R.fits]
+        L.append(md_table(["Run"] + [_short(_flabel(R, k)) for k in fac] + ["Gas delivered", "P0 (barA)", "Settled"]
+                          + [_short(R.fits[k].label) for k in resp],
+                          [[r.point.name[:6]] + [fmt(r.point.row.value(k), 5) for k in fac]
+                           + [fmt(r.op.delivered_sccm, 5), fmt(r.op.p0_bar, 3),
+                              "–" if r.op.settled is None else ("yes" if r.op.settled else "NO")]
+                           + [fmt(r.values.get(k), 4) for k in resp]
+                           for r in sorted(nd, key=lambda r: (r.point.order, r.point.name))]))
+        eff = T["limited_effects"]
+        if eff:
+            L.append("\n**What controlled them** (a main-effects fit among these runs only: the change from each "
+                     "factor's middle to its high level; p from the fit). If the set gas has no effect here, the rig, "
+                     "not the set point, decided their gas.\n")
+            L.append(md_table(["Response", "Factor", "Effect per half-range", "p", "Runs", "R²"],
+                              [[e["response"], e["factor"], fmt(e["effect per half-range"], 4), fmt_p(e["p"]),
+                                e["runs"], fmt(e["R²"], 3)] for e in eff]))
+        L.append("")
+    return L
+
+
+def gas_rows(R) -> list[dict]:
+    """Per run: the gas it was set to and the gas and pressure it got in the camera window (operating.py)."""
+    rows = []
+    for r in sorted(R.loaded.runs, key=lambda r: (r.point.order, r.point.name)):
+        op = r.op
+        if op is None:
+            continue
+        rows.append({"run": r.point.name, "set gas (sccm)": op.set_sccm,
+                     "delivered (sccm)": None if op.delivered_sccm is None else round(op.delivered_sccm),
+                     "delivered p10 (sccm)": None if op.delivered_p10 is None else round(op.delivered_p10),
+                     "delivered p90 (sccm)": None if op.delivered_p90 is None else round(op.delivered_p90),
+                     "delivered / set": None if op.delivered_share is None else round(op.delivered_share, 3),
+                     "P0 (barA)": None if op.p0_bar is None else round(op.p0_bar, 3),
+                     "10 s before the window (sccm)": None if op.pre_sccm is None else round(op.pre_sccm),
+                     "regime": op.regime, "settled": "" if op.settled is None else ("yes" if op.settled else "NO"),
+                     "in fit": "yes" if r.point.in_fit else "no", "note": op.note})
+    return rows
+
+
+def limited_effect_rows(R) -> list[dict]:
+    """Main effects among the runs that did not get their set gas (coefficient per half-range, p)."""
+    labels = {"delivered": "Gas delivered (sccm)", **{k: fr.label for k, fr in R.fits.items()}}
+    rows = []
+    for key, f in R.limited_effects.items():
+        for t, b, p in zip(f.terms, f.beta, f.p):
+            if t == "1":
+                continue
+            rows.append({"response": labels.get(key, key), "factor": _flabel(R, t), "effect per half-range": _r(b),
+                         "p": _r(p), "runs": f.n, "R²": _r(f.r2)})
+    return rows
+
+
+def best_observed_rows(R) -> list[dict]:
+    keys = [f.key for f in R.loaded.detected.factors]
+    rows = []
+    for i, (D, r, each) in enumerate(R.best_observed, 1):
+        row = {"rank": i, "run": r.point.name, "D (observed)": _r(D)}
+        for k in keys:
+            row[_flabel(R, k)] = r.point.row.value(k)
+        row["regime"] = r.op.regime if r.op is not None else ""
+        row["gas delivered (sccm)"] = None if r.op is None or r.op.delivered_sccm is None else round(r.op.delivered_sccm)
+        for key in each:
+            v = r.values.get(key)
+            row[R.fits[key].label if key in R.fits else key] = None if v is None or not math.isfinite(v) else _r(v)
+        row["in fit"] = "yes" if r.point.in_fit else "no"
+        rows.append(row)
+    return rows
+
+
 def results_csv(R) -> list[dict]:
     """One row per run in the CCD plan's column layout (gas_sccm, feed_sps, rpm, orifice_mm, af, d32, ...)."""
     rows = []
@@ -270,6 +385,8 @@ def results_csv(R) -> list[dict]:
             v = r.values.get(k)
             d[name] = None if v is None or not math.isfinite(v) else v
         d["hours"] = r.hours
+        why = (r.metrics or {}).get("no_spray")
+        d["note"] = f"no spray: size and steadiness not reported ({why})" if why else ""
         rows.append(d)
     return rows
 
@@ -317,15 +434,17 @@ def _verdict(R, key: str) -> list[str]:
     curv = [term_text(R, t) for t in f.terms if t.endswith("^2") and rs.term_parents(t)[0] in R.axis
             and f.p_of[t] < ALPHA]
     lof = f.lof
-    fitq = (f"the model explains {100 * f.r2:.0f}% of the run-to-run spread (predicted R² {f.r2_pred:.2f})"
-            if f.r2 is not None and f.r2_pred is not None else "")
+    # predictive quality is the simplified model's: it is what the maps draw and the best setting uses
+    r2p = fr.r2_pred_used
+    fitq = (f"the model explains {100 * f.r2:.0f}% of the run-to-run spread (predicted R² {r2p:.2f}, simplified "
+            f"model)" if f.r2 is not None and r2p is not None else "")
     lofq = ("" if lof is None or lof.p is None else
             (f"; lack of fit is significant (p = {lof.p:.3f}): the surface misses something" if lof.p < ALPHA
              else f"; no evidence of lack of fit (p = {lof.p:.2f})"))
     weak = ""
-    if f.r2_pred is not None and f.r2_pred < 0.5:
-        weak = (" **This surface predicts new runs poorly** (predicted R² below 0.5"
-                + ("; below 0, worse than just using the average" if f.r2_pred < 0 else "")
+    if r2p is not None and r2p < rr.USABLE_R2_PRED:
+        weak = (f" **This surface predicts new runs poorly** (predicted R² below {rr.USABLE_R2_PRED}"
+                + ("; below 0, worse than just using the average" if r2p < 0 else "")
                 + "): treat its map as noise, not a guide.")
     out.append(f"**{fr.label}** " + ("; ".join(lin) if lin else "shows no clear slope along the axis factors")
                + (f", and curves ({', '.join(curv)} significant)" if curv else "") + f". {fitq[:1].upper()}{fitq[1:]}{lofq}."
@@ -389,7 +508,9 @@ def tradeoffs(R, o) -> dict:
     return out
 
 
-def build(models: dict, prov, figure_files=(), title: str = "Response-surface analysis") -> str:
+def build(models: dict, prov, figure_files=(), title: str = "Response-surface analysis", shared=None) -> str:
+    """`shared`: the same runs through the Taguchi analysis (rsm_publish's shared extras), for the covariate
+    sections (gas mass flux at the orifice, silicone film at the exit); None leaves them out."""
     from pathlib import Path
     figs = {Path(p).name for p in figure_files}
     names = list(models)
@@ -403,6 +524,10 @@ def build(models: dict, prov, figure_files=(), title: str = "Response-surface an
              f"{' × '.join(_short(_flabel(R, k)) for k in R.axis)} · generated {prov.generated} · revision {prov.revision}\n")
     if R.loaded.refused:
         return "\n".join(L + ["## Not analysed\n", R.loaded.refused]) + "\n"
+    # problems reading the runs go first, where they cannot be missed (e.g. no atomised
+    # liquid flow, which silently removed the throughput goal on 2026-10-13)
+    for w in R.loaded.warnings:
+        L.append(f"> ⚠ {w}\n")
 
     # what was found
     L.append("## What was found\n")
@@ -423,11 +548,35 @@ def build(models: dict, prov, figure_files=(), title: str = "Response-surface an
         L.append(f"- **Best overall setting** (desirability D = {o.D:.2f}): {where}" + (f" at {held}" if held else "")
                  + (f". It sits on the edge of the tested range for {', '.join(_short(_flabel(R, k)) for k in o.on_edge)}:"
                     f" the best point may lie beyond it, so confirm before going further." if o.on_edge else "."))
+        if R.free:
+            one = len(R.free) == 1
+            L.append(f"  - {', '.join(_short(_flabel(R, k)) for k in R.free)} {'is' if one else 'are'} in none of "
+                     f"the surfaces it optimises, so the best setting does not depend on {'it' if one else 'them'}: "
+                     f"held at the design centre. Choose {'it' if one else 'them'} for another reason (throughput, "
+                     f"steadiness, cost).")
         for k, (up, down) in tradeoffs(R, o).items():
             if up and down:
                 L.append(f"  - The trade-off on {_short(_flabel(R, k)).lower()}: {', '.join(up)} would rather it went "
                          f"up; {', '.join(down)} would rather it went down. The combined score settles at "
                          f"{num(R.decode(k, o.coded[k]))}.")
+    left_out = [s for s in R.goal_status if not s.used]
+    used = [_short(s.label) for s in R.goal_status if s.used]
+    if left_out:
+        L.append(("  - It optimises " + ", ".join(used) + " only: " if used else
+                  "- **No best setting**: every goal was left out: ")
+                 + "; ".join(f"{_short(s.label)} was set as a goal but left out ({s.why})" for s in left_out) + ".")
+    if R.best_observed:
+        D, r, _each = R.best_observed[0]
+        setting = ", ".join(f"{_short(_flabel(R, f.key))} {num(r.point.row.value(f.key))}"
+                            for f in det.factors if r.point.row.value(f.key) is not None)
+        L.append(f"- **Best run as measured** (the same goals on observed values): {r.point.name[:6]} ({setting}"
+                 + (f"; {r.op.regime}, {r.op.delivered_sccm:,.0f} sccm delivered" if r.op is not None
+                    and r.op.delivered_sccm is not None else "") + f"), D = {D:.2f}.")
+    if R.limited:
+        how = {"exclude": "kept out of the surfaces", "delivered": "fitted at the gas they got",
+               "set": "fitted at their set gas, which they did not get"}[R.limited_mode]
+        L.append(f"- **{len(R.limited)} run(s) did not get their set gas** ("
+                 + ", ".join(sorted({r.op.regime for r in R.limited})) + f"), {how}: see *Gas delivered*.")
     L.append("")
 
     # the design and the models
@@ -461,6 +610,12 @@ def build(models: dict, prov, figure_files=(), title: str = "Response-surface an
         L.append(md_table(["Model", "Nuisance", "Surface term", "r"],
                           [[c["model"], c["nuisance"], c["axis term"], f"{c['r']:+.2f}"] for c in T["correlations"]]))
     L.append("")
+
+    L += gas_section(R, T, figs)
+    if shared is not None and shared.runs:
+        from .report import film_section, gas_flux_section
+        L.append(gas_flux_section(shared, figs))
+        L.append(film_section(shared, figs))
 
     # per response
     L.append("## Results by response\n")
@@ -504,9 +659,24 @@ def build(models: dict, prov, figure_files=(), title: str = "Response-surface an
         L.append(_img(figs, stem, "Desirability"))
     L.append(_img(figs, "fig_rsm_profiler", "Prediction profiler"))
     L.append("Desirability scores each goal from 0 (unacceptable) to 1 (ideal) and takes the geometric mean, so no goal "
-             "can be traded away completely. The goals and their ramps:\n")
-    L.append(md_table(["Response", "Aim", "0 at", "1 at"],
-                      [[g["response"], g["aim"], fmt(g["0 at"]), fmt(g["1 at"])] for g in T["goals"]]))
+             "can be traded away completely. **Every goal that was set, and whether it steered the best setting** "
+             "(a goal is left out when its surface cannot predict a new run, or when it has no values):\n")
+    ramps = {g["response"]: g for g in T["goals"]}
+    L.append(md_table(["Response", "Aim", "Importance", "Used", "0 at", "1 at", "Why"],
+                      [[s["response"], s["aim"], fmt(s["importance"], 3), s["used for the best setting"],
+                        fmt(ramps.get(s["response"], {}).get("0 at")), fmt(ramps.get(s["response"], {}).get("1 at")),
+                        "–" if s["why"] == "used" else s["why"]] for s in T["goal_status"]]))
+    if getattr(R, "surface_best", None):
+        L.append("\nA blank *1 at* is the best the fitted surface reaches inside the tested region, so 'maximise' "
+                 "never tops out at the best run seen: " + "; ".join(
+                     f"{_short(R.fits[k].label)} {fmt(v)}" for k, v in R.surface_best.items() if k in R.fits)
+                 + ". A blank *0 at* is the worst run seen.\n")
+    dropped = [s for s in T["goal_status"] if s["used for the best setting"] != "yes"]
+    kept = [s["response"] for s in T["goal_status"] if s["used for the best setting"] == "yes"]
+    if dropped:
+        L.append(f"\n**{len(dropped)} of {len(T['goal_status'])} goals were left out**, "
+                 + (f"so the best setting below optimises {', '.join(kept)} only.\n" if kept else
+                    "so there is no best setting: no goal has a surface that can predict a new run.\n"))
     if T["constraints"]:
         L.append(md_table(["Constraint", "At least", "At most"],
                           [[c["response"], fmt(c["at least"]), fmt(c["at most"])] for c in T["constraints"]]))
@@ -516,6 +686,22 @@ def build(models: dict, prov, figure_files=(), title: str = "Response-surface an
     L.append(md_table(head, [[o["model"], o["held at"], fmt(o["desirability D"], 3)] +
                              [fmt(o[_flabel(R, k)], 5) for k in R.axis] + [o["on the edge of"] or "–"]
                              for o in T["optimum"]]))
+    if R.free:
+        L.append(f"\n{', '.join(_flabel(R, k) for k in R.free)}: in none of the surfaces that steer the best "
+                 "setting, so any level gives the same score; shown at the design centre.\n")
+    if T["best_observed"]:
+        L.append("\n**Best runs as measured** (the same goals scored on each run's OBSERVED values; every run counts, "
+                 "in the fit or not, so a reproducible pressure-limited run shows here even though the surface "
+                 "leaves it out)\n")
+        goal_cols = [k for k in T["best_observed"][0] if k not in
+                     {"rank", "run", "D (observed)", "regime", "gas delivered (sccm)", "in fit"}
+                     and k not in {_flabel(R, f.key) for f in R.loaded.detected.factors}]
+        fac = [_flabel(R, f.key) for f in R.loaded.detected.factors]
+        L.append(md_table(["Rank", "Run", "D"] + [_short(c) for c in fac] + ["Gas delivered", "Regime"]
+                          + [_short(c) for c in goal_cols],
+                          [[b["rank"], b["run"][:6], fmt(b["D (observed)"], 3)] + [fmt(b.get(c), 5) for c in fac]
+                           + [fmt(b["gas delivered (sccm)"], 5), b["regime"] or "–"]
+                           + [fmt(b.get(c), 4) for c in goal_cols] for b in T["best_observed"]]))
     if T["stationary_points"]:
         L.append("\n**Where each fitted surface peaks** (simplified model, nuisance factors at their centre)\n")
         L.append(md_table(["Response", "Kind", "Inside the range"] + [_flabel(R, k) for k in R.axis] + ["Fitted value"],
@@ -534,12 +720,15 @@ def build(models: dict, prov, figure_files=(), title: str = "Response-surface an
             L.append(rec_["why"] + "\n")
             rows = [r for r in T["next_runs"] if r["Recommendation"] == rec_["recommendation"]]
             if rows:
+                warn = any(r.get("pressure check") for r in rows)
                 head = ["Run", "Why this run"] + [_short(_flabel(R, k)) for k in keys] + \
-                       [f"{_short(R.fits[g].label)} (95% PI)" for g in goals] + ["Extrapolated"]
+                       [f"{_short(R.fits[g].label)} (95% PI)" for g in goals] + ["Extrapolated"] + \
+                       (["Pressure check"] if warn else [])
                 L.append(md_table(head, [[r["Run"], r["Why this run"]] + [fmt(r.get(_flabel(R, k)), 5) for k in keys]
                                          + [f"{fmt(r.get('predicted ' + R.fits[g].label), 4)} "
                                             f"({r.get(R.fits[g].label + ' 95% PI', '–')})" for g in goals]
-                                         + [r["extrapolated"] or "–"] for r in rows]))
+                                         + [r["extrapolated"] or "–"]
+                                         + ([r.get("pressure check") or "–"] if warn else []) for r in rows]))
             elif rec_["kind"] == "new_ccd":
                 L.append("The full run sheet is in `next CCD/run_sheet.xlsx`.\n")
 

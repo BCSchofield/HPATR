@@ -63,6 +63,7 @@ class TaguchiTab(QWidget):
         self.options_provider = lambda: {}            # MainWindow: the outputs pane's ticks
         self.batch_busy = lambda: False               # MainWindow: is a batch running?
         self.bins_provider = lambda: (size_bins.DEFAULT_WIDTH_UM, size_bins.DEFAULT_MAX_UM)  # Settings tab
+        self.analysis_provider = lambda: None          # Settings tab: stats.AnalysisOptions (None = defaults)
         self.analysis = AnalysisController(self)
         self.analysis.changed.connect(self.refresh_analyse)
         self.analysis.finished.connect(self._analysis_finished)
@@ -454,7 +455,7 @@ class TaguchiTab(QWidget):
         self.analysis.log = self.log
         width, maximum = self.bins_provider()
         self.analysis.start(self.design, self.output_dir, thr=thr, options=self.options_provider(),
-                            bin_width=width, bin_max=maximum)
+                            bin_width=width, bin_max=maximum, analysis_opts=self.analysis_provider())
 
     def _analysis_finished(self, d) -> None:
         if d.refused:

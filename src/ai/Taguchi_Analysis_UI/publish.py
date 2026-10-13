@@ -91,7 +91,8 @@ def publish(design: dz.Design, output_dir: Path, *, thr: float | None = None,
             options: dict | None = None, bin_width: float = size_bins.DEFAULT_WIDTH_UM,
             bin_max: float = size_bins.DEFAULT_MAX_UM,
             progress: Callable[[int, int, str], None] | None = None,
-            log: Log | None = None, do_bootstrap: bool = True) -> Deliverables:
+            log: Log | None = None, do_bootstrap: bool = True,
+            analysis_opts: stats.AnalysisOptions | None = None) -> Deliverables:
     log = log or (lambda text, level="info": None)
     options = options or {}
     output_dir = Path(output_dir)
@@ -103,7 +104,7 @@ def publish(design: dz.Design, output_dir: Path, *, thr: float | None = None,
 
     log("analysis: reading the measured runs ...", "info")
     results = stats.analyse(design, thr, progress, do_bootstrap,
-                            metrics_cache=output_dir / METRICS_CACHE)
+                            metrics_cache=output_dir / METRICS_CACHE, opts=analysis_opts)
     d.results = results
     for w in results.warnings:
         log(f"analysis: {w}", "warn")
@@ -160,7 +161,8 @@ def publish(design: dz.Design, output_dir: Path, *, thr: float | None = None,
         d.report = step("report", put_report)
 
     d.workbook = step("workbook", lambda: workbook.write(
-        output_dir / WORKBOOK_NAME, results, d.bins, d.prov, workbook.read_timings(output_dir)))
+        output_dir / WORKBOOK_NAME, results, d.bins, d.prov, workbook.read_timings(output_dir),
+        figures_dir=output_dir / FIGURES_DIR))
 
     if not no_deck:
         log("analysis: building the PowerPoint deck ...", "info")

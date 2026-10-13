@@ -281,6 +281,43 @@ def test_size_bin_settings_validate_and_announce_the_change(app):
     assert tab.width.error.text() == "" and (tab.bin_width, tab.bin_max) == (50.0, 300.0)
 
 
+def test_the_no_spray_threshold_validates_resets_and_reaches_analyse(app):
+    tab = make(app)
+    assert tab.analysis_options().no_spray_atom_pct == 2.0 and tab.no_spray.tag.text() == "default"
+    assert "dribble" in tab.no_spray.note.text()
+    type_in(tab.no_spray, "5")
+    assert tab.analysis_options().no_spray_atom_pct == 5.0 and tab.no_spray.tag.text() == "edited"
+    type_in(tab.no_spray, "abc")
+    assert "a percentage" in tab.no_spray.error.text() and tab.analysis_options().no_spray_atom_pct == 5.0
+    type_in(tab.no_spray, "100")
+    assert "below 100" in tab.no_spray.error.text()
+    type_in(tab.no_spray, "0")
+    assert tab.analysis_options().no_spray_atom_pct == 0 and "off" in tab.no_spray.note.text()
+    tab.no_spray.reset_btn.click()
+    assert tab.analysis_options().no_spray_atom_pct == 2.0 and tab.no_spray.editor.text() == "2"
+    assert tab.no_spray.error.text() == "" and tab.no_spray.tag.text() == "default"
+
+
+def test_the_count_band_and_ceiling_validate_reset_and_reach_analyse(app):
+    tab = make(app)
+    o = tab.analysis_options()
+    assert o.band_um == (30.0, 50.0) and o.supply_ceiling_bar == 9.5 and tab.band_row.editor.text() == "30-50"
+    type_in(tab.band_row, "20 to 60")
+    assert tab.analysis_options().band_um == (20.0, 60.0) and tab.band_row.tag.text() == "edited"
+    type_in(tab.band_row, "60-20")
+    assert "lower size first" in tab.band_row.error.text() and tab.analysis_options().band_um == (20.0, 60.0)
+    type_in(tab.band_row, "abc")
+    assert "two sizes" in tab.band_row.error.text()
+    tab.band_row.reset_btn.click()
+    assert tab.analysis_options().band_um == (30.0, 50.0) and tab.band_row.error.text() == ""
+    type_in(tab.ceiling, "8")
+    assert tab.analysis_options().supply_ceiling_bar == 8.0
+    type_in(tab.ceiling, "0.5")
+    assert "above 1 barA" in tab.ceiling.error.text()
+    tab.ceiling.reset_btn.click()
+    assert tab.analysis_options().supply_ceiling_bar == 9.5
+
+
 # ---- reset ----------------------------------------------------------------------------------------------------------
 
 def test_each_reset_button_puts_the_default_back_and_clears_its_error(app):
@@ -414,9 +451,12 @@ def test_the_main_window_has_the_tab_and_analyse_gets_its_bin_settings(app, tmp)
             got.update(kw)
             return publish.Deliverables(out)
         tt.analysis.publish_fn = fake
+        type_in(st.no_spray, "3")
         tt.analyse_btn.click()
         pump(app, lambda: not tt.analysis.busy and tt.analysis.last is not None)
         assert (got["bin_width"], got["bin_max"]) == (50.0, 200.0)
+        assert got["analysis_opts"].no_spray_atom_pct == 3.0
+        assert w.rsm_tab.analysis_provider().no_spray_atom_pct == 3.0
     finally:
         w.close()
 
