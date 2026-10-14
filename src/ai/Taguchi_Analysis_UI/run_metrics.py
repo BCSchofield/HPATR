@@ -46,8 +46,9 @@ STATIC_GRID_PX = 6
 # same shape as taguchi_analysis.RESPONSES. Kept few on purpose: every extra response is
 # another chance of a false "significant" (the CCD plan's warning). The two volume-based ones
 # (liquid stage 2.3.0, 2026-10-13) are SECONDARY: they rank runs like the area fraction but are
-# ~3x noisier and good to about +/-40% in scale; never a default goal. Runs measured before
-# 2.3.0 have no volume columns, so these are blank for them.
+# ~3x noisier and good to about +/-40% in scale. Runs measured before 2.3.0 have no volume
+# columns, so these are blank for them. The in-band rate (below) rests on the volume fraction and
+# is the default goal from 2026-10-14 (rsm_responses.DEFAULT_GOALS).
 EXTRA_RESPONSES = [
     ("dv50", "Dv50, volume median, in-focus (um)", "smaller", False),
     ("af_flow", "Atomised liquid flow index, area-based (mL/min)", "larger", False),
@@ -66,12 +67,15 @@ EXTRA_RESPONSES = [
     # pi/6 <d^3>. Unlike the per-frame counts it does not fall when the spray speeds up: on the CCD day the
     # in-focus count was flat along the 1.2 mm gas axis while this doubled. Rests on the volume estimate
     # (+/-40% absolute, ranking good) and on the in-focus sizes standing for every droplet; <d^3> leans on
-    # the largest, worst-sampled droplets. Liquid stage 2.3.0 only. Never a default goal.
+    # the largest, worst-sampled droplets. Liquid stage 2.3.0 only. `rate_band` is the default goal
+    # (importance 3, with atomised fraction 1; Ben, 2026-10-14: the spray is collected and size-filtered,
+    # so throughput in the band is the objective).
     ("rate", "Droplets produced per second, mass balance (estimated)", "larger", False),
     ("rate_band", "Droplets produced per second in the size band, mass balance (estimated)", "larger", False),
 ]
-DEFAULT_BAND_UM = (30.0, 50.0)     # brackets the CCD day's mean (38-42 um); both edges fall between
-                                   # pixel-lattice diameters (7/8 and 19/20 px of area at 10 um/px)
+DEFAULT_BAND_UM = (20.0, 60.0)     # the size Ben collects (2026-10-14; was 30-50). Both edges fall between
+                                   # pixel-lattice diameters (3/4 and 28/29 px of area at 10 um/px), so the
+                                   # band starts at 4 px (22.6 um): the 1-3 px droplets (11-20 um) are left out
 
 
 def band_counts(rec: dict | None, band=DEFAULT_BAND_UM):

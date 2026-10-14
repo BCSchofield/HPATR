@@ -44,8 +44,11 @@ from . import rsm_detect as rdet
 from . import rsm_stats as rs
 from . import stats
 
-# the size goal is MEAN diameter, not D32 (Ben, 2026-10-11); one size goal only, as two would double its weight
-DEFAULT_GOALS = (("atom", "max"), ("af_flow", "max"), ("cv_droplets", "min"), ("d_mean", "min"))
+# (key, direction, importance). The objective is THROUGHPUT (Ben, 2026-10-14): the spray is collected and
+# size-filtered, so the goal is as many droplets in the size band per second as possible (mass balance,
+# `rate_band`, Settings band default 20-60 um), with atomised fraction as a lighter second goal. A run
+# without the rate (measured before liquid stage 2.3.0, or no syringe flow) leaves atomised fraction alone.
+DEFAULT_GOALS = (("rate_band", "max", 3.0), ("atom", "max", 1.0))
 USABLE_R2_PRED = 0.5                  # below this a surface is not used to choose the best setting
 LIMITED_MODES = ("exclude", "delivered", "set")   # what to do with runs that did not get their set gas
 LIMITED_RESPONSES = ("delivered", "atom", "per_frame", "af_flow", "d_mean")   # the pressure-limited section
@@ -331,11 +334,11 @@ def _best_observed(runs: list[RunData], goals: list[rs.Goal]) -> list[tuple]:
 def default_goals(L: Loaded) -> list[rs.Goal]:
     out = []
     fit_runs = [r for r in L.runs if r.point.in_fit]
-    for key, direction in DEFAULT_GOALS:
+    for key, direction, importance in DEFAULT_GOALS:
         v = [r.values.get(key) for r in fit_runs]
         v = [x for x in v if x is not None and math.isfinite(x)]
         if len(v) >= 3 and max(v) > min(v):
-            out.append(rs.Goal(key, direction, float(min(v)), float(max(v))))
+            out.append(rs.Goal(key, direction, float(min(v)), float(max(v)), importance=importance))
     return out
 
 
@@ -496,7 +499,8 @@ def analyse(L: Loaded, axis: list[str] | None = None, nuisance: dict | None = No
                                 _block_pairs(det, L.runs, key, full), _predict(L, red, key, model_keys, nuisance,
                                                                                time_term, x))
     rs.bh_across({k: f.full for k, f in fits.items() if f.full is not None})
-    requested = list(goals) if goals is not None else [{"key": k, "direction": d} for k, d in DEFAULT_GOALS]
+    requested = list(goals) if goals is not None else [{"key": k, "direction": d, "importance": w}
+                                                       for k, d, w in DEFAULT_GOALS]
     goals = resolve_goals(L, requested)
     goals_all = list(goals)
     # a goal whose surface cannot predict a new run must not steer the best setting

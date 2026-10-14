@@ -77,11 +77,16 @@ def test_the_settable_optimum_uses_an_insert_that_exists(day):
 
 
 def test_weak_surfaces_are_kept_out_of_the_best_settings_search(day):
-    R = day["R"]
+    """Goals named explicitly: the default goals (in-band rate, atomised fraction; 2026-10-14) have no weak
+    surface on the fakes, which carry no liquid volumes and so no rate."""
+    from src.ai.Taguchi_Analysis_UI import rsm_responses as rr
+    R = rr.analyse(day["R"].loaded, discrete={"orifice": INSERTS},
+                   goals=[{"key": k, "direction": d} for k, d in (("atom", "max"), ("cv_droplets", "min"),
+                                                                  ("d32", "min"))])
     weak = [k for k in ("cv_droplets", "d32") if R.fits[k].r2_pred_used < 0.5]
+    assert weak
     assert {g.key for g in R.goals}.isdisjoint(weak)
-    if weak:
-        assert any("left out of the best-settings search" in w for w in R.warnings)
+    assert any("left out of the best-settings search" in w for w in R.warnings)
 
 
 def test_ccd_conditions_are_grouped_by_setting_in_natural_order(day):

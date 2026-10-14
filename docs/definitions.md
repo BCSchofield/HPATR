@@ -364,7 +364,8 @@ two dribbles (G 3 to 5 kg/m²/s) had set the flux exponent for atomised fraction
 
 The number of in-focus droplets per analysed frame with lo ≤ d < hi (half-open, as the size bins),
 counted from the same diameters as D32 and averaged over every analysed frame (a frame with none counts
-as 0). The band is a Settings value, default **30–50 µm**. Mean diameter cannot tell 5 droplets at 40 µm
+as 0). The band is a Settings value, default **20–60 µm** (the size collected after filtering; 30–50 µm before
+2026-10-14). At 10 µm/px the band starts at 4 px of area (22.6 µm); 1–3 px droplets fall below it. Mean diameter cannot tell 5 droplets at 40 µm
 from 100,000; this can. Caveats: it is a **concentration** (droplets in view per frame), not a production
 rate, so it understates fast, high-gas sprays; the 2.2.0 sharpness rule removes more droplets at high gas;
 below 50 µm sizes sit near the pixel lattice. It overlaps with atomised fraction and atomised liquid flow
@@ -392,8 +393,11 @@ stayed flat while this rate doubled (`docs/notes/2026-10-13_droplet_rate_investi
 - the in-focus sizes stand for every droplet;
 - ⟨d³⟩ leans on the largest, worst-sampled droplets, so the rate inherits their noise.
 
-Blank without volumes (an earlier liquid stage) or without the liquid flow. Never a default goal. It
-overlaps with atomised fraction and flow (all rise when more liquid becomes droplets).
+Blank without volumes (an earlier liquid stage) or without the liquid flow. **`rate_band` is the default
+goal** from 2026-10-14 (importance 3, with atomised fraction at 1): the spray is collected and size-filtered,
+so throughput in the band is the objective. It rises with the syringe flow by construction, so feed always
+helps it until atomisation falls. It overlaps with atomised fraction and flow (all rise when more liquid
+becomes droplets).
 
 ## Atomised fraction by volume, estimated (`atom_vol`, liquid stage ≥ 2.3.0)
 

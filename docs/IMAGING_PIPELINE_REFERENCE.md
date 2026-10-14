@@ -569,10 +569,11 @@ atomised fraction over 31 spraying runs. P0 is read upstream, so α is underesti
 is assumed. **No-spray runs are left out of every covariate fit** (plotted as grey ×).
 
 **Added 2026-10-13:** atomised fraction by volume (estimated, liquid stage ≥ 2.3.0, secondary) and its
-flow index; in-focus droplets per frame in the size band (Settings, default 30–50 µm, half-open): how many
+flow index; in-focus droplets per frame in the size band (Settings, default 20–60 µm since 2026-10-14, half-open): how many
 droplets of the wanted size, a concentration, not a rate; droplets produced per second (all sizes and in the
 band), by mass balance: syringe flow × atomised fraction by volume ÷ π/6⟨d³⟩, a rate that does not fall when
-the spray speeds up (liquid stage ≥ 2.3.0; `run_metrics.mass_balance_rate`).
+the spray speeds up (liquid stage ≥ 2.3.0; `run_metrics.mass_balance_rate`). From 2026-10-14 the in-band rate
+is the default response-surface goal (importance 3, atomised fraction 1).
 
 **Extra responses** (`run_metrics.py`, the shared per-run data layer, cached in `<output>/cache/`):
 Dv50 (volume median, grouped-data interpolation across the pixel lattice's diameter cells), atomised

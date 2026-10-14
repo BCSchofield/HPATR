@@ -700,7 +700,7 @@ class RsmTab(QWidget):
             if f.key == "orifice":
                 vals = sorted(set(f.levels) | {v for v, kind in f.special.items() if kind == rdet.CHECK})
                 discrete[f.key] = ", ".join(f"{v:g}" for v in vals)
-        goals = [{"key": k, "aim": d, "worst": None, "best": None, "importance": 1.0} for k, d in rr.DEFAULT_GOALS]
+        goals = [{"key": k, "aim": d, "worst": None, "best": None, "importance": w} for k, d, w in rr.DEFAULT_GOALS]
         return {"roles": roles, "discrete": discrete, "compare": compare, "time": False, "goals": goals,
                 "limited": "exclude", "log": [f.key for f in det.factors if f.key == "orifice"]}
 

@@ -36,7 +36,7 @@ cd /Users/benschofield/Documents/GitHub/HPATR && /Users/benschofield/anaconda3/e
    optimiser could not tell them apart and stopped at the first it tried, e.g. feed 3,000 when maximising a
    production rate that rises with feed). **Importance** weights the goals (all 1 = equal; e.g. atomised fraction 3, mean diameter 2).
    **Droplet count in a size band** ("In-focus droplets per frame in the size band", band in Settings,
-   default 30–50 µm): maximise it to favour settings that make MANY droplets of the size you want, not
+   default 20–60 µm): maximise it to favour settings that make MANY droplets of the size you want, not
    just droplets of that size. It is a per-frame concentration, and it overlaps with atomised fraction and
    flow; give it a lower importance if all three are goals. **Droplets produced per second** (all sizes, or
    in the band; "mass balance (estimated)") is the RATE version: syringe flow × atomised fraction by volume ÷
@@ -47,8 +47,12 @@ cd /Users/benschofield/Documents/GitHub/HPATR && /Users/benschofield/anaconda3/e
    dribble; its droplet size and steadiness are left out of those fits (it stays in atomised fraction,
    droplet count and the liquid responses), so a minimise-size goal cannot be won by a run that barely
    sprays. The report names such runs at the top.
-   The default goals: maximise atomised fraction and atomised liquid flow, minimise droplet-count CV and
-   mean diameter (the size goal; D32 is mapped and reported but not a default goal). Set them
+   The default goals (from 2026-10-14) are **throughput**: maximise droplets produced per second in the size
+   band (importance 3) and atomised fraction (importance 1). The spray is collected and size-filtered, so the
+   aim is as many droplets in the band per second as possible. Runs without the rate (measured before liquid
+   stage 2.3.0, or no syringe flow) are left with atomised fraction alone. To aim for size instead, add mean
+   diameter (minimise) and drop the rate. Before 2026-10-14 the defaults were atomised fraction, atomised
+   liquid flow, count CV and mean diameter. Set them
    before the first Analyse or change them later and press Analyse again; they are saved with the output.
    Goals that measure the same thing stack: D32, mean diameter and D90 all say "smaller droplets", so
    choosing all three triples the weight on size. Pick one per thing you care about. And a fraction goal

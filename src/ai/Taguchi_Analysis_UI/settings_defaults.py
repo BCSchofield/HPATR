@@ -289,9 +289,9 @@ def supply_ceiling() -> Default:
 def count_band() -> Default:
     from .run_metrics import DEFAULT_BAND_UM
     lo, hi = DEFAULT_BAND_UM
-    return Default(DEFAULT_BAND_UM, f"this app's own default, {lo:g}-{hi:g} um: brackets the CCD day's mean diameter "
-                                    "(38-42 um). The response counts in-focus droplets per frame in this band "
-                                    "(lo <= d < hi): how many of the size you want, not just their size")
+    return Default(DEFAULT_BAND_UM, f"this app's own default, {lo:g}-{hi:g} um: the size range collected after the "
+                                    "spray is filtered (Ben, 2026-10-14). The in-band responses count droplets in this "
+                                    "band (lo <= d < hi): per frame, and per second by mass balance (the default goal)")
 
 
 def parse_band(text: str, what: str = "size band") -> tuple:
