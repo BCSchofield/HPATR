@@ -330,9 +330,23 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
 
 **Wednesday 2026-10-14 (code / understanding) and Thursday (rig): `docs/notes/2026-10-14_plan_for_wednesday.md`**
 - **Thursday (agreed 2026-10-14), in this order:**
-  1. the bead calibration: 48 captures, `docs/BEAD_CALIBRATION.md`;
-  2. the 3 gas-only Cd tests (1.2, 0.8, 0.5 mm; line loss ignored, Ben: negligible);
-  3. if there is time, the 16 spray runs, the PCC check and the exposure series.
+  1. each insert's gas-only Cd test (1.2, 0.8, 0.5 mm; line loss ignored, Ben: negligible) and its spray runs:
+     10 spray runs (cut from 16);
+  2. the PCC check and exposure series (optional);
+  3. THEN all the bead work, `docs/BEAD_CALIBRATION.md`, with the optics untouched all day:
+     - 43 sandwich captures (GUI run sheet);
+     - then the falling beads, recorded in PCC (2 pours per size, 10 recordings, named
+       `BEAD fall <size> p1/p2.cine` in `Calibration/Imaging Work/2026/10/15/falling/`). `run_ai_where.py`
+       turns each loose .cine into a run folder and runs the AI.
+
+  The 10 spray runs:
+  - 1.2 mm: anchor centre 9,000/500/4,000; confirm 11,000/100/5,000 x2; 12,000/100 at feed 5,000, 6,000 and
+    8,000;
+  - 0.8 mm: 12,000/100/5,000;
+  - 0.5 mm: the C7 repeat 7,000/900/3,000; 900 rpm at feed 4,000 and 2,000.
+
+  Dropped from the 16: the second anchor, the third confirmation, feed 7,000, 0.8 mm at 900 rpm, 0.5 mm at
+  500 rpm, and the second C7 repeat.
   Spray-run details: 1.2 mm: 2 centre anchors, 3 confirmations of 11,000/100/5,000, a 12,000 sccm feed ladder
   5,000-8,000 (longer travel for the fast feeds). 0.8 mm: 12,000/100 and /900 at feed 5,000. 0.5 mm: C7 recipe x2,
   feed 2,000 and 4,000 at 900 rpm, 500 rpm at 3,000. Notes `S2 #NN <purpose>` (never "run N"). The bubbler's maximum is 900 rpm.
@@ -603,10 +617,12 @@ made", "Bit depth", and the dated sections).
     - 'Post-trigger (s)' sets the camera (Apply Config) to 1 s for bead rows and back to 13 s for spray rows,
       without the standard-capture question for that field only. SETUP instructions pop up.
   - Thursday's sheet is rebuilt in this order:
-    - 48 bead captures: a mixed sandwich at 23 z from -4 to +4 mm, 4 focus patches + bg, 5 single-size
-      slides x (2 + bg), and 5 falling pours;
+    - 43 sandwich captures: a mixed sandwich at 23 z from -4 to +4 mm, 4 focus patches + bg, 5 single-size
+      slides x (2 + bg);
     - then the 3 Cd tests (saved under `Calibration/Orifice Cd`);
-    - then the 16 spray runs.
+    - then the 16 spray runs;
+    - last, the falling beads: 2 pours per size, 10 runs, after clearing up, optics untouched. The analysis
+      pools the two pours.
   - New `AI/Real_Data_Code/bead_calibration.py` (Mac, no AI for static beads):
     - averages each capture (40 frames);
     - background from the frame itself, two passes, < 1 % on a gradient; dust from bead-free captures
@@ -621,6 +637,10 @@ made", "Bit depth", and the dated sections).
   - On synthetic Blaisot-model beads: chi recovered within ~1-2 um, contrast-corrected size within 2 %.
   - `Calibration/Imaging Work/README.md` + `targets.json` on the LaCie (Ben: add supplier, lot, spreads).
   - Tests: test_bead_calibration (11), run-sheet window checks 9.
+  - Falling-bead AI at home: new `AI/Real_Data_Code/run_ai_where.py` runs the AI chain (process_capture) only on
+    runs whose Notes start with given text (`--notes "BEAD fall"`; `--dry-run`; restartable), so the 48 static
+    captures in the same day folder are not inferred. Command in docs/BEAD_CALIBRATION.md. Tests:
+    test_run_ai_where (2).
 
 - 2026-10-14 (Mac): **GUI_Clean top bar: master_log button, AFG light removed** (untried on the rig). A small
   button right of LaCie opens master_log.xlsx. GREEN = safe; RED and not clickable while a run is going, its

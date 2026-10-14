@@ -69,9 +69,10 @@ def finish(i, choice, extra="", folder="/runs/A", save_ok=True):
 def check_loading_fills_in_the_first_run():
     fresh()
     b = boxes()
-    assert (b["flow"], b["speed"], b["rpm"], b["notes"]) == ("0", "1000", "", "BEAD mix z-4.00"), b
-    assert win._sheet_table.rowCount() == len(win._sheet_rows) and "Next: #B01" in win._sheet_next_lbl.text()
-    assert any("set-up" in t and "EMPTY or DISCONNECT" in m for t, m in warned), warned  # SETUP pops up
+    assert (b["flow"], b["speed"], b["rpm"], b["orifice"], b["notes"]) == ("2000", "0", "", "1.2mm",
+                                                                          "CD TEST 1.2 mm"), b
+    assert win._sheet_table.rowCount() == len(win._sheet_rows) and "Next: #Cd 1.2" in win._sheet_next_lbl.text()
+    assert any(t == "Change the insert" and "SETUP" in m and "Cd test" in m for t, m in warned), warned
     warned.clear()
     win._run_sheet_load(str(THURSDAY), fill=False)                 # as after a restart: progress kept, no pop-up
     assert win._sheet_progress.current == 0 and not warned
@@ -131,7 +132,7 @@ def check_nothing_is_filled_in_while_a_run_is_going():
     win._run_sheet_fill(idx("S2 #05 ladder"))
     win.pressure_data["experiment_active"] = True
     try:
-        win._run_sheet_fill(idx("S2 #06 ladder"))
+        win._run_sheet_fill(idx("S2 #06 confirm"))
         assert boxes()["notes"] == "S2 #05 ladder"
     finally:
         win.pressure_data["experiment_active"] = False
@@ -201,7 +202,7 @@ def check_calibration_rows_route_the_run_folder_and_shorten_the_capture():
     win._cam_fps.setText("390")
     win._run_sheet_fill(idx("CD TEST 0.5 mm"))
     assert win._run_base(lacie) == os.path.join(lacie, "Calibration", "Orifice Cd")
-    win._run_sheet_fill(idx("S2 #12 0.5 rpm"))
+    win._run_sheet_fill(idx("S2 #09 0.5 feed"))
     assert win._cam_post_s.text() == "13"                          # back to the standard
     assert win._run_base(lacie) == os.path.join(lacie, "Experiments")
     asked.clear()

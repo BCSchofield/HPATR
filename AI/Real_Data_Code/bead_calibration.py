@@ -604,12 +604,33 @@ def falling(caps: list[Capture], targets: dict) -> list[dict]:
         with open(files[0], newline="") as f:
             rr = list(csv.DictReader(f))
         d_in = [float(r["diameter_um"]) for r in rr if str(r.get("in_focus")).lower() in ("1", "true")]
-        med = _median(d_in)
-        out.append({"run": c.run.name, "certified_um": cert, "n_detected": len(rr), "n_in_focus": len(d_in),
-                    "in_focus_share": round(len(d_in) / len(rr), 3) if rr else None,
-                    "d_in_focus_median_um": round(med, 2),
-                    "bias_pct": round(100 * (med / cert - 1), 1) if cert and np.isfinite(med) else None})
+        out.append(_fall_row(c.run.name, cert, len(rr), d_in))
+    # the pours of each size pooled (two per size from 2026-10-15: a hand sprinkle is not a defined plane)
+    pooled = {}
+    for c in caps:
+        files = sorted((c.run / "shadowgraph" / "analysis").glob("droplets_*/droplet_sizes.csv"))
+        if not files or not c.slide:
+            continue
+        cert = min(sizes, key=lambda s: abs(s - float(c.slide)))
+        with open(files[0], newline="") as f:
+            rr = list(csv.DictReader(f))
+        acc = pooled.setdefault(cert, [0, [], 0])
+        acc[0] += len(rr)
+        acc[1] += [float(r["diameter_um"]) for r in rr if str(r.get("in_focus")).lower() in ("1", "true")]
+        acc[2] += 1
+    for cert, (n_all, d_in, n_runs) in sorted(pooled.items()):
+        if n_runs > 1:
+            out.append(_fall_row(f"all {n_runs} pours", cert, n_all, d_in))
     return out
+
+
+def _fall_row(name: str, cert, n_all: int, d_in: list) -> dict:
+    med = _median(d_in)
+    q = np.percentile(d_in, [25, 75]) if d_in else [np.nan, np.nan]
+    return {"run": name, "certified_um": cert, "n_detected": n_all, "n_in_focus": len(d_in),
+            "in_focus_share": round(len(d_in) / n_all, 3) if n_all else None,
+            "d_in_focus_median_um": round(med, 2), "d_in_focus_iqr_um": [round(float(v), 2) for v in q],
+            "bias_pct": round(100 * (med / cert - 1), 1) if cert and np.isfinite(med) else None}
 
 
 def _write_csv(path: Path, rows: list[dict]):

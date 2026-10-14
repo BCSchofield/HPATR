@@ -1,5 +1,19 @@
 Run,Orifice (mm),Gas flow (sccm),Bubbler RPM,Silicone (steps/s),Motor Travel (mm),Notes to type,Instructions,Save under,Post-trigger (s)
-B01,,0,,1000,0.5,BEAD mix z-4.00,"SETUP: bead calibration (docs/BEAD_CALIBRATION.md). EMPTY or DISCONNECT the silicone line: the traverse moves 0.5 mm per capture so the auto-trigger fires. Optics EXACTLY as for the CCD day (lens, aperture, focus ring, camera distance, backlight, 4 us, 2048x1152, 390 fps); photograph the lens settings. Camera tab: Run AI analysis OFF, Window check OFF, Auto-trigger ON. Mount the MIXED sandwich (all five sizes, coverslip towards the camera) square to the camera at the spray plane. Find best focus on the 155.8 um beads with the micrometer: that reading is z0 (write it down). Then turn to z0 - 4.00 mm. From here on always turn the SAME way (backlash).",Calibration/Imaging Work,1
+Cd 1.2,1.2,2000,,0,,CD TEST 1.2 mm,"SETUP: Thursday 2026-10-15. Lab PC pulled and GUI_Clean restarted. Fit the 1.2 mm insert. Order today: each insert's Cd test then its spray runs (1.2, 0.8, 0.5 mm), then ALL the bead work at the end. Gas-only Cd test (docs/ORIFICE_CD_TEST.md). Purge the nozzle dry first (6,000 sccm for 30 s). Speed 0, RPM empty, Orifice length box = this insert's bore length. START, then step the gas with Set Flow: 2,000 -> 4,000 -> 6,000 -> 8,000 -> 10,000 -> 12,000 sccm, about 20 s each. STOP EVERYTHING to end.",Calibration/Orifice Cd,
+1,1.2,9000,500,4000,36,S2 #01 anchor centre,"SETUP: spray runs. Fill the silicone line; Window check ON; wipe the window and save a clean-window reference. Optional: the PCC max-fps check (256x1152, 512x1152, 2048x256). Centre point, as on the CCD day: the day-to-day check against its five centres.",,
+2,1.2,11000,100,5000,36,S2 #02 confirm,The model's best setting (predicted 288k droplets/s in 20-60 um).,,
+3,1.2,12000,100,6000,43,S2 #03 ladder,Feed ladder at full gas. Travel 43 mm.,,
+4,1.2,12000,100,8000,58,S2 #04 ladder,Top of the feed ladder. Travel 58 mm: one syringe fill for this run.,,
+5,1.2,12000,100,5000,36,S2 #05 ladder,Full gas at the best setting's feed.,,
+6,1.2,11000,100,5000,36,S2 #06 confirm,Confirmation 2 of 2.,,
+Cd 0.8,0.8,2000,,0,,CD TEST 0.8 mm,"SETUP: change to the 0.8 mm insert. Gas-only Cd test (docs/ORIFICE_CD_TEST.md). Purge the nozzle dry first (6,000 sccm for 30 s). Speed 0, RPM empty, Orifice length box = this insert's bore length. START, then step the gas with Set Flow: 2,000 -> 4,000 -> 6,000 -> 8,000 -> 10,000 -> 12,000 sccm, about 20 s each. STOP EVERYTHING to end.",Calibration/Orifice Cd,
+7,0.8,12000,100,5000,36,S2 #07 0.8 capacity,0.8 mm at full gas. STOP if P0 reaches 9.3 barA.,,
+Cd 0.5,0.5,2000,,0,,CD TEST 0.5 mm,"SETUP: change to the 0.5 mm insert. Gas-only Cd test (docs/ORIFICE_CD_TEST.md). Purge the nozzle dry first (6,000 sccm for 30 s). Speed 0, RPM empty, Orifice length box = this insert's bore length. START, then step the gas with Set Flow: 2,000 -> 4,000 -> 6,000 -> 8,000 -> 10,000 -> 12,000 sccm, about 20 s each. STOP EVERYTHING to end.",Calibration/Orifice Cd,
+8,0.5,7000,900,3000,36,S2 #08 C7 repeat,The C7 recipe (CCD day: 280k/s and 187k/s). Pressure-limited: the gas set point does not matter here.,,
+9,0.5,7000,900,4000,36,S2 #09 0.5 feed,"Between the good feed (3,000) and the poor one (5,000).",,
+10,0.5,7000,900,2000,36,S2 #10 0.5 feed,"Less feed, more gas gets through: does throughput hold?",,
+Exp,0.5,7000,900,3000,36,S2 exposure series,"OPTIONAL. In PCC: exposure 1, 4, 16, 40 us, about 2 s of video each, pre 0 s. Then set the exposure BACK TO 4 us. Velocity plan step 1 (docs/VELOCITY_CAPTURE_PLAN.md).",,
+B01,,0,,1000,0.5,BEAD mix z-4.00,"SETUP: bead calibration (docs/BEAD_CALIBRATION.md), after the spray work. Clean up the silicone; EMPTY or DISCONNECT the silicone line (the traverse moves 0.5 mm per capture so the auto-trigger fires) and HOME the traverse first (21.5 mm of nudges in all). Move the nozzle out of the way as needed, but do NOT touch the camera, lens (focus ring, aperture), its distance or the backlight. Exposure 4 us (after the exposure series). Camera tab: Run AI analysis OFF, Window check OFF, Auto-trigger ON. Mount the MIXED sandwich (all five sizes, coverslip towards the camera) square to the camera at the spray plane. Find best focus on the 155.8 um beads with the micrometer: that reading is z0 (write it down). Then turn to z0 - 4.00 mm. From here on always turn the SAME way (backlash).",Calibration/Imaging Work,1
 B02,,0,,1000,0.5,BEAD mix z-3.00,Micrometer to z0 - 3.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
 B03,,0,,1000,0.5,BEAD mix z-2.50,Micrometer to z0 - 2.50 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
 B04,,0,,1000,0.5,BEAD mix z-2.00,Micrometer to z0 - 2.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
@@ -26,7 +40,7 @@ B24,,0,,1000,0.5,BEAD mix z0 p2,"Micrometer back to z0, approaching from the sam
 B25,,0,,1000,0.5,BEAD mix z0 p3,At z0. Slide the sandwich sideways to a NEW patch of beads.,Calibration/Imaging Work,1
 B26,,0,,1000,0.5,BEAD mix z0 p4,At z0. Slide the sandwich sideways to a NEW patch of beads.,Calibration/Imaging Work,1
 B27,,0,,1000,0.5,BEAD mix z0 p5,At z0. Slide the sandwich sideways to a NEW patch of beads.,Calibration/Imaging Work,1
-B28,,0,,1000,0.5,BEAD mix bg,"At z0, slide to a patch with NO beads in view (or the bare end of the slide): the background for this sandwich.",Calibration/Imaging Work,1
+B28,,0,,1000,0.5,BEAD mix bg,"At z0, slide to a patch with NO beads in view (or the bare end of the slide): the background for this sandwich, and the dust map.",Calibration/Imaging Work,1
 B29,,0,,1000,0.5,BEAD 37.36 z0 p1,SETUP: swap to the 37.36 um sandwich. Find ITS best focus with the micrometer (its own z0) and capture there.,Calibration/Imaging Work,1
 B30,,0,,1000,0.5,BEAD 37.36 z0 p2,At this slide's z0: slide sideways to a new patch of beads.,Calibration/Imaging Work,1
 B31,,0,,1000,0.5,BEAD 37.36 bg,At this slide's z0: a patch with NO beads in view (background).,Calibration/Imaging Work,1
@@ -41,29 +55,4 @@ B39,,0,,1000,0.5,BEAD 98.1 z0 p2,At this slide's z0: slide sideways to a new pat
 B40,,0,,1000,0.5,BEAD 98.1 bg,At this slide's z0: a patch with NO beads in view (background).,Calibration/Imaging Work,1
 B41,,0,,1000,0.5,BEAD 155.8 z0 p1,SETUP: swap to the 155.8 um sandwich. Find ITS best focus with the micrometer (its own z0) and capture there.,Calibration/Imaging Work,1
 B42,,0,,1000,0.5,BEAD 155.8 z0 p2,At this slide's z0: slide sideways to a new patch of beads.,Calibration/Imaging Work,1
-B43,,0,,1000,0.5,BEAD 155.8 bg,At this slide's z0: a patch with NO beads in view (background).,Calibration/Imaging Work,1
-F1,,0,,0,,BEAD fall 37.36,"SETUP: falling beads. Take the sandwich and holder OUT of the field. Static run: START, pour a pinch of the 37.36 um beads slowly through the camera field from above (sieve or folded paper), press Trigger (Space) while they fall, then STOP EVERYTHING once the video is saved. Catch the beads underneath.",Calibration/Imaging Work,5
-F2,,0,,0,,BEAD fall 56.28,"Static run: START, pour a pinch of the 56.28 um beads slowly through the camera field from above (sieve or folded paper), press Trigger (Space) while they fall, then STOP EVERYTHING once the video is saved. Catch the beads underneath.",Calibration/Imaging Work,5
-F3,,0,,0,,BEAD fall 76.39,"Static run: START, pour a pinch of the 76.39 um beads slowly through the camera field from above (sieve or folded paper), press Trigger (Space) while they fall, then STOP EVERYTHING once the video is saved. Catch the beads underneath.",Calibration/Imaging Work,5
-F4,,0,,0,,BEAD fall 98.1,"Static run: START, pour a pinch of the 98.1 um beads slowly through the camera field from above (sieve or folded paper), press Trigger (Space) while they fall, then STOP EVERYTHING once the video is saved. Catch the beads underneath.",Calibration/Imaging Work,5
-F5,,0,,0,,BEAD fall 155.8,"Static run: START, pour a pinch of the 155.8 um beads slowly through the camera field from above (sieve or folded paper), press Trigger (Space) while they fall, then STOP EVERYTHING once the video is saved. Catch the beads underneath.",Calibration/Imaging Work,5
-Cd 1.2,1.2,2000,,0,,CD TEST 1.2 mm,"SETUP: orifice Cd tests. No silicone needed. Gas-only Cd test (docs/ORIFICE_CD_TEST.md). Purge the nozzle dry first (6,000 sccm for 30 s). Speed 0, RPM empty, Orifice length box = this insert's bore length. START, then step the gas with Set Flow: 2,000 -> 4,000 -> 6,000 -> 8,000 -> 10,000 -> 12,000 sccm, about 20 s each. STOP EVERYTHING to end.",Calibration/Orifice Cd,
-Cd 0.8,0.8,2000,,0,,CD TEST 0.8 mm,"Gas-only Cd test (docs/ORIFICE_CD_TEST.md). Purge the nozzle dry first (6,000 sccm for 30 s). Speed 0, RPM empty, Orifice length box = this insert's bore length. START, then step the gas with Set Flow: 2,000 -> 4,000 -> 6,000 -> 8,000 -> 10,000 -> 12,000 sccm, about 20 s each. STOP EVERYTHING to end.",Calibration/Orifice Cd,
-Cd 0.5,0.5,2000,,0,,CD TEST 0.5 mm,"Gas-only Cd test (docs/ORIFICE_CD_TEST.md). Purge the nozzle dry first (6,000 sccm for 30 s). Speed 0, RPM empty, Orifice length box = this insert's bore length. START, then step the gas with Set Flow: 2,000 -> 4,000 -> 6,000 -> 8,000 -> 10,000 -> 12,000 sccm, about 20 s each. STOP EVERYTHING to end.",Calibration/Orifice Cd,
-1,1.2,9000,500,4000,36,S2 #01 anchor centre,"SETUP: spray runs. Reconnect and fill the silicone line; Window check ON; wipe the window; save a clean-window reference. Optional: the PCC max-fps check (256x1152, 512x1152, 2048x256). Centre point, as on the CCD day: checks day-to-day shift.",,
-2,1.2,11000,100,5000,36,S2 #02 confirm,The model's best setting (predicted 288k droplets/s in 20-60 um).,,
-3,1.2,12000,100,6000,43,S2 #03 ladder,Feed ladder at full gas. Travel 43 mm.,,
-4,1.2,12000,100,8000,58,S2 #04 ladder,Top of the feed ladder. Travel 58 mm: one syringe fill for this run.,,
-5,1.2,12000,100,5000,36,S2 #05 ladder,Full gas at the best setting's feed.,,
-6,1.2,12000,100,7000,50,S2 #06 ladder,Feed ladder. Travel 50 mm.,,
-7,1.2,11000,100,5000,36,S2 #07 confirm,Confirmation 2 of 3.,,
-8,1.2,11000,100,5000,36,S2 #08 confirm,Confirmation 3 of 3.,,
-9,1.2,9000,500,4000,36,S2 #09 anchor centre,"Second centre point, end of the 1.2 mm block.",,
-10,0.8,12000,100,5000,36,S2 #10 0.8 capacity,0.8 mm at full gas. STOP if P0 reaches 9.3 barA.,,
-11,0.8,12000,900,5000,36,S2 #11 0.8 capacity,Does rpm help at 0.8 mm? STOP if P0 reaches 9.3 barA.,,
-12,0.5,7000,500,3000,36,S2 #12 0.5 rpm,Pressure-limited: the gas set point does not matter here.,,
-13,0.5,7000,900,3000,36,S2 #13 C7 repeat,The C7 recipe (CCD day: 280k/s and 187k/s).,,
-14,0.5,7000,900,4000,36,S2 #14 0.5 feed,"Between the good feed (3,000) and the poor one (5,000).",,
-15,0.5,7000,900,3000,36,S2 #15 C7 repeat,The C7 recipe again.,,
-16,0.5,7000,900,2000,36,S2 #16 0.5 feed,"Less feed, more gas gets through: does throughput hold?",,
-Exp,0.5,7000,900,3000,36,S2 exposure series,"OPTIONAL, last. In PCC: exposure 1, 4, 16, 40 us, about 2 s of video each, pre 0 s. Then set the exposure BACK TO 4 us. Velocity plan step 1 (docs/VELOCITY_CAPTURE_PLAN.md).",,
+B43,,0,,1000,0.5,BEAD 155.8 bg,"At this slide's z0: a patch with NO beads in view (background). NEXT (not in this sheet): the falling beads, recorded in PCC (docs/BEAD_CALIBRATION.md step 11): two 5 s pours per size, each saved as 'BEAD fall <size> p1.cine' / 'p2' in Calibration\Imaging Work\2026\10\15\falling\.",Calibration/Imaging Work,1

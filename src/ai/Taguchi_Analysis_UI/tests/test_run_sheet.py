@@ -44,11 +44,15 @@ def test_the_analysis_apps_next_runs_csv_loads_as_it_is(tmp_path):
 
 def test_thursdays_sheet_is_valid_and_its_cd_tests_are_static_runs():
     rows = rs.load(THURSDAY)
-    assert len(rows) == 68 and sum(r.notes.startswith("BEAD") for r in rows) == 48
+    assert len(rows) == 57 and sum(r.notes.startswith("BEAD") for r in rows) == 43
+    assert not any("fall" in r.notes for r in rows)                           # falling beads: in PCC, not here
+    assert "PCC" in rows[-1].instructions
     cd = [r for r in rows if r.notes.startswith("CD TEST")]
     assert [r.orifice for r in cd] == [1.2, 0.8, 0.5] and all(r.static and r.rpm is None for r in cd)
     spray = [r for r in rows if r.notes.startswith("S2 #")]
-    assert len(spray) == 16 and all(not r.static for r in spray)
+    assert len(spray) == 10 and all(not r.static for r in spray)
+    first_bead = next(i for i, r in enumerate(rows) if r.notes.startswith("BEAD"))
+    assert all(r.notes.startswith("BEAD") for r in rows[first_bead:])        # all the bead work at the end
     assert not any("run " in r.notes.lower() for r in rows)          # "run N" would read as a CCD-day run
     assert all(r.travel >= 36 * r.feed / 5000 - 0.5 for r in spray if r.feed > 5000)   # >= ~49 s per run
 

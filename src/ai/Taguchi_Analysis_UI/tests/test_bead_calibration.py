@@ -91,13 +91,14 @@ def day(tmp_path_factory):
     T = np.ones((H, W))
     bead_T(T, 110, 115, 40.0, 8.0)                         # a speck on the window: in the bead-free capture too
     write_run(d, "110100_0sccm_bg", "BEAD 98.1 bg", T, seed=21)
-    fall = write_run(d, "110200_0sccm_fall", "BEAD fall 56.28", np.ones((H, W)), seed=22)
-    m = fall / "shadowgraph" / "analysis" / "droplets_0.30"
-    m.mkdir(parents=True)
-    with open(m / "droplet_sizes.csv", "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["frame", "diameter_um", "in_focus"])
-        w.writerows([["f", 50.0 + k % 5, 1] for k in range(20)] + [["f", 80.0, 0]] * 5)
+    for k, base in ((1, 50.0), (2, 54.0)):                  # two pours of one size, as on the day
+        fall = write_run(d, f"11020{k}_0sccm_fall", f"BEAD fall 56.28 p{k}", np.ones((H, W)), seed=21 + k)
+        m = fall / "shadowgraph" / "analysis" / "droplets_0.30"
+        m.mkdir(parents=True)
+        with open(m / "droplet_sizes.csv", "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["frame", "diameter_um", "in_focus"])
+            w.writerows([["f", base + j % 5, 1] for j in range(20)] + [["f", 80.0, 0]] * 5)
     write_run(d, "110300_9000sccm_spray", "S2 #01 anchor centre", np.ones((H, W)), seed=23)   # not a capture
     return d
 
@@ -108,6 +109,7 @@ def test_notes_are_parsed_as_the_run_sheet_writes_them():
     assert bc.parse_notes("BEAD mix z0 p3") == ("bead", "mix", "focus", 0.0, "p3")
     assert bc.parse_notes("BEAD 56.28 bg") == ("bead", "56.28", "bg", None, "")
     assert bc.parse_notes("BEAD fall 155.8") == ("bead", "155.8", "fall", None, "")
+    assert bc.parse_notes("BEAD fall 155.8 p2")[:3] == ("bead", "155.8", "fall")
     assert bc.parse_notes("RETICLE array tl") == ("reticle", "reticle", "array", None, "tl")
     assert bc.parse_notes("RETICLE z+0.40")[2:4] == ("z", 0.4)
     assert bc.parse_notes("S2 #01 anchor centre") is None and bc.parse_notes(None) is None
@@ -162,7 +164,7 @@ def test_a_mixed_slide_is_sorted_by_size_even_with_a_common_bias():
 def test_the_day_end_to_end(day, tmp_path):
     out = tmp_path / "analysis"
     R = bc.analyse([day], out, None, max_frames=3)
-    assert R["captures"] == 12                                                 # 9 + focus + bg + fall
+    assert R["captures"] == 13                                                 # 9 + focus + bg + 2 pours
     tf = R["through_focus"]["mix"]
     assert tf["info"]["n_beads"] == 6
     big = tf["155.8"]
@@ -175,6 +177,9 @@ def test_the_day_end_to_end(day, tmp_path):
     assert s98["n_beads"] == 8 and s98["ring_share"] >= 0.7                    # 6 transparent + 2 from the mix
     assert R["dust_spots"] == 1                                               # the speck, excluded everywhere
     assert R["falling"][0]["n_in_focus"] == 20 and R["falling"][0]["certified_um"] == 56.28
+    pooled = R["falling"][-1]
+    assert pooled["run"] == "all 2 pours" and pooled["n_in_focus"] == 40 and pooled["n_detected"] == 50
+    assert pooled["d_in_focus_median_um"] == 54.0                              # 50-54 and 54-58: 54 twice as often
     for name in ("optics_calibration_v1.json", "report.md", "beads_at_focus.csv", "beads_through_focus.csv",
                  "fig_at_focus.png", "fig_through_focus.png"):
         assert (out / name).is_file(), name

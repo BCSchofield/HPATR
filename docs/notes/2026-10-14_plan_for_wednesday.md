@@ -22,6 +22,14 @@ only; Thursday is the rig.
 
 ## Thursday's plan (agreed with Ben 2026-10-14: Cd tests, more 0.5 mm, 15-20 runs, feed max 8,000, 0.8 mm at 12,000 OK)
 
+**REVISED later on 2026-10-14 (Ben):**
+- Spray runs cut to 10: #01 anchor, #02 and #06 confirm, #03-#05 the 12,000 ladder at 6,000 / 8,000 / 5,000,
+  #07 0.8 mm, and #08-#10 at 0.5 mm (C7, feed 4,000, feed 2,000).
+- Each insert's Cd test sits just before its spray runs.
+- The bead calibration (43 sandwich captures + 10 falling pours) comes at the END of the day.
+- The live sheet is `docs/notes/2026-10-15_thursday_run_sheet.csv`; the table below is the original
+  16-run version.
+
 16 spray runs and 3 gas-only Cd runs (1.2, 0.8, 0.5 mm). Line loss is ignored (Ben, 2026-10-14). Blocks go 1.2 → 0.8 → 0.5 mm, so the pressure rises through the day;
 the order within each block is randomised (seed 20261015). Wipe the window and run the window check before
 every spray run. **Notes:** `S2 #NN <purpose>`. Do NOT write "run N": the analysis reads "run N" as a CCD-day

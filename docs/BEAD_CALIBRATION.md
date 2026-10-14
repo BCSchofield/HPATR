@@ -1,7 +1,7 @@
 # Size calibration with glass beads (and later the reticle)
 
-Written 2026-10-14 for the session on Thursday 2026-10-15, which comes before the Cd tests and the spray
-runs. The plan is `/Users/benschofield/.claude/plans/cozy-orbiting-swing.md`; the background is
+Written 2026-10-14 for Thursday 2026-10-15. The bead work is the LAST part of the day, after the Cd tests and
+the (10) spray runs (Ben). The plan is `/Users/benschofield/.claude/plans/cozy-orbiting-swing.md`; the background is
 `docs/DROPLET_MEASUREMENT_METHOD.md`.
 
 ## Why
@@ -31,8 +31,12 @@ The beads add the transparent case.
 - Clean microscope slides and coverslips, tape, the slide holder with its micrometer, a fine sieve or
   folded paper, and something under the field to catch falling beads.
 - The run sheet: `Experiments\Run sheets\2026-10-15 Thursday run sheet.csv`, loaded on GUI_Clean's
-  **Run sheet** tab. Rows B01–B48 and F1–F5 are the beads; they save under
-  `Calibration\Imaging Work` with 1 s captures.
+  **Run sheet** tab. The sheet's order:
+  - each insert's Cd test and spray runs (1.2, 0.8, 0.5 mm; 10 runs);
+  - the optional exposure series;
+  - rows B01–B43, the sandwiches (saved under `Calibration\Imaging Work`, 1 s captures);
+  - last, NOT in the sheet: the falling beads, recorded in PCC (step 11). Two 5 s pours per size, because
+    a hand sprinkle does not cover a defined plane.
 
 ## Make the sandwiches (before the session)
 
@@ -78,17 +82,44 @@ For each one:
 9. **Background (B28):** at z0, a patch with no beads in view.
 10. **Single-size sandwiches (B29–B43):** for each size, refocus with the micrometer to that slide's own
     best focus, then capture two patches and one empty patch.
-11. **Falling beads (F1–F5):** take the sandwich and holder out of the field.
-    - Each row is a static run: START, pour a pinch of one size slowly through the field from above,
-      press **Trigger** (Space) while they fall, and STOP EVERYTHING once the 5 s video is saved.
-    - Catch the beads underneath.
-    - These go through the normal AI pipeline overnight at home.
+11. **Falling beads, recorded in PCC: LAST, after the sandwiches.** No GUI_Clean run, no motor: plain PCC
+    captures.
+    - Clear the field first (nozzle, holder), but **do not touch the camera, the lens (focus ring, aperture),
+      its distance or the backlight**: the focal plane must be where it was in the morning.
+    - **Hand the camera to PCC:** close GUI_Clean (or disconnect the camera in it).
+    - **In PCC, match the day's settings:** 2048 × 1152, 390 fps, exposure **4 µs** (back from the exposure
+      series), about 5 s per recording.
+    - **Two pours per size.** Save each recording to the LaCie as **`BEAD fall <size> p1.cine`** and
+      **`… p2.cine`**, e.g. `BEAD fall 56.28 p1.cine`, in
+      `Calibration\Imaging Work\2026\10\15\falling\`.
+    - **The file name is what the analysis reads.** Underscores instead of spaces are fine. Any other name
+      works too, if you tell Claude which is which.
+    - **Mark the focal plane first:** where the sandwich's bead layer sat.
+    - **Dispense** from a small sieve or tea strainer, or a creased card, tapped gently: a slow, sparse
+      rain. Not a funnel (one fast stream in one plane) and not from fingers (clumps).
+    - **Use a TINY pinch:** a few mg is hundreds of beads; aim for ~5–30 in view per frame.
+    - **Height and sweep:** hold it 15–20 cm above the MIDDLE of the field, away from the window, and sweep
+      it slowly towards and away from the camera through the focal plane (about ±10 mm). Some beads then
+      land on the sharp plane and most fall either side, which is what the AI's in-focus test needs.
+    - **Beads dry, room still,** gas and bubbler off. Static and damp make glass beads clump; do not blow.
+    - **Record:** start sprinkling, start/trigger the PCC recording once beads are falling, keep tapping for
+      the 5 s, then save the cine with its name as above.
+    - **Catch** the beads underneath.
+    - **Afterwards:** clean up stray beads and **wipe the window**. A bead left on the glass is a speck in
+      every later run.
+    - These go through the normal AI pipeline overnight at home (below).
 
-**After the first five captures,** run the analysis on them (below). It shows straight away whether the
-background, the focus and the bead density are workable.
+**After the first few captures,** check on the live view that the beads are sparse and separate and that
+best focus is sharp. The analysis needs the LaCie on the Mac, so it runs afterwards.
 
-Then the Cd tests (rows `Cd 1.2`, `Cd 0.8`, `Cd 0.5`, saved under `Calibration\Orifice Cd`), then the
-spray runs if there is time.
+**Order on the day:**
+1. each insert's Cd test (saved under `Calibration\Orifice Cd`) and its spray runs;
+2. the exposure series (optional);
+3. the sandwiches (steps 5–10);
+4. the falling beads (step 11), last.
+
+Before the sandwiches: clean up the silicone, empty or disconnect the line, home the traverse, and move the
+nozzle out of the way if needed. Do not touch the camera, lens, distance or backlight.
 
 ## The analysis (Mac; no AI for the static beads)
 
@@ -124,6 +155,24 @@ found by itself in `Calibration/Imaging Work`.
   1/DOF(d) weight);
 - the depth range sized within ±5%;
 - the χ(z) fit.
+
+**Falling beads: the AI first, at home overnight.** The pours need the AI chain; the static captures do not.
+`git pull` on the home PC first. In Command Prompt, with the LaCie as `D:`, point it at the folder of PCC
+recordings:
+
+```
+"C:\Users\BenSc\anaconda3\envs\Detectron\python.exe" "C:\Users\BenSc\Documents\GitHub\HPATR\AI\Real_Data_Code\run_ai_where.py" "D:\Calibration\Imaging Work\2026\10\15\falling" --notes "BEAD fall"
+```
+
+- Add `--dry-run` first to see the ten recordings it picks (two per size); a dry run creates nothing.
+- **Each recording becomes a run folder next to it,** `falling\BEAD fall 56.28 p1\`, with a
+  `run_summary.xlsx` whose Notes are the file name. The AI chain copies the .cine into that folder (its rule:
+  the video lives in the run), so each pour is stored twice (~6 GB each). The original file is never
+  changed.
+- It is restartable, and writes only into those run folders.
+- At stride 10, a 5 s pour is about 195 frames, about 6 min a run on the GPU (about an hour for the ten).
+- The analysis lists each pour and pools the two pours of each size.
+- Then re-run the analysis command above on the Mac; the falling-bead table fills in.
 
 Results go in `analysis/<date>/`, including `optics_calibration_v1.json`. **Nothing in the pipeline
 changes yet:** a new sizer (3.0.0) is decided with Ben once the beads, and later the reticle, are in.
