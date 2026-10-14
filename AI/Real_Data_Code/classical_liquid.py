@@ -543,6 +543,10 @@ def main():
                          "this share of frames (2.3.0; 0 = off)")
     ap.add_argument("--volume", action=argparse.BooleanOptionalAction, default=True,
                     help="per-frame droplet and total liquid volume (2.3.0; secondary measure)")
+    ap.add_argument("--more-extremes", type=Path, default=None,
+                    help="measure_run's extreme_frames_more/index.json (busiest and mean-diameter frames); "
+                         "in extremes mode those frames are drawn here too, the classical way. Default: "
+                         "<root>/shadowgraph/analysis/droplets_<thr>/extreme_frames_more/index.json")
     ap.add_argument("--limit", type=int, default=None, help="first N frames only")
     ap.add_argument("--frames", nargs="*", default=None,
                     help="measure only these frame stems")
@@ -688,9 +692,21 @@ def main():
                 if by_atom else None)
     d32_extremes = ({"lowest": _d32_entry(by_d32[0]), "highest": _d32_entry(by_d32[-1])}
                     if len(by_d32) >= 2 else None)
+    # measure_run's busiest and mean-diameter frames (extreme_frames_more/) are drawn here as
+    # well (2026-10-14, Ben): its own drawings outline filaments thinly, so at slide size the
+    # un-atomised liquid is hard to see; filled, it reads like the atomised extremes.
+    more = []
+    if draw_extremes:
+        idx = args.more_extremes or (root / "shadowgraph" / "analysis" / f"droplets_{args.score_thresh:.2f}"
+                                     / "extreme_frames_more" / "index.json")
+        try:
+            more = sorted({f["frame"] for f in json.loads(idx.read_text(encoding="utf-8")).get("frames", [])
+                           if f.get("frame") in held})
+        except (OSError, ValueError, AttributeError):
+            more = []
     if draw_extremes:
         to_draw = {e["frame"] for grp in (extremes, d32_extremes) if grp
-                   for e in (grp["lowest"], grp["highest"])}
+                   for e in (grp["lowest"], grp["highest"])} | set(more)
         for stem in sorted(to_draw):
             if stem not in held:
                 continue
@@ -812,6 +828,7 @@ def main():
         "unatomised_px": int(tot - drp),
         "atomised_extreme_frames": extremes,
         "d32_extreme_frames": d32_extremes,
+        "more_extreme_frames": more,           # measure_run's busiest / mean-diameter frames, drawn here too
         "n_components": len(areas),
         "component_area_px": {
             "mean": round(float(areas.mean()), 1) if areas.size else None,

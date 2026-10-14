@@ -20,28 +20,51 @@ only; Thursday is the rig.
    across both regimes (Spearman +0.91 / −0.90). The lamella AI's film (about 0.38 mm per wall) agrees with the
    model's estimate (0.31–0.35 mm) to within about 20%.
 
-## A draft for Thursday (to finalise on Wednesday)
+## Thursday's plan (agreed with Ben 2026-10-14: Cd tests, more 0.5 mm, 15-20 runs, feed max 8,000, 0.8 mm at 12,000 OK)
 
-This is about 17 spray runs plus the short tests. Order the blocks 1.2 → 0.8 → 0.5 mm (rising pressure),
-randomise within each block, and wipe the window and run the window check before every run.
+16 spray runs and 3 gas-only Cd runs (1.2, 0.8, 0.5 mm). Line loss is ignored (Ben, 2026-10-14). Blocks go 1.2 → 0.8 → 0.5 mm, so the pressure rises through the day;
+the order within each block is randomised (seed 20261015). Wipe the window and run the window check before
+every spray run. **Notes:** `S2 #NN <purpose>`. Do NOT write "run N": the analysis reads "run N" as a CCD-day
+run number. "S2" = session 2; item 19 teaches the analysis to treat it as an added session.
 
-| Block | Runs | Why |
-|---|---|---|
-| **Start (no silicone)** | PCC window check (max fps at 256×1152, 512×1152, 2048×256), stand-off distance, clean-window reference | Velocity plan step 1; open item |
-| **1.2 mm, Cd test first** | Gas-only ladder 2–12k sccm, plus the line-loss run with the insert out (`docs/ORIFICE_CD_TEST.md`) | Discharge coefficient → gas share and film |
-| 1.2 mm | Centre anchor 9,000 / 500 / 4,000 (×1 at the start, ×1 at the end of the day) | Links to the CCD day; drift check |
-| 1.2 mm | **Model best 11,000 / 100 / 5,000 ×3** | Confirms the prediction (288k/s, PI 249–326k) |
-| 1.2 mm | 11,000 / **500** / 5,000 ×2 | Is low rotation really better? (a weak rpm × orifice term) |
-| 1.2 mm | **12,000 / 0 / 5,300 ×2** | Steepest ascent at the rig's gas limit |
-| 1.2 mm | 12,000 / 100 / **6,000, 7,000, 8,000** ×1 each, ascending | Where does feed stop paying? (Use more travel: 8,000 steps/s over 36 mm lasts only 31 s; the limit is 72.5 mm.) |
-| 1.2 mm | Exposure series at the centre: 1 / 4 / 16 / 40 µs, about 2 s each | Velocity step 1 |
-| **0.8 mm, Cd test first** | Gas-only ladder | Chokes at 10–12k sccm, so a good Cd |
-| 0.8 mm | 12,000 / 100 / 5,000 ×2; watch P0, and stop if it nears 9.3 barA | Capacity check; the orifice² point the model lacks |
-| **0.5 mm, Cd test first** | Gas-only ladder | Chokes from about 4k sccm |
-| 0.5 mm | **C7 recipe 7,000 / 900 / 3,000 ×3** | Is 280k/s repeatable, or is C8's 187k/s the norm? |
+**Travel:** 36 mm as on the CCD day, except the fast feeds, so every run lasts at least ~49 s like the feed-5,000
+runs. At 36 mm a feed-8,000 run lasts only 31 s, leaving the camera window close to the silicone's arrival.
+6,000 → 43 mm, 7,000 → 50 mm, 8,000 → 58 mm (one syringe fill per run; 72.5 mm is the limit).
 
-That's about 17 spray runs at roughly 8 minutes each (the CCD day averaged that), plus about 1.5 h of short
-tests: a full day.
+| # | Insert | Gas (sccm) | RPM | Feed (steps/s) | Travel (mm) | Notes | Why |
+|---|---|---|---|---|---|---|---|
+| – | – | – | – | – | – | PCC: max fps at 256×1152, 512×1152, 2048×256; clean-window reference | velocity plan step 1 (no spray) |
+| – | 1.2 | ladder 2–12k | – | 0 | – | `CD TEST 1.2 mm L <L> mm, room <T> C` | Cd (subsonic) |
+| 1 | 1.2 | 9,000 | 500 | 4,000 | 36 | `S2 #01 anchor centre` | day-to-day check against the CCD day's 5 centres |
+| 2 | 1.2 | 11,000 | 100 | 5,000 | 36 | `S2 #02 confirm` | the model's best: predicted 288k/s (PI 249–326k) |
+| 3 | 1.2 | 12,000 | 100 | 6,000 | 43 | `S2 #03 ladder` | gas to the rig's limit, feed up |
+| 4 | 1.2 | 12,000 | 100 | 8,000 | 58 | `S2 #04 ladder` | top of the feed ladder |
+| 5 | 1.2 | 12,000 | 100 | 5,000 | 36 | `S2 #05 ladder` | gas alone up from the best setting |
+| 6 | 1.2 | 12,000 | 100 | 7,000 | 50 | `S2 #06 ladder` | |
+| 7 | 1.2 | 11,000 | 100 | 5,000 | 36 | `S2 #07 confirm` | |
+| 8 | 1.2 | 11,000 | 100 | 5,000 | 36 | `S2 #08 confirm` | |
+| 9 | 1.2 | 9,000 | 500 | 4,000 | 36 | `S2 #09 anchor centre` | second anchor, end of the block |
+| – | 0.8 | ladder 2–12k | – | 0 | – | `CD TEST 0.8 mm L <L> mm, room <T> C` | Cd (choked from ~10k) |
+| 10 | 0.8 | 12,000 | 100 | 5,000 | 36 | `S2 #10 0.8 capacity` | 0.8 mm at full gas; stop if P0 reaches 9.3 barA |
+| 11 | 0.8 | 12,000 | 900 | 5,000 | 36 | `S2 #11 0.8 capacity` | does rpm help at 0.8 as it does at 0.5? |
+| – | 0.5 | ladder 2–12k | – | 0 | – | `CD TEST 0.5 mm L <L> mm, room <T> C` | Cd (choked from ~4k) |
+| 12 | 0.5 | 7,000 | 500 | 3,000 | 36 | `S2 #12 0.5 rpm` | rpm at the best feed (500 was only run at feed 4,000) |
+| 13 | 0.5 | 7,000 | 900 | 3,000 | 36 | `S2 #13 C7 repeat` | C7 gave 280k/s, C8 187k/s: which is typical? |
+| 14 | 0.5 | 7,000 | 900 | 4,000 | 36 | `S2 #14 0.5 feed` | between the best feed (3,000) and the poor one (5,000) |
+| 15 | 0.5 | 7,000 | 900 | 3,000 | 36 | `S2 #15 C7 repeat` | |
+| 16 | 0.5 | 7,000 | 900 | 2,000 | 36 | `S2 #16 0.5 feed` | less feed, more gas gets through: does throughput hold? |
+| – | 0.5 | 7,000 | 900 | 3,000 | 36 | `S2 exposure series` (1 / 4 / 16 / 40 µs, ~2 s each) | velocity plan step 1; LAST, so the 4 µs exposure cannot be left changed for a real run |
+
+**Why 0.5 mm looks like this.** At 0.5 mm every CCD run was pressure-limited, and the gas SET POINT made no
+difference: at the same feed and rpm, 7,000 vs 11,000 set gave 3,832 vs 3,912 sccm delivered, and 5,370 vs
+5,554. So all 0.5 runs use 7,000. The levers are rpm (100 → 900 at feed 3,000: about 3,900 → 5,450 sccm delivered
+and 19% → 35% atomised) and feed (at 900 rpm: feed 3,000 gives about 5,450 sccm and 35% atomised; feed 5,000
+gives 716–2,170 sccm, and at 100 rpm feed 5,000 is a dribble). Nothing yet tests feed 2,000 or 4,000 at 900 rpm,
+or 500 rpm at feed 3,000.
+
+**Totals:** about 220 mL of silicone (12.8 mL per 36 mm; 15–21 mL for the fast feeds), about 11–12 syringe fills.
+About 4 h: 16 runs at ~8 min, 3 Cd runs at ~10 min, insert changes, the PCC check and the exposure series.
+If time runs short, drop #11 and #16 first.
 
 ## Wednesday: code and understanding, in priority order
 
@@ -60,7 +83,7 @@ tests: a full day.
    - Frame extraction took 2.5 min, writing a 16-bit TIFF and an 8-bit PNG per frame to the LaCie.
    - Leads: batch the tiles, half precision, find the 300 s overhead, and a quick-look stride (e.g. 50).
      Not now; see item 26.
-3. **Thursday's run sheet.** Check whether the app's *Build a run sheet* can take a custom list (numbered Notes,
+3. ~~**Thursday's run sheet.**~~ **DONE 2026-10-14:** `docs/notes/2026-10-15_thursday_run_sheet.csv`. Check whether the app's *Build a run sheet* can take a custom list (numbered Notes,
    randomised within blocks, printable). If not, add a "custom runs" mode (about 1 h); otherwise build it by hand
    from the table above.
 4. **Exposure-series analysis script** (`exposure_series.py`, from the B2 code in
@@ -74,7 +97,7 @@ tests: a full day.
 6. **The C7 / C8 volume gap.** Compare their per-frame volumes and un-atomised pieces, using contact sheets of
    the frames with the largest liquid volume. The aim is a more robust pooled volume fraction (e.g. trimmed, or
    per-frame medians), because the main response rests on it. 1–2 h.
-7. **Settling time against feed.** From the CCD pressure logs, find when the silicone arrives and P0 settles for
+7. ~~**Settling time against feed.**~~ **SKIPPED 2026-10-14 (Ben):** the spray is not steady enough to say when it settles; maybe later. From the CCD pressure logs, find when the silicone arrives and P0 settles for
    each orifice and feed, then set Motor Travel and the auto-trigger timing for the high-feed runs. The camera
    window must sit in steady running. About 30 min.
 8. **Is the 20% plateau real or optical?**
@@ -97,9 +120,9 @@ tests: a full day.
 
 ## Added 2026-10-14 (Ben's list, with notes)
 
-14. **Open the master_log from GUI_Clean** (a button). Excel locks the file on Windows, so if it is open when a
+14. ~~**Open the master_log from GUI_Clean** (a button).~~ **DONE 2026-10-14:** top-bar button, green only when safe; START checks it is closed. Excel locks the file on Windows, so if it is open when a
     run ends, the GUI's save fails. Open a read-only COPY, or warn while a run is in progress. About 20 min.
-15. **Pressure / flow logs that lag, drop points, then jump.** Scan every CCD run's pressure log for gaps
+15. ~~**Pressure / flow logs that lag, drop points, then jump.**~~ **DONE 2026-10-14** (STATUS Recent changes). Scan every CCD run's pressure log for gaps
     (time steps far above the median) and step jumps, and list where they fall (camera window or not). The
     likely cause is already on the known-bugs list: the GUI thread blocks for about 10 s while it rewrites the
     83 MB master_log at run end, plus `find_lacie_drive()` and serial logging on the GUI thread. The gas flux
@@ -116,7 +139,7 @@ tests: a full day.
       100–900 rpm) sits near the limit and its harmonics alias;
     - a true lag-1 at 2.56 ms.
     It costs about 10× the AI time. Try one run (C7, or a 1.2 mm high-gas run) first. About 1 h, plus the AI.
-18. **Run sheets drive GUI_Clean** (a new tab after Extremes).
+18. ~~**Run sheets drive GUI_Clean** (a new tab after Extremes).~~ **DONE 2026-10-14** (untried on the rig).
     - Load the app's `next_runs.csv` / `.xlsx`. It already has gas, rpm, feed, orifice and "Notes to type" per run.
     - Pre-fill the settings and Notes for the current row; Start Experiment as now.
     - Only after the master_log is saved: "Did this run go OK?" Yes ticks the row and loads the next one; No
@@ -153,9 +176,10 @@ tests: a full day.
     window-drop frames and no-droplet frames. About 1 h.
 22. **Check the syringe flow on the rig.** The rate rests on Q_L from motor steps. A one-off: weigh the
     silicone out over a timed run at feed 3,000 and 5,000 (scale + stopwatch), against the steps formula.
-23. **GUI_Clean's run-end freeze.** The master_log rewrite (about 10 s) is the likely cause of item 15 and
-    would also delay the pop-up in item 18. Move the save to a worker thread, or link the images instead of
-    embedding them.
+23. **GUI_Clean's run-end freeze.** Not the cause of item 15 after all: that was LaCie access on the GUI and
+    serial threads (fixed). The master_log save already runs on a worker thread, but its 83 MB rewrite still
+    holds the interpreter for about 10 s, which would delay the pop-up in item 18. Linking the images instead
+    of embedding them would shrink it.
 25. Small items: fold in the Windows timings (`eta.py`, 10 min); the master_log row with "NO DATA AVAILABLE"
     (scripted repair); `Brightest_Frame` still created; `requirements.txt` stale.
 
@@ -164,7 +188,7 @@ tests: a full day.
 
 ## IMPORTANT, after the small fixes: calibration scripts (plan mode first)
 
-**27. Scripts for the size calibration, ready before the parts arrive** (Ben, 2026-10-14), so the calibration
+**27. ~~Scripts for the size calibration~~ BUILT 2026-10-14 (beads; reticle ready in the same script), see `docs/BEAD_CALIBRATION.md`; captures Thursday 2026-10-15, first thing.** Was: scripts for the size calibration, ready before the parts arrive (Ben, 2026-10-14), so the calibration
 is a quick session once the parts are in hand. This is a big task: go into plan mode for it once the small
 fixes above are done, not before.
 - Method and parts list: `docs/DROPLET_MEASUREMENT_METHOD.md` ("Calibration: what to buy and how to run it").
@@ -178,6 +202,13 @@ fixes above are done, not before.
   - the beads: how a transparent sphere's bright centre affects its measured size.
 - Output: a calibration file the sizer reads, with a version bump. This is what makes absolute sizes
   defensible in the thesis (STATUS open question "Which edge is true diameter").
+
+**28. After calibration: can a classical detector replace the AI for droplets?** (Ben, 2026-10-14.) The AI is
+still needed: it decides which dark shapes are droplets (vs ligament fragments and blobs), splits touching droplets
+and finds droplets on ligaments. Every droplet number and the atomised fraction's numerator come from it.
+Calibration fixes how a found object is MEASURED, not how it is found. Once the calibrated edge rule exists, test a
+classical droplet detector (threshold at that edge, then roundness and size) against the 20 hand-labelled
+validation frames. If it is close enough, the lab PC could give same-day numbers without the AI.
 
 ## Physical prep (Ben, before or on Thursday)
 

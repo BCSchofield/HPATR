@@ -26,8 +26,10 @@ an insert with fewer than two choked steps is fitted on its subsonic steps above
 says so: that Cd leans on a pressure drop of a few tenths of a bar, so use --line-loss-run.
 
 CAVEAT. P0 is read at the Alicat, upstream of the line and the bubbler chamber, so it includes their
-pressure drop and Cd comes out LOW. --line-loss-run takes a run with the insert REMOVED (open fitting):
-its pressure above ambient against flow is fitted as dP = k Q^2 and subtracted.
+pressure drop and Cd comes out LOW. --line-loss-run takes the gas-only run on the bare 1.8 mm bubbler (no
+insert; the rig has no open fitting, 1.8 mm is the largest exit): its pressure above ambient against flow is
+fitted as dP = k Q^2 and subtracted. That includes the 1.8 mm exit's own small drop (ideally 0.01-0.07 bar),
+so k and the 1.2 mm Cd read slightly high.
 
     python orifice_cd.py <run folder or day folder> [...] --out <folder> [--write] [--temp-c 20]
 """
@@ -131,7 +133,8 @@ def main():
     ap.add_argument("--temp-c", type=float, default=20.0, help="gas temperature at the orifice (C)")
     ap.add_argument("--min-step-s", type=float, default=8.0)
     ap.add_argument("--settle-s", type=float, default=3.0)
-    ap.add_argument("--line-loss-run", type=Path, help="a run with the insert removed (open fitting)")
+    ap.add_argument("--line-loss-run", type=Path,
+                    help="the gas-only run on the bare 1.8 mm bubbler (no insert), as the line-loss reference")
     ap.add_argument("--write", action="store_true", help=f"update {CD_TABLE.relative_to(REPO)}")
     args = ap.parse_args()
     T = args.temp_c + 273.15

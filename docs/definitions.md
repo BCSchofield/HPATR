@@ -469,6 +469,14 @@ capture GUI and the app's `gallery_more_<c>` sheets):
   is in index.json `min_droplets_for_mean`. Fewer than 2 such frames: both left
   out, `note` says why.
 
+**How they are drawn (2026-10-14).** The liquid stage (`classical_liquid.py`, extremes mode) draws these
+frames too, into `liquid_<thr>/extreme_images/`, the classical way: un-atomised liquid filled, droplets ringed,
+the classical atomised % printed. The app's 2×2 slides and galleries, and the GUI's Extremes tab, use that
+drawing when it exists, else measure_run's (thin outlines; model-only atomised % printed). Older runs are
+back-filled by `draw_more_classical.py`: it re-runs the liquid stage into a temporary folder and copies only the
+new images, after checking that each drawn frame's numbers (and, on a full pass, the run's pooled numbers) match
+the run's own. A run with no window drops needs only the frames drawn (seconds); otherwise every frame.
+
 Ties go to the first frame. Each entry carries that frame's counts, mean, D32
 and **model-only** atomised % (not the quoted classical one). These are for
 looking at, never for ranking runs: one frame is not a run. (With the first

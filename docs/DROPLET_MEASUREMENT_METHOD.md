@@ -140,6 +140,18 @@ projected area; projected area remains acceptable as a ranking response because 
 
 ## Calibration: what to buy and how to run it
 
+**Update 2026-10-14: beads first.** The beads arrived before the reticle: 37.36, 56.28, 76.39, 98.1 and
+155.8 um, certified. With a slide holder on a micrometer, a mixed-bead sandwich is stepped through focus
+directly. So the beads give the size bias, the edge level and the DOF for TRANSPARENT spheres now, and
+the reticle adds scale, distortion and opaque references later.
+- Procedure: `docs/BEAD_CALIBRATION.md`.
+- Analysis: `AI/Real_Data_Code/bead_calibration.py`.
+- Plan: `/Users/benschofield/.claude/plans/cozy-orbiting-swing.md`.
+
+Found while planning: the sizer keeps the half-max region around the darkest pixel and does not fill
+holes. A transparent sphere's bright centre can therefore make that region a RING, which reads low and
+can trip the 2.2.0 rule. The beads measure how often this happens.
+
 ### Shopping list
 
 | item | suggestion | why |
@@ -208,9 +220,19 @@ projected area; projected area remains acceptable as a ranking response because 
   image analysis", Parts 1 (fundamental principles and calibration) and 2 (comparison with phase
   Doppler on a hollow-cone spray), 2003-2004. The PDIA approach: sizing defocused droplets from
   calibrated image properties. https://eprints.soton.ac.uk/64551 and https://eprints.soton.ac.uk/64553/
-- J.-B. Blaisot and J. Yon published on droplet size and morphology characterisation in dense
-  (diesel) sprays by image processing (INSA Rouen / CORIA, mid-2000s): relevant to ligament vs
-  droplet morphology. Exact citation not yet verified.
+- J.-B. Blaisot and J. Yon, "Droplet size and morphology characterization for dense sprays by image
+  processing: application to the Diesel spray", *Exp. Fluids* 39:977-994 (2005),
+  doi:10.1007/s00348-005-0026-4 (verified 2026-10-14; the PDF is in Literature/PDFs of Papers/Imaging).
+  The calibration method we follow:
+  - a target stepped through focus (50 um steps);
+  - contrast C and the radii at relative levels 0.25 / 0.61 / 0.77;
+  - a contrast-corrected size at l = 0.61, because l = 0.5 cannot be inverted at high contrast;
+  - a blur width chi = f(r_0.77 - r_0.25, C) with chi(z) = chi0 + k|z|, and acceptance chi < chi_max,
+    giving a DOF independent of size.
+
+  Implemented, model computed numerically, in `AI/Real_Data_Code/bead_calibration.py`.
+- Z. Wang et al., *Phys. Fluids* 34, 113316 (2022) (FocGAN): in-focus droplets by a GAN trained on
+  synthetic blur. No physical calibration; it supports a blur-width threshold only.
 
 ## Related records
 

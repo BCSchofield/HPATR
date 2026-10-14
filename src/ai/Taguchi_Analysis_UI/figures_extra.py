@@ -680,8 +680,13 @@ MORE_COLUMNS = (("most_in_focus", "most in focus", ""), ("most_total", "most in 
 
 def _more_frames(r, thr: float) -> dict[str, tuple[Path, dict]]:
     """{key: (image path, index entry)} from the run's droplets_<thr>/extreme_frames_more/index.json, for
-    entries whose image exists; {} for a run without one (measured before 2026-10-13, not back-filled)."""
-    meas = Path((r.rec or {}).get("meas_dir") or r.path / "shadowgraph" / "analysis" / f"droplets_{thr:.2f}")
+    entries whose image exists; {} for a run without one (measured before 2026-10-13, not back-filled).
+    The CLASSICAL drawing of the frame (liquid_<thr>/extreme_images/, un-atomised liquid filled) is used
+    when there is one (2026-10-14: classical_liquid.py draws these frames; draw_more_classical.py back-fills
+    them); otherwise measure_run's own drawing. The entry's "drawn" says which: "classical" | "measure_run"."""
+    an = r.path / "shadowgraph" / "analysis"
+    meas = Path((r.rec or {}).get("meas_dir") or an / f"droplets_{thr:.2f}")
+    cl = Path((r.rec or {}).get("cl_dir") or an / f"liquid_{thr:.2f}") / "extreme_images"
     d = meas / MORE_DIR
     try:
         frames = json.loads((d / "index.json").read_text(encoding="utf-8")).get("frames") or []
@@ -689,15 +694,26 @@ def _more_frames(r, thr: float) -> dict[str, tuple[Path, dict]]:
         return {}
     out = {}
     for e in frames:
-        p = d / e["image"] if isinstance(e, dict) and e.get("image") else None
+        if not isinstance(e, dict):
+            continue
+        classical = cl / f"{e['frame']}.png" if e.get("frame") else None
+        if classical is not None and classical.is_file():
+            out[e.get("key")] = (classical, dict(e, drawn="classical"))
+            continue
+        p = d / e["image"] if e.get("image") else None
         if p is not None and p.is_file():
-            out[e.get("key")] = (p, e)
+            out[e.get("key")] = (p, dict(e, drawn="measure_run"))
     return out
+
+
+def more_drawn_classical(ex: dict) -> bool:
+    """True when every frame of a _more_frames result is the classical drawing."""
+    return bool(ex) and all(e.get("drawn") == "classical" for _p, e in ex.values())
 
 
 def gallery_more(results, cond: str, runs, out_dir: Path) -> Path | None:
     """Each run's frame with the most in-focus droplets, the most in total, and the smallest and largest mean
-    in-focus diameter (measure_run's drawing: model masks, green / magenta droplet rings)."""
+    in-focus diameter (the classical drawing where there is one, else measure_run's; see _more_frames)."""
     rows = []
     for r in runs:
         ex = _more_frames(r, results.thr)

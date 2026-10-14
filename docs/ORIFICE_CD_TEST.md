@@ -23,11 +23,13 @@ Cd ≈ 0.8, nitrogen at 20 °C and no line loss (* = choked):
 
 - **0.5 mm and 0.8 mm:** good. They are choked over most of the ladder, which is the regime the
   two-phase runs are in.
-- **1.2 mm:** marginal. It is subsonic only, with a 0.2–0.3 bar drop, so the line loss matters as much
-  as the orifice. Do the line-loss run (step 4).
-- **1.8 mm:** gas alone hardly raises the pressure (≤ 1.07 barA, within the sensor's noise), so it
-  cannot be measured this way. Leave it at "not measured". Either use a literature value for the
-  insert's shape, or come back to it with a restrictor or a higher-flow MFC.
+- **1.2 mm:** marginal. It is subsonic only, with a 0.2–0.3 bar drop. Line loss is IGNORED (Ben,
+  2026-10-14): it is negligible against the choked 0.5 / 0.8 mm pressures, and for 1.2 mm a line loss of a
+  few hundredths of a bar would make its Cd read low by a few percent.
+- **1.8 mm (the bubbler's own exit, no insert):** gas alone hardly raises the pressure (≤ 1.07 barA,
+  within the sensor's noise), so its Cd cannot be measured this way. Leave it at "not measured". Either
+  use a literature value for the exit's shape, or come back to it with a restrictor or a higher-flow
+  MFC. Its ladder is still run, as the line-loss reference (step 4).
 
 ## On the rig (about 10 min per insert)
 
@@ -46,19 +48,28 @@ Cd ≈ 0.8, nitrogen at 20 °C and no line loss (* = choked):
      `run_summary.xlsx`.
 3. **Check the readings on the day** against the table above. A pressure well above it means
    something blocks the orifice (silicone, debris) or the line loss is large.
-4. **Line-loss run (needed for 1.2 mm):** the same ladder with the insert REMOVED, leaving the open
-   fitting. Notes: `CD TEST line loss`. The script fits that run's pressure rise as dP = k Q² and
-   subtracts it from every other run.
+4. **Line-loss run (OPTIONAL; skipped, Ben 2026-10-14):** the same ladder on the bare **1.8 mm bubbler** (no insert).
+   The rig has no open fitting: 1.8 mm is the bubbler's own exit and the largest opening there is
+   (Ben, 2026-10-14). Notes: `CD TEST 1.8 mm line loss`. Its gas-only pressure is mostly line loss,
+   plus the 1.8 mm exit's own small drop (ideally 0.01–0.07 bar over the ladder, table above). The
+   script fits that run's pressure rise as dP = k Q² and subtracts it from every other run. Because the
+   1.8 mm drop is counted as line loss, k reads slightly high and the 1.2 mm Cd slightly high. To do:
+   subtract the 1.8 mm exit's ideal drop first and give the 1.2 mm Cd as a range.
 
 The camera is not needed. AI analysis can stay off.
 
 ## The analysis (Mac or lab PC)
 
-Run it on the day folder. The output folder is new, and nothing in the run folders is changed:
+Run it on the day folder. The output folder is new, and nothing in the run folders is changed. Since
+2026-10-14 the run sheet saves the Cd runs under `Calibration/Orifice Cd` (its "Save under" column), so
+they stay out of the spray runs' day folder:
 
 ```
-/Users/benschofield/anaconda3/envs/phantom/bin/python3 /Users/benschofield/Documents/GitHub/HPATR/AI/Real_Data_Code/orifice_cd.py "/Volumes/LaCie/Experiments/2026/10/<DD>" --out "/Volumes/LaCie/Experiments/Orifice_Cd/2026-10-<DD>" --line-loss-run "/Volumes/LaCie/Experiments/2026/10/<DD>/<line-loss run folder>"
+/Users/benschofield/anaconda3/envs/phantom/bin/python3 /Users/benschofield/Documents/GitHub/HPATR/AI/Real_Data_Code/orifice_cd.py "/Volumes/LaCie/Calibration/Orifice Cd/2026/10/<DD>" --out "/Volumes/LaCie/Calibration/Orifice Cd/analysis/2026-10-<DD>"
 ```
+
+Line loss is ignored (Ben, 2026-10-14); add `--line-loss-run "<run folder>"` only if a line-loss run was
+made.
 
 It writes:
 

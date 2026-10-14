@@ -458,8 +458,14 @@ components ≥ 50% covered by a detected droplet and ≤ 100 px across) and, in 
 (since 2026-10-08) the lowest/highest per-frame D32, picked by the same rule as `measure_run`
 (raw extremes among frames with an in-focus droplet, so the same frames). Rendering: un-atomised
 liquid filled orange, droplets ringed green (in focus) or magenta (out of focus, including droplets
-moved by the 2.2.0 rule). `classical_summary.json` records both `atomised_extreme_frames` (with
-droplet count, un-atomised px and pieces) and `d32_extreme_frames`. The raw lowest-D32 frame is
+moved by the 2.2.0 rule). Since 2026-10-14 it also draws, the same way, measure_run's busiest and
+mean-diameter frames (`droplets_<thr>/extreme_frames_more/index.json`, or `--more-extremes`); the 2×2 slides
+and the GUI show these drawings in preference to measure_run's. `classical_summary.json` records both
+`atomised_extreme_frames` (with droplet count, un-atomised px and pieces) and `d32_extreme_frames`, and
+`more_extreme_frames` (the frames drawn). `draw_more_classical.py` back-fills older runs: a re-run into a
+temporary folder, each drawn frame's row checked against the run's per-frame CSV (and on a full pass the pooled
+summary too), only the new images copied. A run whose summary records no window drops is re-measured on the
+drawn frames alone (`--frames`, `--window-p 0`: with no window mask a frame depends only on itself), ~4 s. The raw lowest-D32 frame is
 often a sparse frame (e.g. 4 droplets): read the droplet count in the caption.
 
 This fraction is **projected area**, at one axial position, of an instantaneous snapshot (not

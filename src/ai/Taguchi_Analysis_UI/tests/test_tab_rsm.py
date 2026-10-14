@@ -95,7 +95,8 @@ def test_the_model_defaults_for_a_ccd(ccd):
     assert m["discrete"] == {"orifice": "0.5, 0.8, 1.2, 1.8"}
     models, opts = ccd.models_and_options()
     assert len(models) == 1 and opts["discrete"] == {"orifice": [0.5, 0.8, 1.2, 1.8]}
-    assert {g["key"] for g in opts["goals"]} == {"atom", "af_flow", "cv_droplets", "d_mean"}     # mean diameter, not D32
+    # throughput (2026-10-14): in-band droplets per second x3, atomised fraction x1
+    assert {g["key"]: g["importance"] for g in opts["goals"]} == {"rate_band": 3.0, "atom": 1.0}
     # 2026-10-13: orifice on a log scale and pressure-limited runs left out, by default
     assert m["log"] == ["orifice"] and opts["log_scale"] == ["orifice"] and opts["limited"] == "exclude"
     row = next(i for i in range(ccd.roles_table.rowCount()) if ccd.roles_table.item(i, 0).text().startswith("Orifice"))
@@ -207,6 +208,9 @@ def test_goal_ends_mean_worst_and_best_for_every_aim():
 
 def test_the_goals_table_reaches_the_analysis_and_a_backwards_ramp_is_refused(app, ccd):
     i = _goal_row(ccd, "d_mean")
+    aim = ccd.goals_table.cellWidget(i, 1)
+    was = aim.currentData()                                       # not a default goal since 2026-10-14
+    aim.setCurrentIndex(aim.findData("min"))
     ccd.goals_table.item(i, 2).setText("60")
     ccd.goals_table.item(i, 3).setText("30")
     ccd.goals_table.item(i, 4).setText("2")
@@ -220,3 +224,4 @@ def test_the_goals_table_reaches_the_analysis_and_a_backwards_ramp_is_refused(ap
     ccd.goals_table.item(i, 2).setText("")                        # put it back for the other tests
     ccd.goals_table.item(i, 3).setText("")
     ccd.goals_table.item(i, 4).setText("1")
+    aim.setCurrentIndex(aim.findData(was))

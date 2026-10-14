@@ -884,20 +884,40 @@ def tw_gallery(results, c: str):
             "frame with the lowest atomised fraction; right: the highest.")
 
 
+# how the busiest / mean-diameter frames are drawn: the classical pass (2026-10-14) or measure_run's own
+CLASSICAL_DRAWN = ("Drawn the classical way, as the atomised extremes: un-atomised liquid filled orange-brown, "
+                   "droplets ringed (green in focus, magenta out of focus). The atomised % printed on each frame "
+                   "is the classical one, as quoted.")
+MEASURE_RUN_DRAWN = ("Drawn as measured (measure_run): circles = droplets (green in focus, magenta out of focus), "
+                     "orange = filaments, blue = blobs. The atomised % printed on each frame is the model-only "
+                     "figure, not the classical one quoted.")
+MIXED_DRAWN = ("Drawn the classical way where the run has it (un-atomised liquid filled orange-brown, the classical "
+               "atomised % printed), otherwise as measured by measure_run (orange outlines = filaments, blue = "
+               "blobs, the model-only atomised % printed). Droplets ringed green in focus, magenta out of focus.")
+
+
+def _drawn_text(exs: list[dict]) -> str:
+    exs = [ex for ex in exs if ex]
+    if exs and all(figures_extra.more_drawn_classical(ex) for ex in exs):
+        return CLASSICAL_DRAWN
+    if any(e.get("drawn") == "classical" for ex in exs for _p, e in ex.values()):
+        return MIXED_DRAWN
+    return MEASURE_RUN_DRAWN
+
+
 def tw_gallery_more(results, c: str):
-    bits = []
+    bits, exs = [], []
     for r in _conds(results).get(c, []):
         ex = figures_extra._more_frames(r, results.thr)
+        exs.append(ex)
         vals = [f"{short} {ex[k][1].get('value')}{unit}" for k, short, unit in figures_extra.MORE_COLUMNS if k in ex]
         if vals:
             bits.append(f"{r.name[:6]}: " + ", ".join(vals))
     return (f"{cond_text(results, c)}: busiest frames and mean-diameter extremes", "; ".join(bits) + ".",
             defs("D10"),
-            "Drawn as measured (measure_run): circles = droplets (green in focus, magenta out of focus), orange = "
-            "filaments, blue = blobs. Columns: most in-focus droplets, most droplets in total, smallest and largest "
+            _drawn_text(exs) + " Columns: most in-focus droplets, most droplets in total, smallest and largest "
             "mean in-focus diameter (only frames with at least half the run's median count of in-focus droplets, "
-            "never fewer than 10, compete for the mean). The "
-            "atomised % printed on each frame is the model-only figure, not the classical one quoted.")
+            "never fewer than 10, compete for the mean).")
 
 
 MORE_GRID = (("most_in_focus", "Most in-focus droplets"), ("most_total", "Most droplets in total"),
@@ -923,12 +943,10 @@ def tw_more_run(results, r):
         else:
             what = f"{n_in} in-focus droplets"
         cells.append((img, f"{label}: {what}   ({img.stem.split('_n')[0]})"))
-    notes = (f"{r.name}. Drawn as measured (measure_run): circles = droplets (green in focus, magenta out of "
-             "focus), orange = filaments, blue = blobs. Top: the frame with the most in-focus droplets and the one "
+    notes = (f"{r.name}. {_drawn_text([ex])} Top: the frame with the most in-focus droplets and the one "
              "with the most droplets in total. Bottom: the smallest and largest mean in-focus diameter, among "
              "frames with at least half the run's median count of in-focus droplets (never fewer than 10), so a "
-             "thin frame's chance mean cannot win. The mean uses in-focus droplets only. The atomised % printed "
-             "on each frame is the model-only figure, not the classical one quoted.")
+             "thin frame's chance mean cannot win. The mean uses in-focus droplets only.")
     return f"{cond_text(results, r.condition)}, {r.name[:6]}: busiest and mean-diameter frames", cells, notes
 
 

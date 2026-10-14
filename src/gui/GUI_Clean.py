@@ -51,7 +51,8 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QLineEdit, QComboBox, QCheckBox, QTextEdit, QPlainTextEdit,
     QFrame, QTabWidget, QSizePolicy, QProgressBar, QScrollArea,
     QGridLayout, QMessageBox, QFileDialog, QSpinBox, QInputDialog,
-    QDialog, QDialogButtonBox, QRadioButton, QAbstractSpinBox
+    QDialog, QDialogButtonBox, QRadioButton, QAbstractSpinBox,
+    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView
 )
 from PySide6.QtCore import Qt, QTimer, Signal, Slot, QObject, QThread, QSize, QEvent, QRectF, QPointF
 from PySide6.QtGui import QFont, QPixmap, QImage, QColor, QPalette, QIcon, QPainter, QPen, QPolygonF, QIntValidator, QDoubleValidator, QValidator
@@ -79,6 +80,12 @@ try:
     from gui import window_check as _window_check
 except Exception:
     _window_check = None
+# Run sheets (gui/run_sheet.py, 2026-10-14): load a list of runs, fill each run's settings in, ask after each
+# saved run whether it went OK. Optional: the GUI starts without it.
+try:
+    from gui import run_sheet as _run_sheet
+except Exception:
+    _run_sheet = None
 GAS_SHORT_SHARE = 0.95       # flow below this share of the set point ...
 GAS_SHORT_HOLD_S = 3.0       # ... for this long is not a transient: say so
 
@@ -787,12 +794,61 @@ def _get_session_log_file():
             log_dir, datetime.now().strftime("serial_%Y%m%d_%H%M%S.txt"))
     return _SESSION_LOG_FILE
 
+# The serial log is written by ONE background thread (2026-10-14). log_serial() used to open the file on
+# the LaCie for every line, on the Portenta reader thread: when the drive was busy (on the CCD day, usually
+# ~25-70 s after the previous run's 15 GB cine finished saving) the reader stalled for 1-5 s with it. A
+# stalled reader leaves the Portenta's lines unread, and the firmware's Serial.print() blocks the stepper
+# once its TX buffer fills. Now a line is stamped when it is logged and queued; a slow drive only delays
+# the file, never the caller.
+_SERIAL_LOG_Q: "queue.Queue[tuple]" = queue.Queue()
+_SERIAL_LOG_LOCK = threading.Lock()
+_SERIAL_LOG_THREAD = None
+
+
+def _write_serial_lines(batch):
+    by_file = {}
+    for log_file, line in batch:
+        by_file.setdefault(log_file, []).append(line)
+    for log_file, lines in by_file.items():
+        try:
+            with open(log_file or _get_session_log_file(), "a") as f:
+                f.writelines(lines)
+        except OSError:
+            pass                                   # a log line is never worth stopping for
+
+
+def _serial_log_writer():
+    while True:
+        batch = [_SERIAL_LOG_Q.get()]
+        while True:
+            try:
+                batch.append(_SERIAL_LOG_Q.get_nowait())
+            except queue.Empty:
+                break
+        _write_serial_lines(batch)
+        for _ in batch:
+            _SERIAL_LOG_Q.task_done()
+
+
+def flush_serial_log(timeout_s: float = 5.0) -> bool:
+    """Wait (up to timeout_s) until every queued line is written; True if it was. For shutdown and tests."""
+    end = time.monotonic() + timeout_s
+    while _SERIAL_LOG_Q.unfinished_tasks:
+        if time.monotonic() > end:
+            return False
+        time.sleep(0.01)
+    return True
+
+
 def log_serial(message, log_file=None):
-    if log_file is None:
-        log_file = _get_session_log_file()
+    """Queue one line for the serial log; returns at once (see _serial_log_writer)."""
+    global _SERIAL_LOG_THREAD
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-    with open(log_file, "a") as f:
-        f.write(f"[{timestamp}] {message}\n")
+    with _SERIAL_LOG_LOCK:
+        if _SERIAL_LOG_THREAD is None or not _SERIAL_LOG_THREAD.is_alive():
+            _SERIAL_LOG_THREAD = threading.Thread(target=_serial_log_writer, name="serial-log", daemon=True)
+            _SERIAL_LOG_THREAD.start()
+    _SERIAL_LOG_Q.put((log_file, f"[{timestamp}] {message}\n"))
 
 class ArduinoController:
     def __init__(self, port, baudrate=9600):
@@ -1799,6 +1855,7 @@ class AtomisationApp(QMainWindow):
 
     # Cross-thread signals for pipeline callbacks
     _pipeline_done = Signal(object)
+    _lacie_probed = Signal(bool)     # the LaCie probe thread's answer (a signal: safe if the window is gone)
     _pipeline_err  = Signal(str)
 
     def __init__(self):
@@ -2064,6 +2121,16 @@ class AtomisationApp(QMainWindow):
         hl.addWidget(self._hdr_lacie_dot)
         hl.addWidget(self._hdr_lacie_lbl)
 
+        # master_log.xlsx, one click away (Ben, 2026-10-14). GREEN = safe to open. RED and disabled while a run
+        # is going, its save is pending, a save is being written or the AI's re-save is still to come: Excel
+        # locks the file it opens, and the save would fail. See _master_log_busy / _update_master_btn.
+        self._hdr_master_btn = QPushButton("master_log")
+        self._hdr_master_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._hdr_master_btn.setFixedHeight(24)
+        self._hdr_master_btn.clicked.connect(self._open_master_log)
+        hl.addWidget(self._hdr_master_btn)
+        self._update_master_btn()
+
         hl.addStretch()
 
         # Last save path — "No Current Runs" until first save; becomes clickable afterwards
@@ -2095,22 +2162,19 @@ class AtomisationApp(QMainWindow):
         _sep.setStyleSheet(f"background: {CLR_BORDER};")
         hl.addWidget(_sep)
 
-        # Status dots — order: Arduino · Camera · AFG · BAR
+        # Status dots — order: Arduino · Camera · BAR · MFC (the AFG light was removed 2026-10-14)
         self._hdr_arduino_dot  = dot_indicator(CLR_TEXT_SEC)
         self._hdr_arduino_lbl  = QLabel("Portenta")
         self._hdr_camera_dot   = dot_indicator(CLR_TEXT_SEC)
         self._hdr_camera_lbl   = QLabel("Camera")
-        self._hdr_afg_dot      = dot_indicator(CLR_RED)
-        self._hdr_afg_lbl      = QLabel("AFG")
         self._hdr_pressure_dot = dot_indicator(CLR_TEXT_SEC)
         self._hdr_pressure_lbl = QLabel("– barA")
         self._hdr_mfc_dot      = dot_indicator(CLR_TEXT_SEC)
         self._hdr_mfc_lbl      = QLabel("MFC")
 
-        # Arduino, AFG, BAR, MFC — plain dot + label
+        # Arduino, BAR, MFC — plain dot + label
         for dot, lbl in [
             (self._hdr_arduino_dot,  self._hdr_arduino_lbl),
-            (self._hdr_afg_dot,      self._hdr_afg_lbl),
             (self._hdr_pressure_dot, self._hdr_pressure_lbl),
             (self._hdr_mfc_dot,      self._hdr_mfc_lbl),
         ]:
@@ -2132,7 +2196,7 @@ class AtomisationApp(QMainWindow):
         _cam_box_hl.addWidget(self._hdr_camera_dot)
         _cam_box_hl.addWidget(self._hdr_camera_lbl)
 
-        # Add all indicators in order: Arduino · Camera · AFG · BAR
+        # Add all indicators in order: Arduino · Camera · BAR · MFC
         hl.addWidget(self._hdr_arduino_dot)
         hl.addWidget(self._hdr_arduino_lbl)
         _sp = QFrame(); _sp.setFixedWidth(10); _sp.setStyleSheet("background: transparent;")
@@ -2141,11 +2205,6 @@ class AtomisationApp(QMainWindow):
         hl.addWidget(self._hdr_camera_box)
         _sp2 = QFrame(); _sp2.setFixedWidth(10); _sp2.setStyleSheet("background: transparent;")
         hl.addWidget(_sp2)
-
-        hl.addWidget(self._hdr_afg_dot)
-        hl.addWidget(self._hdr_afg_lbl)
-        _sp3 = QFrame(); _sp3.setFixedWidth(10); _sp3.setStyleSheet("background: transparent;")
-        hl.addWidget(_sp3)
 
         hl.addWidget(self._hdr_pressure_dot)
         hl.addWidget(self._hdr_pressure_lbl)
@@ -2489,7 +2548,7 @@ class AtomisationApp(QMainWindow):
             QTabBar::tab {{
                 background: transparent;
                 color: {CLR_TEXT_SEC};
-                padding: 12px 24px;
+                padding: 12px 18px;
                 font-weight: 500;
                 font-size: 13px;
                 border: none;
@@ -2509,6 +2568,7 @@ class AtomisationApp(QMainWindow):
         self._tabs.addTab(self._build_calibration_tab(),  "  Calibration  ")
         self._tabs.addTab(self._build_cone_tab(),         "  Cone  ")
         self._tabs.addTab(self._build_extremes_tab(),     "  Extremes  ")
+        self._tabs.addTab(self._build_run_sheet_tab(),    "  Run sheet  ")
         self._tabs.addTab(self._build_how_to_tab(),       "")
         # Hide the How To tab itself — its content is reached via the corner
         # button below.  Indexed off the count so adding/removing a tab above
@@ -4065,7 +4125,7 @@ class AtomisationApp(QMainWindow):
             img.clearImage(f"image not found: {path}")
             path_lbl.setText(path or "")
 
-        self._update_more_extremes(results.get("_measurement_dir"))
+        self._update_more_extremes(results.get("_measurement_dir"), cdir)
         legend = ("orange = un-atomised liquid, green = in-focus droplet, magenta = out of "
                   "focus" if source == "classical pass" else
                   "green = in-focus droplet, magenta = out of focus")
@@ -4079,9 +4139,11 @@ class AtomisationApp(QMainWindow):
                 "Run finished but no marked-up images were found — "
                 "measure_run needs --images (process_capture passes it by default).")
 
-    def _update_more_extremes(self, mdir) -> int:
+    def _update_more_extremes(self, mdir, liquid_dir=None) -> int:
         """The four count / mean-diameter extremes from <droplets dir>/extreme_frames_more/index.json;
-        the number of images shown. Runs measured before 2026-10-13 have no index (unless back-filled)."""
+        the number of images shown. Runs measured before 2026-10-13 have no index (unless back-filled).
+        Each frame is shown as the CLASSICAL pass drew it (liquid_<thr>/extreme_images/, un-atomised
+        liquid filled, as the panels above) when it did (2026-10-14), else as measure_run drew it."""
         frames, note = {}, ""
         folder = os.path.join(mdir, "extreme_frames_more") if mdir else None
         try:
@@ -4108,6 +4170,10 @@ class AtomisationApp(QMainWindow):
                 bits.append(f"D32 {e['d32_um']} µm")
             cap.setText(f"{e.get('frame', '?')}   ·   " + "   ·   ".join(bits))
             path = os.path.join(folder, e["image"]) if e.get("image") else None
+            classical = (os.path.join(liquid_dir, "extreme_images", f"{e['frame']}.png")
+                         if liquid_dir and e.get("frame") else None)
+            if classical and os.path.exists(classical):
+                path = classical
             pix = QPixmap(path) if path and os.path.exists(path) else None
             if pix is not None and not pix.isNull():
                 img.setSourcePixmap(pix)
@@ -4117,6 +4183,325 @@ class AtomisationApp(QMainWindow):
                 img.clearImage(f"image not found: {path}" if path else "no image saved")
                 path_lbl.setText(path or "")
         return shown
+
+    # ── Run sheet tab (2026-10-14) ───────────────────────────────────────────
+    # Load a run sheet (.csv / .xlsx, e.g. the analysis app's next_runs.csv) and the GUI fills in each run's
+    # settings. After each run, ONLY ONCE the run is saved to master_log, it asks whether the run went OK: Yes
+    # fills in the next run, No keeps this one to redo (and marks the saved run's Notes). Progress is kept on
+    # the local disk (gui/run_sheet.py), so it survives a restart.
+
+    SHEET_COLUMNS = ("#", "Status", "Insert", "Gas (sccm)", "RPM", "Feed", "Travel", "Notes")
+
+    def _build_run_sheet_tab(self):
+        scroll = QScrollArea(); scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("background:transparent; border:none;")
+        w = QWidget(); vl = QVBoxLayout(w); vl.setSpacing(16); vl.setContentsMargins(16, 16, 16, 16)
+        self._sheet_rows = None
+        self._sheet_progress = None
+        self._sheet_row_at_start = None
+        self._notes_lock = None
+
+        c = card()
+        c.layout().addWidget(section_label("RUN SHEET"))
+        intro = QLabel("Load a run sheet and the GUI fills in each run's gas, RPM, feed, travel, insert and Notes. "
+                       "Press START EXPERIMENT as usual. When the run has been saved to master_log, it asks "
+                       "whether the run went OK: Yes fills in the next run, No keeps this one to redo.")
+        intro.setWordWrap(True)
+        intro.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
+        c.layout().addWidget(intro)
+        row = QHBoxLayout()
+        self._sheet_load_btn = accent_button("Load sheet…")
+        self._sheet_load_btn.clicked.connect(self._run_sheet_pick)
+        row.addWidget(self._sheet_load_btn)
+        self._sheet_fill_btn = ghost_button("Fill in selected run")
+        self._sheet_fill_btn.clicked.connect(lambda: self._run_sheet_fill(self._run_sheet_selected()))
+        row.addWidget(self._sheet_fill_btn)
+        for text, status in (("Mark done", "done"), ("Mark to redo", "redo"), ("Skip", "skipped")):
+            b = ghost_button(text)
+            b.clicked.connect(lambda _c=False, st=status: self._run_sheet_mark(self._run_sheet_selected(), st))
+            row.addWidget(b)
+        row.addStretch()
+        c.layout().addLayout(row)
+        self._sheet_follow_chk = QCheckBox("After each run (once it is saved), ask whether it went OK and fill in "
+                                           "the next run")
+        self._sheet_follow_chk.setChecked(True)
+        self._sheet_follow_chk.setStyleSheet(f"color:{CLR_TEXT}; font-size:12px;")
+        c.layout().addWidget(self._sheet_follow_chk)
+        self._sheet_path_lbl = QLabel("No sheet loaded.")
+        self._sheet_path_lbl.setWordWrap(True)
+        self._sheet_path_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
+        c.layout().addWidget(self._sheet_path_lbl)
+        self._sheet_next_lbl = QLabel("")
+        self._sheet_next_lbl.setWordWrap(True)
+        self._sheet_next_lbl.setStyleSheet(f"color:{CLR_TEXT}; font-size:14px; font-weight:700;")
+        c.layout().addWidget(self._sheet_next_lbl)
+        self._sheet_instr_lbl = QLabel("")
+        self._sheet_instr_lbl.setWordWrap(True)
+        self._sheet_instr_lbl.setStyleSheet(f"color:{CLR_ORANGE}; font-size:12px; font-weight:600;")
+        c.layout().addWidget(self._sheet_instr_lbl)
+        for lbl in (intro, self._sheet_path_lbl, self._sheet_next_lbl, self._sheet_instr_lbl):
+            lbl.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        vl.addWidget(c)
+
+        t = card()
+        self._sheet_table = QTableWidget(0, len(self.SHEET_COLUMNS))
+        self._sheet_table.setHorizontalHeaderLabels(self.SHEET_COLUMNS)
+        self._sheet_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._sheet_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._sheet_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._sheet_table.verticalHeader().setVisible(False)
+        hh = self._sheet_table.horizontalHeader()
+        hh.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        hh.setStretchLastSection(True)
+        self._sheet_table.setMinimumHeight(300)
+        self._sheet_table.setStyleSheet(f"""
+            QTableWidget {{ background:{CLR_INPUT}; color:{CLR_TEXT}; border:1px solid {CLR_BORDER};
+                            border-radius:8px; gridline-color:{CLR_BORDER}; font-size:12px; }}
+            QHeaderView::section {{ background:{CLR_PANEL}; color:{CLR_TEXT_SEC}; border:none;
+                                    padding:4px 8px; font-weight:600; }}
+            QTableWidget::item:selected {{ background:{CLR_ACCENT}; color:white; }}
+        """)
+        self._sheet_table.cellDoubleClicked.connect(lambda r, _c: self._run_sheet_fill(r))
+        t.layout().addWidget(self._sheet_table)
+        vl.addWidget(t)
+        vl.addStretch()
+        scroll.setWidget(w)
+        QTimer.singleShot(0, self, self._run_sheet_resume)
+        return scroll
+
+    def _run_sheet_selected(self) -> int | None:
+        rows = self._sheet_table.selectionModel().selectedRows() if self._sheet_table.selectionModel() else []
+        if rows:
+            return rows[0].row()
+        return self._sheet_progress.current if self._sheet_progress is not None else None
+
+    def _run_sheet_resume(self):
+        """At start-up: reload the sheet last used and its progress (the boxes are NOT filled in)."""
+        if _run_sheet is None:
+            return
+        try:
+            d = json.loads(_run_sheet.state_path().read_text(encoding="utf-8"))
+            path = d.get("sheet")
+        except (OSError, ValueError, AttributeError):
+            return
+        if path and os.path.exists(path):
+            self._run_sheet_load(path, fill=False)
+
+    def _run_sheet_pick(self):
+        if _run_sheet is None:
+            self._warn("Run sheet", "gui/run_sheet.py could not be imported.")
+            return
+        start = os.path.dirname(getattr(self, "_sheet_path", "") or "") or (find_lacie_drive() or "")
+        path, _ = QFileDialog.getOpenFileName(self, "Load a run sheet", start,
+                                              "Run sheets (*.csv *.xlsx);;All files (*)")
+        if path:
+            self._run_sheet_load(path, fill=True)
+
+    def _run_sheet_load(self, path: str, fill: bool = True):
+        try:
+            rows = _run_sheet.load(path)
+        except _run_sheet.SheetError as e:
+            self._warn("Run sheet", str(e))
+            return
+        prog = _run_sheet.load_state(len(rows), path) or _run_sheet.Progress.new(path, len(rows))
+        self._sheet_rows, self._sheet_progress, self._sheet_path = rows, prog, path
+        self._run_sheet_save_state()
+        self._run_sheet_refresh()
+        done = prog.counts()["done"]
+        self._log(f"Run sheet loaded: {os.path.basename(path)}, {len(rows)} runs"
+                  + (f" ({done} already done)" if done else ""))
+        if fill and not self.pressure_data['experiment_active']:
+            nxt = prog.next_open(prog.current - 1)
+            if nxt is not None:
+                self._run_sheet_fill(nxt)
+
+    def _run_sheet_save_state(self):
+        if self._sheet_progress is None:
+            return
+        try:
+            _run_sheet.save_state(self._sheet_progress)
+        except OSError as e:
+            self._log(f"Run sheet: progress not saved ({e})")
+
+    def _run_sheet_refresh(self):
+        rows, prog = self._sheet_rows, self._sheet_progress
+        tbl = self._sheet_table
+        if rows is None or prog is None:
+            tbl.setRowCount(0)
+            return
+        tbl.setRowCount(len(rows))
+        colours = {"done": CLR_GREEN, "redo": CLR_ORANGE, "skipped": CLR_TEXT_SEC, "pending": CLR_TEXT}
+        for i, r in enumerate(rows):
+            status = prog.status[i]
+            vals = (r.number, ("▶ next" if i == prog.current and status in ("pending", "redo") else status),
+                    f"{r.orifice:g} mm" if r.orifice is not None else "",
+                    f"{r.gas:,.0f}" if r.gas is not None else "",
+                    f"{r.rpm:g}" if r.rpm else "–",
+                    "static (0)" if r.static else f"{r.feed:,.0f}",
+                    f"{r.travel:g} mm" if r.travel is not None else "",
+                    r.notes)
+            for j, v in enumerate(vals):
+                it = QTableWidgetItem(str(v))
+                it.setForeground(QColor(CLR_ACCENT if i == prog.current and status != "done" else colours[status]))
+                if i == prog.current:
+                    f = it.font(); f.setBold(True); it.setFont(f)
+                tbl.setItem(i, j, it)
+        c = prog.counts()
+        self._sheet_path_lbl.setText(f"{self._sheet_path}\n{c['done']} of {len(rows)} done"
+                                     + (f", {c['redo']} to redo" if c['redo'] else "")
+                                     + (f", {c['skipped']} skipped" if c['skipped'] else ""))
+        cur = rows[prog.current]
+        if prog.status[prog.current] == "done" and prog.next_open(prog.current) is None:
+            self._sheet_next_lbl.setText("Sheet complete: every run is done.")
+            self._sheet_instr_lbl.setText("")
+        else:
+            self._sheet_next_lbl.setText(f"Next: #{cur.number}  ·  {cur.label()}")
+            self._sheet_instr_lbl.setText(cur.instructions or ("Static run: no traverse. End it with STOP "
+                                                               "EVERYTHING." if cur.static else ""))
+
+    def _run_sheet_fill(self, i):
+        """Put row i's settings into the boxes (and make it the current row)."""
+        if self._sheet_rows is None or i is None or not (0 <= i < len(self._sheet_rows)):
+            return
+        if self.pressure_data['experiment_active']:
+            self._warn("Run sheet", "A run is in progress: the next run's settings are filled in when it ends.")
+            return
+        row = self._sheet_rows[i]
+        prev = self._orifice_combo.currentText()
+        f = row.fields()
+        boxes = (("flow", self._flow_entry), ("speed", self._speed_entry), ("distance", self._distance_entry),
+                 ("rpm", self._rpm_entry), ("orifice_length", self._orifice_len_entry))
+        for key, box in boxes:
+            if key in f:
+                box.setText(f[key])
+        self._notes_text.setPlainText(f["notes"])
+        if "orifice" in f:
+            k = self._orifice_combo.findText(f["orifice"])
+            if k < 0:
+                self._warn("Run sheet", f"Run #{row.number}: the insert '{f['orifice']}' is not in the Orifice "
+                                        "list. Pick it by hand.")
+            else:
+                self._orifice_combo.setCurrentIndex(k)
+        self._sheet_progress.current = i
+        self._run_sheet_save_state()
+        self._run_sheet_refresh()
+        # the camera's post-trigger: the row's own (a calibration capture), else back to the standard
+        std_post = next(v for key, _l, v in self.STANDARD_CAPTURE if key == "post_trigger_s")
+        want_post = f.get("post_trigger", std_post)
+        if self._cam_post_s.text().strip() != want_post:
+            self._cam_post_s.setText(want_post)
+            cam_on = bool(self.phantom and getattr(self.phantom, "is_connected", False))
+            if cam_on:
+                self._cam_configure()             # = Apply Config (refused while a save is running)
+            self._log(f"Run sheet: camera post-trigger set to {want_post} s"
+                      + ("" if cam_on else " (camera not connected: press Apply Config once it is)."))
+        try:
+            self._save_camera_settings()          # the boxes as they now are, as if typed
+        except Exception:
+            pass
+        self._update_next_save_preview()          # the header shows where this run will be saved
+        self._log(f"Run sheet: filled in #{row.number} ({row.label()})"
+                  + (f", saved under {'/'.join(row.folder_parts())}" if row.save_under else "") + ".")
+        self._set_status(f"Run sheet: #{row.number} filled in — "
+                         + (row.instructions[:110] if row.instructions else row.label()), CLR_GREEN)
+        change = "orifice" in f and f["orifice"] != prev
+        setup = row.instructions.upper().startswith("SETUP")
+        if setup and not change:
+            self._warn(f"Run #{row.number}: set-up", row.instructions)
+        elif change or (row.static and row.instructions):
+            msg = (f"Run #{row.number} uses the {f['orifice']} insert (the last run used {prev}).\n\n"
+                   "Fit it, and check the Orifice length box before starting." if change else "")
+            if (row.static or setup) and row.instructions:
+                msg = (msg + "\n\n" if msg else "") + row.instructions
+            self._warn("Change the insert" if change else f"Run #{row.number}", msg)
+
+    def _run_sheet_mark(self, i, status: str):
+        if self._sheet_progress is None or i is None:
+            return
+        self._sheet_progress.status[i] = status
+        if status in ("done", "skipped") and i == self._sheet_progress.current:
+            nxt = self._sheet_progress.next_open(i)
+            if nxt is not None:
+                self._sheet_progress.current = nxt
+        self._run_sheet_save_state()
+        self._run_sheet_refresh()
+
+    def _run_sheet_after_save(self, ok: bool, err):
+        """Called once the end-of-run save has finished. Only now may the next run's values go into the boxes,
+        so the master_log row can never be saved with the next run's settings."""
+        i = getattr(self, "_sheet_row_at_start", None)
+        self._sheet_row_at_start = None
+        if i is None or self._sheet_rows is None or self._sheet_progress is None:
+            return
+        row = self._sheet_rows[i]
+        if not ok:
+            self._warn("Run sheet", f"Run #{row.number} could NOT be saved ({err}).\n\nThe sheet has not moved on: "
+                                    "use Save to Excel, then mark the run done or to redo on the Run sheet tab.")
+            return
+        diffs = _run_sheet.differences(row, self._run_conditions or {})
+        choice, extra = self._run_sheet_ask(row, diffs)
+        if choice == "later":
+            self._log(f"Run sheet: #{row.number} left open; mark it on the Run sheet tab.")
+            return
+        notes = self._notes_text.toPlainText().rstrip()
+        if choice == "redo":
+            notes = f"{notes} {_run_sheet.BAD_RUN_NOTE}".strip()
+        if extra:
+            notes = f"{notes} {extra}".strip()
+        folder = getattr(self, "_last_saved_run_folder", None) or self._run_folder
+
+        def advance(saved_ok=True, save_err=None):
+            if not saved_ok:
+                self._warn("Run sheet", f"The Notes for #{row.number} could not be saved ({save_err}). The sheet "
+                                        "has not moved on.")
+                return
+            self._notes_lock = (folder, notes)     # later saves of this run keep its own Notes
+            nxt = self._sheet_progress.finish(i, choice == "ok", folder)
+            self._run_sheet_save_state()
+            self._run_sheet_refresh()
+            if nxt is None:
+                self._log("Run sheet: every run is done.")
+                self._set_status("Run sheet complete", CLR_GREEN)
+                return
+            self._run_sheet_fill(nxt)
+
+        if notes != self._notes_text.toPlainText().rstrip():
+            self._notes_text.setPlainText(notes)
+            self._save_to_excel_async(on_done=lambda o, e: advance(o, e))   # update the same master_log row
+        else:
+            advance()
+
+    def _run_sheet_ask(self, row, diffs: list[str]) -> tuple[str, str]:
+        """('ok' | 'redo' | 'later', text to add to the Notes)."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Run sheet: #{row.number}")
+        dlg.setStyleSheet(f"""
+            QDialog {{ background-color: {CLR_PANEL}; color: {CLR_TEXT}; }}
+            QLabel {{ color: {CLR_TEXT}; font-size: 13px; }}
+            QLineEdit {{ background:{CLR_INPUT}; color:{CLR_TEXT}; border:1px solid {CLR_BORDER};
+                         border-radius:6px; padding:6px; font-size:13px; }}
+        """)
+        lay = QVBoxLayout(dlg)
+        stop = f"\n\nIt was STOPPED: {self._run_stop_reason}." if self._run_stop_reason else ""
+        warn = ("\n\nIts settings differed from the sheet: " + "; ".join(diffs) + ".") if diffs else ""
+        msg = QLabel(f"Run #{row.number} ({row.label()}) is saved to master_log.{stop}{warn}\n\n"
+                     "Did everything go OK?")
+        msg.setWordWrap(True)
+        lay.addWidget(msg)
+        lay.addWidget(QLabel("Add to this run's Notes (optional):"))
+        extra = QLineEdit()
+        extra.setPlaceholderText("e.g. pulsing, window wiped late")
+        lay.addWidget(extra)
+        btns = QHBoxLayout()
+        result = {"choice": "later"}
+        for text, choice, colour in (("Yes, next run", "ok", CLR_GREEN), ("No, redo this run", "redo", CLR_ORANGE),
+                                     ("Decide later", "later", None)):
+            b = accent_button(text, colour) if colour else ghost_button(text)
+            b.clicked.connect(lambda _c=False, ch=choice: (result.update(choice=ch), dlg.accept()))
+            btns.addWidget(b)
+        lay.addLayout(btns)
+        dlg.exec()
+        return result["choice"], extra.text().strip()
 
     def _build_cone_tab(self):
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
@@ -4325,10 +4710,13 @@ class AtomisationApp(QMainWindow):
         sections = [
             ("LAYOUT", [
                 ("Header",
-                 "Left to right: LaCie (green when the drive is found), the last saved run "
+                 "Left to right: LaCie (green when the drive is found), the master_log button "
+                 "(GREEN: click to open master_log.xlsx; RED and not clickable while a run is "
+                 "going or not yet saved, or a save is running, because Excel locks the file "
+                 "and the save would fail; close Excel before the next Start), the last saved run "
                  "(click it to open the folder) and the folder the next run will go to "
                  "(orange if it already exists), the calibrated px/mm, then the Portenta, "
-                 "Camera, AFG, live pressure (barA) and MFC indicators, and the run timer. "
+                 "Camera, live pressure (barA) and MFC indicators, and the run timer. "
                  "The Camera box is outlined orange while armed and green while a "
                  "trigger is saving."),
                 ("Left panel",
@@ -4339,7 +4727,7 @@ class AtomisationApp(QMainWindow):
                  "STOP EVERYTHING."),
                 ("Tabs",
                  "Hardware (connections, bubbler RPM, gas flow, traverse), Materials, "
-                 "Camera, AFG1062, Calibration, Cone and Extremes. This page is the How "
+                 "Camera, AFG1062, Calibration, Cone, Extremes and Run sheet. This page is the How "
                  "To button at the top right."),
                 ("Right panel and bottom bar",
                  "Right: Nozzle (orifice, bubbler height), Notes with Save to Excel, and "
@@ -4515,6 +4903,21 @@ class AtomisationApp(QMainWindow):
                  "count of in-focus droplets, never fewer than 10). "
                  "Green = in-focus droplet, magenta = out of focus, orange = un-atomised "
                  "liquid."),
+                ("Run sheet",
+                 "Load sheet… takes a .csv or .xlsx with a row per run (the analysis app's "
+                 "next_runs.csv works as it is): gas, RPM, feed, and optionally insert, "
+                 "travel, orifice length, Notes and instructions. The next run's settings "
+                 "and Notes are filled in; press START EXPERIMENT as usual. When the run "
+                 "has been SAVED to master_log, it asks whether it went OK (and lets you "
+                 "add to its Notes): Yes fills in the next run; No marks the saved run "
+                 "'[bad run, redone]' and keeps this one to redo. Double-click a row to "
+                 "fill it in; Mark done / Mark to redo / Skip for anything else. A change "
+                 "of insert pops up a reminder, and so does a row whose instructions start "
+                 "with SETUP. Optional columns: 'Save under' (a folder on the LaCie, e.g. "
+                 "Calibration/Imaging Work, instead of Experiments) and 'Post-trigger (s)' "
+                 "(the camera's capture length for that row, e.g. 1 s for calibration "
+                 "captures; rows without it go back to the 13 s standard). Progress is "
+                 "remembered across restarts (on this PC, not the LaCie)."),
                 ("Calibration (px/mm)",
                  "Start Feed and Use as Calibration Image, or Load from File. Scroll to "
                  "zoom, right-drag to pan, double-click to reset. Click two points a "
@@ -5115,12 +5518,18 @@ class AtomisationApp(QMainWindow):
             # Stamped here, on the reader thread, so a busy GUI thread (a save,
             # a modal dialog) cannot make healthy readings look stale.
             self._alicat_last_frame_t = time.monotonic()
-            QTimer.singleShot(0, self, lambda p=pressure, t=temp, m=mass_flow, s=setpoint:
-                self._on_alicat_reading(p, t, m, s))
+            # ... and the reading's TIME is taken here too (2026-10-14). It used to be taken when the
+            # GUI thread got to it: on the CCD day the GUI thread stalled for 1-4 s in 30 of 33 runs
+            # (12 inside the camera window), and the readings queued meanwhile were logged in a burst
+            # at one instant, so the log showed a gap and then a jump.
+            stamp = time.time()
+            QTimer.singleShot(0, self, lambda p=pressure, t=temp, m=mass_flow, s=setpoint, w=stamp:
+                self._on_alicat_reading(p, t, m, s, w))
         except (ValueError, IndexError):
             pass
 
-    def _on_alicat_reading(self, pressure: float, temp: float, mass_flow: float, setpoint: float):
+    def _on_alicat_reading(self, pressure: float, temp: float, mass_flow: float, setpoint: float,
+                           stamp: float | None = None):
         self._alicat_last_frame_t = time.monotonic()
         if self._alicat_stale:
             self._alicat_stale = False
@@ -5135,7 +5544,7 @@ class AtomisationApp(QMainWindow):
         self._check_pressure_cutoff(pressure)
         self._update_gas_regime(pressure, mass_flow, setpoint)
         # The Alicat is the only source for the live graphs and the run log.
-        self._record_alicat_sample(pressure, mass_flow)
+        self._record_alicat_sample(pressure, mass_flow, stamp)
 
     def _update_gas_regime(self, pressure: float, flow: float, setpoint: float):
         """Live: is the gas at its set point? A flow more than 5% short for GAS_SHORT_HOLD_S is not a
@@ -5652,9 +6061,10 @@ class AtomisationApp(QMainWindow):
             except Exception as e:
                 log_serial(f"Serial reader warning: {e}")
 
-    def _record_alicat_sample(self, pressure: float, flow: float):
-        """Feed one Alicat frame into the live graphs and the experiment log."""
-        now = time.time()
+    def _record_alicat_sample(self, pressure: float, flow: float, stamp: float | None = None):
+        """Feed one Alicat frame into the live graphs and the experiment log, at the time it was READ
+        (`stamp`, time.time() on the reader thread), not the time the GUI thread got to it."""
+        now = stamp if stamp is not None else time.time()
 
         # ── EMA smoothing ─────────────────────────────────────────────────────
         # Initialise (or reinitialise after a gap) by seeding with the first value
@@ -5677,7 +6087,9 @@ class AtomisationApp(QMainWindow):
             lb['timestamps'].pop(0); lb['pressures'].pop(0); lb['flows'].pop(0)
 
         # ── Experiment log — always stores raw values for accurate export ─────
-        if self.pressure_data['experiment_active']:
+        if self.pressure_data['experiment_active'] and \
+                now >= (self.pressure_data.get('experiment_start_time') or now):
+            # (a reading taken before Start but handled after it is not this run's)
             ed = self.pressure_data['experiment_data']
             ed['timestamps'].append(now - self.pressure_data['experiment_start_time'])
             ed['pressures'].append(pressure)
@@ -5754,6 +6166,7 @@ class AtomisationApp(QMainWindow):
                 'camera_windows': list(self.pressure_data.get('camera_windows', [])),
             }
             self._experiment_saved = False
+            self._update_master_btn()
             # Save immediately, so a run is on disk before anyone can forget.
             # Notes are written AFTER a run, so this row is expected to be
             # incomplete -- saving again once they are typed updates this same
@@ -5769,6 +6182,8 @@ class AtomisationApp(QMainWindow):
                               "again to update the same row.")
                 else:
                     self._log(f"Auto-save failed ({err}) — use Save to Excel.")
+                # the run sheet's question, only now that the run is in master_log
+                QTimer.singleShot(0, self, lambda: self._run_sheet_after_save(ok, err))
             try:
                 self._save_to_excel_async(on_done=_after_auto_save)
             except Exception as _e:
@@ -5800,6 +6215,71 @@ class AtomisationApp(QMainWindow):
             subprocess.run(["open", path])
         else:
             subprocess.run(["xdg-open", path])
+
+    # ── master_log button (top bar, 2026-10-14) ──────────────────────────────
+
+    @staticmethod
+    def _master_log_path(lacie) -> str:
+        """Where master_log.xlsx lives: the LaCie's Experiments/Logs, or the repo's experiment_logs without it.
+        The ONE place both the save and the top-bar button take it from."""
+        base = os.path.join(lacie, "Experiments", "Logs") if lacie else os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "experiment_logs")
+        return os.path.join(base, "master_log.xlsx")
+
+    def _master_log_busy(self) -> str | None:
+        """Why master_log must not be opened now (Excel would lock it and a save would fail), or None."""
+        pd = getattr(self, "pressure_data", None) or {}
+        if pd.get("experiment_active"):
+            return "a run is in progress"
+        if getattr(self, "_excel_saves_pending", 0):
+            return "a save to master_log is being written"
+        if not getattr(self, "_experiment_saved", True) and (pd.get("experiment_data") or {}).get("timestamps"):
+            return "the last run has not been saved yet"
+        if getattr(self, "_pipeline_busy", False):
+            return "the AI is running and will save its results to master_log"
+        return None
+
+    def _update_master_btn(self):
+        btn = getattr(self, "_hdr_master_btn", None)
+        if btn is None:
+            return
+        why = self._master_log_busy()
+        btn.setEnabled(why is None)
+        btn.setToolTip(f"master_log is not safe to open: {why}." if why else
+                       "Open master_log.xlsx. Close Excel before the next START EXPERIMENT, or that run's save fails.")
+        colour = CLR_RED if why else CLR_GREEN
+        btn.setStyleSheet(f"""
+            QPushButton {{ background-color: {colour}; color: white; border: none; border-radius: 6px;
+                           padding: 2px 10px; font-size: 11px; font-weight: 700; }}
+            QPushButton:hover {{ background-color: {_darken_hex(colour, 0.9)}; }}
+            QPushButton:disabled {{ background-color: {CLR_RED}; color: white; }}
+        """)
+
+    def _open_master_log(self):
+        why = self._master_log_busy()
+        if why:                                    # the button is disabled then; checked again all the same
+            self._set_status(f"master_log not opened: {why}", CLR_ORANGE)
+            return
+        path = self._master_log_path(find_lacie_drive())
+        if not os.path.exists(path):
+            self._warn("master_log", f"There is no master_log yet at:\n{path}")
+            return
+        self._log(f"Opening {path}. Close Excel before the next START EXPERIMENT.")
+        self._open_folder(path)                    # os.startfile / open: the file's own program
+
+    @staticmethod
+    def _master_log_locked(path: str) -> bool:
+        """True if another program (Excel) holds master_log open, so a save would fail. Windows only: Excel locks
+        the files it opens there (a write-open is refused); elsewhere this cannot be told and returns False."""
+        if sys.platform != "win32" or not os.path.exists(path):
+            return False
+        try:
+            with open(path, "r+b"):
+                return False
+        except PermissionError:
+            return True
+        except OSError:
+            return False
 
     def _open_last_save_folder(self):
         path = getattr(self, "_last_saved_run_folder", None)
@@ -5930,6 +6410,24 @@ class AtomisationApp(QMainWindow):
             self._flowrate_lbl.setText("≈ – mL/min")
         self._update_glr_label()
 
+    def _sheet_row_now(self):
+        """The run sheet's current row while the sheet is being followed, else None."""
+        rows, prog = getattr(self, "_sheet_rows", None), getattr(self, "_sheet_progress", None)
+        chk = getattr(self, "_sheet_follow_chk", None)
+        if rows is None or prog is None or chk is None or not chk.isChecked():
+            return None
+        return rows[prog.current]
+
+    def _run_base(self, lacie) -> str:
+        """Where run folders go: <LaCie>/Experiments, or the current run sheet row's 'save under' folder
+        (e.g. Calibration/Imaging Work for the bead calibration, 2026-10-14). Without the LaCie, the same
+        under the repo's experiment_logs. Used by Start, the save's fallback and the next-save preview."""
+        row = self._sheet_row_now()
+        parts = (row.folder_parts() if row is not None else []) or ["Experiments"]
+        root = lacie or os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "experiment_logs")
+        return os.path.join(root, *parts)
+
     def _update_next_save_preview(self):
         now = datetime.now()
         flow_raw = self._flow_entry.text().strip() if hasattr(self, "_flow_entry") else ""
@@ -5939,9 +6437,7 @@ class AtomisationApp(QMainWindow):
             flow_str = "?sccm"
         run_id = self._run_id(now, flow_str)
         lacie = find_lacie_drive()
-        exp_base = os.path.join(lacie, "Experiments") if lacie else os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-            "experiment_logs", "Experiments")
+        exp_base = self._run_base(lacie)
         preview = os.path.join(exp_base, now.strftime("%Y"), now.strftime("%m"), now.strftime("%d"), run_id)
         colour = "#FFA500" if os.path.exists(preview) else CLR_TEXT_SEC
         self._hdr_next_save_lbl.setText(preview)
@@ -5961,7 +6457,31 @@ class AtomisationApp(QMainWindow):
         self._hdr_timer_lbl.setStyleSheet(f"color: {CLR_TEXT}; font-size: 12px; font-weight: 700;")
 
     def _poll_lacie(self):
-        connected = find_lacie_drive() is not None
+        """Every 5 s: is the LaCie there? Probed on a worker thread (2026-10-14): find_lacie_drive() lists
+        drive roots, and on the GUI thread it froze the window (and the Alicat log's timing) for 1-5 s
+        whenever the drive was busy writing a cine. One probe at a time."""
+        if getattr(self, "_lacie_probe_busy", False):
+            return
+        self._lacie_probe_busy = True
+
+        if not getattr(self, "_lacie_signal_connected", False):
+            self._lacie_probed.connect(self._show_lacie)          # queued to the GUI thread by Qt
+            self._lacie_signal_connected = True
+
+        def probe():
+            try:
+                ok = find_lacie_drive() is not None
+            except Exception:
+                ok = False
+            try:
+                self._lacie_probed.emit(ok)
+            except RuntimeError:
+                pass                                              # the window has been closed meanwhile
+        threading.Thread(target=probe, name="lacie-probe", daemon=True).start()
+
+    def _show_lacie(self, connected: bool):
+        self._lacie_probe_busy = False
+        self._update_master_btn()
         colour = CLR_GREEN if connected else CLR_RED
         self._hdr_lacie_dot.setStyleSheet(
             f"color:{colour}; font-size:10px; background:transparent;")
@@ -6930,6 +7450,8 @@ class AtomisationApp(QMainWindow):
         Lowest D32 is the finest-atomised frame in the run, which is the one
         worth looking at.
         """
+        self._pipeline_busy = False                    # the re-save it triggers is counted as a save
+        QTimer.singleShot(0, self, self._update_master_btn)
         self._pipeline_status.setText("Pipeline: complete ✓")
         self._log("── AI chain complete ✓ ──")
         self._flash_log_border(CLR_GREEN)
@@ -7072,6 +7594,8 @@ class AtomisationApp(QMainWindow):
             self._log(f"  (auto-save after AI failed: {e} -- use Save to Excel)")
 
     def _on_pipeline_error(self, err: str):
+        self._pipeline_busy = False
+        self._update_master_btn()
         self._pipeline_status.setText(f"Pipeline error: {err}")
         self._log(f"── AI chain error: {err} ──")
         self._flash_log_border("#ff3b30")
@@ -7265,6 +7789,8 @@ class AtomisationApp(QMainWindow):
         self._test_pipeline_btn.setEnabled(False)
         self._test_pipeline_btn.setText("Running…")
         self._pipeline_status.setText("Pipeline: running…")
+        self._pipeline_busy = bool(save_to_log)        # its results will be saved to master_log
+        self._update_master_btn()
         self._log(f"── AI chain started on {os.path.basename(cine_path)} ──")
 
         def _worker():
@@ -8090,8 +8616,6 @@ class AtomisationApp(QMainWindow):
             self.afg.connect()
             self._afg_status_lbl.setText("AFG: connected")
             self._afg_status_lbl.setStyleSheet(f"color:{CLR_GREEN}; font-size:12px;")
-            self._hdr_afg_dot.setStyleSheet(f"color:{CLR_ORANGE}; font-size:10px; background:transparent;")
-            self._hdr_afg_lbl.setStyleSheet(f"color:{CLR_TEXT}; font-size:12px;")
         except Exception as e:
             self._afg_status_lbl.setText(f"AFG error: {e}")
             self._set_status(f"AFG: {e}", CLR_RED)
@@ -8108,8 +8632,6 @@ class AtomisationApp(QMainWindow):
             else:
                 pulse_str = f"{pulse_us:.0f} µs"
             self._afg_status_lbl.setText(f"AFG: configured ({pulse_str} pulse, CH{ch})")
-            self._hdr_afg_dot.setStyleSheet(f"color:{CLR_GREEN}; font-size:10px; background:transparent;")
-            self._hdr_afg_lbl.setStyleSheet(f"color:{CLR_TEXT}; font-size:12px;")
         except Exception as e:
             self._set_status(f"AFG config error: {e}", CLR_RED)
 
@@ -8127,8 +8649,6 @@ class AtomisationApp(QMainWindow):
         if self.afg: self.afg.disconnect()
         self._afg_status_lbl.setText("AFG: disconnected")
         self._afg_status_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
-        self._hdr_afg_dot.setStyleSheet(f"color:{CLR_RED}; font-size:10px; background:transparent;")
-        self._hdr_afg_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Logic — Experiment
@@ -8155,8 +8675,25 @@ class AtomisationApp(QMainWindow):
 
     def _check_standard_capture(self) -> bool:
         """Before a run: offer to restore the campaign standard if anything differs.
-        Returns False only if the user cancels the run."""
+        Returns False only if the user cancels the run. A run sheet row that sets its own post-trigger
+        (a calibration capture, e.g. 1 s of beads) is not asked about THAT field; anything else that
+        differs is still asked about."""
         diffs = self._standard_capture_diffs()
+        row = self._sheet_row_now()
+        if row is not None and row.post_trigger_s is not None:
+            post_label = next(lab for key, lab, _v in self.STANDARD_CAPTURE if key == "post_trigger_s")
+            keep = []
+            for label, cur, std in diffs:
+                try:
+                    intended = label == post_label and abs(float(cur) - row.post_trigger_s) < 1e-9
+                except ValueError:
+                    intended = False
+                if intended:
+                    self._log(f"Capture: post-trigger {cur} s, as run sheet #{row.number} sets "
+                              "(a calibration capture, not the campaign standard).")
+                else:
+                    keep.append((label, cur, std))
+            diffs = keep
         if not diffs:
             return True
         lines = "\n".join(f"  • {label}: {cur}  (standard {std})" for label, cur, std in diffs)
@@ -8373,6 +8910,14 @@ class AtomisationApp(QMainWindow):
                        "Connect it on the Hardware tab, or clear the RPM box for a run "
                        "without rotation.")
             return
+        if self._master_log_locked(self._master_log_path(find_lacie_drive())):
+            ans = QMessageBox.question(
+                self, "master_log is open",
+                "master_log.xlsx is open (in Excel?).\n\nThis run's save to master_log will FAIL while it is "
+                "open. Close it, then press START EXPERIMENT again.\n\nStart anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+            if ans != QMessageBox.StandardButton.Yes:
+                return
         if not self._window_check_at_start():
             return
         if not self._orifice_len_entry.text().strip():
@@ -8390,6 +8935,12 @@ class AtomisationApp(QMainWindow):
 
         self.pressure_data['experiment_active'] = True
         self.pressure_data['experiment_start_time'] = time.time()
+        # the run sheet row this run is (None: no sheet, or not following it); Notes are live again
+        self._update_master_btn()
+        self._sheet_row_at_start = (self._sheet_progress.current
+                                    if getattr(self, "_sheet_progress", None) is not None
+                                    and self._sheet_follow_chk.isChecked() else None)
+        self._notes_lock = None
         self.pressure_data['experiment_data'] = {'timestamps':[], 'pressures':[], 'flows':[]}
         self.pressure_data['camera_windows'] = []
         self._last_cone_path = None   # reset so we only capture this experiment's image
@@ -8411,9 +8962,7 @@ class AtomisationApp(QMainWindow):
         self._run_started_at = _now
         _run_id = self._run_id(_now, f"{flow:.0f}sccm")
         _lacie = find_lacie_drive()
-        _exp_base = os.path.join(_lacie, "Experiments") if _lacie else os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-            "experiment_logs", "Experiments")
+        _exp_base = self._run_base(_lacie)          # Experiments, or the run sheet row's 'save under'
         self._run_folder = os.path.join(
             _exp_base, _now.strftime("%Y"), _now.strftime("%m"), _now.strftime("%d"), _run_id)
         # Only the folders every run uses. TIFFs/ is created at the point of use
@@ -8564,6 +9113,8 @@ class AtomisationApp(QMainWindow):
             ex = self._excel_executor = ThreadPoolExecutor(
                 max_workers=1, thread_name_prefix="excel-save")
         self._set_status("Saving to Excel…")
+        self._excel_saves_pending = getattr(self, "_excel_saves_pending", 0) + 1
+        self._update_master_btn()
 
         def _run():
             try:
@@ -8577,6 +9128,8 @@ class AtomisationApp(QMainWindow):
     def _on_excel_saved(self, result, on_done):
         ind_path, master_path, run_dir = result
         self._experiment_saved = True
+        self._excel_saves_pending = max(0, getattr(self, "_excel_saves_pending", 1) - 1)
+        self._update_master_btn()
         self._set_status("Saved: run_summary.xlsx  +  master_log.xlsx updated", CLR_GREEN)
         self._save_path_lbl.setText(f"{ind_path}\nMaster: {master_path}")
 
@@ -8594,6 +9147,8 @@ class AtomisationApp(QMainWindow):
             on_done(True, None)
 
     def _on_excel_save_failed(self, e, on_done):
+        self._excel_saves_pending = max(0, getattr(self, "_excel_saves_pending", 1) - 1)
+        self._update_master_btn()
         self._set_status(f"Save error: {e}", CLR_RED)
         if on_done:
             on_done(False, str(e))
@@ -8655,9 +9210,7 @@ class AtomisationApp(QMainWindow):
         if self._run_folder:
             run_dir = self._run_folder
         else:
-            _exp_base = os.path.join(lacie, "Experiments") if lacie else os.path.join(
-                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-                "experiment_logs", "Experiments")
+            _exp_base = self._run_base(lacie)
             _run_id = self._run_id(now, f_range_file or 'unknownsccm')
             run_dir = os.path.join(_exp_base, now.strftime("%Y"), now.strftime("%m"),
                                    now.strftime("%d"), _run_id)
@@ -8670,7 +9223,10 @@ class AtomisationApp(QMainWindow):
             **cond,
             'lacie':        lacie,
             'now':          now,
-            'notes':        self._notes_text.toPlainText(),     # live: typed after the run
+            # live: typed after the run -- unless the run sheet has already filled in the NEXT run's Notes,
+            # in which case a later save of this run (e.g. after the AI) keeps the Notes it was saved with
+            'notes':        (self._notes_lock[1] if getattr(self, "_notes_lock", None)
+                             and self._notes_lock[0] == run_dir else self._notes_text.toPlainText()),
             'run_status':   (f"STOPPED: {self._run_stop_reason}" if self._run_stop_reason
                              else "complete") if self._run_conditions else "",
             'ai':           dict(self._last_ai_results or {}),
@@ -8920,11 +9476,8 @@ class AtomisationApp(QMainWindow):
                 _lamella_cell_val = 'Input Self'
 
         # ── Master log: insert at row 2, shift image anchors first ───────
-        _master_base = os.path.join(lacie, "Experiments", "Logs") if lacie else os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-            "experiment_logs")
-        os.makedirs(_master_base, exist_ok=True)
-        master_path = os.path.join(_master_base, 'master_log.xlsx')
+        master_path = self._master_log_path(lacie)
+        os.makedirs(os.path.dirname(master_path), exist_ok=True)
         # Row for THIS run, if it is already logged. The Timestamp column
         # holds the experiment's start time, which is unique per run, so it
         # identifies the row without needing a hidden key. Set below once
@@ -9592,6 +10145,7 @@ class AtomisationApp(QMainWindow):
         ex = getattr(self, "_excel_executor", None)
         if ex is not None:
             ex.shutdown(wait=True)
+        flush_serial_log(3.0)            # the last queued serial-log lines (a busy drive: up to 3 s)
         super().closeEvent(event)
 
 

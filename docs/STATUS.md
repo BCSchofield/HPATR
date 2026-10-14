@@ -329,13 +329,19 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
 ## Next steps, in order
 
 **Wednesday 2026-10-14 (code / understanding) and Thursday (rig): `docs/notes/2026-10-14_plan_for_wednesday.md`**
-(throughput defaults DONE 2026-10-14; Ben's added tasks: master_log button, pressure/flow log gaps, the stride pop-up,
-a full-stride cine, run sheets driving GUI_Clean; pool every new run into the CCD day (needs the next-session fix);
-the lab PC cannot run the AI, so no live numbers (overnight at home); IMPORTANT after the small fixes: the
-calibration scripts, ready before the reticle/stage/beads arrive (plan mode first); same-day droplets/s on the rig, Thursday's run sheet, exposure-series script, pressure limit;
-the C7/C8 volume gap, settling time vs feed; Thursday: Cd tests, confirm 11,000/100/5,000/1.2, steepest ascent,
-feed push to 8,000, 0.8 mm at 12,000, C7 recipe x3, velocity exposure series). Push `0809dea` and pull on the lab
-PC before any capture.
+- **Thursday (agreed 2026-10-14), in this order:**
+  1. the bead calibration: 48 captures, `docs/BEAD_CALIBRATION.md`;
+  2. the 3 gas-only Cd tests (1.2, 0.8, 0.5 mm; line loss ignored, Ben: negligible);
+  3. if there is time, the 16 spray runs, the PCC check and the exposure series.
+  Spray-run details: 1.2 mm: 2 centre anchors, 3 confirmations of 11,000/100/5,000, a 12,000 sccm feed ladder
+  5,000-8,000 (longer travel for the fast feeds). 0.8 mm: 12,000/100 and /900 at feed 5,000. 0.5 mm: C7 recipe x2,
+  feed 2,000 and 4,000 at 900 rpm, 500 rpm at 3,000. Notes `S2 #NN <purpose>` (never "run N"). The bubbler's maximum is 900 rpm.
+- **Wednesday done:** throughput defaults; pressure/flow log gaps explained and fixed; classical 2x2 grids; GUI_Clean
+  Run sheet tab + Thursday's sheet (`docs/notes/2026-10-15_thursday_run_sheet.csv`; load it on the Run sheet tab).
+- **Open:** the stride pop-up (need its wording), a full-stride cine;
+  pool every new run into the CCD day (needs the next-session fix, item 19); the lab PC cannot run the AI, so no
+  live numbers (overnight at home); IMPORTANT after the small fixes: the calibration scripts (plan mode first).
+- **Commit and push today's work, then pull on the lab PC before any capture** (`0809dea` is not pushed either).
 
 0. **CCD follow-up plan** (approved 2026-10-13; `docs/notes/2026-10-13_CCD_followup_plan.md`), phase-gated:
    1 bugs 3 + 6 and the "by area" relabel (DONE 2026-10-13); 2 "no spray" runs (atomised < 2%: size and
@@ -427,10 +433,16 @@ half-loaded, unused code, How To button + text (details under Recent changes). S
 - Camera IP box is ignored (PhantomController.connect discovers); three volume calcs disagree (r=10 mm,
   25.8 mL/72.5 mm, bore 20.27 mm: up to 13%); the Homed dot stays red after the board's own start-up
   homing (the "Homing Complete" line is consumed during connect).
-- FREEZES (to do separately): cone webcam on the GUI thread at 10 Hz; `find_lacie_drive()` on the GUI
-  thread every 5 s and per keystroke; `log_serial` appends to the LaCie per serial line/command; the
-  83 MB master_log.xlsx rewrite holds the GIL ~10 s at every run end; Phantom live-feed conversion on
-  the GUI thread; ~30 setStyleSheet/s; console never trimmed.
+- Deleting GUI_Clean's main window crashes Qt (segfault / bus error), offscreen on the Mac, the committed version
+  too (found 2026-10-14 writing the run-sheet tests: build + delete the window, or build twice). Not seen on the
+  rig, where it is built once and deleted at exit; it may explain any crash on closing. Cause not looked at.
+- FREEZES (to do separately): cone webcam on the GUI thread at 10 Hz; `find_lacie_drive()` per keystroke;
+  the 83 MB master_log.xlsx rewrite holds the GIL ~10 s at every run end; Phantom live-feed conversion on
+  the GUI thread; ~30 setStyleSheet/s; console never trimmed. (FIXED 2026-10-14: the 5-s LaCie poll now
+  probes on a worker thread; `log_serial` queues to one writer thread.)
+- The pressure cut-off is checked on the GUI thread, so a GUI stall delays it (1-4 s stalls on the CCD day,
+  now mostly removed; see Recent changes 2026-10-14). Not changed: moving it to the reader thread means
+  sending STOP from a second thread.
 
 Taguchi_Analysis_UI (found in the 2026-10-06 batch):
 1. ~~One failed log write kills the worker~~ **FIXED 2026-10-11** (Mac, committed 6f63e76): writes to the
@@ -580,6 +592,86 @@ made", "Bit depth", and the dated sections).
 - Give Ben exact paste-able commands with absolute paths and the real interpreter.
 
 ## Recent changes (newest first; trim to ~10 entries, older ones live in git history)
+
+- 2026-10-14 (Mac): **Size calibration with glass beads, built for Thursday morning** (plan
+  `~/.claude/plans/cozy-orbiting-swing.md`; procedure `docs/BEAD_CALIBRATION.md`). Beads 37.36 / 56.28 / 76.39 /
+  98.1 / 155.8 um (certified) and a micrometer slide holder. The method is Blaisot & Yon 2005 (Exp. Fluids
+  39:977-994, verified; Wang 2022 FocGAN has no physical calibration).
+  - Captures are run-sheet rows. The run sheet has two new optional columns:
+    - 'Save under' routes a run to e.g. `Calibration/Imaging Work` instead of Experiments (one helper,
+      `_run_base`, for Start, save and preview);
+    - 'Post-trigger (s)' sets the camera (Apply Config) to 1 s for bead rows and back to 13 s for spray rows,
+      without the standard-capture question for that field only. SETUP instructions pop up.
+  - Thursday's sheet is rebuilt in this order:
+    - 48 bead captures: a mixed sandwich at 23 z from -4 to +4 mm, 4 focus patches + bg, 5 single-size
+      slides x (2 + bg), and 5 falling pours;
+    - then the 3 Cd tests (saved under `Calibration/Orifice Cd`);
+    - then the 16 spray runs.
+  - New `AI/Real_Data_Code/bead_calibration.py` (Mac, no AI for static beads):
+    - averages each capture (40 frames);
+    - background from the frame itself, two passes, < 1 % on a gradient; dust from bead-free captures
+      dropped (an averaged spray frame shows ~200 specks);
+    - follows each bead through z;
+    - per bead: the current sizer exactly (measure_run functions, a T < 0.95 mask in place of the AI's),
+      d(l) curves, ring flag, and Blaisot C, chi and the contrast-corrected size, from the model computed
+      numerically;
+    - outputs: bias at focus, l*, ring and 2.2.0-rejection shares, effective DOF of the current rule
+      (the 1/DOF weight), size-stable range, chi(z) fit; falling beads from the AI's droplet_sizes.csv;
+      reticle array scale ready.
+  - On synthetic Blaisot-model beads: chi recovered within ~1-2 um, contrast-corrected size within 2 %.
+  - `Calibration/Imaging Work/README.md` + `targets.json` on the LaCie (Ben: add supplier, lot, spreads).
+  - Tests: test_bead_calibration (11), run-sheet window checks 9.
+
+- 2026-10-14 (Mac): **GUI_Clean top bar: master_log button, AFG light removed** (untried on the rig). A small
+  button right of LaCie opens master_log.xlsx. GREEN = safe; RED and not clickable while a run is going, its
+  save is pending, a save is being written, or the AI's re-save is still to come (Excel locks the file and
+  the save would fail). START also checks (Windows) whether master_log is open and asks before starting, as a
+  run's save fails while Excel holds it. master_log's path now comes from one helper
+  (`_master_log_path`) for the save and the button. Tab padding 24 -> 18 px so the nine tabs fit a ~1,600 px
+  window (all fit at 1,920). Checks: tests/gui_window_checks.py (8, run by test_run_sheet.py).
+
+- 2026-10-14 (Mac): **GUI_Clean Run sheet tab** (after Extremes; untried on the rig). Load a .csv/.xlsx (the
+  app's next_runs.csv works as it is; columns matched loosely): the next run's gas, RPM, feed, travel, insert,
+  orifice length and Notes are filled in. Only once the end-of-run save to master_log has FINISHED does it ask
+  'Did this run go OK?' (with a box to add to the run's Notes): Yes fills in the next run; No appends
+  '[bad run, redone]' to the saved run's Notes (re-saved) and keeps the row to redo; Decide later changes
+  nothing. A later save of the finished run (e.g. after the AI) keeps that run's own Notes (`_notes_lock`), not
+  the next run's. Settings that differ from the sheet are listed in the question; a change of insert pops up a
+  reminder (with a Cd test's instructions); nothing is filled in during a run. Progress lives on the LOCAL disk
+  (~/.hpatr/run_sheet_state.json) and is resumed after a restart without filling the boxes. New
+  `src/gui/run_sheet.py` (no Qt). Thursday's sheet: `docs/notes/2026-10-15_thursday_run_sheet.csv` (also
+  `Experiments/Run sheets/` on the LaCie). The LaCie probe now answers through a Qt signal (a QTimer posted from
+  its thread could hit a deleted window). Tests: test_run_sheet (5 + the real window's flows in a separate
+  process, tests/gui_run_sheet_checks.py: building and deleting GUI_Clean's window crashes Qt, see Known bugs).
+
+- 2026-10-14 (Mac): **Pressure / gas log: gaps then jumps, explained and fixed.** Scan of the 33 CCD runs
+  (`run_summary.xlsx` Pressure sheets, ~0.22 s spacing): 30 runs have a 1-4.3 s gap followed by a burst of
+  5-21 readings at one instant, 12 of them inside the camera window. Cause: each Alicat reading was stamped
+  when the GUI THREAD handled it, and the GUI thread stalled; the reader kept reading (burst size = gap /
+  0.2 s), so the readings were queued, then logged together. The Portenta reader stalled at the same
+  moments (serial log silent 4-5 s, then a burst). Both touch the LaCie: `find_lacie_drive()` every 5 s on
+  the GUI thread, and `log_serial` opening the LaCie log per line on the reader thread; most stalls fell
+  25-70 s after the previous run's 15 GB cine finished saving. Effect on the CCD numbers: P0 <= 0.005 bar,
+  delivered gas <= 0.6% on flow-controlled runs, up to 6% on the pulsing pressure-limited ones (110227:
+  2,813 -> 2,639 sccm); no regime or conclusion changes. FIXED in GUI_Clean (untried on the rig): readings
+  stamped at read time on the reader thread; serial-log lines queued to one writer thread (a busy drive no
+  longer holds up the Portenta reader, whose stall could block the stepper once the board's TX buffer
+  fills); the LaCie poll on a worker thread. Old logs repaired in the analysis: `operating.respace_queued`
+  spreads a burst back across its stall instead of dropping all but one reading. Tests:
+  test_pressure_log_timing (6).
+
+- 2026-10-14 (Mac): **Busiest / mean-diameter frames drawn the classical way.** measure_run's drawings of
+  the 2x2 slide frames outlined filaments thinly, so un-atomised liquid was hard to see (Ben). The liquid
+  stage (`classical_liquid.py`, extremes mode) now draws those frames too (un-atomised liquid filled, classical
+  atomised % printed; `more_extreme_frames` in its summary); the 2x2 slides, `gallery_more` sheets and
+  GUI_Clean's Extremes tab prefer that drawing, and the slide notes say which drawing is shown. New
+  `AI/Real_Data_Code/draw_more_classical.py` back-fills older runs: liquid stage re-run into a temp folder,
+  numbers gated against the run's summary, only the new PNGs copied (about 2 min a run alone, ~4 min three at
+  a time: it re-reads every frame for the window mask). CCD day back-filled 33/33, numbers unchanged in every
+  run; `Taguchi/CCD/Rec CCD 4 factor 20-60um/` re-published (157 slides, all 33 grids classical, best setting
+  unchanged: 11,000 / 100 / 5,000 / 1.2). Then a FAST path: a run with no window drops (26 of 33) is
+  re-measured on the drawn frames only, ~4 s instead of ~2 min, per-frame rows gated (checked on 105301:
+  images byte-identical to the full pass). Tests: test_more_extremes +2.
 
 - 2026-10-14 (Mac): **Throughput is the default objective.** The spray is collected and size-filtered (Ben), so
   `rsm_responses.DEFAULT_GOALS` is now in-band droplets per second (`rate_band`, importance 3) + atomised fraction

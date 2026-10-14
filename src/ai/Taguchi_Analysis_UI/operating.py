@@ -38,6 +38,8 @@ SETTLED_PCT = 10.0
 SETTLED_SCCM = 100.0         # ... or this many sccm, whichever is larger (a dribble's 30-100 sccm is noise)
 PRE_WINDOW_S = 10.0
 TRACE_POINTS = 400           # the whole-run trace kept for figures is decimated to about this many samples
+STALL_S = 0.75               # a step this long in the ~0.22 s log: GUI_Clean's GUI thread stalled (see respace_queued)
+BURST_S = 0.05               # readings logged closer than this after a stall were queued during it
 
 FLOW_CONTROLLED, PRESSURE_LIMITED, GAS_SHORT, UNKNOWN = ("flow-controlled", "pressure-limited", "gas short",
                                                         "unknown")
@@ -58,6 +60,31 @@ class Trace:
     p: np.ndarray                 # barA
     q: np.ndarray                 # sccm (0 where not logged)
     cam: tuple | None             # (start, end) of the camera window, s since Start
+
+
+def respace_queued(t: np.ndarray) -> np.ndarray:
+    """Times for readings that were QUEUED while GUI_Clean's GUI thread stalled.
+
+    Before 2026-10-14 the GUI stamped each Alicat reading when its GUI thread handled it, not when it was
+    read. On the CCD day that thread stalled for 1-4 s in 30 of 33 runs (the LaCie busy, usually just after
+    the previous run's cine finished saving), the reader kept reading every ~0.2 s, and the readings queued
+    meanwhile were logged in one burst at a single instant: a gap, then a jump. Unique timestamps alone kept
+    one reading of each burst and dropped the rest. Here a burst that follows a stall is spread evenly back
+    across the stall, which is when those readings were taken. Logs from the fixed GUI have no such bursts."""
+    t = np.asarray(t, float).copy()
+    i = 0
+    while i < t.size - 1:
+        if t[i + 1] - t[i] > STALL_S:
+            j = i + 1
+            while j + 1 < t.size and t[j + 1] - t[j] < BURST_S:
+                j += 1
+            n = j - i                                   # readings i+1 .. j were queued during the stall
+            if n > 1:
+                t[i + 1:j + 1] = t[i] + (t[j] - t[i]) * np.arange(1, n + 1) / n
+            i = j
+        else:
+            i += 1
+    return t
 
 
 def read_trace(xlsx: Path) -> Trace | None:
@@ -81,7 +108,7 @@ def read_trace(xlsx: Path) -> Trace | None:
     t0 = next((_num(r[3]) for r in rows if len(r) > 3 and _num(r[3]) is not None), None)
     t1 = next((_num(r[4]) for r in rows if len(r) > 4 and _num(r[4]) is not None), None)
     ok = np.isfinite(t)
-    t, p, q = t[ok], p[ok], q[ok]
+    t, p, q = respace_queued(t[ok]), p[ok], q[ok]
     _, iu = np.unique(t, return_index=True)
     return Trace(t[iu], p[iu], q[iu], (t0, t1) if t0 is not None and t1 is not None else None)
 

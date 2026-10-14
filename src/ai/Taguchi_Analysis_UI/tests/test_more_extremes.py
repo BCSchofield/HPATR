@@ -386,3 +386,74 @@ def test_every_goal_gets_maps():
     R = SimpleNamespace(goal_status=[SimpleNamespace(key="rate_band"), SimpleNamespace(key="atom")],
                         goals=[], fits={k: 1 for k in ("rate_band", "atom", "d32", "lag1", "peak_bar")})
     assert rf.mapped_responses(R) == ["rate_band", "atom", "d32", "lag1", "peak_bar"]
+
+
+# ---- drawn the classical way (2026-10-14) -----------------------------------------------------------------
+dmc = spec.rdc_module("draw_more_classical")
+
+
+def _classical(run: Path, out: Path):
+    cmd = [sys.executable, "-W", "ignore", str(Path(dmc.__file__).with_name("classical_liquid.py")), "--root",
+           str(run), "--out-dir", str(out), "--score-thresh", "0.30", "--images-mode", "extremes"]
+    p = subprocess.run(cmd, capture_output=True, text=True)
+    assert p.returncode == 0, p.stdout[-2000:] + p.stderr[-2000:]
+
+
+def test_the_classical_pass_draws_the_busiest_frames_and_the_deck_uses_them(copy):
+    """classical_liquid.py draws measure_run's busiest / mean-diameter frames too (un-atomised liquid filled),
+    lists them in its summary, and the gallery, the 2x2 slides and the GUI read them in preference."""
+    run, meas = copy
+    liq = run / "shadowgraph" / "analysis" / "liquid_0.30"
+    _classical(run, liq)
+    idx = json.loads((meas / mr.MORE_EXTREMES_DIR / "index.json").read_text())
+    want = sorted({f["frame"] for f in idx["frames"]})
+    assert json.loads((liq / "classical_summary.json").read_text())["more_extreme_frames"] == want
+    assert all((liq / "extreme_images" / f"{f}.png").is_file() for f in want)
+    r = SimpleNamespace(name=run.name, path=run, rec={}, condition="T1", replicate=1, levels={"gas": 9000}, values={})
+    ex = fx._more_frames(r, 0.30)
+    assert set(ex) == set(KEYS) and fx.more_drawn_classical(ex)
+    assert all(p.parent == liq / "extreme_images" for p, _e in ex.values())
+    res = SimpleNamespace(thr=0.30, runs=[r], factors=[SimpleNamespace(key="gas", label="Gas flow (sccm)")])
+    _title, _cells, notes = deck.tw_more_run(res, r)
+    assert deck.CLASSICAL_DRAWN in notes and "model-only" not in notes
+    (liq / "extreme_images" / f"{ex['most_total'][1]['frame']}.png").unlink()      # one frame missing: mixed
+    ex2 = fx._more_frames(r, 0.30)
+    assert ex2["most_total"][1]["drawn"] == "measure_run" and deck._drawn_text([ex2]) == deck.MIXED_DRAWN
+
+
+def test_the_classical_backfill_draws_only_and_refuses_a_run_whose_numbers_move(copy, tmp_path):
+    run, meas = copy
+    liq = run / "shadowgraph" / "analysis" / "liquid_0.30"
+    _classical(run, liq)
+    want = json.loads((liq / "classical_summary.json").read_text())["more_extreme_frames"]
+    made = {f: (liq / "extreme_images" / f"{f}.png").read_bytes() for f in want}
+    s = json.loads((liq / "classical_summary.json").read_text())
+    s.pop("more_extreme_frames")                                  # as a run measured before 2026-10-14
+    (liq / "classical_summary.json").write_text(json.dumps(s, indent=2))
+    for f in want:
+        (liq / "extreme_images" / f"{f}.png").unlink()
+    before = _tree(run, "extreme_images")
+    assert s["window"]["objects"] == []                                # no window drops: the fast path
+    for full in (False, True):                                        # both paths draw the same images
+        msg = dmc.one(run, 0.30, False, False, tmp_path, full=full)
+        assert "numbers unchanged" in msg and ("full pass" if full else "fast") in msg, msg
+        assert {f: (liq / "extreme_images" / f"{f}.png").read_bytes() for f in want} == made
+        assert _tree(run, "extreme_images") == before                 # nothing else in the run written
+        assert "already drawn" in dmc.one(run, 0.30, False, False, tmp_path)
+        for f in want:
+            (liq / "extreme_images" / f"{f}.png").unlink()
+    rows = (liq / "classical_per_frame.csv").read_text()               # a frame's row moved: both paths refuse
+    first = want[0]
+    line = next(ln for ln in rows.splitlines() if ln.startswith(first + ","))
+    cells = line.split(",")
+    cells[4] = f"{float(cells[4]) + 0.5:g}"                            # atomised_pct
+    (liq / "classical_per_frame.csv").write_text(rows.replace(line, ",".join(cells)))
+    for full in (False, True):
+        msg = dmc.one(run, 0.30, False, False, tmp_path, full=full)
+        assert "FAILED the gate" in msg and f"{first} atomised_pct" in msg, msg
+    (liq / "classical_per_frame.csv").write_text(rows)
+    s["atomised_pct_pooled"] += 0.5                                    # the pooled summary: the full pass checks it
+    (liq / "classical_summary.json").write_text(json.dumps(s, indent=2))
+    msg = dmc.one(run, 0.30, False, False, tmp_path, full=True)
+    assert "FAILED the gate" in msg and "atomised_pct_pooled" in msg
+    assert not any((liq / "extreme_images" / f"{f}.png").exists() for f in want)
