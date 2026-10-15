@@ -12,10 +12,21 @@ Captures are GUI_Clean runs found by their Notes (run_summary.xlsx):
     BEAD fall 56.28     beads poured through the field: read from the AI pipeline's droplet_sizes.csv
     RETICLE z-1.25 / RETICLE array c|tl|tr|bl|br / RETICLE bg     the reticle, when it arrives
 
+    BEAD blank bg.cine  a loose .cine (recorded in PCC) whose FILE NAME reads as Notes: here an empty field,
+                        the dust map (anything dark in it is not a bead, wherever it turns up)
+
 Each capture is averaged over its frames. The beads do not move, so a temporal median would contain them:
 the background is estimated from the averaged frame itself (a large-window median; a bead is at most ~16 px
 across) and T = I / background. Beads are found at best focus and each is followed through every depth at
 the same place, so its identity (certified size) carries through.
+
+ONLY THE SPARSE PART OF EACH PHOTO IS USED (1.1.0, 2026-10-15; the real slides: faint specks and fibres
+everywhere, the coverslip edge, and crowded streaks of small beads). A bead counts only if it is DARK (its
+darkest pixel T < 0.5; specks sit at 0.8-0.9 and are ignored, even as neighbours), ROUND (a touching pair is
+not) and ISOLATED (no other dark object within one of its diameters), and only inside the photo's sparse
+tiles (128 px; dark objects cover <= 3 % of the area around the tile). The area used is boxed on a PNG written
+into the capture's own folder (shadowgraph/analysis/bead_calibration/bead_region.png; Ben, 2026-10-15) and
+copied to <out>/regions/. Nothing else is written into the capture folders.
 
 Per bead and depth it records:
   * what THE CURRENT SIZER makes of it (measure_run.measure_droplet: robust core, in focus if core <= 0.70,
@@ -30,7 +41,7 @@ Per bead and depth it records:
 It reports, per size: the current sizer's bias against the certificate at focus, the level l* that gives
 the certified size, rings, 2.2.0 rejections, the depth range over which the current rule counts the bead as
 in focus (the 1/DOF(d) weight), the range over which its size holds within 5 %, and chi(z) = chi0 + k|z - zf|.
-Nothing in the capture folders is written; nothing in the pipeline changes (a new sizer is a separate step).
+Nothing in the pipeline changes (a new sizer is a separate step).
 
     python bead_calibration.py "<LaCie>/Calibration/Imaging Work/2026/10/15" --out "<...>/analysis/2026-10-15"
 """
@@ -53,7 +64,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import measure_run as mr  # noqa: E402
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 UM_PER_PX = mr.UM_PER_PX
 LEVELS = tuple(round(float(x), 2) for x in np.arange(0.10, 0.901, 0.05))
 BLAISOT_LEVELS = (0.25, 0.61, 0.77)
@@ -63,7 +74,12 @@ EDGE_PX = 3                   # a bead this close to the frame edge is not measu
 BG_DOWNSAMPLE = 4
 BG_WINDOW_PX = 101            # >> the largest bead (155.8 um = 16 px), even blurred
 RECENTRE_PX = 3               # a bead may shift this much between depths
-ISOLATION = 2.0               # centres closer than this many mean diameters (+2 px): both dropped
+DARK_T = 0.50                 # a bead's darkest pixel at focus (light smoothing); specks and fibre halos: 0.8-0.9
+ROUND_MAX = 1.30              # major / minor axis of the (1 - T)-weighted moments; a touching pair is ~2
+GAP = 1.0                     # isolated: no other dark object within GAP x its diameter + 2 px, edge to edge
+TILE_PX = 128                 # the sparse region is made of tiles this size (1.28 mm)
+SPARSE_MAX = 0.03             # a tile is sparse if dark objects cover <= 3 % around it (random beads: ~60 % isolated)
+MIN_TILES = 12                # if fewer tiles are that sparse, the MIN_TILES sparsest are used
 UPSAMPLE = 4                  # the level curves are measured on a 4x bicubic upsample (less pixel staircase)
 MAX_FRAMES = 40                # ~0.5 s a frame from the LaCie; 40 frames cut the noise ~6x
 DUST_PX = 4                    # a 'bead' this close to something seen in a bead-free capture is dust
@@ -134,25 +150,39 @@ def read_meta(xlsx: Path) -> dict:
 
 
 def find_captures(paths) -> list[Capture]:
+    """Run folders whose Notes read as a capture, then loose .cine files (PCC) whose file name does, unless
+    run_ai_where has already made a run folder for that file (then the run folder is the capture)."""
     out = []
     for p in paths:
         p = Path(p)
-        summaries = [p / "run_summary.xlsx"] if (p / "run_summary.xlsx").is_file() else \
+        is_run = (p / "run_summary.xlsx").is_file()
+        summaries = [p / "run_summary.xlsx"] if is_run else \
             sorted(q for q in p.rglob("run_summary.xlsx") if not any(s.startswith((".", "_")) for s in q.parts))
         for x in summaries:
             notes = read_meta(x).get("Notes")
             parsed = parse_notes(notes)
             if parsed:
                 out.append(Capture(x.parent, str(notes).strip(), *parsed))
+        if is_run or not p.is_dir():
+            continue
+        for c in sorted(p.rglob("*.cine")):
+            if "CINE" in c.parts[:-1] or any(s.startswith((".", "_")) for s in c.parts) or \
+                    (c.parent / c.stem / "run_summary.xlsx").is_file():
+                continue                          # a run's own recording, or one with its run folder already
+            notes = c.stem.replace("_", " ").strip()
+            parsed = parse_notes(notes)
+            if parsed:
+                out.append(Capture(c, notes, *parsed))
     return out
 
 
 # ---- frames and transmission ------------------------------------------------------------------------------
 
 def average_frames(run: Path, max_frames: int = MAX_FRAMES) -> np.ndarray:
-    """The capture averaged over up to max_frames frames, spread through it: from its .cine, else from
-    extracted 16-bit TIFFs (shadowgraph/raw/frames/16bit)."""
-    cines = sorted((run / "shadowgraph" / "raw" / "CINE").glob("*.cine"))
+    """The capture averaged over up to max_frames frames, spread through it: from its .cine (or `run` IS a
+    loose .cine), else from extracted 16-bit TIFFs (shadowgraph/raw/frames/16bit)."""
+    run = Path(run)
+    cines = [run] if run.suffix.lower() == ".cine" else sorted((run / "shadowgraph" / "raw" / "CINE").glob("*.cine"))
     if cines:
         from cine_reader import Cine
         acc, n = None, 0
