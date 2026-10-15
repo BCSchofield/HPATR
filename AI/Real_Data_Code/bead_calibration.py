@@ -22,7 +22,7 @@ the same place, so its identity (certified size) carries through.
 
 ONLY THE SPARSE PART OF EACH PHOTO IS USED (1.1.0, 2026-10-15; the real slides: faint specks and fibres
 everywhere, the coverslip edge, and crowded streaks of small beads). A bead counts only if it is DARK (its
-darkest pixel T < 0.5; specks sit at 0.8-0.9 and are ignored, even as neighbours), ROUND (a touching pair is
+darkest pixel T < 0.35; specks and debris sit at 0.35-0.9 and are ignored, even as neighbours), ROUND (a touching pair is
 not) and ISOLATED (no other dark object within one of its diameters), and only inside the photo's sparse
 tiles (128 px; dark objects cover <= 3 % of the area around the tile). The area used is boxed on a PNG written
 into the capture's own folder (shadowgraph/analysis/bead_calibration/bead_region.png; Ben, 2026-10-15) and
@@ -74,8 +74,8 @@ EDGE_PX = 3                   # a bead this close to the frame edge is not measu
 BG_DOWNSAMPLE = 4
 BG_WINDOW_PX = 101            # >> the largest bead (155.8 um = 16 px), even blurred
 RECENTRE_PX = 3               # a bead may shift this much between depths
-DARK_T = 0.50                 # a bead's darkest pixel at focus (light smoothing); specks and fibre halos: 0.8-0.9
-ROUND_MAX = 1.30              # major / minor axis of the (1 - T)-weighted moments; a touching pair is ~2
+DARK_T = 0.35                 # a bead's darkest pixel at focus (light smoothing): beads 0.1-0.35, debris 0.35-0.9
+ROUND_MAX = 1.40              # major / minor axis of the core (half-max part); a touching pair is ~2
 GAP = 1.0                     # isolated: no other dark object within GAP x its diameter + 2 px, edge to edge
 TILE_PX = 128                 # the sparse region is made of tiles this size (1.28 mm)
 SPARSE_MAX = 0.03             # a tile is sparse if dark objects cover <= 3 % around it (random beads: ~60 % isolated)
@@ -149,6 +149,11 @@ def read_meta(xlsx: Path) -> dict:
         wb.close()
 
 
+def _hidden(q: Path, root: Path) -> bool:
+    """Below the folder given, a name starting with '.' or '_' (archives, app caches, macOS '._' files)."""
+    return any(s.startswith((".", "_")) for s in q.relative_to(root).parts)
+
+
 def find_captures(paths) -> list[Capture]:
     """Run folders whose Notes read as a capture, then loose .cine files (PCC) whose file name does, unless
     run_ai_where has already made a run folder for that file (then the run folder is the capture)."""
@@ -157,7 +162,7 @@ def find_captures(paths) -> list[Capture]:
         p = Path(p)
         is_run = (p / "run_summary.xlsx").is_file()
         summaries = [p / "run_summary.xlsx"] if is_run else \
-            sorted(q for q in p.rglob("run_summary.xlsx") if not any(s.startswith((".", "_")) for s in q.parts))
+            sorted(q for q in p.rglob("run_summary.xlsx") if not _hidden(q, p))
         for x in summaries:
             notes = read_meta(x).get("Notes")
             parsed = parse_notes(notes)
@@ -166,7 +171,7 @@ def find_captures(paths) -> list[Capture]:
         if is_run or not p.is_dir():
             continue
         for c in sorted(p.rglob("*.cine")):
-            if "CINE" in c.parts[:-1] or any(s.startswith((".", "_")) for s in c.parts) or \
+            if "CINE" in c.relative_to(p).parts[:-1] or _hidden(c, p) or \
                     (c.parent / c.stem / "run_summary.xlsx").is_file():
                 continue                          # a run's own recording, or one with its run folder already
             notes = c.stem.replace("_", " ").strip()
@@ -288,30 +293,127 @@ def p_width(C0: float) -> float:
 
 # ---- detection and measurement ---------------------------------------------------------------------------
 
-def find_beads(T: np.ndarray) -> list[dict]:
-    """Isolated dark round-ish objects, as extract_candidates finds candidates (T < 0.95, >= 4 px), not touching
-    the frame edge and with no neighbour closer than ISOLATION mean diameters."""
+def _dark_objects(T: np.ndarray):
+    """The dark matter of a photo. Components of T < 0.95 (as extract_candidates finds candidates) whose darkest
+    pixel is below DARK_T are DARK; faint ones (specks on the slide or the window, dried debris, fibre halos) are
+    not beads and do not count as anyone's neighbour. Each dark component's CORE is its half-max part
+    (T < T_min + 0.5 (1 - T_min)): the bead itself, without the faint debris its blurred edge may run into; two
+    touching beads give two cores, or one long one. Returns (smoothed T, component labels, dark per component,
+    core labels, number of cores, core -> its component)."""
+    from scipy import ndimage
     Ts = cv2.GaussianBlur(T, (0, 0), 0.5)
-    n, lab, stats, cent = cv2.connectedComponentsWithStats((Ts < DETECT_T).astype(np.uint8), connectivity=8)
+    n, lab = cv2.connectedComponents((Ts < DETECT_T).astype(np.uint8), connectivity=8)
+    tmin = np.asarray(ndimage.minimum(Ts, lab, np.arange(n)), float)
+    area = np.bincount(lab.ravel(), minlength=n)
+    dark = (tmin < DARK_T) & (area >= MIN_AREA_PX)
+    dark[0] = False
+    level = np.where(dark, tmin + 0.5 * (1.0 - tmin), -1.0)
+    core = dark[lab] & (Ts < level[lab])
+    nc, clab = cv2.connectedComponents(core.astype(np.uint8), connectivity=8)
+    parent = np.zeros(nc, int)
+    parent[clab.ravel()] = lab.ravel()
+    parent[0] = 0
+    return Ts, lab, dark, clab, nc, parent
+
+
+def _axis_ratio(mask: np.ndarray) -> float:
+    """Major / minor axis of a region's second moments (plus each pixel's own 1/12 variance, so a 2-px blob is
+    not called elongated)."""
+    yy, xx = np.nonzero(mask)
+    if yy.size == 0:
+        return float("inf")
+    cxx = xx.var() + 1 / 12
+    cyy = yy.var() + 1 / 12
+    cxy = ((xx - xx.mean()) * (yy - yy.mean())).mean()
+    ev = np.linalg.eigvalsh(np.array([[cxx, cxy], [cxy, cyy]]))
+    return float(math.sqrt(ev[1] / max(ev[0], 1e-9)))
+
+
+CORE_MIN_PX = 3               # a core smaller than this is an obstacle, never a bead
+
+
+def objects(T: np.ndarray) -> list[dict]:
+    """Every dark core, with why it is not a usable bead ('' = usable): 'edge' (at the frame edge), 'not round'
+    (a touching pair, a fibre: axis ratio > ROUND_MAX), 'crowded' (other dark matter -- another core, or another
+    dark component -- within GAP of its own diameters, edge to edge). Sizes and shapes are the core's."""
+    from scipy import ndimage
+    Ts, lab, dark, clab, nc, parent = _dark_objects(T)
     H, W = T.shape
     out = []
-    for i in range(1, n):
-        x, y, w, h, a = (int(v) for v in stats[i])
-        if a < MIN_AREA_PX or x <= EDGE_PX or y <= EDGE_PX or x + w >= W - EDGE_PX or y + h >= H - EDGE_PX:
+    if nc < 2:
+        return out
+    boxes = ndimage.find_objects(clab)
+    for k in range(1, nc):
+        sl = boxes[k - 1]
+        if sl is None:
             continue
-        out.append({"cx": float(cent[i][0]), "cy": float(cent[i][1]), "area": a,
-                    "d_px": 2.0 * math.sqrt(a / math.pi)})
-    keep = []
-    for i, b in enumerate(out):
-        ok = True
-        for j, c in enumerate(out):
-            if i != j and math.hypot(b["cx"] - c["cx"], b["cy"] - c["cy"]) < \
-                    ISOLATION * (b["d_px"] + c["d_px"]) / 2 + 2:
-                ok = False
-                break
-        if ok:
-            keep.append(b)
-    return keep
+        y, x = sl[0].start, sl[1].start
+        h, w = sl[0].stop - y, sl[1].stop - x
+        own = clab[sl] == k
+        a = int(own.sum())
+        if a < CORE_MIN_PX:
+            continue
+        yy, xx = np.nonzero(own)
+        d = 2.0 * math.sqrt(a / math.pi)
+        o = {"cx": float(x + xx.mean()), "cy": float(y + yy.mean()), "area": a, "d_px": d,
+             "t_min": round(float(Ts[sl][own].min()), 4), "why": ""}
+        if x <= EDGE_PX or y <= EDGE_PX or x + w >= W - EDGE_PX or y + h >= H - EDGE_PX:
+            o["why"] = "edge"
+            out.append(o)
+            continue
+        o["axis_ratio"] = round(_axis_ratio(own), 3)
+        need = GAP * d + 2
+        m = int(math.ceil(need)) + 1
+        x0, y0, x1, y1 = max(0, x - m), max(0, y - m), min(W, x + w + m), min(H, y + h + m)
+        cw, lw = clab[y0:y1, x0:x1], lab[y0:y1, x0:x1]
+        other = ((cw > 0) & (cw != k)) | (dark[lw] & (lw != parent[k]))
+        gap = float("inf")
+        if other.any():
+            dist = cv2.distanceTransform((cw != k).astype(np.uint8), cv2.DIST_L2, 3)   # to its own nearest pixel
+            gap = float(dist[other].min()) - 1.0
+        o["gap_px"] = round(gap, 2) if np.isfinite(gap) else None
+        if o["axis_ratio"] > ROUND_MAX:
+            o["why"] = "not round"
+        elif gap < need:
+            o["why"] = "crowded"
+        out.append(o)
+    return out
+
+
+def find_beads(T: np.ndarray) -> list[dict]:
+    """The usable beads: dark, round, isolated, not touching the frame edge."""
+    return [o for o in objects(T) if not o["why"]]
+
+
+def sparse_region(T: np.ndarray) -> tuple[np.ndarray, dict]:
+    """The part of the photo whose beads can be measured: the TILE_PX tiles where dark cores cover at most
+    SPARSE_MAX of the area around the tile (a box twice the tile, so a tile's share is not decided by one or
+    two large beads); if fewer than MIN_TILES are that sparse, the MIN_TILES sparsest. Returns the region as a
+    boolean mask and a summary."""
+    _Ts, _lab, _dark, clab, _nc, _parent = _dark_objects(T)
+    foot = (clab > 0).astype(np.float32)                 # the cores: the beads (and dark dirt) themselves
+    H, W = T.shape
+    ny, nx = -(-H // TILE_PX), -(-W // TILE_PX)
+    share = np.zeros((ny, nx))
+    for j in range(ny):
+        for i in range(nx):
+            cy, cx = j * TILE_PX + TILE_PX // 2, i * TILE_PX + TILE_PX // 2
+            share[j, i] = foot[max(0, cy - TILE_PX):cy + TILE_PX, max(0, cx - TILE_PX):cx + TILE_PX].mean()
+    keep = share <= SPARSE_MAX
+    if keep.sum() < min(MIN_TILES, share.size):
+        keep = np.zeros_like(keep)
+        keep.flat[np.argsort(share, axis=None)[:min(MIN_TILES, share.size)]] = True
+    mask = np.kron(keep, np.ones((TILE_PX, TILE_PX), bool))[:H, :W]
+    return mask, {"tiles_used": int(keep.sum()), "tiles": int(share.size),
+                  "share_of_frame": round(float(mask.mean()), 3),
+                  "dark_cover_used": round(float(share[keep].mean()), 4),
+                  "dark_cover_all": round(float(foot.mean()), 4),
+                  "fallback_sparsest": bool((share <= SPARSE_MAX).sum() < min(MIN_TILES, share.size))}
+
+
+def _in(region, b) -> bool:
+    return region is None or bool(region[min(region.shape[0] - 1, int(round(b["cy"]))),
+                                         min(region.shape[1] - 1, int(round(b["cx"])))])
 
 
 def _component_at(mask: np.ndarray, y: int, x: int) -> np.ndarray:
@@ -465,35 +567,115 @@ def _slide_sizes(slide: str, target: str, targets: dict) -> list[float]:
 
 
 def dust_positions(T: np.ndarray) -> list[tuple[float, float]]:
-    """Everything dark in a bead-free ('bg') capture: specks on the window, the sensor or the slide, which
-    stay at the same pixels whatever the beads do (an averaged spray frame shows ~200 of them)."""
-    return [(b["cx"], b["cy"]) for b in find_beads(T)]
+    """Every dark object in a bead-free ('bg') capture, crowded or not: specks on the window, the sensor or the
+    slide, which stay at the same pixels whatever the beads do (an averaged spray frame shows ~200 of them)."""
+    return [(o["cx"], o["cy"]) for o in objects(T)]
 
 
 def _not_dust(b: dict, dust) -> bool:
     return all(math.hypot(b["cx"] - x, b["cy"] - y) > max(DUST_PX, b["d_px"] / 2) for x, y in dust)
 
 
-def detect_and_identify(T, sizes, tau=None, dust=()) -> tuple[list[dict], float]:
-    beads = [b for b in find_beads(T) if _not_dust(b, dust)]
-    rows = [measure_at(T, b["cx"], b["cy"], b["d_px"], tau) for b in beads]
-    rows = [r for r in rows if r and r.get("detected")]
-    if len(sizes) == 1:                                   # a single-size slide: drop clumps and dust
-        d = np.asarray([r.get("d_l0.50", np.nan) for r in rows], float)
-        med = float(np.nanmedian(d)) if np.isfinite(d).any() else np.nan
-        out = []
-        for r in rows:
-            if np.isfinite(med) and abs(r.get("d_l0.50", np.nan) / med - 1) <= 0.35:
-                r["certified_um"] = sizes[0]
-                out.append(r)
-        return out, (med / sizes[0] if np.isfinite(med) else float("nan"))
-    ids, k = assign_sizes([r.get("d_l0.50", np.nan) for r in rows], sizes)
+SINGLE_BAND = 0.20            # a single-size slide keeps beads within 20 % of its size's mode (76.39 is 22 % below 98.1)
+
+
+def _single_size_scale(d: list[float], cert: float) -> float:
+    """The measured size the beads of a single-size slide cluster at, as a share of the certified one: the mode
+    (the scale with the most beads within 20 %), so dirt that is dark and round does not pull it as a median would."""
+    ld = np.log(np.asarray([v for v in d if np.isfinite(v) and v > 0], float))
+    if not ld.size:
+        return float("nan")
+    ks = np.linspace(0.5, 1.6, 221)
+    counts = np.array([(np.abs(ld - math.log(k * cert)) <= math.log(1.2)).sum() for k in ks])
+    k = float(np.median(ks[counts == counts.max()]))
+    near = ld[np.abs(ld - math.log(k * cert)) <= math.log(1.2)]
+    return float(np.exp(np.median(near)) / cert) if near.size else k
+
+
+def detect_and_identify(T, sizes, tau=None, dust=(), region=None) -> tuple[list[dict], float, list[dict]]:
+    """The usable beads inside `region` (None = the whole photo), measured, each with its certified size.
+    Also returns the dark objects in the region that were NOT used, each with why (for the PNG)."""
+    rejected, beads = [], []
+    for o in objects(T):
+        if not _in(region, o):
+            continue
+        if not o["why"] and not _not_dust(o, dust):
+            o["why"] = "dust"
+        (rejected if o["why"] else beads).append(o)
+    rows = []
+    for b in beads:
+        r = measure_at(T, b["cx"], b["cy"], b["d_px"], tau)
+        if r and r.get("detected"):
+            rows.append(r)
+        else:
+            rejected.append({**b, "why": "not measured"})
+    d = [r.get("d_l0.50", np.nan) for r in rows]
+    if len(sizes) == 1:                                   # a single-size slide: drop clumps and dirt
+        k = _single_size_scale(d, sizes[0])
+        ids = [sizes[0] if np.isfinite(k) and np.isfinite(v) and abs(math.log(v / (k * sizes[0]))) <=
+               math.log(1 + SINGLE_BAND) else None for v in d]
+    else:
+        ids, k = assign_sizes(d, sizes)
     out = []
     for r, s in zip(rows, ids):
-        if s is not None:
+        if s is None:
+            rejected.append({"cx": r["cx"], "cy": r["cy"], "d_px": r.get("d_l0.50", 0) / UM_PER_PX,
+                             "why": "no size match"})
+        else:
             r["certified_um"] = s
             out.append(r)
-    return out, k
+    return out, k, rejected
+
+
+SIZE_BGR = [(255, 140, 0), (0, 190, 0), (0, 200, 255), (230, 0, 230), (40, 40, 255), (255, 255, 0), (0, 128, 255)]
+
+
+def region_png(T, region, used, rejected, title: str, sizes: list[float], dest: list[Path]) -> None:
+    """The averaged photo with the area used boxed (green), the beads used circled in their size's colour and the
+    dark objects in the area that were not used in thin red. Written to every path in `dest`."""
+    img = cv2.cvtColor(np.clip(T / 1.1 * 255, 0, 255).astype(np.uint8), cv2.COLOR_GRAY2BGR)
+    if region is not None:
+        img[~region] = (0.55 * img[~region] + 0.45 * np.array([150, 110, 110])).astype(np.uint8)   # not used: shaded
+        cnts, _h = cv2.findContours(region.astype(np.uint8), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+        cv2.drawContours(img, cnts, -1, (0, 200, 0), 3)
+    for o in rejected:
+        cv2.circle(img, (int(round(o["cx"])), int(round(o["cy"]))), int(o.get("d_px", 4) / 2 + 3), (0, 0, 220), 1)
+    order = sorted(sizes)
+    for r in used:
+        c = SIZE_BGR[order.index(r["certified_um"]) % len(SIZE_BGR)] if r["certified_um"] in order else (255, 255, 255)
+        cv2.circle(img, (int(round(r["cx"])), int(round(r["cy"]))), int(r["certified_um"] / UM_PER_PX / 2 + 5), c, 2)
+    lines = [(title, (0, 0, 0)),
+             (f"area used (inside green, unshaded): {100 * region.mean():.0f}% of the photo" if region is not None else
+              "area used: the whole photo", (0, 140, 0)),
+             (f"beads used: {len(used)} (circled, colour = size)   not used, in the area: {len(rejected)} (red)",
+              (0, 0, 0))]
+    font, sc, th = cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2
+    hgt = 30 * (len(lines) + 1) + 10
+    cv2.rectangle(img, (0, 0), (min(img.shape[1], 980), hgt), (255, 255, 255), -1)
+    for j, (txt, col) in enumerate(lines):
+        cv2.putText(img, txt, (10, 28 + 30 * j), font, sc, col, th, cv2.LINE_AA)
+    x = 10
+    for s in order:
+        if any(r["certified_um"] == s for r in used):
+            txt = f"{s:g} um"
+            cv2.putText(img, txt, (x, 28 + 30 * len(lines)), font, sc, SIZE_BGR[order.index(s) % len(SIZE_BGR)], th,
+                        cv2.LINE_AA)
+            x += cv2.getTextSize(txt, font, sc, th)[0][0] + 25
+    for p in dest:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(p), img)
+
+
+def _png_dest(c: Capture, out: Path | None) -> list[Path]:
+    """Where a capture's region PNG goes: its own folder (Ben, 2026-10-15) and the analysis folder."""
+    if out is None:
+        return []
+    notes = re.sub(r"[^\w .+-]", "_", c.notes)
+    name = f"{c.run.stem if c.run.is_file() else c.run.name}  {notes}.png"
+    dest = [out / "regions" / name]
+    if c.run.is_dir():
+        dest.insert(0, c.run / "shadowgraph" / "analysis" / "bead_calibration" / "bead_region.png")
+    return dest
 
 
 def _median(v):
@@ -533,25 +715,40 @@ def fit_chi(z: np.ndarray, chi: np.ndarray) -> dict:
             "rms_um": round(math.sqrt(sse / z.size), 2)}
 
 
-def through_focus(caps: list[Capture], targets: dict, max_frames: int, tau_hint=None, dust=()) -> tuple[list, dict]:
-    """The traverse of one slide: beads found in its z = 0 capture, followed through every z."""
+def through_focus(caps: list[Capture], targets: dict, max_frames: int, tau_hint=None, dust=(),
+                  out: Path | None = None) -> tuple[list, dict]:
+    """The traverse of one slide: beads found in the sparse region of its z = 0 capture, followed through
+    every z (same region, same places)."""
     caps = sorted(caps, key=lambda c: c.z_mm)
     ref = min(caps, key=lambda c: abs(c.z_mm))
     sizes = _slide_sizes(ref.slide, ref.target, targets)
     T_ref = transmission(average_frames(ref.run, max_frames))
-    beads, k = detect_and_identify(T_ref, sizes, dust=dust)
+    region, reg = sparse_region(T_ref)
+    beads, k, rejected = detect_and_identify(T_ref, sizes, dust=dust, region=region)
     tau = tau_hint if tau_hint is not None else _tau(beads)
     rows = []
     for c in caps:
         T = T_ref if c is ref else transmission(average_frames(c.run, max_frames))
+        rows_c = []
         for i, b in enumerate(beads):
             r = measure_at(T, b["cx"], b["cy"], b["certified_um"] / UM_PER_PX, tau)
             if r is None:
                 continue
             r.update(bead=i, certified_um=b["certified_um"], z_mm=c.z_mm, run=c.run.name, slide=c.slide)
-            rows.append(r)
+            rows_c.append(r)
+        rows += rows_c
+        region_png(T, region, rows_c, rejected if c is ref else [],
+                   f"{c.notes}   ({c.run.name}; beads chosen at {ref.notes})", sizes, _png_dest(c, out))
     return rows, {"slide": ref.slide, "reference_run": ref.run.name, "n_beads": len(beads),
-                  "scale_k": round(k, 4) if np.isfinite(k) else None, "tau": tau}
+                  "scale_k": round(k, 4) if np.isfinite(k) else None, "tau": tau, "region": reg,
+                  "not_used_in_region": _why_counts(rejected)}
+
+
+def _why_counts(rejected) -> dict:
+    out = {}
+    for o in rejected:
+        out[o["why"]] = out.get(o["why"], 0) + 1
+    return out
 
 
 def _tau(rows) -> float:
@@ -663,6 +860,42 @@ def _fall_row(name: str, cert, n_all: int, d_in: list) -> dict:
             "bias_pct": round(100 * (med / cert - 1), 1) if cert and np.isfinite(med) else None}
 
 
+def equivalent_defocus(rows_depth: list[dict], fall: list[dict]) -> dict:
+    """At what depth do the static beads read as large as the falling ones? For every z of the through-focus
+    series, the median in-focus d_current / certified of each size, against each pour's median / certified; the
+    z where they agree best over all the sizes both have (mean |log ratio|). A pour is not on the focal plane:
+    this says how far off it fell, and so how much of the falling beads' error is defocus that the current
+    in-focus rule lets through (2026-10-15: ~2.5-3 mm, which explains the falling beads' fixed ~+20 um)."""
+    want = {f["certified_um"]: f["d_in_focus_median_um"] / f["certified_um"] for f in fall
+            if not str(f.get("run", "")).startswith("all ") and f.get("d_in_focus_median_um") and f.get("certified_um")
+            and np.isfinite(f["d_in_focus_median_um"])}
+    sizes = sorted({r["certified_um"] for r in rows_depth} & set(want))
+    if not sizes:
+        return {}
+    by_z = []
+    for z in sorted({r["z_mm"] for r in rows_depth}):
+        ratio = {}
+        for c in sizes:
+            d = [r.get("d_current_um") for r in rows_depth
+                 if r["z_mm"] == z and r["certified_um"] == c and r.get("in_focus_current")]
+            m = _median(d)
+            if np.isfinite(m):
+                ratio[c] = m / c
+        if len(ratio) == len(sizes):
+            by_z.append((float(np.mean([abs(math.log(ratio[c] / want[c])) for c in sizes])), z, ratio))
+    if not by_z:
+        return {}
+    misfit, z, ratio = min(by_z, key=lambda t: t[0])
+    other = [t for t in by_z if t[1] * z < 0]                   # the best on the other side of focus
+    out = {"sizes_um": sizes, "best_z_mm": z, "misfit_pct": round(100 * misfit, 1),
+           "static_ratio_at_best_z": {f"{c:g}": round(ratio[c], 3) for c in sizes},
+           "falling_ratio": {f"{c:g}": round(want[c], 3) for c in sizes}}
+    if other:
+        m2, z2, _r2 = min(other, key=lambda t: t[0])
+        out.update(other_side_z_mm=z2, other_side_misfit_pct=round(100 * m2, 1))
+    return out
+
+
 def _write_csv(path: Path, rows: list[dict]):
     if not rows:
         return
@@ -736,31 +969,44 @@ def analyse(paths, out: Path, targets_path: Path | None = None, max_frames: int 
     # through focus, per slide
     rows_depth = []
     tau = None
+    result["regions"] = []
     for slide in sorted({c.slide for c in caps if c.kind == "z"}):
         zc = [c for c in caps if c.kind == "z" and c.slide == slide]
-        rows, info = through_focus(zc, targets, max_frames, dust=dust)
+        rows, info = through_focus(zc, targets, max_frames, dust=dust, out=out)
         tau = info["tau"] if tau is None else tau
         rows_depth += rows
         result["through_focus"][slide] = {"info": info}
+        result["regions"].append({"run": info["reference_run"], "slide": slide, "kind": "through focus",
+                                  "beads_used": info["n_beads"], **info["region"],
+                                  "not_used_in_region": info["not_used_in_region"]})
         for cert in sorted({r["certified_um"] for r in rows}):
             result["through_focus"][slide][f"{cert:g}"] = depth_summary(
                 [r for r in rows if r["certified_um"] == cert], cert)
 
-    # at focus: the traverse's z = 0 plus every 'focus' capture
+    # at focus: the traverse's z = 0 plus every 'focus' capture, each in its own sparse region
     rows_focus = [dict(r) for r in rows_depth if r["z_mm"] == 0]
     for c in [c for c in caps if c.kind == "focus"]:
         T = transmission(average_frames(c.run, max_frames))
         sizes = _slide_sizes(c.slide, c.target, targets)
-        beads, _k = detect_and_identify(T, sizes, dust=dust)
+        region, reg = sparse_region(T)
+        beads, _k, rejected = detect_and_identify(T, sizes, dust=dust, region=region)
         t = tau if tau is not None else _tau(beads)
+        used = []
         for r in beads:
             r2 = measure_at(T, r["cx"], r["cy"], r["certified_um"] / UM_PER_PX, t)
             if r2 and r2.get("detected"):
                 r2.update(certified_um=r["certified_um"], z_mm=0.0, run=c.run.name, slide=c.slide)
-                rows_focus.append(r2)
+                used.append(r2)
+        rows_focus += used
+        region_png(T, region, used, rejected, f"{c.notes}   ({c.run.name})", sizes, _png_dest(c, out))
+        result["regions"].append({"run": c.run.name, "slide": c.slide, "kind": "at focus", "beads_used": len(used),
+                                  **reg, "not_used_in_region": _why_counts(rejected)})
     tau = tau if tau is not None else _tau(rows_focus)
     for cert in sorted({r["certified_um"] for r in rows_focus}):
-        result["at_focus"][f"{cert:g}"] = focus_summary([r for r in rows_focus if r["certified_um"] == cert], cert)
+        rc = [r for r in rows_focus if r["certified_um"] == cert]
+        result["at_focus"][f"{cert:g}"] = focus_summary(rc, cert)
+        result["at_focus"][f"{cert:g}"]["by_slide"] = {
+            s: focus_summary([r for r in rc if r["slide"] == s], cert) for s in sorted({r["slide"] for r in rc})}
     result["tau"] = round(float(tau), 4) if tau is not None else None
 
     # background cross-check: a 'bg' capture's own T should be ~1 everywhere
@@ -775,6 +1021,7 @@ def analyse(paths, out: Path, targets_path: Path | None = None, max_frames: int 
         a = array_scale(T, float(targets["reticle"]["array"]["pitch_um"]))
         result["array"].append({"run": c.run.name, "pos": c.pos, **a})
     result["falling"] = falling([c for c in caps if c.kind == "fall"], targets)
+    result["falling_equivalent_defocus"] = equivalent_defocus(rows_depth, result["falling"])
 
     _write_csv(out / "beads_through_focus.csv", rows_depth)
     _write_csv(out / "beads_at_focus.csv", rows_focus)
@@ -802,6 +1049,27 @@ def report(R: dict, figs) -> str:
                      f"{a['level_star']} | {a['d_blaisot_median_um']} | {a['contrast_median']} | {a['chi_median_um']} |")
         L.append("\nl* = the relative grey level whose (hole-filled) diameter equals the certified size; the "
                  "current sizer uses 0.5 (half-max).\n")
+        L += ["### By slide\n", "| certified (um) | slide | beads | current sizer (um) | bias | in focus | l* |",
+              "|---|---|---|---|---|---|---|"]
+        for s, a in sorted(R["at_focus"].items(), key=lambda kv: float(kv[0])):
+            for sl, b in a.get("by_slide", {}).items():
+                L.append(f"| {s} | {sl} | {b['n_beads']} | {b['d_current_median_um']} | {b['bias_current_pct']}% | "
+                         f"{b['in_focus_current_share']} | {b['level_star']} |")
+        L.append("")
+    if R.get("regions"):
+        L += ["## The part of each photo used\n",
+              f"Only dark (T_min < {DARK_T}), round (axis ratio <= {ROUND_MAX}), isolated beads, inside the sparse "
+              f"{TILE_PX}-px tiles (dark cover <= {100 * SPARSE_MAX:.0f}% around the tile; else the {MIN_TILES} "
+              "sparsest). Each capture's folder holds `shadowgraph/analysis/bead_calibration/bead_region.png` with "
+              "the area boxed; copies are in `regions/`.\n",
+              "| run | slide | kind | area used | dark cover (used / whole photo) | beads used | not used in the area |",
+              "|---|---|---|---|---|---|---|"]
+        for g in R["regions"]:
+            L.append(f"| {g['run']} | {g['slide']} | {g['kind']} | {100 * g['share_of_frame']:.0f}%"
+                     f"{' (sparsest only)' if g['fallback_sparsest'] else ''} | {100 * g['dark_cover_used']:.1f}% / "
+                     f"{100 * g['dark_cover_all']:.1f}% | {g['beads_used']} | "
+                     f"{', '.join(f'{k} {v}' for k, v in sorted(g['not_used_in_region'].items())) or '-'} |")
+        L.append("")
     for slide, d in R["through_focus"].items():
         L += [f"## Through focus: slide '{slide}' (reference {d['info']['reference_run']}, "
               f"{d['info']['n_beads']} beads)\n",
@@ -817,8 +1085,19 @@ def report(R: dict, figs) -> str:
         L += ["## Falling beads (AI pipeline)\n", "| run | certified (um) | in focus | median (um) | bias |",
               "|---|---|---|---|---|"]
         for f in R["falling"]:
+            b = f.get("bias_pct")
             L.append(f"| {f['run']} | {f['certified_um']} | {f.get('n_in_focus', '-')} | "
-                     f"{f.get('d_in_focus_median_um', f.get('note'))} | {f.get('bias_pct', '-')} |")
+                     f"{f.get('d_in_focus_median_um', f.get('note'))} | {f'{b:+.1f}%' if b is not None else '-'} |")
+        e = R.get("falling_equivalent_defocus") or {}
+        if e:
+            L += ["", f"**Equivalent defocus:** the static beads read as large as the falling ones at z = "
+                      f"{e['best_z_mm']:+.2f} mm from best focus (misfit {e['misfit_pct']}%"
+                  + (f"; the other side of focus, {e['other_side_z_mm']:+.2f} mm, misfit {e['other_side_misfit_pct']}%"
+                     if "other_side_z_mm" in e else "") + "). d / certified, static at that z against falling: "
+                  + ", ".join(f"{c} um {e['static_ratio_at_best_z'][c]} vs {e['falling_ratio'][c]}"
+                              for c in e['static_ratio_at_best_z'])
+                  + ". The pours did not fall on the focal plane, and the current in-focus rule accepts beads "
+                    "that far out, so their error is mostly defocus, not the edge level."]
     if R["array"]:
         L += ["\n## Reticle dot array: scale\n"] + [f"- {a['run']} ({a['pos']}): {a.get('um_per_px')} um/px, "
                                                    f"quadrants {a.get('by_quadrant')}" for a in R["array"]]

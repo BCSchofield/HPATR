@@ -188,8 +188,119 @@ def test_the_day_end_to_end(day, tmp_path):
     assert not any(p.name == "analysis" for p in day.rglob("*") if p.is_dir() and p.parent == day)  # nothing written there
 
 
-def test_nothing_is_written_into_the_capture_folders(day, tmp_path):
-    before = {p: p.stat().st_mtime_ns for p in day.rglob("*") if p.is_file()}
+def test_the_captures_are_untouched_and_each_gets_its_region_png(day, tmp_path):
+    """Ben, 2026-10-15: a PNG with the area used boxed goes into each measured capture's own folder. Nothing
+    else is written there, and nothing that was there changes."""
+    def files():                      # (the day is shared: an earlier test may have written the PNGs already)
+        return {p: p.stat().st_mtime_ns for p in day.rglob("*") if p.is_file()}
+    before = {p: t for p, t in files().items() if "bead_calibration" not in p.parts}
     bc.analyse([day], tmp_path / "a2", None, max_frames=2)
-    after = {p: p.stat().st_mtime_ns for p in day.rglob("*") if p.is_file()}
-    assert before == after
+    after = files()
+    assert {p: t for p, t in after.items() if "bead_calibration" not in p.parts} == before
+    new = sorted(p for p in after if "bead_calibration" in p.parts)
+    assert new and all(p.relative_to(p.parents[3]).as_posix() ==
+                       "shadowgraph/analysis/bead_calibration/bead_region.png" for p in new)
+    measured = {c.run for c in bc.find_captures([day]) if c.kind in ("z", "focus")}
+    assert {p.parents[3] for p in new} == measured
+    assert len(list((tmp_path / "a2" / "regions").glob("*.png"))) == len(measured)
+    assert cv2.imread(str(new[0])).shape[:2] == (H, W)
+
+
+# ---- the real slides of 2026-10-15: specks, debris, clumps, crowding --------------------------------------
+
+def _frame(h=H, w=W):
+    return np.ones((h, w))
+
+
+def test_faint_specks_are_ignored_and_do_not_crowd_a_bead():
+    """The 155.8 slide: ~1,000 faint specks (T 0.8-0.9) around ~35 beads. A speck is not a bead, and one
+    beside a bead does not make the bead 'crowded'."""
+    T = _frame()
+    bead_T(T, 160, 120, 155.8, 12.0)
+    for x, y in ((182, 120), (160, 98), (140, 140), (60, 60), (250, 200)):
+        bead_T(T, x, y, 30.0, 8.0, tau=0.8)                    # faint specks, two right at the bead's edge
+    beads = bc.find_beads(T.astype(np.float32))
+    assert len(beads) == 1 and abs(beads[0]["cx"] - 160) < 1.5 and abs(beads[0]["cy"] - 120) < 1.5
+
+
+def test_two_touching_beads_are_not_a_bead():
+    T = _frame()
+    bead_T(T, 150, 120, 56.28, 8.0)
+    bead_T(T, 156, 120, 56.28, 8.0)                            # 6 px apart: overlapping
+    bead_T(T, 60, 60, 56.28, 8.0)                              # and one on its own
+    obs = bc.objects(T.astype(np.float32))
+    assert [(round(o["cx"]), round(o["cy"])) for o in obs if not o["why"]] == [(60, 60)]
+    assert any(o["why"] in ("not round", "crowded") for o in obs if abs(o["cx"] - 153) < 5)
+
+
+def test_pale_debris_is_not_taken_for_beads_even_when_it_outnumbers_them():
+    """Attempt 2's failure on the 98.1 slide: pale debris with a darker centre (core T ~0.45) outnumbered the
+    beads 7 to 1, and the slide's 'most common size' became the debris. Beads are dark (core T ~0.1)."""
+    T = _frame(480, 640)
+    rng = np.random.default_rng(3)
+    beads = [(80, 80), (560, 80), (80, 400), (560, 400)]
+    for x, y in beads:
+        bead_T(T, x, y, 98.1, 10.0)
+    for x in range(170, 480, 60):                              # 6 x 5 = 30 pale objects, apart (overlapping
+        for y in range(60, 430, 85):                           # pale debris is dark enough to be a bead)
+            bead_T(T, x + rng.uniform(-5, 5), y + rng.uniform(-5, 5), 80.0, 10.0, tau=0.45)
+    rows, k, rejected = bc.detect_and_identify(T.astype(np.float32), [98.1])
+    assert sorted((round(r["cx"] / 10), round(r["cy"] / 10)) for r in rows) == sorted((x // 10, y // 10)
+                                                                                       for x, y in beads)
+    assert k == pytest.approx(1.0, abs=0.08)
+
+
+def test_the_sparse_region_leaves_out_a_crowded_patch_and_the_png_shows_it(tmp_path):
+    T = _frame(512, 768)
+    for j in range(8):                                         # a crowded streak in the bottom-left tile
+        for i in range(8):
+            bead_T(T, 20 + 12 * i, 400 + 12 * j, 76.39, 8.0)
+    for x, y in ((450, 300), (600, 420), (700, 150)):
+        bead_T(T, x, y, 76.39, 8.0)
+    region, info = bc.sparse_region(T.astype(np.float32))
+    assert not region[440, 60] and region[300, 450] and region[420, 600] and region[150, 700]
+    assert 0.5 < info["share_of_frame"] < 1.0 and not info["fallback_sparsest"]
+    rows, _k, rejected = bc.detect_and_identify(T.astype(np.float32), [76.39], region=region)
+    assert len(rows) == 3
+    png = tmp_path / "x" / "bead_region.png"
+    bc.region_png(T.astype(np.float32), region, rows, rejected, "test", [76.39], [png])
+    img = cv2.imread(str(png)).astype(int)
+    assert img.shape[:2] == (512, 768)
+    assert img[505, 122, 0] - img[505, 122, 2] > 10                 # the left-out tile is shaded (bluish)
+    assert abs(img[300, 300, 0] - img[300, 300, 2]) < 3              # the area used is not
+
+
+def test_a_loose_pcc_cine_is_a_capture_by_its_file_name(tmp_path):
+    """The PCC blank (no beads, the dust map) sits in falling/ as 'BEAD blank bg.cine'. A recording inside a
+    run's CINE folder, one that run_ai_where has given a run folder, and macOS '._' files are not captures.
+    The day may sit under a folder whose name starts with '.' (the check is below the folder given)."""
+    day = tmp_path / ".hidden_parent" / "15"
+    fall = day / "falling"
+    (fall / "BEAD fall 56.28 p1" / "shadowgraph" / "raw" / "CINE").mkdir(parents=True)
+    for p in (fall / "BEAD blank bg.cine", fall / "._BEAD blank bg.cine", fall / "BEAD fall 56.28 p1.cine",
+              fall / "BEAD fall 56.28 p1" / "shadowgraph" / "raw" / "CINE" / "BEAD fall 56.28 p1.cine"):
+        p.write_bytes(b"cine")
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Metadata"
+    ws.append(["Field", "Value"])
+    ws.append(["Notes", "BEAD fall 56.28 p1"])
+    wb.save(fall / "BEAD fall 56.28 p1" / "run_summary.xlsx")
+    caps = sorted(bc.find_captures([day]), key=lambda c: c.notes)
+    assert [(c.notes, c.kind, c.slide, c.run.name) for c in caps] == [
+        ("BEAD blank bg", "bg", "blank", "BEAD blank bg.cine"),
+        ("BEAD fall 56.28 p1", "fall", "56.28", "BEAD fall 56.28 p1")]
+
+
+def test_the_falling_beads_equivalent_defocus_is_found():
+    """2026-10-15: falling beads read ~0.94 x nominal + 22 um; static beads 2.5-3 mm from focus read the same.
+    Built here: static size grows 10 % per mm off focus, the pours read 20 % large -> 2 mm, either side."""
+    rows = [{"z_mm": z, "certified_um": c, "d_current_um": c * (1 + 0.1 * abs(z)), "in_focus_current": True}
+            for z in (-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0) for c in (40.0, 80.0)]
+    fall = [{"run": "p1", "certified_um": 40.0, "d_in_focus_median_um": 48.0},
+            {"run": "p1", "certified_um": 80.0, "d_in_focus_median_um": 96.0},
+            {"run": "all 2 pours", "certified_um": 40.0, "d_in_focus_median_um": 60.0}]   # pooled rows are skipped
+    e = bc.equivalent_defocus(rows, fall)
+    assert abs(e["best_z_mm"]) == 2.0 and e["misfit_pct"] == 0.0 and abs(e["other_side_z_mm"]) == 2.0
+    assert e["sizes_um"] == [40.0, 80.0] and e["falling_ratio"] == {"40": 1.2, "80": 1.2}
+    assert bc.equivalent_defocus(rows, []) == {}

@@ -128,11 +128,33 @@ nozzle out of the way if needed. Do not touch the camera, lens, distance or back
 /Users/benschofield/anaconda3/envs/phantom/bin/python3 /Users/benschofield/Documents/GitHub/HPATR/AI/Real_Data_Code/bead_calibration.py "/Volumes/LaCie/Calibration/Imaging Work/2026/10/15" --out "/Volumes/LaCie/Calibration/Imaging Work/analysis/2026-10-15"
 ```
 
-Each capture is averaged over 40 frames, spread through its 1 s (about 20 s a capture from the LaCie;
-`--max-frames` changes it), so the full set takes about 15-20 min. Anything dark in a bead-free (`bg`)
-capture is treated as dust (window, sensor or slide) and dropped wherever it turns up: an averaged spray
-frame shows about 200 such specks. So take the `bg` captures. `targets.json` (supplier, lot, spreads) is
+Each capture is averaged over 40 frames, spread through its 1 s (about 6 s a capture from the LaCie;
+`--max-frames` changes it); the 36 captures of 2026-10-15 take about 4 min to read and 2 min to analyse.
+Anything dark in a bead-free (`bg`) capture is treated as dust (window, sensor or slide) and dropped wherever
+it turns up. A loose PCC recording whose file name reads as Notes counts as a capture too: on 2026-10-15 that
+is `falling/BEAD blank bg.cine`, the empty field, the dust map. `targets.json` (supplier, lot, spreads) is
 found by itself in `Calibration/Imaging Work`.
+
+**Which beads count (1.1.0, 2026-10-15).** The real slides are not the clean sparse slides 1.0 was written
+for: the 155.8 slide has ~35 beads among ~1,000 faint specks and fibres, the 98.1 slide a lot of pale dried
+debris, the 37.36 and mixed slides crowded streaks. So only:
+- **dark** objects: the darkest pixel below T 0.35. Beads at focus sit at 0.1-0.35 (the 37.36 ones are the
+  palest, being ~4 px across); specks and debris at 0.35-0.9. Faint objects are not beads and not neighbours;
+- **round** ones: the half-max core no longer than 1.4x its width (a touching pair is ~2). Shape and spacing
+  come from the core, which the faint debris around a bead's blurred edge does not reach;
+- **isolated** ones: no other dark object within one of its diameters (+2 px), edge to edge;
+- **in the sparse part of the photo**: 128 px tiles where dark cores cover <= 3 % of the area around the
+  tile (the 12 sparsest if fewer are that sparse). The through-focus series uses its z = 0 capture's area
+  for every depth;
+- on a single-size slide, within 20 % of the slide's most common size (76.39 is 22 % below 98.1).
+
+**The area used is shown on a PNG in each capture's own folder**,
+`<run>/shadowgraph/analysis/bead_calibration/bead_region.png` (Ben, 2026-10-15), copied to
+`analysis/<date>/regions/`. Inside the green line and unshaded: the area used. Blue (or a size's colour):
+the beads used. Thin red: dark objects in that area that were not used (crowded, not round, no size match,
+dust). Look at these before trusting a number: on 2026-10-15 a looser darkness cut (0.5) gave plausible
+counts while counting pale debris as 98.1 µm beads, which only the picture showed. That PNG is the only file
+written into a capture folder.
 
 **What it does:**
 - Finds the captures by their Notes (`BEAD …`) and averages each 1 s capture.

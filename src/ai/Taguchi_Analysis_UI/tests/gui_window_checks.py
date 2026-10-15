@@ -14,7 +14,9 @@ REPO = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(REPO / "src"))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 STATE = Path(os.environ.setdefault("HPATR_RUN_SHEET_STATE", "/tmp/hpatr_run_sheet_checks_state.json"))
-THURSDAY = REPO / "docs" / "notes" / "2026-10-15_thursday_run_sheet.csv"
+# A frozen copy of the full 57-row sheet planned for 2026-10-15 (057a0f3): Cd tests, spray runs and bead rows.
+# Not the live day sheet, which was cut to the bead rows on the day (b55c142) and may change again.
+THURSDAY = Path(__file__).resolve().parent / "data" / "run_sheet_57_rows_2026-10-15.csv"
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
 

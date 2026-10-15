@@ -1,0 +1,58 @@
+Run,Orifice (mm),Gas flow (sccm),Bubbler RPM,Silicone (steps/s),Motor Travel (mm),Notes to type,Instructions,Save under,Post-trigger (s)
+Cd 1.2,1.2,2000,,0,,CD TEST 1.2 mm,"SETUP: Thursday 2026-10-15. Lab PC pulled and GUI_Clean restarted. Fit the 1.2 mm insert. Order today: each insert's Cd test then its spray runs (1.2, 0.8, 0.5 mm), then ALL the bead work at the end. Gas-only Cd test (docs/ORIFICE_CD_TEST.md). Purge the nozzle dry first (6,000 sccm for 30 s). Speed 0, RPM empty, Orifice length box = this insert's bore length. START, then step the gas with Set Flow: 2,000 -> 4,000 -> 6,000 -> 8,000 -> 10,000 -> 12,000 sccm, about 20 s each. STOP EVERYTHING to end.",Calibration/Orifice Cd,
+1,1.2,9000,500,4000,36,S2 #01 anchor centre,"SETUP: spray runs. Fill the silicone line; Window check ON; wipe the window and save a clean-window reference. Optional: the PCC max-fps check (256x1152, 512x1152, 2048x256). Centre point, as on the CCD day: the day-to-day check against its five centres.",,
+2,1.2,11000,100,5000,36,S2 #02 confirm,The model's best setting (predicted 288k droplets/s in 20-60 um).,,
+3,1.2,12000,100,6000,43,S2 #03 ladder,Feed ladder at full gas. Travel 43 mm.,,
+4,1.2,12000,100,8000,58,S2 #04 ladder,Top of the feed ladder. Travel 58 mm: one syringe fill for this run.,,
+5,1.2,12000,100,5000,36,S2 #05 ladder,Full gas at the best setting's feed.,,
+6,1.2,11000,100,5000,36,S2 #06 confirm,Confirmation 2 of 2.,,
+Cd 0.8,0.8,2000,,0,,CD TEST 0.8 mm,"SETUP: change to the 0.8 mm insert. Gas-only Cd test (docs/ORIFICE_CD_TEST.md). Purge the nozzle dry first (6,000 sccm for 30 s). Speed 0, RPM empty, Orifice length box = this insert's bore length. START, then step the gas with Set Flow: 2,000 -> 4,000 -> 6,000 -> 8,000 -> 10,000 -> 12,000 sccm, about 20 s each. STOP EVERYTHING to end.",Calibration/Orifice Cd,
+7,0.8,12000,100,5000,36,S2 #07 0.8 capacity,0.8 mm at full gas. STOP if P0 reaches 9.3 barA.,,
+Cd 0.5,0.5,2000,,0,,CD TEST 0.5 mm,"SETUP: change to the 0.5 mm insert. Gas-only Cd test (docs/ORIFICE_CD_TEST.md). Purge the nozzle dry first (6,000 sccm for 30 s). Speed 0, RPM empty, Orifice length box = this insert's bore length. START, then step the gas with Set Flow: 2,000 -> 4,000 -> 6,000 -> 8,000 -> 10,000 -> 12,000 sccm, about 20 s each. STOP EVERYTHING to end.",Calibration/Orifice Cd,
+8,0.5,7000,900,3000,36,S2 #08 C7 repeat,The C7 recipe (CCD day: 280k/s and 187k/s). Pressure-limited: the gas set point does not matter here.,,
+9,0.5,7000,900,4000,36,S2 #09 0.5 feed,"Between the good feed (3,000) and the poor one (5,000).",,
+10,0.5,7000,900,2000,36,S2 #10 0.5 feed,"Less feed, more gas gets through: does throughput hold?",,
+Exp,0.5,7000,900,3000,36,S2 exposure series,"OPTIONAL. In PCC: exposure 1, 4, 16, 40 us, about 2 s of video each, pre 0 s. Then set the exposure BACK TO 4 us. Velocity plan step 1 (docs/VELOCITY_CAPTURE_PLAN.md).",,
+B01,,0,,1000,0.5,BEAD mix z-4.00,"SETUP: bead calibration (docs/BEAD_CALIBRATION.md), after the spray work. Clean up the silicone; EMPTY or DISCONNECT the silicone line (the traverse moves 0.5 mm per capture so the auto-trigger fires) and HOME the traverse first (21.5 mm of nudges in all). Move the nozzle out of the way as needed, but do NOT touch the camera, lens (focus ring, aperture), its distance or the backlight. Exposure 4 us (after the exposure series). Camera tab: Run AI analysis OFF, Window check OFF, Auto-trigger ON. Mount the MIXED sandwich (all five sizes, coverslip towards the camera) square to the camera at the spray plane. Find best focus on the 155.8 um beads with the micrometer: that reading is z0 (write it down). Then turn to z0 - 4.00 mm. From here on always turn the SAME way (backlash).",Calibration/Imaging Work,1
+B02,,0,,1000,0.5,BEAD mix z-3.00,Micrometer to z0 - 3.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+B03,,0,,1000,0.5,BEAD mix z-2.50,Micrometer to z0 - 2.50 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+B04,,0,,1000,0.5,BEAD mix z-2.00,Micrometer to z0 - 2.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+B05,,0,,1000,0.5,BEAD mix z-1.50,Micrometer to z0 - 1.50 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+B06,,0,,1000,0.5,BEAD mix z-1.25,Micrometer to z0 - 1.25 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+B07,,0,,1000,0.5,BEAD mix z-1.00,Micrometer to z0 - 1.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+B08,,0,,1000,0.5,BEAD mix z-0.80,Micrometer to z0 - 0.80 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+B09,,0,,1000,0.5,BEAD mix z-0.60,Micrometer to z0 - 0.60 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+B10,,0,,1000,0.5,BEAD mix z-0.40,Micrometer to z0 - 0.40 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+B11,,0,,1000,0.5,BEAD mix z-0.20,Micrometer to z0 - 0.20 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+B12,,0,,1000,0.5,BEAD mix z+0.00,Micrometer to z0 (best focus). Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+B13,,0,,1000,0.5,BEAD mix z+0.20,Micrometer to z0 + 0.20 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+B14,,0,,1000,0.5,BEAD mix z+0.40,Micrometer to z0 + 0.40 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+B15,,0,,1000,0.5,BEAD mix z+0.60,Micrometer to z0 + 0.60 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+B16,,0,,1000,0.5,BEAD mix z+0.80,Micrometer to z0 + 0.80 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+B17,,0,,1000,0.5,BEAD mix z+1.00,Micrometer to z0 + 1.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+B18,,0,,1000,0.5,BEAD mix z+1.25,Micrometer to z0 + 1.25 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+B19,,0,,1000,0.5,BEAD mix z+1.50,Micrometer to z0 + 1.50 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+B20,,0,,1000,0.5,BEAD mix z+2.00,Micrometer to z0 + 2.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+B21,,0,,1000,0.5,BEAD mix z+2.50,Micrometer to z0 + 2.50 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+B22,,0,,1000,0.5,BEAD mix z+3.00,Micrometer to z0 + 3.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+B23,,0,,1000,0.5,BEAD mix z+4.00,"Micrometer to z0 + 4.00 mm. If beads still look sharp here, carry on in 1 mm steps and add rows by hand (Notes 'BEAD mix z+5.00' ...).",Calibration/Imaging Work,1
+B24,,0,,1000,0.5,BEAD mix z0 p2,"Micrometer back to z0, approaching from the same side as before. Slide the sandwich sideways to a NEW patch of beads.",Calibration/Imaging Work,1
+B25,,0,,1000,0.5,BEAD mix z0 p3,At z0. Slide the sandwich sideways to a NEW patch of beads.,Calibration/Imaging Work,1
+B26,,0,,1000,0.5,BEAD mix z0 p4,At z0. Slide the sandwich sideways to a NEW patch of beads.,Calibration/Imaging Work,1
+B27,,0,,1000,0.5,BEAD mix z0 p5,At z0. Slide the sandwich sideways to a NEW patch of beads.,Calibration/Imaging Work,1
+B28,,0,,1000,0.5,BEAD mix bg,"At z0, slide to a patch with NO beads in view (or the bare end of the slide): the background for this sandwich, and the dust map.",Calibration/Imaging Work,1
+B29,,0,,1000,0.5,BEAD 37.36 z0 p1,SETUP: swap to the 37.36 um sandwich. Find ITS best focus with the micrometer (its own z0) and capture there.,Calibration/Imaging Work,1
+B30,,0,,1000,0.5,BEAD 37.36 z0 p2,At this slide's z0: slide sideways to a new patch of beads.,Calibration/Imaging Work,1
+B31,,0,,1000,0.5,BEAD 37.36 bg,At this slide's z0: a patch with NO beads in view (background).,Calibration/Imaging Work,1
+B32,,0,,1000,0.5,BEAD 56.28 z0 p1,SETUP: swap to the 56.28 um sandwich. Find ITS best focus with the micrometer (its own z0) and capture there.,Calibration/Imaging Work,1
+B33,,0,,1000,0.5,BEAD 56.28 z0 p2,At this slide's z0: slide sideways to a new patch of beads.,Calibration/Imaging Work,1
+B34,,0,,1000,0.5,BEAD 56.28 bg,At this slide's z0: a patch with NO beads in view (background).,Calibration/Imaging Work,1
+B35,,0,,1000,0.5,BEAD 76.39 z0 p1,SETUP: swap to the 76.39 um sandwich. Find ITS best focus with the micrometer (its own z0) and capture there.,Calibration/Imaging Work,1
+B36,,0,,1000,0.5,BEAD 76.39 z0 p2,At this slide's z0: slide sideways to a new patch of beads.,Calibration/Imaging Work,1
+B37,,0,,1000,0.5,BEAD 76.39 bg,At this slide's z0: a patch with NO beads in view (background).,Calibration/Imaging Work,1
+B38,,0,,1000,0.5,BEAD 98.1 z0 p1,SETUP: swap to the 98.1 um sandwich. Find ITS best focus with the micrometer (its own z0) and capture there.,Calibration/Imaging Work,1
+B39,,0,,1000,0.5,BEAD 98.1 z0 p2,At this slide's z0: slide sideways to a new patch of beads.,Calibration/Imaging Work,1
+B40,,0,,1000,0.5,BEAD 98.1 bg,At this slide's z0: a patch with NO beads in view (background).,Calibration/Imaging Work,1
+B41,,0,,1000,0.5,BEAD 155.8 z0 p1,SETUP: swap to the 155.8 um sandwich. Find ITS best focus with the micrometer (its own z0) and capture there.,Calibration/Imaging Work,1
+B42,,0,,1000,0.5,BEAD 155.8 z0 p2,At this slide's z0: slide sideways to a new patch of beads.,Calibration/Imaging Work,1
+B43,,0,,1000,0.5,BEAD 155.8 bg,"At this slide's z0: a patch with NO beads in view (background). NEXT (not in this sheet): the falling beads, recorded in PCC (docs/BEAD_CALIBRATION.md step 11): two 5 s pours per size, each saved as 'BEAD fall <size> p1.cine' / 'p2' in Calibration\Imaging Work\2026\10\15\falling\.",Calibration/Imaging Work,1

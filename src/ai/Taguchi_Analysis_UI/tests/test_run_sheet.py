@@ -42,19 +42,18 @@ def test_the_analysis_apps_next_runs_csv_loads_as_it_is(tmp_path):
     assert rows[1].fields()["rpm"] == "" and rows[1].instructions == "Step 1"     # rpm 0: the box is cleared
 
 
-def test_thursdays_sheet_is_valid_and_its_cd_tests_are_static_runs():
+def test_thursdays_sheet_as_run_is_the_bead_captures():
+    """2026-10-15 as run (lab PC, b55c142): no silicone; the Cd tests were run first and dropped from the sheet,
+    the spray runs postponed (they are in 057a0f3's sheet). Left: one capture per single-size sandwich at focus,
+    then the mixed sandwich through focus, all 1 s captures saved under Calibration/Imaging Work."""
     rows = rs.load(THURSDAY)
-    assert len(rows) == 57 and sum(r.notes.startswith("BEAD") for r in rows) == 43
-    assert not any("fall" in r.notes for r in rows)                           # falling beads: in PCC, not here
-    assert "PCC" in rows[-1].instructions
-    cd = [r for r in rows if r.notes.startswith("CD TEST")]
-    assert [r.orifice for r in cd] == [1.2, 0.8, 0.5] and all(r.static and r.rpm is None for r in cd)
-    spray = [r for r in rows if r.notes.startswith("S2 #")]
-    assert len(spray) == 10 and all(not r.static for r in spray)
-    first_bead = next(i for i, r in enumerate(rows) if r.notes.startswith("BEAD"))
-    assert all(r.notes.startswith("BEAD") for r in rows[first_bead:])        # all the bead work at the end
+    assert len(rows) == 36 and all(r.notes.startswith("BEAD") for r in rows)
+    assert [r.notes for r in rows[:5]] == [f"BEAD {s} z0" for s in ("155.8", "98.1", "76.39", "56.28", "37.36")]
+    assert rows[5].notes == "BEAD mix z-8.00" and rows[-1].notes == "BEAD mix z+8.00"
+    assert all(r.folder_parts() == ["Calibration", "Imaging Work"] and r.post_trigger_s == 1 for r in rows)
+    assert all(r.gas == 0 and not r.static and r.travel == 0.5 for r in rows)  # a nudge, so the trigger fires
+    assert not any("fall" in r.notes for r in rows) and "PCC" in rows[-1].instructions  # pours: PCC, not here
     assert not any("run " in r.notes.lower() for r in rows)          # "run N" would read as a CCD-day run
-    assert all(r.travel >= 36 * r.feed / 5000 - 0.5 for r in spray if r.feed > 5000)   # >= ~49 s per run
 
 
 def test_a_sheet_without_gas_or_feed_is_refused_with_a_reason(tmp_path):
