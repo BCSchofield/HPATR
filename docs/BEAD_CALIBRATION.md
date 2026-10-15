@@ -1,7 +1,7 @@
 # Size calibration with glass beads (and later the reticle)
 
-Written 2026-10-14 for Thursday 2026-10-15. The bead work is the LAST part of the day, after the Cd tests and
-the (10) spray runs (Ben). The plan is `/Users/benschofield/.claude/plans/cozy-orbiting-swing.md`; the background is
+Written 2026-10-14 for Thursday 2026-10-15. The bead work is the LAST part of the day, after the Cd tests (Ben).
+On 2026-10-15 the spray runs were postponed: that day is Cd tests + beads only, no silicone. The plan is `/Users/benschofield/.claude/plans/cozy-orbiting-swing.md`; the background is
 `docs/DROPLET_MEASUREMENT_METHOD.md`.
 
 ## Why
@@ -32,9 +32,10 @@ The beads add the transparent case.
   folded paper, and something under the field to catch falling beads.
 - The run sheet: `Experiments\Run sheets\2026-10-15 Thursday run sheet.csv`, loaded on GUI_Clean's
   **Run sheet** tab. The sheet's order:
-  - each insert's Cd test and spray runs (1.2, 0.8, 0.5 mm; 10 runs);
-  - the optional exposure series;
-  - rows B01–B43, the sandwiches (saved under `Calibration\Imaging Work`, 1 s captures);
+  - (the Cd tests were run first, then dropped from the sheet; no spray runs on 2026-10-15);
+  - B01–B05: ONE capture per single-size sandwich at its own best focus (Ben, 2026-10-15: biggest to smallest, 155.8 first; the slide cannot be
+    moved sideways to a new patch, and the background comes from the same photo, so no p2 / bg captures);
+  - B06–B36: the mixed sandwich through focus, −8 to +8 mm, OPTIONAL (the only depth-of-field data); the sandwiches (saved under `Calibration\Imaging Work`, 1 s captures);
   - last, NOT in the sheet: the falling beads, recorded in PCC (step 11). Two 5 s pours per size, because
     a hand sprinkle does not cover a defined plane.
 
@@ -71,16 +72,16 @@ For each one:
    to the camera axis. If one side of the field is sharper than the other, it is tilted.
 6. **Find best focus** on the 155.8 µm beads with the micrometer, by eye on the live view. That
    reading is **z0**; write it down.
-7. **Through focus (B01–B23):** z = z0 −4.00, −3.00, −2.50, −2.00, −1.50, −1.25, −1.00, −0.80, −0.60,
-   −0.40, −0.20, 0, +0.20 … +4.00 mm.
+7. **Through focus (B06–B36, optional on 2026-10-15):** z = z0 −8.00, −7.00, −6.00, −5.00, −4.00, −3.00, −2.50, −2.00, −1.50, −1.25, −1.00, −0.80, −0.60,
+   −0.40, −0.20, 0, +0.20 … +4.00, +5.00, +6.00, +7.00, +8.00 mm.
    - **Always turn the micrometer the same way** (backlash).
    - Do not slide the sandwich sideways during these rows.
-   - If beads still look sharp at ±4 mm, carry on in 1 mm steps and add rows by hand
-     (Notes `BEAD mix z+5.00`).
-8. **More beads at focus (B24–B27):** back to z0, approaching from the same side as before, then slide
+   - The manual stage reaches about ±8 mm from focus (Ben, 2026-10-15), so the series runs ±8 mm (it was ±4).
+     Start a little past −8 and turn forward to −8 to take up the backlash. If the stage cannot reach ±8, skip those rows.
+8. **More beads at focus (not on the 2026-10-15 sheet: the slide cannot be moved sideways):** back to z0, approaching from the same side as before, then slide
    sideways to four new patches.
-9. **Background (B28):** at z0, a patch with no beads in view.
-10. **Single-size sandwiches (B29–B43):** for each size, refocus with the micrometer to that slide's own
+9. **Background (not on the 2026-10-15 sheet; the background comes from each photo itself):** at z0, a patch with no beads in view.
+10. **Single-size sandwiches (B01–B05, done FIRST on 2026-10-15, one capture each at best focus):** for each size, refocus with the micrometer to that slide's own
     best focus, then capture two patches and one empty patch.
 11. **Falling beads, recorded in PCC: LAST, after the sandwiches.** No GUI_Clean run, no motor: plain PCC
     captures.
@@ -89,7 +90,8 @@ For each one:
     - **Hand the camera to PCC:** close GUI_Clean (or disconnect the camera in it).
     - **In PCC, match the day's settings:** 2048 × 1152, 390 fps, exposure **4 µs** (back from the exposure
       series), about 5 s per recording.
-    - **Two pours per size.** Save each recording to the LaCie as **`BEAD fall <size> p1.cine`** and
+    - **One pour per size is enough if it shows enough beads; a second (p2) only for a thin pour** (2026-10-15;
+      was two per size). Trim each to the stretch with beads before saving. Save each recording to the LaCie as **`BEAD fall <size> p1.cine`** and
       **`… p2.cine`**, e.g. `BEAD fall 56.28 p1.cine`, in
       `Calibration\Imaging Work\2026\10\15\falling\`.
     - **The file name is what the analysis reads.** Underscores instead of spaces are fine. Any other name
@@ -113,12 +115,11 @@ For each one:
 best focus is sharp. The analysis needs the LaCie on the Mac, so it runs afterwards.
 
 **Order on the day:**
-1. each insert's Cd test (saved under `Calibration\Orifice Cd`) and its spray runs;
-2. the exposure series (optional);
-3. the sandwiches (steps 5–10);
-4. the falling beads (step 11), last.
+1. each insert's Cd test (saved under `Calibration\Orifice Cd`);
+2. the single-size sandwiches (step 10), then the mixed one (steps 5–9; skipped if it does not work);
+3. the falling beads (step 11), last.
 
-Before the sandwiches: clean up the silicone, empty or disconnect the line, home the traverse, and move the
+Before the sandwiches: empty or disconnect the silicone line, home the traverse, and move the
 nozzle out of the way if needed. Do not touch the camera, lens, distance or backlight.
 
 ## The analysis (Mac; no AI for the static beads)
@@ -164,14 +165,22 @@ recordings:
 "C:\Users\BenSc\anaconda3\envs\Detectron\python.exe" "C:\Users\BenSc\Documents\GitHub\HPATR\AI\Real_Data_Code\run_ai_where.py" "D:\Calibration\Imaging Work\2026\10\15\falling" --notes "BEAD fall"
 ```
 
+- **Stride (decided 2026-10-15, Ben: keep the default 10, trim the cines instead).** Only about 10% of an untrimmed
+  pour's frames have beads, and a 155.8 um bead crosses the 11.5 mm field in ~7 ms (2-3 frames at 390 fps), so
+  at stride 10 an untrimmed pour can lose most of its large beads. Each cine is therefore trimmed in PCC to the
+  stretch where beads are falling. Even then stride 10 sees roughly 1 in 4 large beads (small ones, ~0.1 m/s,
+  stay in view for tens of frames and are seen many times). If a size comes out with too few in-focus beads,
+  re-run that pour with `--stride 1` (~1 h a pour) or `--stride 2`.
+
 - Add `--dry-run` first to see the ten recordings it picks (two per size); a dry run creates nothing.
 - **Each recording becomes a run folder next to it,** `falling\BEAD fall 56.28 p1\`, with a
   `run_summary.xlsx` whose Notes are the file name. The AI chain copies the .cine into that folder (its rule:
   the video lives in the run), so each pour is stored twice (~6 GB each). The original file is never
   changed.
 - It is restartable, and writes only into those run folders.
-- At stride 10, a 5 s pour is about 195 frames, about 6 min a run on the GPU (about an hour for the ten).
-- The analysis lists each pour and pools the two pours of each size.
+- At stride 10, a 5 s pour is about 195 frames, about 6 min a run on the GPU; a trimmed pour less. At stride 1,
+  ~1 h a pour.
+- The analysis lists each pour and pools the pours of each size (one or two).
 - Then re-run the analysis command above on the Mac; the falling-bead table fills in.
 
 Results go in `analysis/<date>/`, including `optics_calibration_v1.json`. **Nothing in the pipeline

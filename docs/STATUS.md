@@ -1,6 +1,6 @@
 # STATUS — real-data droplet pipeline and Taguchi study
 
-**Last updated: 2026-10-14 (Mac: throughput is now the default: response-surface goals in-band droplets per second x3 + atomised fraction x1, Settings size band 20-60 um; Ben's new tasks added to the open list in `docs/notes/2026-10-14_plan_for_wednesday.md`; the CCD run-33 bubbler stall false trip is resolved (Ben: "I didn't plug it in"); the silicone is one part, not curing). 2026-10-13 (Mac: CCD follow-up plan approved, `docs/notes/2026-10-13_CCD_followup_plan.md`, 12 phases; phase 1 done: app bugs 3 and 6 fixed, atomised fraction / flow relabelled "by area"; phase 2 done: "no spray" runs (atomised < 2%) have size and steadiness blanked; phase 3 done: gas regimes (pressure-limited runs left out of the surfaces by default, own section), goals used/dropped and best observed runs in Best settings; F2/H1 checks done (window drops in 8 runs; volume ranks like area); liquid stage 2.3.0 built (window drops masked, volume) and being re-run on the Mac for the CCD day, old outputs archived to _liquid2.2.0/; phase 4 done: band-count response (in-focus droplets per frame, 30-50 um, Settings); phase 5 done: GUI_Clean live gas regime + run_summary gas fields (rig check pending); phase 6 done: orifice on a log scale, fitted span when runs are left out; master_log gains a Mean Diameter column and the 33 CCD rows now hold D32, mean and atomised % (atomised % updated to liquid 2.3.0 at 15:30, backup kept); liquid 2.3.0 re-run done 33/33; phase 8 done (rate: count is a concentration, gas speeds the liquid up, cines cannot give velocity; docs/notes/2026-10-13_droplet_rate_investigation.md); phase 9 done (CCD re-analysed: in the flow-controlled region atomised fraction = gas + orifice only, predicted R2 0.89; best ~10,700 sccm on 1.2 mm; the 35% runs are pressure-limited 0.5 mm; docs/notes/2026-10-13_CCD_reanalysis.md); three RSM bugs found and fixed in the re-analysis (goal gate on the wrong model, strengthen runs outside the fitted span, free factors reported as edge optima); opt-in mass-balance rate responses added (`rate`, `rate_band`: droplets produced per second, all sizes / in the band); velocity capture plan written: `docs/VELOCITY_CAPTURE_PLAN.md` (exposure series ~20 min, then a 15-capture calibration set, ~3.5 h, on a narrow strip at ~10 kfps, 1 us; PCC check of rows-vs-width first). Earlier 2026-10-13, home PC: CCD batch finished 33/33 at 2.2.0 and analysed once; the 0.5 mm block was gas-starved at a ~9.5 barA ceiling (see Recent changes and docs/notes/2026-10-13_CCD_day_explained.md); app bugs 3 (stale run list) and 6 (no atomised liquid flow on Python 3.9) found. 2026-10-12 home PC: python-pptx 1.0.2 installed in the Detectron env; CCD day checked on the LaCie: 33/33 cines + summaries, detects as a complete 4-factor CCF, quick self-test READY; batch not started. Lab PC: 33-run CCD day captured, all cines saved, run 33 valid (the GUI's stall check false-tripped; label removed); GUI_Clean camera save hardened after a lost auto-trigger capture (untried on the rig); STATUS commit refs fixed, tracked __pycache__ removed, front limit switch tested on the rig, emoji removed from GUI_Clean console messages, switch noise filter in firmware (needs flashing), GUI_Clean SCCM ramp + bubbler starts with Start Experiment (untried on the rig); Mac: CCD plan complete, Phase 7 committed 2ebc9f0; Mac light-mode theme fix; batch bugs 1-2, goal-ramp bug, feed floor 2,000 steps/s; mean diameter now a headline response and the default size goal; GUI_Clean auto-trigger at end of test and pressure cut-off (both untried on the rig); GUI_Clean review fixes + front limit switch firmware (committed 58f1b94; firmware flashed and switch-tested on the lab rig 2026-10-12, all passed); next is the 33-run CCD day).** This is the live state of the work. Claude keeps it current
+**Last updated: 2026-10-15 (lab PC: falling beads: only ~10% of frames have beads, kept at stride 10 with trimmed cines; today is Cd tests + bead calibration only, no silicone; spray runs postponed, the three Cd tests DONE 11:12-11:34 (`Calibration/Orifice Cd/2026/10/15/`, not yet analysed); run sheet now 36 bead rows: ONE capture per single-size sandwich at focus (no patches or bg: the slide cannot move sideways, background from the photo itself), then the mixed through-focus series ±8 mm (optional; the only depth-of-field data), then the falling beads; pulled 057a0f3 at 07:52 and GUI_Clean restarted at 07:52 on it; python-pptx 1.0.2 confirmed; the Portenta switch filter is still recorded as not flashed). 2026-10-14 (Mac: throughput is now the default: response-surface goals in-band droplets per second x3 + atomised fraction x1, Settings size band 20-60 um; Ben's new tasks added to the open list in `docs/notes/2026-10-14_plan_for_wednesday.md`; the CCD run-33 bubbler stall false trip is resolved (Ben: "I didn't plug it in"); the silicone is one part, not curing). 2026-10-13 (Mac: CCD follow-up plan approved, `docs/notes/2026-10-13_CCD_followup_plan.md`, 12 phases; phase 1 done: app bugs 3 and 6 fixed, atomised fraction / flow relabelled "by area"; phase 2 done: "no spray" runs (atomised < 2%) have size and steadiness blanked; phase 3 done: gas regimes (pressure-limited runs left out of the surfaces by default, own section), goals used/dropped and best observed runs in Best settings; F2/H1 checks done (window drops in 8 runs; volume ranks like area); liquid stage 2.3.0 built (window drops masked, volume) and being re-run on the Mac for the CCD day, old outputs archived to _liquid2.2.0/; phase 4 done: band-count response (in-focus droplets per frame, 30-50 um, Settings); phase 5 done: GUI_Clean live gas regime + run_summary gas fields (rig check pending); phase 6 done: orifice on a log scale, fitted span when runs are left out; master_log gains a Mean Diameter column and the 33 CCD rows now hold D32, mean and atomised % (atomised % updated to liquid 2.3.0 at 15:30, backup kept); liquid 2.3.0 re-run done 33/33; phase 8 done (rate: count is a concentration, gas speeds the liquid up, cines cannot give velocity; docs/notes/2026-10-13_droplet_rate_investigation.md); phase 9 done (CCD re-analysed: in the flow-controlled region atomised fraction = gas + orifice only, predicted R2 0.89; best ~10,700 sccm on 1.2 mm; the 35% runs are pressure-limited 0.5 mm; docs/notes/2026-10-13_CCD_reanalysis.md); three RSM bugs found and fixed in the re-analysis (goal gate on the wrong model, strengthen runs outside the fitted span, free factors reported as edge optima); opt-in mass-balance rate responses added (`rate`, `rate_band`: droplets produced per second, all sizes / in the band); velocity capture plan written: `docs/VELOCITY_CAPTURE_PLAN.md` (exposure series ~20 min, then a 15-capture calibration set, ~3.5 h, on a narrow strip at ~10 kfps, 1 us; PCC check of rows-vs-width first). Earlier 2026-10-13, home PC: CCD batch finished 33/33 at 2.2.0 and analysed once; the 0.5 mm block was gas-starved at a ~9.5 barA ceiling (see Recent changes and docs/notes/2026-10-13_CCD_day_explained.md); app bugs 3 (stale run list) and 6 (no atomised liquid flow on Python 3.9) found. 2026-10-12 home PC: python-pptx 1.0.2 installed in the Detectron env; CCD day checked on the LaCie: 33/33 cines + summaries, detects as a complete 4-factor CCF, quick self-test READY; batch not started. Lab PC: 33-run CCD day captured, all cines saved, run 33 valid (the GUI's stall check false-tripped; label removed); GUI_Clean camera save hardened after a lost auto-trigger capture (untried on the rig); STATUS commit refs fixed, tracked __pycache__ removed, front limit switch tested on the rig, emoji removed from GUI_Clean console messages, switch noise filter in firmware (needs flashing), GUI_Clean SCCM ramp + bubbler starts with Start Experiment (untried on the rig); Mac: CCD plan complete, Phase 7 committed 2ebc9f0; Mac light-mode theme fix; batch bugs 1-2, goal-ramp bug, feed floor 2,000 steps/s; mean diameter now a headline response and the default size goal; GUI_Clean auto-trigger at end of test and pressure cut-off (both untried on the rig); GUI_Clean review fixes + front limit switch firmware (committed 58f1b94; firmware flashed and switch-tested on the lab rig 2026-10-12, all passed); next is the 33-run CCD day).** This is the live state of the work. Claude keeps it current
 (see "How this file is maintained" at the bottom). History, evidence and full reasoning are in
 `docs/archive/HANDOFF_real_data_pipeline_LEGACY.md` (frozen 2026-10-07, newest section first).
 
@@ -328,18 +328,55 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
 
 ## Next steps, in order
 
+**TONIGHT 2026-10-15 (home PC + Mac): analyse the calibration day.** What was captured (all on the LaCie):
+- `Calibration/Orifice Cd/2026/10/15/`: 3 Cd tests, 1.2 (111209), 0.8 (112250), 0.5 mm (113124). Notes say
+  `CD TEST <d> mm ...`; check each has its orifice length (typed on the day) in run_summary.
+- `Calibration/Imaging Work/2026/10/15/`: 36 GUI runs, 1 s each (one 1.15 GB cine + run_summary, all checked):
+  - 130707-133119: `BEAD 155.8 / 98.1 / 76.39 / 56.28 / 37.36 z0`, one capture per single-size sandwich at focus;
+  - 134805-143553: `BEAD mix z-8.00` ... `z+8.00` (31 captures), the mixed sandwich through focus (complete).
+  - NO `bg` captures (the slide could not be moved sideways; background comes from each photo), so dust on the
+    window/sensor is NOT removed: expect a few false "beads" at fixed positions (the static specks, Known bugs).
+    If a `BEAD blank bg.cine` (empty field, PCC) was saved in `falling/`, run_ai_where with `--notes "BEAD blank"`
+    turns it into a run folder whose Notes make it a bg capture (dust map).
+- `Calibration/Imaging Work/2026/10/15/falling/`: PCC pours `BEAD fall <size> p1.cine` (one per size; p2 only if
+  thin; each trimmed to the stretch with beads). PCC does NOT add `.cine` to names with a decimal point: check
+  every file ends in `.cine` (the first one was renamed by hand), or run_ai_where skips it.
+
+Order:
+1. **Home PC: `git pull`** (Testing), LaCie as D:. The Python 3.9 fixes (057a0f3) are first run here.
+2. **Home PC: AI on the pours** (Command Prompt; ~6 min a pour at stride 10). Dry run first, it must list every pour:
+   `"C:\Users\BenSc\anaconda3\envs\Detectron\python.exe" "C:\Users\BenSc\Documents\GitHub\HPATR\AI\Real_Data_Code\run_ai_where.py" "D:\Calibration\Imaging Work\2026\10\15\falling" --notes "BEAD fall" --dry-run`
+   then the same without `--dry-run`. Stride stays 10 (Ben); only ~10% of an untrimmed pour's frames have beads,
+   and stride 10 sees ~1 in 4 large beads.
+3. **Mac: bead analysis** (no AI for the static captures; ~15-20 min; finds the pours' AI results too):
+   `/Users/benschofield/anaconda3/envs/phantom/bin/python3 /Users/benschofield/Documents/GitHub/HPATR/AI/Real_Data_Code/bead_calibration.py "/Volumes/LaCie/Calibration/Imaging Work/2026/10/15" --out "/Volumes/LaCie/Calibration/Imaging Work/analysis/2026-10-15"`
+   Targets for "it works": in-focus falling beads per size ~20-30 (155.8 / 98.1 / 76.39), ~30 (56.28), ~50
+   sightings (37.36: ~4 px across, and each slow bead is seen ~4 times at stride 10). A size short of that:
+   re-run that pour at `--stride 1` (~1 h) before re-recording anything.
+   Fill in `Calibration/Imaging Work/targets.json` (supplier, lot, each size's certified spread) when the
+   certificates are to hand.
+4. **Mac: Cd analysis** (writes only the new folder; `--write` to the app's Cd table only after reviewing):
+   `/Users/benschofield/anaconda3/envs/phantom/bin/python3 /Users/benschofield/Documents/GitHub/HPATR/AI/Real_Data_Code/orifice_cd.py "/Volumes/LaCie/Calibration/Orifice Cd/2026/10/15" --out "/Volumes/LaCie/Calibration/Orifice Cd/analysis/2026-10-15"`
+   Expected P0 over the 2,000-12,000 ladder (Cd 0.8): 1.2 mm 1.02-1.29, 0.8 mm 1.05-2.45, 0.5 mm 1.27-6.3 barA.
+   After `--write`, re-run the CCD analysis (gas share / film thickness use Cd).
+5. Then: Claude reviews the bead + Cd results with Ben (the size bias at focus, the effective DOF per size, and
+   whether the AI pipeline sizes falling beads as the sandwiches say), before anything changes in the sizer.
+
 **Wednesday 2026-10-14 (code / understanding) and Thursday (rig): `docs/notes/2026-10-14_plan_for_wednesday.md`**
-- **Thursday (agreed 2026-10-14), in this order:**
-  1. each insert's gas-only Cd test (1.2, 0.8, 0.5 mm; line loss ignored, Ben: negligible) and its spray runs:
-     10 spray runs (cut from 16);
-  2. the PCC check and exposure series (optional);
-  3. THEN all the bead work, `docs/BEAD_CALIBRATION.md`, with the optics untouched all day:
-     - 43 sandwich captures (GUI run sheet);
-     - then the falling beads, recorded in PCC (2 pours per size, 10 recordings, named
-       `BEAD fall <size> p1/p2.cine` in `Calibration/Imaging Work/2026/10/15/falling/`). `run_ai_where.py`
+- **Thursday 2026-10-15: NO SILICONE (Ben, morning of the 15th). DONE:**
+  1. each insert's gas-only Cd test (1.2, 0.8, 0.5 mm; line loss ignored, Ben: negligible);
+  2. THEN all the bead work, `docs/BEAD_CALIBRATION.md`, with the optics untouched all day:
+     - 36 sandwich captures (GUI run sheet);
+     - then the falling beads, recorded in PCC (one pour per size, trimmed, named
+       `BEAD fall <size> p1.cine` in `Calibration/Imaging Work/2026/10/15/falling/`). `run_ai_where.py`
        turns each loose .cine into a run folder and runs the AI.
 
-  The 10 spray runs:
+  The run sheet (`docs/notes/2026-10-15_thursday_run_sheet.csv`, same on the LaCie) is now 36 bead rows (the 3 Cd rows done and
+  removed; B01-B05 one capture per single-size sandwich at focus, then B06-B36 the mixed sandwich through focus ±8 mm, optional; Cd rows now carry Motor Travel 0, as Start refuses an empty box). **Postponed to a later spray
+  day, unchanged:** the 10 spray runs below, the PCC max-fps check and the exposure series (in the sheet's git history,
+  commit 057a0f3).
+
+  The 10 spray runs (postponed):
   - 1.2 mm: anchor centre 9,000/500/4,000; confirm 11,000/100/5,000 x2; 12,000/100 at feed 5,000, 6,000 and
     8,000;
   - 0.8 mm: 12,000/100/5,000;
@@ -355,7 +392,7 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
 - **Open:** the stride pop-up (need its wording), a full-stride cine;
   pool every new run into the CCD day (needs the next-session fix, item 19); the lab PC cannot run the AI, so no
   live numbers (overnight at home); IMPORTANT after the small fixes: the calibration scripts (plan mode first).
-- **Commit and push today's work, then pull on the lab PC before any capture** (`0809dea` is not pushed either).
+- ~~Commit and push, then pull on the lab PC before any capture~~ DONE (lab PC pulled 057a0f3 on 2026-10-15).
 
 0. **CCD follow-up plan** (approved 2026-10-13; `docs/notes/2026-10-13_CCD_followup_plan.md`), phase-gated:
    1 bugs 3 + 6 and the "by area" relabel (DONE 2026-10-13); 2 "no spray" runs (atomised < 2%: size and
@@ -388,7 +425,7 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
 4. **Fold in the Windows timings**: `9x3 Taguchi Repeats/_job/eta_calibration.json` +
    `_job/timings.csv` -> replace `eta.PRIORS_BY_OS["Windows"]` in `eta.py` with measured
    lo/typ/hi per stage. ~10 min, any time.
-5. **Install `python-pptx` on the lab PC** (home PC DONE 2026-10-12: 1.0.2 + lxml 6.1.3 + XlsxWriter 3.2.9
+5. ~~Install `python-pptx` on the lab PC~~ **DONE** (lab PC 1.0.2 in system Python 3.11, checked 2026-10-15; home PC DONE 2026-10-12: 1.0.2 + lxml 6.1.3 + XlsxWriter 3.2.9
    into the Detectron env, numpy untouched at 2.0.2). (The Taguchi app's PowerPoint deck needs it;
    without it the publish still writes everything else and the report says why). Command Prompt:
    home PC `"C:\Users\BenSc\anaconda3\envs\Detectron\python.exe" -m pip install "python-pptx==1.0.2"`;
@@ -606,6 +643,17 @@ made", "Bit depth", and the dated sections).
 - Give Ben exact paste-able commands with absolute paths and the real interpreter.
 
 ## Recent changes (newest first; trim to ~10 entries, older ones live in git history)
+
+- 2026-10-15 (lab PC): **Calibration day, no silicone.** Cd tests DONE for 1.2 / 0.8 / 0.5 mm (11:12-11:34,
+  `Calibration/Orifice Cd/2026/10/15/`, not yet analysed). Bead captures in `Calibration/Imaging Work/2026/10/15/`:
+  one capture per single-size sandwich at focus (155.8 -> 37.36; no extra patches or bg: the slide cannot move
+  sideways, and the background comes from each photo), then the mixed sandwich through focus -8 to +8 mm (manual
+  stage, ±8 mm range); every run checked: one 1.15 GB cine and the right Notes. Falling beads recorded in PCC to
+  `.../falling/`. **Falling beads: only ~10% of a pour's frames contain beads (Ben), so stride 10 can miss a
+  pour's large beads.** Decided: keep stride 10 and trim each cine in PCC to the stretch with beads; re-run a
+  pour at `--stride 1` if a size ends up with too few in-focus beads (docs/BEAD_CALIBRATION.md). One pour per
+  size is enough if it has enough beads (the static captures carry the size bias and DOF). GUI_Clean on the rig: run sheet, Save under and the 1 s post-trigger
+  worked; bead rows (0.5 mm nudge, 3.4 s) pop up "Test shorter than the video": press Trigger early.
 
 - 2026-10-15 (Mac): **Python 3.9 (home PC Detectron env): eleven signature annotations fixed.** `X | None` in a
   function signature is evaluated at import and fails on 3.9. Affected:
