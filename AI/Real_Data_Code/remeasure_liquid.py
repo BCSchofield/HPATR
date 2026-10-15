@@ -46,7 +46,7 @@ def runs_under(paths: list[Path]) -> list[Path]:
     return out
 
 
-def _version(summary: Path) -> str | None:
+def _version(summary: Path) -> "str | None":
     try:
         return json.loads(summary.read_text(encoding="utf-8"))["provenance"].get("liquid_version") or "2.2.0"
     except (OSError, ValueError, KeyError):

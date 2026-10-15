@@ -67,7 +67,7 @@ def _fill_holes(m: np.ndarray) -> np.ndarray:
     return out | m
 
 
-def _piece_volume(own: np.ndarray, fill: np.ndarray | None = None) -> float:
+def _piece_volume(own: np.ndarray, fill: "np.ndarray | None" = None) -> float:
     """One connected piece (uint8 0/1, padded by >= 1 px of background). `fill`: pixels allowed to
     close the piece's holes (the droplet mask): a droplet sitting in a blob is cut out of the
     un-atomised mask, and the blob's body continues through it."""

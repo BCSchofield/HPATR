@@ -607,6 +607,15 @@ made", "Bit depth", and the dated sections).
 
 ## Recent changes (newest first; trim to ~10 entries, older ones live in git history)
 
+- 2026-10-15 (Mac): **Python 3.9 (home PC Detectron env): eleven signature annotations fixed.** `X | None` in a
+  function signature is evaluated at import and fails on 3.9. Affected:
+  - GUI_Clean.py, 8 (4 since August/October, 4 from 2026-10-14). So GUI_Clean has NEVER imported on the home PC:
+    this, not only Cone_4, is why bug 6 (no GUI formula: no atomised liquid flow or GLR there) persisted;
+  - liquid_volume.py: liquid stage 2.3.0 would have crashed in the home PC's batch;
+  - remeasure_liquid.py and draw_more_classical.py.
+  All quoted. A scan of 94 files finds no 3.9-unsafe annotation left, and all compile with a real Python 3.9
+  (the Mac's 'Hello' env). Not yet run on the home PC itself.
+
 - 2026-10-14 (Mac): **Size calibration with glass beads, built for Thursday morning** (plan
   `~/.claude/plans/cozy-orbiting-swing.md`; procedure `docs/BEAD_CALIBRATION.md`). Beads 37.36 / 56.28 / 76.39 /
   98.1 / 155.8 um (certified) and a micrometer slide holder. The method is Blaisot & Yon 2005 (Exp. Fluids

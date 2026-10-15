@@ -1064,7 +1064,7 @@ class AlicatMFC:
             except Exception: pass
 
     # ── queued commands (safe from any thread) ────────────────────────────
-    def set_flow(self, sccm: float, ramp_rate: float | None = None) -> float:
+    def set_flow(self, sccm: float, ramp_rate: "float | None" = None) -> float:
         """Go to `sccm`: at once, or at `ramp_rate` sccm/s from the current
         setpoint.  Returns the ramp time in seconds (0 for a jump)."""
         with self._lock:
@@ -1116,7 +1116,7 @@ class AlicatMFC:
             self.ser.write(raw)
             self.ser.flush()
 
-    def read_frame(self, timeout_s: float) -> str | None:
+    def read_frame(self, timeout_s: float) -> "str | None":
         """Accumulate bytes until a CR arrives; None if the unit stayed quiet.
 
         Leftovers after the CR are kept in _rx_buf so a frame split across two
@@ -4269,7 +4269,7 @@ class AtomisationApp(QMainWindow):
         QTimer.singleShot(0, self, self._run_sheet_resume)
         return scroll
 
-    def _run_sheet_selected(self) -> int | None:
+    def _run_sheet_selected(self) -> "int | None":
         rows = self._sheet_table.selectionModel().selectedRows() if self._sheet_table.selectionModel() else []
         if rows:
             return rows[0].row()
@@ -5529,7 +5529,7 @@ class AtomisationApp(QMainWindow):
             pass
 
     def _on_alicat_reading(self, pressure: float, temp: float, mass_flow: float, setpoint: float,
-                           stamp: float | None = None):
+                           stamp: "float | None" = None):
         self._alicat_last_frame_t = time.monotonic()
         if self._alicat_stale:
             self._alicat_stale = False
@@ -5794,7 +5794,7 @@ class AtomisationApp(QMainWindow):
         self._rpm_spin_btn.setStyleSheet(accent_button("Stop", CLR_GREEN).styleSheet())
         return True
 
-    def _start_rpm(self) -> float | None:
+    def _start_rpm(self) -> "float | None":
         """The RPM in the box if Start Experiment should spin the bubbler, else None."""
         try:
             rpm = float(self._rpm_entry.text().strip())
@@ -5986,7 +5986,7 @@ class AtomisationApp(QMainWindow):
         self._rpm_current_lbl.setText(f"{ma} mA")
         self._rpm_current_lbl.setStyleSheet(f"color:{CLR_GREEN}; font-size:14px; font-weight:700;")
 
-    def _on_stall_detected(self, stall_rpm: float | None):
+    def _on_stall_detected(self, stall_rpm: "float | None"):
         """Firmware detected SG_RESULT below threshold and already stopped the
         motor on its own; mirror that here rather than waiting on RPM_ACTUAL."""
         self._reset_rpm_spin_ui(clear_sg=False)
@@ -6061,7 +6061,7 @@ class AtomisationApp(QMainWindow):
             except Exception as e:
                 log_serial(f"Serial reader warning: {e}")
 
-    def _record_alicat_sample(self, pressure: float, flow: float, stamp: float | None = None):
+    def _record_alicat_sample(self, pressure: float, flow: float, stamp: "float | None" = None):
         """Feed one Alicat frame into the live graphs and the experiment log, at the time it was READ
         (`stamp`, time.time() on the reader thread), not the time the GUI thread got to it."""
         now = stamp if stamp is not None else time.time()
@@ -6226,7 +6226,7 @@ class AtomisationApp(QMainWindow):
             os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "experiment_logs")
         return os.path.join(base, "master_log.xlsx")
 
-    def _master_log_busy(self) -> str | None:
+    def _master_log_busy(self) -> "str | None":
         """Why master_log must not be opened now (Excel would lock it and a save would fail), or None."""
         pd = getattr(self, "pressure_data", None) or {}
         if pd.get("experiment_active"):

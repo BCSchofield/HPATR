@@ -90,7 +90,7 @@ def differences(old: dict, new: dict) -> list[str]:
     return out
 
 
-def one(run: Path, thr: float, dry: bool, force: bool, tmp_root: Path | None, full: bool = False) -> str:
+def one(run: Path, thr: float, dry: bool, force: bool, tmp_root: "Path | None", full: bool = False) -> str:
     an = run / "shadowgraph" / "analysis"
     cur = an / f"liquid_{thr:.2f}"
     summary = _load(cur / "classical_summary.json")
