@@ -304,3 +304,56 @@ def test_the_falling_beads_equivalent_defocus_is_found():
     assert abs(e["best_z_mm"]) == 2.0 and e["misfit_pct"] == 0.0 and abs(e["other_side_z_mm"]) == 2.0
     assert e["sizes_um"] == [40.0, 80.0] and e["falling_ratio"] == {"40": 1.2, "80": 1.2}
     assert bc.equivalent_defocus(rows, []) == {}
+
+
+def _rle(mask, x0, y0):
+    from pycocotools import mask as mask_util
+    ys, xs = np.nonzero(mask)
+    y, x, y1, x1 = ys.min(), xs.min(), ys.max() + 1, xs.max() + 1
+    crop = np.asfortranarray(mask[y:y1, x:x1].astype(np.uint8))
+    rle = mask_util.encode(crop)
+    rle["counts"] = rle["counts"].decode("ascii")
+    full = np.zeros((H, W), np.uint8, order="F")
+    full[y:y1, x:x1] = crop
+    rle_full = mask_util.encode(full)
+    rle_full["counts"] = rle_full["counts"].decode("ascii")
+    return {"segmentation": rle_full, "segmentation_crop": rle, "crop_xy": [int(x), int(y)],
+            "bbox": [float(x), float(y), float(x1 - x), float(y1 - y)], "area": float(mask.sum())}
+
+
+def test_falling_beads_are_remeasured_one_by_one(tmp_path):
+    """2026-10-15: each AI droplet of a pour re-measured as the pipeline does, plus its blur width; the AI's
+    classes on spheres; a blur-width rule keeps the sharp beads and drops the blurred ones."""
+    import json as _json
+    sg = tmp_path / "BEAD fall 76.39 p1" / "shadowgraph"
+    fr = sg / "raw" / "frames" / "16bit"
+    fr.mkdir(parents=True)
+    (sg / "analysis").mkdir()
+    bgimg = backlight()
+    cv2.imwrite(str(sg / "raw" / "background_median.tiff"), bgimg.astype(np.uint16))
+    images, preds = [], []
+    for k, chi in enumerate((10.0, 60.0)):                     # frame 0 sharp, frame 1 well out of focus
+        T = np.ones((H, W))
+        for x in (100, 230):
+            bead_T(T, x, 120, 76.39, chi)
+        stem = f"frame_{k:04d}_n{k}"
+        cv2.imwrite(str(fr / f"{stem}.tiff"), np.clip(bgimg * T, 0, 65535).astype(np.uint16))
+        images.append({"id": k + 1, "file_name": stem + ".png", "width": W, "height": H})
+        for x in (100, 230):
+            m = np.zeros((H, W), bool)
+            m[100:141, x - 20:x + 21] = T[100:141, x - 20:x + 21] < 0.9
+            preds.append({"image_id": k + 1, "category_id": 1, "score": 0.99, "truncated": False, **_rle(m, 0, 0)})
+    m = np.zeros((H, W), bool)
+    m[20:24, 20:80] = True                                     # one 'filament', as the AI calls a defocused bead
+    preds.append({"image_id": 1, "category_id": 2, "score": 0.9, "truncated": False, **_rle(m, 0, 0)})
+    (sg / "raw" / "instances.json").write_text(_json.dumps({"images": images, "annotations": [], "categories": []}))
+    (sg / "analysis" / "predictions.json").write_text(_json.dumps(preds))
+    rows, info = bc.falling_detail(sg.parent, 76.39, tau=0.05)
+    assert info["classes_n"] == {"droplet": 4, "filament": 1} and 0 < info["atomised_pct_by_area"] < 100
+    sharp = [r for r in rows if r["frame"].endswith("n0")]
+    blurred = [r for r in rows if r["frame"].endswith("n1")]
+    assert len(sharp) == 2 and len(blurred) == 2 and all(r["isolated"] for r in rows)
+    assert max(r["chi_um"] for r in sharp) < 20 < min(r["chi_um"] for r in blurred)
+    assert all(r["pipeline_d_um"] == pytest.approx(76.39, rel=0.12) for r in sharp)
+    s = bc.falling_summary(rows, 76.39, static_ratio=1.0)
+    assert s["detections"] == 4 and s["chi_rule"]["20"]["n"] == 2 and s["chi_rule"]["40"]["n"] == 2

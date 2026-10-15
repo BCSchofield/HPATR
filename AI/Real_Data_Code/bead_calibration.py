@@ -428,8 +428,10 @@ def _component_at(mask: np.ndarray, y: int, x: int) -> np.ndarray:
     return lab == k
 
 
-def measure_at(T: np.ndarray, cx: float, cy: float, d_px: float, tau: float | None = None) -> dict | None:
-    """Everything measured for one bead whose centre is near (cx, cy). None if it is too close to the edge."""
+def measure_at(T: np.ndarray, cx: float, cy: float, d_px: float, tau: float | None = None,
+               levels=None) -> dict | None:
+    """Everything measured for one bead whose centre is near (cx, cy). None if it is too close to the edge.
+    `levels` limits the level curve (default: every level in LEVELS; the Blaisot levels and 0.5 always)."""
     from scipy import ndimage
     H, W = T.shape
     half = int(max(14, 1.5 * d_px + 12))
@@ -490,7 +492,7 @@ def measure_at(T: np.ndarray, cx: float, cy: float, d_px: float, tau: float | No
     U = cv2.resize(Tc, None, fx=UPSAMPLE, fy=UPSAMPLE, interpolation=cv2.INTER_CUBIC)
     near = cv2.resize(cv2.dilate(m.astype(np.uint8), np.ones((5, 5), np.uint8)), (U.shape[1], U.shape[0]),
                       interpolation=cv2.INTER_NEAREST).astype(bool)
-    for l in sorted(set(LEVELS) | set(BLAISOT_LEVELS) | {0.5}):
+    for l in sorted(set(levels if levels is not None else LEVELS) | set(BLAISOT_LEVELS) | {0.5}):
         thr = core + l * (1.0 - core)
         reg = (U < thr) & near
         if not reg.any():
@@ -860,6 +862,127 @@ def _fall_row(name: str, cert, n_all: int, d_in: list) -> dict:
             "bias_pct": round(100 * (med / cert - 1), 1) if cert and np.isfinite(med) else None}
 
 
+CHI_MAX_TRIED = (15.0, 20.0, 25.0, 30.0, 40.0)    # blur-width focus rules tried on the falling beads (um)
+
+
+def falling_detail(run: Path, cert: float | None, tau: float, score_thresh: float = 0.30,
+                   frame_step: int = 1) -> tuple[list[dict], dict]:
+    """Every AI detection of one pour, re-measured (2026-10-15). Each droplet gets the pipeline's own verdict and
+    size, exactly as measure_run made them (measure_droplet, 2.2.0, on T = frame / the run's temporal median),
+    next to its blur width chi, contrast and contrast-corrected size (measure_at) and its nearest neighbour. Every
+    object in a pour is a sphere, so the AI's class shares and the atomised fraction by area are checked too.
+    Needs the AI chain's files in the run: predictions.json, instances.json, background_median.tiff, 16-bit frames.
+    Works on any run with those files (a spray run too: cert None); frame_step > 1 measures every Nth frame."""
+    from collections import Counter, defaultdict
+    sg = run / "shadowgraph"
+    pred, man = sg / "analysis" / "predictions.json", sg / "raw" / "instances.json"
+    bg_path, frames = sg / "raw" / "background_median.tiff", sg / "raw" / "frames" / "16bit"
+    if not (pred.is_file() and man.is_file() and bg_path.is_file() and frames.is_dir()):
+        return [], {"note": "no AI files (predictions.json, instances.json, background, 16-bit frames)"}
+    names = {im["id"]: Path(im["file_name"]).stem for im in json.loads(man.read_text(encoding="utf-8"))["images"]}
+    bg = cv2.imread(str(bg_path), cv2.IMREAD_UNCHANGED).astype(np.float32)
+    by_img = defaultdict(list)
+    for d in json.loads(pred.read_text(encoding="utf-8")):
+        if d["score"] >= score_thresh and not d.get("truncated", False):
+            by_img[d["image_id"]].append(d)
+    rows, n_class, a_class = [], Counter(), Counter()
+    for img_id in sorted(by_img)[::max(1, frame_step)]:
+        T = mr.transmission(frames, names.get(img_id, ""), bg)
+        if T is None:
+            continue
+        drops = []
+        for d in by_img[img_id]:
+            mb, bx, by, bh, bw = mr.det_crop(d)
+            if not mb.any():
+                continue
+            cls = {mr.DROPLET: "droplet", mr.FILAMENT: "filament"}.get(d["category_id"], "blob")
+            n_class[cls] += 1
+            a_class[cls] += float(d["area"])
+            if cls != "droplet":
+                continue
+            md = mr.measure_droplet(T, d, FOCUS_MAX, crop=(mb, bx, by, bh, bw), sharpness_rule=True)
+            if md is None:
+                continue
+            ys, xs = np.nonzero(mb)
+            drops.append((bx + float(xs.mean()), by + float(ys.mean()), 2 * math.sqrt(float(d["area"]) / math.pi), md))
+        pts = np.asarray([[x, y] for x, y, _d, _m in drops], float)
+        for i, (cx, cy, dpx, md) in enumerate(drops):
+            dist = np.hypot(pts[:, 0] - cx, pts[:, 1] - cy) if len(drops) > 1 else np.array([np.inf])
+            if len(drops) > 1:
+                dist[i] = np.inf
+            nn = float(dist.min())
+            r = measure_at(T, cx, cy, dpx, tau, levels=()) or {}      # chi and size only: 4 levels, not 18
+            rows.append({"frame": names[img_id], "cx": round(cx, 1), "cy": round(cy, 1), "certified_um": cert,
+                         "ai_mask_d_um": round(dpx * UM_PER_PX, 2),
+                         "pipeline_in_focus": bool(md["in_focus"]),
+                         "pipeline_d_um": round(float(mr.equiv_um(md["area_px"])), 2), "method": md["method"],
+                         "core_t": round(float(md["core_t"]), 4), "nn_px": round(nn, 1) if np.isfinite(nn) else None,
+                         "isolated": bool(nn > 2 * dpx + 2),
+                         "chi_um": r.get("chi_um", float("nan")), "contrast": r.get("contrast", float("nan")),
+                         "d_l0.50": r.get("d_l0.50", float("nan")), "d_blaisot_um": r.get("d_blaisot_um", float("nan"))})
+    total = sum(a_class.values())
+    return rows, {"classes_n": dict(n_class),
+                  "classes_area_share": {k: round(v / total, 4) for k, v in a_class.items()} if total else {},
+                  "atomised_pct_by_area": round(100 * a_class["droplet"] / total, 2) if total else None}
+
+
+def falling_summary(rows: list[dict], cert: float, static_ratio: float | None = None) -> dict:
+    """One pour: the pipeline as it is, then what a blur-width focus rule would do (chi <= chi_max, isolated
+    droplets, the pipeline's own size), against the certificate and the static beads at focus."""
+    def stats(sel):
+        d = [r["pipeline_d_um"] for r in sel]
+        med = _median(d)
+        return {"n": len(sel), "median_um": round(med, 2) if np.isfinite(med) else None,
+                "bias_pct": round(100 * (med / cert - 1), 1) if np.isfinite(med) else None}
+    inf = [r for r in rows if r["pipeline_in_focus"]]
+    chi_in = [r["chi_um"] for r in inf if np.isfinite(r["chi_um"])]
+    out = {"certified_um": cert, "detections": len(rows), "pipeline_in_focus": stats(inf),
+           "isolated_share": round(sum(r["isolated"] for r in rows) / len(rows), 3) if rows else None,
+           "chi_of_pipeline_in_focus_um": [round(float(np.percentile(chi_in, q)), 1) for q in (10, 50, 90)]
+           if chi_in else None,
+           "static_at_focus_ratio": round(static_ratio, 4) if static_ratio else None, "chi_rule": {}}
+    for cmax in CHI_MAX_TRIED:
+        sel = [r for r in rows if r["isolated"] and np.isfinite(r["chi_um"]) and r["chi_um"] <= cmax]
+        out["chi_rule"][f"{cmax:g}"] = stats(sel)
+    return out
+
+
+def _falling_figure(out: Path, detail: dict, rows_depth: list[dict]) -> Path | None:
+    """Per size: measured / certified against blur width, falling beads (pipeline in focus or not) over the static
+    through-focus beads (known depth), with the chi rules tried."""
+    if not detail:
+        return None
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    sizes = sorted(detail, key=float)
+    fig, axs = plt.subplots(1, len(sizes), figsize=(4.2 * len(sizes), 4.2), squeeze=False)
+    for ax, s in zip(axs[0], sizes):
+        rr, cert = detail[s]["rows"], float(s)
+        for flag, col, lab in ((False, "#9aa0a6", "falling, pipeline: out of focus"),
+                               (True, "#2a7de1", "falling, pipeline: in focus")):
+            sel = [r for r in rr if r["pipeline_in_focus"] == flag and np.isfinite(r["chi_um"])]
+            ax.scatter([r["chi_um"] for r in sel], [r["pipeline_d_um"] / cert for r in sel], s=2, alpha=0.15,
+                       color=col, label=lab, rasterized=True)
+        st = [r for r in rows_depth if r["certified_um"] == cert]
+        if st:
+            zs = sorted({r["z_mm"] for r in st})
+            cx = [_median([r.get("chi_um") for r in st if r["z_mm"] == z]) for z in zs]
+            cy = [_median([r.get("d_current_um") for r in st if r["z_mm"] == z]) / cert for z in zs]
+            ax.plot(cx, cy, "o-", color="#d9822b", ms=3, label="static beads, through focus")
+        for cmax in (20.0, 30.0):
+            ax.axvline(cmax, color="k", lw=0.6, ls=":")
+        ax.axhline(1, color="k", lw=0.8)
+        ax.set(xlim=(0, 90), ylim=(0.6, 2.4), xlabel="blur width chi (um)", ylabel="pipeline size / certified",
+               title=f"{s} um falling")
+    axs[0][0].legend(fontsize=7, markerscale=4, loc="upper left")
+    fig.tight_layout()
+    p = out / "fig_falling_chi.png"
+    fig.savefig(p, dpi=130)
+    plt.close(fig)
+    return p
+
+
 def equivalent_defocus(rows_depth: list[dict], fall: list[dict]) -> dict:
     """At what depth do the static beads read as large as the falling ones? For every z of the through-focus
     series, the median in-focus d_current / certified of each size, against each pour's median / certified; the
@@ -1023,10 +1146,30 @@ def analyse(paths, out: Path, targets_path: Path | None = None, max_frames: int 
     result["falling"] = falling([c for c in caps if c.kind == "fall"], targets)
     result["falling_equivalent_defocus"] = equivalent_defocus(rows_depth, result["falling"])
 
+    # the pours bead by bead (needs the AI chain's files in each pour's run folder)
+    result["falling_detail"] = {}
+    detail_rows, detail_fig = [], {}
+    sizes = [float(s["certified_um"]) for s in targets["beads"]["sizes"]]
+    at_ratio = {float(k): v["d_current_median_um"] / float(k) for k, v in result["at_focus"].items()
+                if v.get("d_current_median_um") and np.isfinite(v["d_current_median_um"])}
+    for c in [c for c in caps if c.kind == "fall" and c.run.is_dir() and c.slide]:
+        cert = min(sizes, key=lambda s: abs(s - float(c.slide)))
+        rows, info = falling_detail(c.run, cert, tau if tau is not None else 0.1)
+        if rows:
+            info = {**falling_summary(rows, cert, at_ratio.get(cert)), **info}
+            for r in rows:
+                r["run"] = c.run.name
+            detail_rows += rows
+            detail_fig.setdefault(f"{cert:g}", {"rows": []})["rows"] += rows
+        result["falling_detail"][c.run.name] = info
+
     _write_csv(out / "beads_through_focus.csv", rows_depth)
     _write_csv(out / "beads_at_focus.csv", rows_focus)
+    _write_csv(out / "falling_beads.csv", detail_rows)
     depth_for_fig = {k: v for s in result["through_focus"].values() for k, v in s.items() if k != "info"}
     figs = _figures(out, result["at_focus"], depth_for_fig, rows_focus)
+    ff = _falling_figure(out, detail_fig, rows_depth)
+    figs += [ff] if ff else []
     name = "optics_calibration_v2.json" if any(c.target == "reticle" for c in caps) else "optics_calibration_v1.json"
     (out / name).write_text(json.dumps(result, indent=1), encoding="utf-8")
     (out / "report.md").write_text(report(result, figs), encoding="utf-8")
@@ -1098,6 +1241,27 @@ def report(R: dict, figs) -> str:
                               for c in e['static_ratio_at_best_z'])
                   + ". The pours did not fall on the focal plane, and the current in-focus rule accepts beads "
                     "that far out, so their error is mostly defocus, not the edge level."]
+    fd = {k: v for k, v in (R.get("falling_detail") or {}).items() if "chi_rule" in v}
+    if fd:
+        rules = list(CHI_MAX_TRIED)
+        L += ["", "### Falling beads, bead by bead: what a blur-width focus rule would do\n",
+              "Each AI droplet detection re-measured as the pipeline does (2.2.0), plus its blur width chi. Rows: the "
+              "pipeline as it is, then only isolated droplets with chi <= chi_max, sized by the pipeline. The static "
+              "beads at focus read the 'static' ratio, the floor a focus rule can reach without a new scale.\n",
+              "| pour | pipeline in focus: n, median, bias | " + " | ".join(f"chi <= {c:g} um" for c in rules)
+              + " | static at focus |", "|" + "---|" * (len(rules) + 3)]
+        for run, v in sorted(fd.items(), key=lambda kv: kv[1]["certified_um"]):
+            pi = v["pipeline_in_focus"]
+            cells = [f"{x['n']}, {x['median_um']}, {x['bias_pct']:+.1f}%" if x["median_um"] else f"{x['n']}, -"
+                     for x in (v["chi_rule"][f"{c:g}"] for c in rules)]
+            st = v.get("static_at_focus_ratio")
+            L.append(f"| {run} | {pi['n']}, {pi['median_um']}, {pi['bias_pct']:+.1f}% | " + " | ".join(cells)
+                     + f" | {f'{100 * (st - 1):+.1f}%' if st else '-'} |")
+        L += ["", "**The AI on pure spheres** (every object in a pour is a bead): "
+              + "; ".join(f"{run}: droplet / filament / blob by count {v['classes_n'].get('droplet', 0)} / "
+                          f"{v['classes_n'].get('filament', 0)} / {v['classes_n'].get('blob', 0)}, atomised by area "
+                          f"{v['atomised_pct_by_area']}%"
+                          for run, v in sorted(fd.items(), key=lambda kv: kv[1]["certified_um"])) + "."]
     if R["array"]:
         L += ["\n## Reticle dot array: scale\n"] + [f"- {a['run']} ({a['pos']}): {a.get('um_per_px')} um/px, "
                                                    f"quadrants {a.get('by_quadrant')}" for a in R["array"]]

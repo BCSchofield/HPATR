@@ -204,6 +204,16 @@ recordings:
   ~1 h a pour.
 - The analysis lists each pour and pools the pours of each size (one or two).
 - Then re-run the analysis command above on the Mac; the falling-bead table fills in.
+- **Bead by bead (1.1.0, 2026-10-15):** every AI droplet of each pour is re-measured exactly as the pipeline
+  does (2.2.0) plus its blur width chi, contrast and nearest neighbour, from the run's predictions.json, 16-bit
+  frames and background: `falling_beads.csv`, `fig_falling_chi.png` (size / certified against chi, over the
+  static through-focus curve) and a report table of what a chi <= chi_max focus rule would do. It also counts
+  the AI's classes: every object in a pour is a sphere, so anything called filament or blob is a misclassification
+  (on 2026-10-15: far-out-of-focus beads). It adds ~15 min to a run (the crowded 37.36 pour is most of it).
+  `falling_detail(run, None, tau, frame_step=10)` runs the same measurement on any spray run.
+- **Big beads through focus:** the mixed slide has too few usable 98 / 155.8 um beads, so take the same
+  -8..+8 mm series on the single-size slides (Notes `BEAD 155.8 z-1.25` etc.); the script reads it as that
+  slide's own series with every bead's size known.
 
 Results go in `analysis/<date>/`, including `optics_calibration_v1.json`. **Nothing in the pipeline
 changes yet:** a new sizer (3.0.0) is decided with Ben once the beads, and later the reticle, are in.
