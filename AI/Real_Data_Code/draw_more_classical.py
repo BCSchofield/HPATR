@@ -110,13 +110,16 @@ def one(run: Path, thr: float, dry: bool, force: bool, tmp_root: "Path | None", 
     if dry:
         return (f"{run.name}: would draw {len(todo)} frame(s) ({'fast' if fast else 'full pass'}): "
                 f"{', '.join(todo)}")
-    sharp = (summary.get("provenance") or {}).get("sharpness_rule", True)
+    prov = summary.get("provenance") or {}
+    sharp = prov.get("sharpness_rule", True)
+    sizer = ["--sizer", "3.0.0"] if prov.get("sizer_version") == "3.0.0" else \
+        ["--sharpness-rule" if sharp else "--no-sharpness-rule"]
     t0 = time.time()
     with tempfile.TemporaryDirectory(dir=tmp_root, prefix=f"more_{run.name[:6]}_") as d:
         out = Path(d) / "liquid"
         cmd = [sys.executable, "-W", "ignore", str(HERE / "classical_liquid.py"), "--root", str(run),
                "--out-dir", str(out), "--score-thresh", str(thr), "--images-mode", "extremes",
-               "--sharpness-rule" if sharp else "--no-sharpness-rule", "--more-extremes", str(idx)]
+               *sizer, "--more-extremes", str(idx)]
         if fast:
             cmd += ["--window-p", "0", "--frames", *todo]
         p = subprocess.run(cmd, capture_output=True, text=True)

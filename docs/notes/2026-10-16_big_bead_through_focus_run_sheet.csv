@@ -1,0 +1,94 @@
+Run,Orifice (mm),Gas flow (sccm),Bubbler RPM,Silicone (steps/s),Motor Travel (mm),Notes to type,Instructions,Save under,Post-trigger (s)
+G01,,0,,1000,0.5,BEAD 155.8 z-8.00,"SETUP: big beads through focus (docs/BEAD_CALIBRATION.md, 'Big beads through focus'; sizer 3.0.0 Phase 3). Three single-size sandwiches, the same 31 depths as Thursday's mixed one, biggest first; about 1.5 h (Thursday's series ran ~55 s a row). EMPTY or DISCONNECT the silicone line and HOME the traverse first (93 rows x 0.5 mm = 46.5 mm of nudges; the travel is 72.5 mm). Do NOT touch the lens (focus ring, aperture) or the backlight, and do not move the camera during the series. Exposure 4 us, 2048 x 1152, 390 fps. Camera tab: Run AI analysis OFF, Window check OFF, Auto-trigger ON. Mount the 155.8 um sandwich (coverslip towards the camera) square to the camera at the spray plane. Find best focus on its beads with the micrometer, by eye: that reading is z0 (write it down). Exact focus does not matter: the analysis finds best focus from the blur. Then turn back a little past z0 - 8.00 mm (e.g. -8.5, or as far as the stage goes) and forward to z0 - 8.00 mm, so the backlash is taken up. From here on always turn the SAME way (forward, towards +8). Do not slide the sandwich sideways during this slide's rows.",Calibration/Imaging Work,1
+G02,,0,,1000,0.5,BEAD 155.8 z-7.00,Micrometer to z0 - 7.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G03,,0,,1000,0.5,BEAD 155.8 z-6.00,Micrometer to z0 - 6.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G04,,0,,1000,0.5,BEAD 155.8 z-5.00,Micrometer to z0 - 5.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G05,,0,,1000,0.5,BEAD 155.8 z-4.00,Micrometer to z0 - 4.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G06,,0,,1000,0.5,BEAD 155.8 z-3.00,Micrometer to z0 - 3.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G07,,0,,1000,0.5,BEAD 155.8 z-2.50,Micrometer to z0 - 2.50 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G08,,0,,1000,0.5,BEAD 155.8 z-2.00,Micrometer to z0 - 2.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G09,,0,,1000,0.5,BEAD 155.8 z-1.50,Micrometer to z0 - 1.50 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G10,,0,,1000,0.5,BEAD 155.8 z-1.25,Micrometer to z0 - 1.25 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G11,,0,,1000,0.5,BEAD 155.8 z-1.00,Micrometer to z0 - 1.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G12,,0,,1000,0.5,BEAD 155.8 z-0.80,Micrometer to z0 - 0.80 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G13,,0,,1000,0.5,BEAD 155.8 z-0.60,Micrometer to z0 - 0.60 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G14,,0,,1000,0.5,BEAD 155.8 z-0.40,Micrometer to z0 - 0.40 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G15,,0,,1000,0.5,BEAD 155.8 z-0.20,Micrometer to z0 - 0.20 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G16,,0,,1000,0.5,BEAD 155.8 z+0.00,Micrometer to z0 (best focus). Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G17,,0,,1000,0.5,BEAD 155.8 z+0.20,Micrometer to z0 + 0.20 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G18,,0,,1000,0.5,BEAD 155.8 z+0.40,Micrometer to z0 + 0.40 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G19,,0,,1000,0.5,BEAD 155.8 z+0.60,Micrometer to z0 + 0.60 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G20,,0,,1000,0.5,BEAD 155.8 z+0.80,Micrometer to z0 + 0.80 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G21,,0,,1000,0.5,BEAD 155.8 z+1.00,Micrometer to z0 + 1.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G22,,0,,1000,0.5,BEAD 155.8 z+1.25,Micrometer to z0 + 1.25 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G23,,0,,1000,0.5,BEAD 155.8 z+1.50,Micrometer to z0 + 1.50 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G24,,0,,1000,0.5,BEAD 155.8 z+2.00,Micrometer to z0 + 2.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G25,,0,,1000,0.5,BEAD 155.8 z+2.50,Micrometer to z0 + 2.50 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G26,,0,,1000,0.5,BEAD 155.8 z+3.00,Micrometer to z0 + 3.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G27,,0,,1000,0.5,BEAD 155.8 z+4.00,Micrometer to z0 + 4.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G28,,0,,1000,0.5,BEAD 155.8 z+5.00,Micrometer to z0 + 5.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G29,,0,,1000,0.5,BEAD 155.8 z+6.00,Micrometer to z0 + 6.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G30,,0,,1000,0.5,BEAD 155.8 z+7.00,Micrometer to z0 + 7.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G31,,0,,1000,0.5,BEAD 155.8 z+8.00,"Micrometer to z0 + 8.00 mm, the end of the stage's range (skip the row if it cannot reach). Same patch of beads: do not slide the sandwich sideways. LAST 155.8 capture. NEXT: the 98.1 um sandwich.",Calibration/Imaging Work,1
+G32,,0,,1000,0.5,BEAD 98.1 z-8.00,"SETUP: swap to the 98.1 um sandwich (coverslip towards the camera), square to the camera at the spray plane. Do not touch the lens or the camera. Find best focus on its beads with the micrometer, by eye: that reading is z0 (write it down). Exact focus does not matter: the analysis finds best focus from the blur. Then turn back a little past z0 - 8.00 mm (e.g. -8.5, or as far as the stage goes) and forward to z0 - 8.00 mm, so the backlash is taken up. From here on always turn the SAME way (forward, towards +8). Do not slide the sandwich sideways during this slide's rows.",Calibration/Imaging Work,1
+G33,,0,,1000,0.5,BEAD 98.1 z-7.00,Micrometer to z0 - 7.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G34,,0,,1000,0.5,BEAD 98.1 z-6.00,Micrometer to z0 - 6.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G35,,0,,1000,0.5,BEAD 98.1 z-5.00,Micrometer to z0 - 5.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G36,,0,,1000,0.5,BEAD 98.1 z-4.00,Micrometer to z0 - 4.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G37,,0,,1000,0.5,BEAD 98.1 z-3.00,Micrometer to z0 - 3.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G38,,0,,1000,0.5,BEAD 98.1 z-2.50,Micrometer to z0 - 2.50 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G39,,0,,1000,0.5,BEAD 98.1 z-2.00,Micrometer to z0 - 2.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G40,,0,,1000,0.5,BEAD 98.1 z-1.50,Micrometer to z0 - 1.50 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G41,,0,,1000,0.5,BEAD 98.1 z-1.25,Micrometer to z0 - 1.25 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G42,,0,,1000,0.5,BEAD 98.1 z-1.00,Micrometer to z0 - 1.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G43,,0,,1000,0.5,BEAD 98.1 z-0.80,Micrometer to z0 - 0.80 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G44,,0,,1000,0.5,BEAD 98.1 z-0.60,Micrometer to z0 - 0.60 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G45,,0,,1000,0.5,BEAD 98.1 z-0.40,Micrometer to z0 - 0.40 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G46,,0,,1000,0.5,BEAD 98.1 z-0.20,Micrometer to z0 - 0.20 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G47,,0,,1000,0.5,BEAD 98.1 z+0.00,Micrometer to z0 (best focus). Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G48,,0,,1000,0.5,BEAD 98.1 z+0.20,Micrometer to z0 + 0.20 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G49,,0,,1000,0.5,BEAD 98.1 z+0.40,Micrometer to z0 + 0.40 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G50,,0,,1000,0.5,BEAD 98.1 z+0.60,Micrometer to z0 + 0.60 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G51,,0,,1000,0.5,BEAD 98.1 z+0.80,Micrometer to z0 + 0.80 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G52,,0,,1000,0.5,BEAD 98.1 z+1.00,Micrometer to z0 + 1.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G53,,0,,1000,0.5,BEAD 98.1 z+1.25,Micrometer to z0 + 1.25 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G54,,0,,1000,0.5,BEAD 98.1 z+1.50,Micrometer to z0 + 1.50 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G55,,0,,1000,0.5,BEAD 98.1 z+2.00,Micrometer to z0 + 2.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G56,,0,,1000,0.5,BEAD 98.1 z+2.50,Micrometer to z0 + 2.50 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G57,,0,,1000,0.5,BEAD 98.1 z+3.00,Micrometer to z0 + 3.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G58,,0,,1000,0.5,BEAD 98.1 z+4.00,Micrometer to z0 + 4.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G59,,0,,1000,0.5,BEAD 98.1 z+5.00,Micrometer to z0 + 5.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G60,,0,,1000,0.5,BEAD 98.1 z+6.00,Micrometer to z0 + 6.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G61,,0,,1000,0.5,BEAD 98.1 z+7.00,Micrometer to z0 + 7.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G62,,0,,1000,0.5,BEAD 98.1 z+8.00,"Micrometer to z0 + 8.00 mm, the end of the stage's range (skip the row if it cannot reach). Same patch of beads: do not slide the sandwich sideways. LAST 98.1 capture. NEXT: the 76.39 um sandwich.",Calibration/Imaging Work,1
+G63,,0,,1000,0.5,BEAD 76.39 z-8.00,"SETUP: swap to the 76.39 um sandwich (coverslip towards the camera), square to the camera at the spray plane. NOT optional: Thursday's mixed slide gave only 2 usable 76 um beads through focus. Do not touch the lens or the camera. Find best focus on its beads with the micrometer, by eye: that reading is z0 (write it down). Exact focus does not matter: the analysis finds best focus from the blur. Then turn back a little past z0 - 8.00 mm (e.g. -8.5, or as far as the stage goes) and forward to z0 - 8.00 mm, so the backlash is taken up. From here on always turn the SAME way (forward, towards +8). Do not slide the sandwich sideways during this slide's rows.",Calibration/Imaging Work,1
+G64,,0,,1000,0.5,BEAD 76.39 z-7.00,Micrometer to z0 - 7.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G65,,0,,1000,0.5,BEAD 76.39 z-6.00,Micrometer to z0 - 6.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G66,,0,,1000,0.5,BEAD 76.39 z-5.00,Micrometer to z0 - 5.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G67,,0,,1000,0.5,BEAD 76.39 z-4.00,Micrometer to z0 - 4.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G68,,0,,1000,0.5,BEAD 76.39 z-3.00,Micrometer to z0 - 3.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G69,,0,,1000,0.5,BEAD 76.39 z-2.50,Micrometer to z0 - 2.50 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G70,,0,,1000,0.5,BEAD 76.39 z-2.00,Micrometer to z0 - 2.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G71,,0,,1000,0.5,BEAD 76.39 z-1.50,Micrometer to z0 - 1.50 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G72,,0,,1000,0.5,BEAD 76.39 z-1.25,Micrometer to z0 - 1.25 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G73,,0,,1000,0.5,BEAD 76.39 z-1.00,Micrometer to z0 - 1.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G74,,0,,1000,0.5,BEAD 76.39 z-0.80,Micrometer to z0 - 0.80 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G75,,0,,1000,0.5,BEAD 76.39 z-0.60,Micrometer to z0 - 0.60 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G76,,0,,1000,0.5,BEAD 76.39 z-0.40,Micrometer to z0 - 0.40 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G77,,0,,1000,0.5,BEAD 76.39 z-0.20,Micrometer to z0 - 0.20 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G78,,0,,1000,0.5,BEAD 76.39 z+0.00,Micrometer to z0 (best focus). Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G79,,0,,1000,0.5,BEAD 76.39 z+0.20,Micrometer to z0 + 0.20 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G80,,0,,1000,0.5,BEAD 76.39 z+0.40,Micrometer to z0 + 0.40 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G81,,0,,1000,0.5,BEAD 76.39 z+0.60,Micrometer to z0 + 0.60 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G82,,0,,1000,0.5,BEAD 76.39 z+0.80,Micrometer to z0 + 0.80 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G83,,0,,1000,0.5,BEAD 76.39 z+1.00,Micrometer to z0 + 1.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G84,,0,,1000,0.5,BEAD 76.39 z+1.25,Micrometer to z0 + 1.25 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G85,,0,,1000,0.5,BEAD 76.39 z+1.50,Micrometer to z0 + 1.50 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G86,,0,,1000,0.5,BEAD 76.39 z+2.00,Micrometer to z0 + 2.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G87,,0,,1000,0.5,BEAD 76.39 z+2.50,Micrometer to z0 + 2.50 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G88,,0,,1000,0.5,BEAD 76.39 z+3.00,Micrometer to z0 + 3.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G89,,0,,1000,0.5,BEAD 76.39 z+4.00,Micrometer to z0 + 4.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G90,,0,,1000,0.5,BEAD 76.39 z+5.00,Micrometer to z0 + 5.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G91,,0,,1000,0.5,BEAD 76.39 z+6.00,Micrometer to z0 + 6.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G92,,0,,1000,0.5,BEAD 76.39 z+7.00,Micrometer to z0 + 7.00 mm. Same patch of beads: do not slide the sandwich sideways.,Calibration/Imaging Work,1
+G93,,0,,1000,0.5,BEAD 76.39 z+8.00,"Micrometer to z0 + 8.00 mm, the end of the stage's range (skip the row if it cannot reach). Same patch of beads: do not slide the sandwich sideways. LAST capture of the series. Take the sandwich out. Tell Claude the date folder (Calibration/Imaging Work/<yyyy>/<mm>/<dd>/) and the three z0 readings.",Calibration/Imaging Work,1

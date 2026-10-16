@@ -65,6 +65,9 @@ def one(run: Path, thr: float, dry: bool) -> str:
     except (OSError, ValueError, KeyError):
         prov = {}
     sharp = prov.get("sharpness_rule", True)
+    # the run's own sizer: 3.0.0 named, 2.2.0 / 2.1.0 by the sharpness switch, exactly as before
+    sizer = ["--sizer", "3.0.0"] if prov.get("sizer_version") == "3.0.0" else \
+        ["--sharpness-rule" if sharp else "--no-sharpness-rule"]
     archive = an / f"_liquid{old}" / name if old else None
     if dry:
         return (f"{run.name}: would archive {name}/ ({old}) to {archive.relative_to(run)} and re-run"
@@ -76,8 +79,7 @@ def one(run: Path, thr: float, dry: bool) -> str:
     if part.exists():
         shutil.rmtree(part)
     cmd = [sys.executable, "-W", "ignore", str(HERE / "classical_liquid.py"), "--root", str(run),
-           "--out-dir", str(part), "--score-thresh", str(thr), "--images-mode", "extremes",
-           "--sharpness-rule" if sharp else "--no-sharpness-rule"]
+           "--out-dir", str(part), "--score-thresh", str(thr), "--images-mode", "extremes", *sizer]
     t0 = time.time()
     p = subprocess.run(cmd, capture_output=True, text=True)
     (part.parent / f"{name}.partial.log").write_text(p.stdout + "\n" + p.stderr, encoding="utf-8") \

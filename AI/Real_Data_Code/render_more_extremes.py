@@ -39,6 +39,7 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import measure_run as mr  # noqa: E402
+import optics  # noqa: E402
 
 # The per_frame.csv rounding: a re-measure must land on the same printed value.
 GATE_D32_UM = 0.01
@@ -98,7 +99,8 @@ def settings(prov, thr):
             "split_um": float(prov.get("split_um", mr.SPLIT_UM)),
             "core_estimator": prov.get("core_estimator", "min" if pre2 else "robust"),
             "sizer": bool(prov.get("sizer_enabled", not pre2)),
-            "sharpness_rule": bool(prov.get("sharpness_rule", False))}
+            "sharpness_rule": bool(prov.get("sharpness_rule", False)),
+            "version": prov.get("sizer_version") if prov.get("sizer_version") == mr.SIZER_VERSION_3 else None}
 
 
 def remeasure(run, meas, prov, stems, thr):
@@ -116,6 +118,13 @@ def remeasure(run, meas, prov, stems, thr):
     id_by_name = {Path(im["file_name"]).stem: im["id"] for im in manifest["images"]}
     want = {id_by_name[s]: s for s in stems}
     s = settings(prov, thr)
+    if s["version"] == mr.SIZER_VERSION_3:
+        # the calibration that sized the run, or the pictures would not match its numbers
+        mr.UM_PER_PX = float(optics.profile_for(run)["um_per_px"])
+        mr.SIZER3 = mr.blur.sizer3(optics.profile_for(run))
+        if prov.get("optics_profile_hash") and mr.SIZER3["hash"] != prov["optics_profile_hash"]:
+            raise RuntimeError(f"measured with sizer calibration {prov['optics_profile_hash']}, the profile now "
+                               f"holds {mr.SIZER3['hash']}: re-measure the run first")
     dets = defaultdict(list)
     for d in json.loads(preds_path.read_text(encoding="utf-8")):
         if d["image_id"] in want and d["score"] >= s["score"] and not d.get("truncated", False):
@@ -127,7 +136,7 @@ def remeasure(run, meas, prov, stems, thr):
             raise RuntimeError(f"no 16-bit frame for {stem} under {sb_dir}")
         out[stem] = mr.measure_frame(T, dets[img_id], s["focus_max"], split_um=s["split_um"],
                                      core_estimator=s["core_estimator"], sizer=s["sizer"],
-                                     sharpness_rule=s["sharpness_rule"], keep_drawn=True)
+                                     sharpness_rule=s["sharpness_rule"], keep_drawn=True, version=s["version"])
     return out, val / "frames" / "8bit"
 
 

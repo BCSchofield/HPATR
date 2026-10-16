@@ -99,7 +99,7 @@ class ScriptCall:
 PROCESS_CAPTURE = ImportCall(
     "process_capture", "process_capture",
     ("cine", "run_dir", "stride", "score_thresh", "device", "model_dir",
-     "images", "ci_stride", "bg_frames", "limit", "reuse", "log", "sharpness_rule"),
+     "images", "ci_stride", "bg_frames", "limit", "reuse", "log", "sharpness_rule", "sizer"),
 )
 
 # Stage 5. Invoked exactly as the canonical caller does (batch_runs.py:87-96).
@@ -110,8 +110,8 @@ PROCESS_CAPTURE = ImportCall(
 CLASSICAL = ScriptCall(
     "classical_liquid.py",
     ("--root", "--out-dir", "--score-thresh", "--images-mode", "--sharpness-rule",
-     "--no-sharpness-rule"),
-    (("--images-mode", ("extremes", "all")),),
+     "--no-sharpness-rule", "--sizer"),
+    (("--images-mode", ("extremes", "all")), ("--sizer", ("3.0.0", "2.2.0", "2.1.0"))),
 )
 
 # Other functions the app calls directly. Each must exist with these names.
@@ -382,6 +382,18 @@ class RunSettings:
     # stage. On by default since 2026-10-08, matching the capture GUI, so runs
     # measured here and runs measured in the lab are one sizer version.
     sharpness_rule: bool = True
+    # The sizer version (sizer 3.0.0 plan, Phase 4): "3.0.0" | "2.2.0" | "2.1.0", or None for what the sharpness
+    # switch says (2.2.0 / 2.1.0), so every job saved before this resumes at its own version.
+    sizer: str | None = None
+
+
+def sizer_of(settings: RunSettings) -> str:
+    """The version a job measures at."""
+    if settings.sizer:
+        if settings.sizer not in ("3.0.0", "2.2.0", "2.1.0"):
+            raise ValueError(f"unknown sizer {settings.sizer!r}")
+        return settings.sizer
+    return "2.2.0" if settings.sharpness_rule else "2.1.0"
 
 
 def rdc_module(name: str):
@@ -441,6 +453,8 @@ def process_capture_kwargs(run_dir: Path, settings: RunSettings, options: dict[s
         "log": log,
         "sharpness_rule": s.sharpness_rule,
     }
+    if s.sizer:
+        kw["sizer"] = sizer_of(s)
     for key in ("device", "model_dir", "ci_stride", "bg_frames", "limit"):
         value = getattr(s, key)
         if value is not None:
@@ -465,7 +479,9 @@ def classical_cmd(run_dir: Path, settings: RunSettings, options: dict[str, Any])
     # 2026-10-08, so leaving the flag off would no longer mean 2.1.0 -- and a
     # job saved before 2026-10-08 resumes with sharpness_rule False and must
     # stay 2.1.0, or its runs straddle two sizer versions.
-    cmd += ["--sharpness-rule" if s.sharpness_rule else "--no-sharpness-rule"]
+    version = sizer_of(s)
+    cmd += ["--sizer", version] if version == "3.0.0" else \
+        ["--sharpness-rule" if version == "2.2.0" else "--no-sharpness-rule"]
     _check_declared((c for c in cmd if c.startswith("--")), CLASSICAL.flags, "classical_cmd")
     return cmd
 

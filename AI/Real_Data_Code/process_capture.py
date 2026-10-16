@@ -187,11 +187,21 @@ def build_background(frames_16bit: Path, out_path: Path, n_sample: int, log):
     return out_path
 
 
+def sizer_flags(sizer=None, sharpness_rule=True) -> list:
+    """The sizer flags for measure_run.py and classical_liquid.py. 2.2.0 / 2.1.0 exactly as always (the sharpness
+    switch, explicit both ways); 3.0.0 as --sizer 3.0.0."""
+    import blur
+    version = blur.resolve_sizer(sizer, sharpness_rule)
+    if version == "3.0.0":
+        return ["--sizer", version]
+    return ["--sharpness-rule" if version == "2.2.0" else "--no-sharpness-rule"]
+
+
 def process_capture(cine: Path, run_dir: Path, *, stride=DEFAULT_STRIDE,
                     score_thresh=DEFAULT_SCORE_THRESH, device=None,
                     model_dir: Path = None, images="extremes", ci_stride=None,
                     bg_frames=BG_FRAMES, limit=None, reuse=False,
-                    log=print, sharpness_rule=True) -> dict:
+                    log=print, sharpness_rule=True, sizer=None) -> dict:
     """
     Run the whole chain. Returns measure_run's summary dict.
 
@@ -215,6 +225,9 @@ def process_capture(cine: Path, run_dir: Path, *, stride=DEFAULT_STRIDE,
     (--sharpness-rule / --no-sharpness-rule), so this function's argument --
     not the script's own default -- decides the version. Pair it with the same
     value in run_classical(...) or the two folders disagree.
+
+    `sizer` ("3.0.0" | "2.2.0" | "2.1.0", sizer 3.0.0 plan Phase 4) overrides `sharpness_rule` when given; None
+    keeps the switch's meaning, so every older caller is unchanged.
     """
     if images is True:
         images = "all"
@@ -342,7 +355,7 @@ def process_capture(cine: Path, run_dir: Path, *, stride=DEFAULT_STRIDE,
         cmd += ["--ci-stride", ci_stride]
     # Explicit both ways: a caller asking for 2.1.0 must get 2.1.0 even though
     # the script now defaults to 2.2.0 (the Taguchi app resumes old jobs at 2.1.0).
-    cmd += ["--sharpness-rule" if sharpness_rule else "--no-sharpness-rule"]
+    cmd += sizer_flags(sizer, sharpness_rule)
     with _Stage("measurement"):
         _run(cmd, log)
 
@@ -388,7 +401,7 @@ def process_capture(cine: Path, run_dir: Path, *, stride=DEFAULT_STRIDE,
 
 
 def run_classical(run_dir: Path, *, score_thresh=DEFAULT_SCORE_THRESH, images="extremes",
-                  sharpness_rule=True, ci_stride=1, n_boot=2000, log=print) -> dict:
+                  sharpness_rule=True, ci_stride=1, n_boot=2000, log=print, sizer=None) -> dict:
     """Stage 5: classical_liquid.py into liquid_<thr>/, invoked exactly as
     batch_runs.py and the Taguchi app do (--root and --out-dir always passed).
     Returns classical_summary.json plus `atomised_ci95`: a frame bootstrap of the
@@ -404,7 +417,7 @@ def run_classical(run_dir: Path, *, score_thresh=DEFAULT_SCORE_THRESH, images="e
            "--root", run_dir, "--out-dir", out_dir, "--score-thresh", score_thresh]
     if images:
         cmd += ["--images-mode", images]
-    cmd += ["--sharpness-rule" if sharpness_rule else "--no-sharpness-rule"]
+    cmd += sizer_flags(sizer, sharpness_rule)
     log("\n=== classical liquid (atomised fraction) ===")
     t0 = time.time()
     _run(cmd, log)
@@ -465,6 +478,8 @@ def main():
                     help="stop after N frames -- use for a quick smoke test")
     ap.add_argument("--sharpness-rule", action=argparse.BooleanOptionalAction, default=True,
                     help="sizer 2.2.0 (default); --no-sharpness-rule for 2.1.0")
+    ap.add_argument("--sizer", choices=("3.0.0", "2.2.0", "2.1.0"), default=None,
+                    help="the sizer version (3.0.0: opt-in until Phase 6); overrides --sharpness-rule")
     args = ap.parse_args()
 
     run_dir = args.run_dir
@@ -481,7 +496,7 @@ def main():
                     model_dir=args.model_dir,
                     images=None if args.no_images else args.images,
                     ci_stride=args.ci_stride, limit=args.limit, reuse=args.reuse,
-                    sharpness_rule=args.sharpness_rule)
+                    sharpness_rule=args.sharpness_rule, sizer=args.sizer)
 
 
 if __name__ == "__main__":

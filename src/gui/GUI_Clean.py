@@ -5991,6 +5991,10 @@ class AtomisationApp(QMainWindow):
     # liquid_0.30/, both 2.2.0, ready for the Taguchi app's Analyse. The app's
     # own batch still defaults to 2.1.0: do not "Re-measure" these runs there.
     SHARPNESS_RULE = True
+    # The sizer version for both stages (sizer 3.0.0 plan, Phase 4). None = what SHARPNESS_RULE says (2.2.0). Set
+    # "3.0.0" only after Ben's Phase 6 go: it needs the optics profile's calibration block (the lab PC must have
+    # pulled it) and measures with blur.py (numpy + OpenCV, no scipy).
+    SIZER = None
 
     # Inference cost scales with frame AREA, not frame count, so the estimate
     # has to know the resolution.  Measured 2026-09-28 on the RTX 4070 Ti SUPER
@@ -7908,6 +7912,7 @@ class AtomisationApp(QMainWindow):
                         lambda s: self._log_queue.put(s + "\n"),
                         every=self.INFERENCE_LOG_EVERY),
                     sharpness_rule=self.SHARPNESS_RULE,
+                    sizer=self.SIZER,
                 )
                 # Stage 5, the classical liquid pass: the quoted atomised
                 # fraction and the extreme-frame images the Extremes tab shows.
@@ -7918,7 +7923,7 @@ class AtomisationApp(QMainWindow):
                     ci_stride = (summary.get("provenance") or {}).get("ci_stride") or 1
                     summary["_classical"] = run_classical(
                         target, score_thresh=0.30, images=images,
-                        sharpness_rule=self.SHARPNESS_RULE, ci_stride=ci_stride,
+                        sharpness_rule=self.SHARPNESS_RULE, sizer=self.SIZER, ci_stride=ci_stride,
                         log=lambda s: self._log_queue.put(s + "\n"))
                 except Exception as e:
                     summary["_classical_error"] = str(e)

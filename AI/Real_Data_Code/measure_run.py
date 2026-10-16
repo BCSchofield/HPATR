@@ -47,6 +47,7 @@ Usage:
         --sixteen-bit-dir <...>/00_frames/<run>/16bit \\
         --images
 """
+from __future__ import annotations
 
 import argparse
 import csv
@@ -75,6 +76,7 @@ from config_loader import find_lacie_drive  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import optics  # noqa: E402  (one profile per optical set-up: config/optics/)
+import blur  # noqa: E402  (sizer 3.0.0: the blur width and the size, measured as the beads were)
 
 # The scale. main() sets it from the run's own optics profile; this default is the newest profile (the rig's
 # set-up now) for callers that measure without a run.
@@ -164,8 +166,20 @@ def det_crop(d):
 #          (2026-10-02). It is a reclassification, never a deletion: counts, the
 #          sized area and the atomised numerator are untouched; only D32
 #          membership moves. Off, a run is 2.1.0 and bit-identical to before.
+#   3.0.0  (sizer 3.0.0 plan, Phase 4, 2026-10-16; opt-in with --sizer 3.0.0 until Ben's Phase 6 go) ONE focus
+#          rule and ONE edge for every size, calibrated on certified glass beads (sizer_calibration.py, the optics
+#          profile's calibration block): each droplet's blur width chi and Blaisot's contrast-corrected size are
+#          measured around its AI mask exactly as the beads were (blur.py). In the measurement volume if chi <=
+#          chi_max and its window fits in the frame; sized directly up to chi_sharp, through the look-up table up
+#          to chi_max; counted but not sized below d_min. No 40 um split, no sharpness rule, no 0.70 core test for
+#          droplets. droplet_sizes.csv gains chi_um, in_volume and size_method.
 SIZER_VERSION = "2.1.0"
 SIZER_VERSION_SHARPNESS = "2.2.0"
+SIZER_VERSION_3 = "3.0.0"
+SIZER3 = None                 # sizer 3.0.0's settings (blur.sizer3): main() sets them from the run's own profile
+IN_VOLUME = ("direct", "table", "table_extrapolated")
+CROWD_PX = 3                  # sizer 3.0.0: another detection this close to a droplet's mask = crowded (not measured);
+                              # further off, its mask grown by this much is blanked out before the droplet is measured
 SPLIT_UM = 40.0              # classical sizing acts at/above this diameter
 DILATE_PX = 5                # search region beyond the model mask
 CORE_MIN_PX = 3              # floor for the robust core, see droplet_core
@@ -268,8 +282,17 @@ FILL_RATIO_MIN = 0.85        # below: not round (blobs, merged pairs)
 EXTINCTION_CONC_MIN = 0.60   # below: blurred, optical depth leaks past the edge
 
 
-def sizer_version(sharpness_rule: bool) -> str:
-    return SIZER_VERSION_SHARPNESS if sharpness_rule else SIZER_VERSION
+def sizer_version(sharpness_rule: bool, sizer: str | None = None) -> str:
+    """The version a run is measured at: `sizer` when given, else the sharpness switch (2.2.0 / 2.1.0)."""
+    return blur.resolve_sizer(sizer, sharpness_rule)
+
+
+def sizer3_settings() -> dict:
+    """Sizer 3.0.0's settings: the ones main() loaded from the run's profile, else the newest profile's."""
+    global SIZER3
+    if SIZER3 is None:
+        SIZER3 = blur.sizer3(optics.current())
+    return SIZER3
 
 
 def sharpness_metrics(T_pad, m_pad, dilate_px=DILATE_PX):
@@ -299,7 +322,8 @@ def sharpness_metrics(T_pad, m_pad, dilate_px=DILATE_PX):
 
 
 def measure_droplet(T, d, focus_max, split_um=SPLIT_UM, core_estimator="robust",
-                    sizer=True, crop=None, want_mask=False, sharpness_rule=False):
+                    sizer=True, crop=None, want_mask=False, sharpness_rule=False, version=None, calib=None,
+                    others=None):
     """Focus verdict and sized area for ONE droplet detection.
 
     Returns None for an empty mask, else a dict:
@@ -313,8 +337,14 @@ def measure_droplet(T, d, focus_max, split_um=SPLIT_UM, core_estimator="robust",
     NOTHING IS EVER DROPPED HERE. An out-of-focus droplet keeps its area and
     still counts toward the atomised fraction; only its SIZE is withheld from
     D32. The sizer changes a number, never membership.
+
+    `version` "3.0.0" (sizer 3.0.0) answers through measure_droplet_3 instead, with `calib` (blur.sizer3) or the
+    run's own; None or "2.2.0" / "2.1.0" is the sharpness switch, exactly as before.
     """
     mb, bx, by, bh, bw = crop if crop is not None else det_crop(d)
+    if version == SIZER_VERSION_3:
+        return measure_droplet_3(T, d, (mb, bx, by, bh, bw), calib or sizer3_settings(), core_estimator, want_mask,
+                                 others)
     if not mb.any():
         return None
     H, W = T.shape
@@ -367,6 +397,98 @@ def measure_droplet(T, d, focus_max, split_um=SPLIT_UM, core_estimator="robust",
     return out
 
 
+def occupancy(T_shape, dets):
+    """Sizer 3.0.0: (every detection's mask, the same grown by CROWD_PX) for one frame, so each droplet can be
+    measured on its own profile (measure_droplet_3's `others`)."""
+    occ = np.zeros(T_shape, bool)
+    for d in dets:
+        mb, bx, by, bh, bw = det_crop(d)
+        occ[by:by + bh, bx:bx + bw] |= mb
+    k = np.ones((2 * CROWD_PX + 1,) * 2, np.uint8)
+    return occ, cv2.dilate(occ.astype(np.uint8), k).astype(bool)
+
+
+def measure_droplet_3(T, d, crop, calib, core_estimator="robust", want_mask=False, others=None):
+    """Sizer 3.0.0 for ONE droplet detection. Returns None for an empty mask, else measure_droplet's dict plus
+        chi_um     the blur width (nan where it could not be measured)
+        size_um    the 3.0.0 diameter (nan unless sized)
+        in_volume  inside the measurement volume: chi <= chi_max and its window fits in the frame
+    with in_focus = in the volume AND sized (>= d_min): what D32, the mean and the band are built from, and
+    method = direct | table | table_extrapolated (in the volume, sized), below_d_min (in the volume, counted, not
+    sized), outside (chi > chi_max), border (too near the frame edge to measure), no_chi (no edge to measure),
+    crowded (another detection within CROWD_PX of its mask: its profile is not its own).
+    A sized droplet's area_px is its diameter's equivalent area, so equiv_um(area_px) gives the diameter back; any
+    other keeps the model's mask area, as an out-of-focus droplet always has.
+
+    `others` = occupancy(T.shape, the frame's detections): the beads were isolated, a spray droplet is not, so every
+    OTHER detection's mask (grown by CROWD_PX) is set to background before measuring, and the droplet's own centre
+    must be dark (no fallback to a nearby piece: in a spray that is the jet). Without it (a lone object) the
+    measurement is exactly the beads'."""
+    mb, bx, by, bh, bw = crop
+    if not mb.any():
+        return None
+    H, W = T.shape
+    pad = DILATE_PX + 2
+    y0, y1 = max(0, by - pad), min(H, by + bh + pad)
+    x0, x1 = max(0, bx - pad), min(W, bx + bw + pad)
+    T_pad = T[y0:y1, x0:x1]
+    m_pad = np.zeros(T_pad.shape, bool)
+    m_pad[by - y0:by - y0 + bh, bx - x0:bx - x0 + bw] = mb
+    core_t = droplet_core(T_pad, m_pad, core_estimator)
+    ys, xs = np.nonzero(mb)
+    cx, cy = bx + float(xs.mean()), by + float(ys.mean())
+    d_px = 2.0 * math.sqrt(float(d["area"]) / math.pi)
+    # a local copy of the frame, wide enough for the whole measurement (or reaching the frame's own edge, so a
+    # window that does not fit in the frame does not fit here either)
+    half = blur.half_window(d_px)
+    reach = half + half // 2 + blur.RECENTRE_PX + 8
+    X0, X1 = max(0, int(round(cx)) - reach), min(W, int(round(cx)) + reach + 1)
+    Y0, Y1 = max(0, int(round(cy)) - reach), min(H, int(round(cy)) + reach + 1)
+    TL = T[Y0:Y1, X0:X1]
+    crowded = False
+    if others is not None:
+        occ, occ_grown = others
+        own = np.zeros(TL.shape, bool)
+        oy0, ox0 = max(by, Y0), max(bx, X0)
+        oy1, ox1 = min(by + bh, Y1), min(bx + bw, X1)
+        own[oy0 - Y0:oy1 - Y0, ox0 - X0:ox1 - X0] = mb[oy0 - by:oy1 - by, ox0 - bx:ox1 - bx]
+        k = np.ones((2 * CROWD_PX + 1,) * 2, np.uint8)
+        own_grown = cv2.dilate(own.astype(np.uint8), k).astype(bool)
+        crowded = bool((occ[Y0:Y1, X0:X1] & own_grown & ~own).any())
+        blank = occ_grown[Y0:Y1, X0:X1] & ~own_grown
+        if blank.any():
+            TL = TL.copy()
+            TL[blank] = 1.0
+    r = None if crowded else blur.measure(TL, cx - X0, cy - Y0, d_px, calib["tau"], droplet_core, UM_PER_PX,
+                                          nearest=others is None)
+    chi, size, method = float("nan"), float("nan"), "crowded" if crowded else "border"
+    if r is not None:
+        chi, base = float(r["chi_um"]), float(r.get(calib["column"], float("nan")))
+        if not (np.isfinite(chi) and np.isfinite(base)):
+            method = "no_chi"
+        else:
+            sz, mt = blur.size_3([base - calib["edge_offset_um"]], [chi], calib["table"], calib["chi_sharp_um"],
+                                 calib["chi_max_um"])
+            size, method = float(sz[0]), str(mt[0])
+    in_volume = method in IN_VOLUME
+    sized = in_volume and bool(np.isfinite(size)) and size >= calib["d_min_um"]
+    if in_volume and not sized:
+        method = "below_d_min"
+    area = math.pi * (size / 2.0 / UM_PER_PX) ** 2 if sized else float(d["area"])
+    out = {"in_focus": sized, "area_px": area, "method": method, "core_t": core_t, "reclassified": False,
+           "chi_um": chi, "size_um": size if sized else float("nan"), "in_volume": in_volume}
+    if want_mask:
+        # the atomised numerator's droplet edge: the half-max component of a sized droplet, as 2.x uses for its
+        # in-focus ones (no size split now); anything else falls back to the model's mask
+        half = None
+        if sized:
+            a_half, _deg, comp = halfmax_area(T_pad, m_pad, core_t)
+            half = comp if a_half >= 4 else None
+        out["mask"] = half
+        out["mask_xy"] = (x0, y0)
+    return out
+
+
 def union_area(rles):
     """Union, not sum. One long filament is emitted as several overlapping
     sub-segments; summing double-counts the overlap (measured: filament 20.5%,
@@ -381,7 +503,7 @@ def transmission(sb_dir, stem, bg):
 
 
 def measure_frame(T, dets, focus_max, split_um=SPLIT_UM, core_estimator="robust",
-                  sizer=True, sharpness_rule=False, keep_drawn=False):
+                  sizer=True, sharpness_rule=False, keep_drawn=False, version=None):
     """Every kept detection of ONE frame: droplets focus-split and sized, liquid
     unioned per class. The body of main()'s per-frame loop, lifted out so
     render_more_extremes.py re-measures a frame with exactly this code.
@@ -393,7 +515,14 @@ def measure_frame(T, dets, focus_max, split_um=SPLIT_UM, core_estimator="robust"
         atom (%), d32 (um, in-focus only)
         methods (Counter of diameter methods), reclassified (int)
         drawn              render_frame items; empty unless keep_drawn
+        sizer 3.0.0 only:  rows3 (one (area_px, in_focus, chi_um, in_volume, method) per droplet, for
+                           droplet_sizes.csv), in_volume / unsized / border / crowded (counts)
     """
+    version = version or sizer_version(sharpness_rule)
+    calib = sizer3_settings() if version == SIZER_VERSION_3 else None
+    others = occupancy(T.shape, dets) if calib is not None else None
+    rows3 = []
+    n_volume = n_unsized = n_border = n_crowded = 0
     focus_a, oof_a = [], []
     fil_a, blob_a = [], []
     rle_drop, rle_fil, rle_blob = [], [], []
@@ -409,10 +538,16 @@ def measure_frame(T, dets, focus_max, split_um=SPLIT_UM, core_estimator="robust"
             md = measure_droplet(T, d, focus_max, split_um=split_um,
                                  core_estimator=core_estimator, sizer=sizer,
                                  crop=(mb, bx, by, bh, bw),
-                                 sharpness_rule=sharpness_rule)
+                                 sharpness_rule=sharpness_rule, version=version, calib=calib, others=others)
             if md is None:
                 continue
             sharp = md["in_focus"]
+            if calib is not None:
+                rows3.append((md["area_px"], sharp, md["chi_um"], md["in_volume"], md["method"]))
+                n_volume += md["in_volume"]
+                n_unsized += md["in_volume"] and not sharp
+                n_border += md["method"] == "border"
+                n_crowded += md["method"] == "crowded"
             n_reclassified += md["reclassified"]
             # the SIZED area, not the model's, when the sizer ran
             (focus_a if sharp else oof_a).append(md["area_px"])
@@ -441,7 +576,9 @@ def measure_frame(T, dets, focus_max, split_um=SPLIT_UM, core_estimator="robust"
             "a_drop": a_drop, "a_fil": a_fil, "a_blob": a_blob,
             "atom": (a_drop / total * 100) if total else float("nan"),
             "d32": d32(focus_a), "methods": methods,
-            "reclassified": n_reclassified, "drawn": drawn}
+            "reclassified": n_reclassified, "drawn": drawn,
+            "rows3": rows3, "in_volume": n_volume, "unsized": n_unsized, "border": n_border,
+            "crowded": n_crowded}
 
 
 def boot_ci(values_fn, items, n_boot, seed=0):
@@ -667,7 +804,7 @@ def px_to_mm2(area_px):
     return np.asarray(area_px, dtype=float) * (UM_PER_PX ** 2) / 1e6
 
 
-def write_distributions(out_dir, per_focus, per_oof, per_fil, per_blob):
+def write_distributions(out_dir, per_focus, per_oof, per_fil, per_blob, per_rows3=None):
     """Per-object size distributions: CSVs always, plot only if matplotlib is
     importable.
 
@@ -680,18 +817,29 @@ def write_distributions(out_dir, per_focus, per_oof, per_fil, per_blob):
     Plotting is optional ON PURPOSE: this runs inside the production chain, and
     a missing matplotlib on the lab machine must not cost a 20-minute
     measurement. The data is written first, the figure second.
+
+    Sizer 3.0.0 (`per_rows3`): one row per droplet in measuring order, with three more columns: chi_um, in_volume
+    and size_method. in_focus = 1 still means "sized, in D32" (in the volume and >= d_min), so every reader of the
+    first three columns reads a 3.0.0 run unchanged.
     """
     stems = sorted(per_focus)
 
     drop_csv = out_dir / "droplet_sizes.csv"
     with open(drop_csv, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["frame", "diameter_um", "in_focus"])
-        for s in stems:
-            for a in per_focus.get(s, []):
-                w.writerow([s, csv_um(a), 1])
-            for a in per_oof.get(s, []):
-                w.writerow([s, csv_um(a), 0])
+        if per_rows3 is not None:
+            w.writerow(["frame", "diameter_um", "in_focus", "chi_um", "in_volume", "size_method"])
+            for s in stems:
+                for a, inf, chi, vol, meth in per_rows3.get(s, []):
+                    w.writerow([s, csv_um(a), int(bool(inf)), round(chi, 3) if np.isfinite(chi) else "",
+                                int(bool(vol)), meth])
+        else:
+            w.writerow(["frame", "diameter_um", "in_focus"])
+            for s in stems:
+                for a in per_focus.get(s, []):
+                    w.writerow([s, csv_um(a), 1])
+                for a in per_oof.get(s, []):
+                    w.writerow([s, csv_um(a), 0])
 
     obj_csv = out_dir / "object_areas.csv"
     with open(obj_csv, "w", newline="", encoding="utf-8") as f:
@@ -712,8 +860,8 @@ def write_distributions(out_dir, per_focus, per_oof, per_fil, per_blob):
     blob_mm2 = px_to_mm2([a for s in stems for a in per_blob.get(s, [])]) \
         if any(per_blob.values()) else np.array([])
 
-    return drop_csv, obj_csv, plot_distributions(out_dir, focus_d, oof_d,
-                                                 fil_mm2, blob_mm2)
+    return drop_csv, obj_csv, plot_distributions(out_dir, focus_d, oof_d, fil_mm2, blob_mm2,
+                                                 sizer3=per_rows3 is not None)
 
 
 def read_distributions(out_dir):
@@ -730,7 +878,7 @@ def read_distributions(out_dir):
     return (np.array(focus_d), np.array(oof_d), np.array(fil), np.array(blob))
 
 
-def plot_distributions(out_dir, focus_d, oof_d, fil_mm2, blob_mm2):
+def plot_distributions(out_dir, focus_d, oof_d, fil_mm2, blob_mm2, sizer3=False):
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -750,8 +898,9 @@ def plot_distributions(out_dir, focus_d, oof_d, fil_mm2, blob_mm2):
         edges = np.arange(0, top + DROPLET_BIN_UM, DROPLET_BIN_UM)
         ax.hist([focus_d, oof_d], bins=edges, stacked=True,
                 color=[PLOT_GREEN, PLOT_MAGENTA],
-                label=[f"in focus (n={focus_d.size:,})",
-                       f"out of focus (n={oof_d.size:,})"],
+                label=([f"sized, in the volume (n={focus_d.size:,})",
+                        f"not sized: outside the volume or below d_min (n={oof_d.size:,})"] if sizer3 else
+                       [f"in focus (n={focus_d.size:,})", f"out of focus (n={oof_d.size:,})"]),
                 edgecolor="white", linewidth=0.5)
         ax.set_xticks(edges[::2])
         ax.legend()
@@ -796,8 +945,38 @@ def plot_distributions(out_dir, focus_d, oof_d, fil_mm2, blob_mm2):
     return png
 
 
+def sizer3_provenance(calib: dict) -> dict:
+    """What a 3.0.0 run records about the calibration that sized it (compare_runs refuses to mix these)."""
+    T = calib["table"]
+    return {"optics_profile_hash": calib["hash"],
+            "sizer_edge": f"{calib['edge_base']} - {calib['edge_offset_um']:g} um",
+            "sizer_chi_sharp_um": calib["chi_sharp_um"], "sizer_chi_max_um": calib["chi_max_um"],
+            "sizer_d_min_um": calib["d_min_um"], "sizer_tau": calib["tau"],
+            "sizer_table_beads_um": list(T["nodes_um"]), "sizer_calibration_status": calib["status"]}
+
+
+def sizer3_definitions(calib: dict) -> dict:
+    T = calib["table"]
+    lo, hi = min(T["nodes_um"]), max(T["nodes_um"])
+    return {
+        "d32": f"droplets in the measurement volume (blur width chi <= {calib['chi_max_um']:g} um, measuring window "
+               f"inside the frame) and sized (>= d_min {calib['d_min_um']:g} um); pooled Sum(d^3)/Sum(d^2)",
+        "diameter": f"sizer 3.0.0: {calib['edge_base']} size measured around the AI mask as the calibration beads "
+                    f"were (blur.py), minus the edge offset {calib['edge_offset_um']:g} um; directly up to chi "
+                    f"{calib['chi_sharp_um']:g} um, through the bead look-up table up to {calib['chi_max_um']:g} um "
+                    f"(beads {lo:g}-{hi:g} um; beyond them extrapolated, size_method table_extrapolated). Optics "
+                    f"profile calibration {calib['hash']}.",
+        "core_transmission": "the robust core (mean of the darkest max(3, 5%) interior pixels); 3.0.0 does not "
+                             "use it for focus",
+        "atomised_pct": "ALL droplet area / (droplet + filament + blob) area, per-class union within a frame, summed "
+                        "across frames (unchanged in 3.0.0; Phase 5 restricts it to the measurement volume)",
+        "caveat": f"Calibrated on certified glass beads {lo:g}-{hi:g} um (provisional: {calib['status']}). Below "
+                  f"{lo:g} um the table is extrapolated down to d_min. Droplets the AI misses are not counted.",
+    }
+
+
 def main():
-    global UM_PER_PX
+    global UM_PER_PX, SIZER3
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     # Not required=True: --replot needs neither, and argparse cannot express
@@ -827,6 +1006,10 @@ def main():
                          "droplets >= 50 um as out of focus when not round (fill_ratio "
                          "< 0.85) or blurred (extinction_conc < 0.60). Moves D32 only. "
                          "--no-sharpness-rule measures at 2.1.0, bit-identical to before")
+    ap.add_argument("--sizer", choices=blur.SIZERS, default=None,
+                    help="the sizer version. 3.0.0 (sizer 3.0.0 plan, Phase 4; opt-in until Phase 6): blur-width "
+                         "focus rule and calibrated sizing from the optics profile. Default: what "
+                         "--sharpness-rule says (2.2.0, or 2.1.0 with --no-sharpness-rule)")
     ap.add_argument("--out-dir", type=Path, default=None,
                     help="default: <val-dir>/measurement_<thresh>")
     ap.add_argument("--images", nargs="?", const="all", default=None,
@@ -856,6 +1039,15 @@ def main():
     root = args.root or real_data_root()
     profile = optics.profile_for(root)                 # the optics this run was captured with
     UM_PER_PX = float(profile["um_per_px"])
+    version = sizer_version(args.sharpness_rule, args.sizer)
+    calib3 = None
+    if version == SIZER_VERSION_3:
+        if args.no_sizer:
+            sys.exit("--no-sizer and --sizer 3.0.0 contradict each other: 3.0.0 always sizes")
+        try:
+            calib3 = SIZER3 = blur.sizer3(profile)     # the run's own profile's calibration, never another's
+        except blur.CalibrationMissing as e:
+            sys.exit(str(e))
     val = root / args.val_dir
     sb_dir = args.sixteen_bit_dir or (val / "frames" / "16bit")
     out_dir = args.out_dir or (val / f"droplets_{args.score_thresh:.2f}")
@@ -904,6 +1096,7 @@ def main():
     per_frame_blob_areas = {}
     all_focus_areas = []
     per_frame_mean_d = {}        # mean in-focus diameter, for the more-extremes pick
+    per_frame_rows3 = {} if calib3 is not None else None      # sizer 3.0.0: every droplet's chi and method
     # extremes mode: which frames to draw is only known once every frame is
     # measured, so hold each frame's crops (small) and draw afterwards.
     pending_images = {}
@@ -917,7 +1110,8 @@ def main():
 
         fr = measure_frame(T, dets, args.focus_max, split_um=args.split_um,
                            core_estimator=args.core_estimator, sizer=not args.no_sizer,
-                           sharpness_rule=args.sharpness_rule, keep_drawn=bool(args.images))
+                           sharpness_rule=args.sharpness_rule, keep_drawn=bool(args.images),
+                           version=version)
         focus_a, oof_a, fil_a, blob_a = fr["focus_a"], fr["oof_a"], fr["fil_a"], fr["blob_a"]
         a_drop, a_fil, a_blob = fr["a_drop"], fr["a_fil"], fr["a_blob"]
         atom, f_d32, drawn = fr["atom"], fr["d32"], fr["drawn"]
@@ -943,6 +1137,12 @@ def main():
             # position; checked 2026-10-13). From droplet_sizes.csv's diameters.
             "mean_d_in_focus_um": round(mean_d, 2),
         })
+        if calib3 is not None:
+            # sizer 3.0.0, appended after everything else: in the volume (sized or not), counted but below d_min,
+            # too near the frame edge to measure, touching another detection
+            rows[-1].update(droplets_in_volume=fr["in_volume"], droplets_unsized_in_volume=fr["unsized"],
+                            droplets_border=fr["border"], droplets_crowded=fr["crowded"])
+            per_frame_rows3[stem] = fr["rows3"]
         per_frame_focus_areas[stem] = focus_a
         per_frame_atom_parts[stem] = (a_drop, a_fil, a_blob)
         per_frame_oof_areas[stem] = oof_a
@@ -1027,6 +1227,12 @@ def main():
     print(f"  droplets IN FOCUS  (green): {n_focus}")
     print(f"  droplets out of focus     : {n_oof}"
           f"   ({100 * n_oof / max(1, n_focus + n_oof):.1f}% of all droplets)")
+    if calib3 is not None:
+        print(f"  sizer 3.0.0: in the volume {sum(r['droplets_in_volume'] for r in rows)} (chi <= "
+              f"{calib3['chi_max_um']:g} um), of which below d_min {calib3['d_min_um']:g} um (counted, not sized) "
+              f"{sum(r['droplets_unsized_in_volume'] for r in rows)}; too near the frame edge "
+              f"{sum(r['droplets_border'] for r in rows)}; touching another detection "
+              f"{sum(r['droplets_crowded'] for r in rows)}")
     print()
     print(f"  D32 (in-focus only)       : {pooled_d32:.1f} um"
           f"   95% CI [{d_lo:.1f}, {d_hi:.1f}]   +/-{(d_hi - d_lo) / 2:.1f}"
@@ -1150,7 +1356,7 @@ def main():
             # SIZING METHOD -- compare_runs.py guards on these. A run measured
             # with a different sizer_version is NOT comparable with one measured
             # before it, and without this field that difference is invisible.
-            "sizer_version": sizer_version(args.sharpness_rule),
+            "sizer_version": version,
             "sizer_enabled": not args.no_sizer,
             "sharpness_rule": args.sharpness_rule,
             "sharpness_reclassified": n_reclassified,
@@ -1160,8 +1366,9 @@ def main():
             "ci_stride": args.ci_stride,
             "frames_used_for_ci": len(ci_stems),
             "ci_assumes_independence": args.ci_stride == 1,
+            **(sizer3_provenance(calib3) if calib3 is not None else {}),
         },
-        "definitions": {
+        "definitions": sizer3_definitions(calib3) if calib3 is not None else {
             "d32": "in-focus droplets only (core transmission <= focus_max); "
                    "pooled Sum(d^3)/Sum(d^2)",
             "diameter": "classical half-max area at/above split_um, (core+1)/2 grown "
@@ -1220,6 +1427,11 @@ def main():
         # the same list as extreme_frames_more/index.json's "frames".
         "more_extreme_frames": more,
     }
+    if calib3 is not None:
+        summary.update(droplets_in_volume=sum(r["droplets_in_volume"] for r in rows),
+                       droplets_unsized_in_volume=sum(r["droplets_unsized_in_volume"] for r in rows),
+                       droplets_border=sum(r["droplets_border"] for r in rows),
+                       droplets_crowded=sum(r["droplets_crowded"] for r in rows))
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2))
 
     # The four frames the GUI's Extremes tab shows (raw D32 low/high, atomised
@@ -1256,7 +1468,7 @@ def main():
 
     drop_csv, obj_csv, png = write_distributions(
         out_dir, per_frame_focus_areas, per_frame_oof_areas,
-        per_frame_fil_areas, per_frame_blob_areas)
+        per_frame_fil_areas, per_frame_blob_areas, per_frame_rows3)
 
     print(f"\n  elapsed {elapsed:.1f} s")
     print(f"  written: {csv_path}")

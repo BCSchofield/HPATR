@@ -241,6 +241,14 @@ def drop_droplet_components(liquid, droplet_mask,
     return kept, dropped, n_kept, n_drop
 
 
+def _others(T, dets, args_ref):
+    """Sizer 3.0.0: the frame's occupancy (measure_run.occupancy) from the same detections measure_run measures
+    (tile-truncated pieces left out, as there), so a droplet gets the same verdict in both stages. None for 2.x."""
+    if getattr(args_ref, "sizer_version", None) != measure_run.SIZER_VERSION_3:
+        return None
+    return measure_run.occupancy(T.shape, [d for d in dets if not d.get("truncated", False)])
+
+
 def model_masks(dets, T, focus_max, args_ref=None):
     """(droplet_union, out_of_focus_unatomised_union).
 
@@ -274,6 +282,7 @@ def model_masks(dets, T, focus_max, args_ref=None):
     oof = np.zeros(T.shape, bool)
     n_half = n_model = n_static = 0
     static_t = getattr(args_ref, "static_t", STATIC_T) if args_ref is not None else STATIC_T
+    others = _others(T, dets, args_ref)
     for d in dets:
         mb, bx, by, bh, bw = det_crop(d)
         if not mb.any():
@@ -294,7 +303,8 @@ def model_masks(dets, T, focus_max, args_ref=None):
                                  core_estimator=getattr(args_ref, "core_estimator", "robust"),
                                  sizer=not getattr(args_ref, "no_sizer", False),
                                  crop=(mb, bx, by, bh, bw), want_mask=True,
-                                 sharpness_rule=getattr(args_ref, "sharpness_rule", False))
+                                 sharpness_rule=getattr(args_ref, "sharpness_rule", False),
+                                 version=getattr(args_ref, "sizer_version", None), others=others)
             hm = md.get("mask") if md else None
             if hm is not None:
                 hx, hy = md["mask_xy"]
@@ -367,6 +377,7 @@ def droplet_part(T, dets, args):
     # twice, and the copies drifted: 85.58 um here against 85.57 um there for the
     # same run. Only the un-atomised denominator is re-derived classically.
     focus_a, oof_a = [], []
+    others = _others(T, dets, args)
     for d in dets:
         if d["category_id"] != DROPLET:
             continue
@@ -381,7 +392,8 @@ def droplet_part(T, dets, args):
                              split_um=getattr(args, "split_um", SPLIT_UM),
                              core_estimator=getattr(args, "core_estimator", "robust"),
                              sizer=not getattr(args, "no_sizer", False),
-                             sharpness_rule=getattr(args, "sharpness_rule", False))
+                             sharpness_rule=getattr(args, "sharpness_rule", False),
+                             version=getattr(args, "sizer_version", None), others=others)
         if md is None:
             continue
         (focus_a if md["in_focus"] else oof_a).append(md["area_px"])
@@ -469,6 +481,7 @@ def draw_frame(view8, dets, T, unatom, row, args, window=None):
     alpha = 0.45
     canvas[unatom] = (np.asarray(ORANGE, np.float32) * alpha
                       + canvas[unatom].astype(np.float32) * (1 - alpha)).astype(np.uint8)
+    others = _others(T, dets, args)
     for d in dets:
         if d["category_id"] != DROPLET:
             continue
@@ -482,7 +495,8 @@ def draw_frame(view8, dets, T, unatom, row, args, window=None):
                              core_estimator=getattr(args, "core_estimator", "robust"),
                              sizer=not getattr(args, "no_sizer", False),
                              crop=(mb, bx, by, bh, bw),
-                             sharpness_rule=getattr(args, "sharpness_rule", False))
+                             sharpness_rule=getattr(args, "sharpness_rule", False),
+                             version=getattr(args, "sizer_version", None), others=others)
         sharp = bool(md["in_focus"]) if md else False
         full = np.zeros(canvas.shape[:2], np.uint8)
         full[by:by + bh, bx:bx + bw] = mb
@@ -526,6 +540,10 @@ def main():
                     help="sizer 2.2.0 (DEFAULT since 2026-10-08), as measure_run.py: "
                          "moves D32 membership and drawing colour only, never the atomised "
                          "fraction. --no-sharpness-rule measures at 2.1.0")
+    ap.add_argument("--sizer", choices=measure_run.blur.SIZERS, default=None,
+                    help="the sizer version, as measure_run.py (3.0.0: the blur-width rule and calibrated sizes "
+                         "for the droplets; filaments and blobs keep the 0.70 test until Phase 5). Default: what "
+                         "--sharpness-rule says")
     ap.add_argument("--focus-max", type=float, default=0.70,
                     help="droplet focus gate, as measure_run (default 0.70)")
     ap.add_argument("--droplet-ring", type=int, default=10,
@@ -558,6 +576,12 @@ def main():
     root = args.root
     profile = optics.profile_for(root)                 # the optics this run was captured with
     UM_PER_PX = measure_run.UM_PER_PX = float(profile["um_per_px"])   # measure_run's helpers read its own
+    args.sizer_version = sizer_version(args.sharpness_rule, args.sizer)
+    if args.sizer_version == measure_run.SIZER_VERSION_3:
+        try:                                           # the run's own profile's calibration, never another's
+            measure_run.SIZER3 = measure_run.blur.sizer3(profile)
+        except measure_run.blur.CalibrationMissing as e:
+            sys.exit(str(e))
     raw = root / "shadowgraph" / "raw"
     pred = args.pred or (root / "shadowgraph" / "analysis" / "predictions_crop.json")
     if not pred.exists():
@@ -780,8 +804,10 @@ def main():
             # its numerator is measured. Without this field a pre-2.1.0 and a
             # post-2.1.0 atomised % look identical and would be compared
             # silently -- a ~3% difference with nothing to flag it.
-            "sizer_version": sizer_version(args.sharpness_rule),
+            "sizer_version": args.sizer_version,
             "sharpness_rule": args.sharpness_rule,
+            **(measure_run.sizer3_provenance(measure_run.SIZER3)
+               if args.sizer_version == measure_run.SIZER_VERSION_3 else {}),
             "atomised_numerator_edge": "half-max where measured, model mask "
                                        "otherwise (out of focus or below split)",
             "classical_only": args.classical_only,

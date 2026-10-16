@@ -211,12 +211,38 @@ recordings:
   the AI's classes: every object in a pour is a sphere, so anything called filament or blob is a misclassification
   (on 2026-10-15: far-out-of-focus beads). It adds ~15 min to a run (the crowded 37.36 pour is most of it).
   `falling_detail(run, None, tau, frame_step=10)` runs the same measurement on any spray run.
-- **Big beads through focus:** the mixed slide has too few usable 98 / 155.8 um beads, so take the same
-  -8..+8 mm series on the single-size slides (Notes `BEAD 155.8 z-1.25` etc.); the script reads it as that
-  slide's own series with every bead's size known.
+- **Big beads through focus (run sheet `docs/notes/2026-10-16_big_bead_through_focus_run_sheet.csv`, 93 rows,
+  ~1.5 h):** the mixed slide has too few usable big beads through focus (2026-10-15: 108 at 37.36 um, 31 at
+  56.28, **2** at 76.39, none at 98.1 or 155.8). So the same −8..+8 mm series goes on the 155.8, 98.1 and 76.39
+  single-size slides (Notes `BEAD 155.8 z-1.25` etc.); the script reads each as that slide's own series with
+  every bead's size known. It needs neither the pinhole nor the focus meter: the table works from χ and the size
+  read, and best focus comes out of the χ curve. Analyse it with the 2026-10-15 τ (χ depends on τ; the
+  calibration refuses analyses whose τ differ), then redo the sizer calibration with both days:
 
-Results go in `analysis/<date>/`, including `optics_calibration_v1.json`. **Nothing in the pipeline
-changes yet:** a new sizer (3.0.0) is decided with Ben once the beads, and later the reticle, are in.
+  ```
+  /Users/benschofield/anaconda3/envs/phantom/bin/python3 /Users/benschofield/Documents/GitHub/HPATR/AI/Real_Data_Code/bead_calibration.py "/Volumes/LaCie/Calibration/Imaging Work/YYYY/MM/DD" --tau 0.1115 --out "/Volumes/LaCie/Calibration/Imaging Work/analysis/YYYY-MM-DD"
+  /Users/benschofield/anaconda3/envs/phantom/bin/python3 /Users/benschofield/Documents/GitHub/HPATR/AI/Real_Data_Code/sizer_calibration.py "/Volumes/LaCie/Calibration/Imaging Work/analysis/2026-10-15" "/Volumes/LaCie/Calibration/Imaging Work/analysis/YYYY-MM-DD" --pour-classes "/Volumes/LaCie/Calibration/Imaging Work/analysis/sizer_calibration_2026-10-16/pour_classes.csv" --out "/Volumes/LaCie/Calibration/Imaging Work/analysis/sizer_calibration_YYYY-MM-DD" --write-profile
+  ```
+
+Results go in `analysis/<date>/`, including `optics_calibration_v1.json`.
+
+## Sizer 3.0.0 calibration (Phase 3, `sizer_calibration.py`, 2026-10-16)
+
+From the bead analysis's CSVs it sets the edge, the χ rules, the measurement depth and the defocus look-up table,
+and with `--write-profile` writes them into the optics profile's `calibration` block (Phase 4 reads it; the
+2.2.0 sizer reads none of it):
+
+- **The table is built from the static beads only** (Δ = how much larger each certified size reads, by χ, both
+  sides of focus pooled) and **checked on the falling beads only**, band by band in χ.
+- **chi_sharp:** sized directly up to here (blur adds ≤ 5 % at every bead size).
+- **chi_max:** sized through the table up to here; the narrowest of the falling check (±10 % every size, every
+  band), the share of poured spheres the AI calls droplet (≥ 90 %), the table's reach, and equal depth (±15 %).
+- **chi_max_direct:** the single cut if the table is not used.
+- `--pours` measures χ for every AI detection of the pours, all classes (~10 min); `--pour-classes` reuses
+  that CSV.
+
+Results 2026-10-16: `analysis/sizer_calibration_2026-10-16/` (report.md). Provisional until the big-bead series
+replaces the 2-bead 76 µm node and adds 98 / 155.8 µm nodes.
 
 ## Later: the reticle (Graticules Optics PS20), when it arrives
 

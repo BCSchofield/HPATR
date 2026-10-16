@@ -62,26 +62,24 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import blur  # noqa: E402  (the measurement itself, shared with measure_run's sizer 3.0.0)
 import measure_run as mr  # noqa: E402
 import optics  # noqa: E402
+from blur import BLAISOT_LEVELS, DETECT_T, RECENTRE_PX, UPSAMPLE, blaisot_model, c0_from, p_level, p_width  # noqa: E402,F401
 
 VERSION = "1.1.0"
 UM_PER_PX = mr.UM_PER_PX
 LEVELS = tuple(round(float(x), 2) for x in np.arange(0.10, 0.901, 0.05))
-BLAISOT_LEVELS = (0.25, 0.61, 0.77)
-DETECT_T = 0.95               # as extract_candidates / check_missed: anything darker is a candidate
 MIN_AREA_PX = 4
 EDGE_PX = 3                   # a bead this close to the frame edge is not measured
 BG_DOWNSAMPLE = 4
 BG_WINDOW_PX = 101            # >> the largest bead (155.8 um = 16 px), even blurred
-RECENTRE_PX = 3               # a bead may shift this much between depths
 DARK_T = 0.35                 # a bead's darkest pixel at focus (light smoothing): beads 0.1-0.35, debris 0.35-0.9
 ROUND_MAX = 1.40              # major / minor axis of the core (half-max part); a touching pair is ~2
 GAP = 1.0                     # isolated: no other dark object within GAP x its diameter + 2 px, edge to edge
 TILE_PX = 128                 # the sparse region is made of tiles this size (1.28 mm)
 SPARSE_MAX = 0.03             # a tile is sparse if dark objects cover <= 3 % around it (random beads: ~60 % isolated)
 MIN_TILES = 12                # if fewer tiles are that sparse, the MIN_TILES sparsest are used
-UPSAMPLE = 4                  # the level curves are measured on a 4x bicubic upsample (less pixel staircase)
 MAX_FRAMES = 40                # ~0.5 s a frame from the LaCie; 40 frames cut the noise ~6x
 DUST_PX = 4                    # a 'bead' this close to something seen in a bead-free capture is dust
 FOCUS_MAX = 0.70              # measure_run's default --focus-max
@@ -240,56 +238,7 @@ def transmission(img: np.ndarray) -> np.ndarray:
     return img / np.maximum(estimate_background(img), 1.0)
 
 
-# ---- the Blaisot & Yon model (Gaussian PSF, disc object) --------------------------------------------------
-
-_MODEL: dict | None = None
-
-
-def blaisot_model() -> dict:
-    """For a grid of a~ = sqrt(2) a / chi (a = geometric radius, chi = PSF half-width, s(r) = exp(-2 r^2/chi^2)):
-    the normalised contrast C0 = (1 - e^-a~^2)/(1 + e^-a~^2) and the level radii r~_l of the image profile
-    (Eq. 5 with tau = 0; r~_l does not depend on tau, Sect. 2.5). Cached."""
-    global _MODEL
-    if _MODEL is not None:
-        return _MODEL
-    from scipy.special import i0e
-    a_grid = np.linspace(0.08, 6.0, 150)
-    r = np.linspace(0.0, 12.0, 2401)
-    levels = sorted(set(LEVELS) | set(BLAISOT_LEVELS) | {0.5})
-    radii = {l: [] for l in levels}
-    for a in a_grid:
-        rho = np.linspace(0.0, a, 500)
-        # e^{-r^2 - rho^2} I0(2 r rho) = e^{-(r - rho)^2} i0e(2 r rho): no overflow
-        f = rho[None, :] * np.exp(-(r[:, None] - rho[None, :]) ** 2) * i0e(2.0 * r[:, None] * rho[None, :])
-        prof = 1.0 - 2.0 * np.trapezoid(f, rho, axis=1)
-        pmin = prof[0]
-        for l in levels:
-            thr = pmin + l * (1.0 - pmin)
-            j = int(np.argmax(prof >= thr))
-            j = max(j, 1)
-            r0, r1, p0, p1 = r[j - 1], r[j], prof[j - 1], prof[j]
-            radii[l].append(r0 + (thr - p0) * (r1 - r0) / (p1 - p0) if p1 != p0 else r1)
-    e = np.exp(-a_grid ** 2)
-    _MODEL = {"a": a_grid, "C0": (1 - e) / (1 + e), "r": {l: np.asarray(v) for l, v in radii.items()}}
-    return _MODEL
-
-
-def c0_from(C: float, tau: float) -> float:
-    """Blaisot Eq. 11 inverted: the normalised contrast from the measured one."""
-    den = (1.0 - tau) * (1.0 + C) - C
-    return float(np.clip(C / den, 0.0, 0.999)) if den > 0 else 0.999
-
-
-def p_level(l: float, C0: float) -> float:
-    """a / r_l as a function of C0 (Blaisot Eq. 15), from the model."""
-    m = blaisot_model()
-    return float(np.interp(C0, m["C0"], m["a"] / m["r"][l]))
-
-
-def p_width(C0: float) -> float:
-    """r~_0.77 - r~_0.25 as a function of C0 (Blaisot Eq. 19-20), from the model."""
-    m = blaisot_model()
-    return float(np.interp(C0, m["C0"], m["r"][0.77] - m["r"][0.25]))
+# ---- the Blaisot & Yon model: blur.py (blaisot_model, c0_from, p_level, p_width; imported above) ------------
 
 
 # ---- detection and measurement ---------------------------------------------------------------------------
@@ -417,16 +366,7 @@ def _in(region, b) -> bool:
                                          min(region.shape[1] - 1, int(round(b["cx"])))])
 
 
-def _component_at(mask: np.ndarray, y: int, x: int) -> np.ndarray:
-    n, lab = cv2.connectedComponents(mask.astype(np.uint8), connectivity=8)
-    if n < 2:
-        return np.zeros_like(mask, bool)
-    k = lab[y, x]
-    if k == 0:                                    # the seed is not in the mask: take the nearest component
-        ys, xs = np.nonzero(lab)
-        j = int(np.argmin((ys - y) ** 2 + (xs - x) ** 2))
-        k = lab[ys[j], xs[j]]
-    return lab == k
+_component_at = blur.component_at
 
 
 def measure_at(T: np.ndarray, cx: float, cy: float, d_px: float, tau: float | None = None,
@@ -434,31 +374,11 @@ def measure_at(T: np.ndarray, cx: float, cy: float, d_px: float, tau: float | No
     """Everything measured for one bead whose centre is near (cx, cy). None if it is too close to the edge.
     `levels` limits the level curve (default: every level in LEVELS; the Blaisot levels and 0.5 always)."""
     from scipy import ndimage
-    H, W = T.shape
-    half = int(max(14, 1.5 * d_px + 12))
-    Ts = cv2.GaussianBlur(T, (0, 0), 1.0)
-    x0r, x1r = int(round(cx)) - RECENTRE_PX, int(round(cx)) + RECENTRE_PX + 1
-    y0r, y1r = int(round(cy)) - RECENTRE_PX, int(round(cy)) + RECENTRE_PX + 1
-    if x0r < 0 or y0r < 0 or x1r > W or y1r > H:
+    loc = blur.locate(T, cx, cy, d_px)                 # re-centre on the darkness, cut the window (blur.py)
+    if loc is None:
         return None
-    # re-centre on the darkness: the centroid of (1 - T) in the search window
-    win = np.clip(1.0 - Ts[max(0, y0r - half // 2):min(H, y1r + half // 2),
-                           max(0, x0r - half // 2):min(W, x1r + half // 2)], 0, None)
-    if win.sum() > 0:
-        yy, xx = np.mgrid[0:win.shape[0], 0:win.shape[1]]
-        ucx = max(0, x0r - half // 2) + float((xx * win).sum() / win.sum())
-        ucy = max(0, y0r - half // 2) + float((yy * win).sum() / win.sum())
-        if math.hypot(ucx - cx, ucy - cy) <= RECENTRE_PX + 1:
-            cx, cy = ucx, ucy
-    xc, yc = int(round(cx)), int(round(cy))
-    x0, x1, y0, y1 = xc - half, xc + half + 1, yc - half, yc + half + 1
-    if x0 < 0 or y0 < 0 or x1 > W or y1 > H:
-        return None
-    Tc = T[y0:y1, x0:x1]
-    Tsc = Ts[y0:y1, x0:x1]
-    row = {"cx": round(cx, 2), "cy": round(cy, 2)}
-    cand = Tsc < DETECT_T
-    m = _component_at(cand, half, half) if cand.any() else np.zeros_like(cand)
+    Tc, Tsc, m = loc["Tc"], loc["Tsc"], loc["m"]
+    row = {"cx": round(loc["cx"], 2), "cy": round(loc["cy"], 2)}
     t_low = float(Tsc.min())
     row["t_min_smoothed"] = round(t_low, 4)
     if not m.any():
@@ -489,32 +409,8 @@ def measure_at(T: np.ndarray, cx: float, cy: float, d_px: float, tau: float | No
                halfmax_d_um=round(float(mr.equiv_um(a_half)), 2) if a_half else float("nan"),
                ring=ring, centre_t=round(centre_t, 4))
 
-    # -- the level curve, on a 4x upsample, inside the bead's neighbourhood --
-    U = cv2.resize(Tc, None, fx=UPSAMPLE, fy=UPSAMPLE, interpolation=cv2.INTER_CUBIC)
-    near = cv2.resize(cv2.dilate(m.astype(np.uint8), np.ones((5, 5), np.uint8)), (U.shape[1], U.shape[0]),
-                      interpolation=cv2.INTER_NEAREST).astype(bool)
-    for l in sorted(set(levels if levels is not None else LEVELS) | set(BLAISOT_LEVELS) | {0.5}):
-        thr = core + l * (1.0 - core)
-        reg = (U < thr) & near
-        if not reg.any():
-            row[f"d_l{l:.2f}"] = row[f"draw_l{l:.2f}"] = float("nan")
-            continue
-        n, lab, stats, _c = cv2.connectedComponentsWithStats(reg.astype(np.uint8), connectivity=8)
-        big = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
-        comp_l = lab == big
-        a_raw = float(comp_l.sum())
-        a_fill = float(ndimage.binary_fill_holes(comp_l).sum())
-        row[f"d_l{l:.2f}"] = round(2 * math.sqrt(a_fill / math.pi) / UPSAMPLE * UM_PER_PX, 3)
-        row[f"draw_l{l:.2f}"] = round(2 * math.sqrt(a_raw / math.pi) / UPSAMPLE * UM_PER_PX, 3)
-
-    # -- Blaisot & Yon: blur width and contrast-corrected size --
-    r25, r61, r77 = (row[f"d_l{l:.2f}"] / 2 for l in BLAISOT_LEVELS)
-    if tau is not None and all(np.isfinite([r25, r61, r77])):
-        C0 = c0_from(row["contrast"], tau)
-        pw = p_width(C0)
-        row["chi_um"] = round(math.sqrt(2.0) * (r77 - r25) / pw, 3) if pw > 0 else float("nan")
-        row["d_blaisot_um"] = round(2 * r61 * p_level(0.61, C0), 3)
-        row["C0"] = round(C0, 4)
+    # -- the level curve on a 4x upsample, the blur width chi and Blaisot's contrast-corrected size (blur.py) --
+    row.update(blur.edge_sizes(Tc, m, core, UM_PER_PX, tau, LEVELS if levels is None else levels))
     return row
 
 
@@ -1072,7 +968,10 @@ def _figures(out: Path, at_focus: dict, depth: dict, rows_focus: list[dict]):
     return figs
 
 
-def analyse(paths, out: Path, targets_path: Path | None = None, max_frames: int = MAX_FRAMES) -> dict:
+def analyse(paths, out: Path, targets_path: Path | None = None, max_frames: int = MAX_FRAMES,
+            tau_fixed: float | None = None) -> dict:
+    """tau_fixed: Blaisot's tau to use instead of measuring it (chi depends on it, so a later series must use the
+    first one's to be comparable: 0.1115 for the beads of 2026-10-15)."""
     global UM_PER_PX
     profile = optics.profile_for(paths[0])             # the optics these captures were taken with
     UM_PER_PX = mr.UM_PER_PX = float(profile["um_per_px"])
@@ -1096,11 +995,11 @@ def analyse(paths, out: Path, targets_path: Path | None = None, max_frames: int 
 
     # through focus, per slide
     rows_depth = []
-    tau = None
+    tau = tau_fixed
     result["regions"] = []
     for slide in sorted({c.slide for c in caps if c.kind == "z"}):
         zc = [c for c in caps if c.kind == "z" and c.slide == slide]
-        rows, info = through_focus(zc, targets, max_frames, dust=dust, out=out)
+        rows, info = through_focus(zc, targets, max_frames, tau_hint=tau_fixed, dust=dust, out=out)
         tau = info["tau"] if tau is None else tau
         rows_depth += rows
         result["through_focus"][slide] = {"info": info}
@@ -1285,6 +1184,8 @@ def main():
     ap.add_argument("--targets", type=Path, default=None,
                     help="targets.json (default: the first found in the given folder or its parents)")
     ap.add_argument("--max-frames", type=int, default=MAX_FRAMES, help="frames averaged per capture")
+    ap.add_argument("--tau", type=float, default=None, help="Blaisot's tau to use instead of measuring it (chi "
+                    "depends on it: give 0.1115, the 2026-10-15 value, so a new series is comparable)")
     a = ap.parse_args()
     targets = a.targets
     if targets is None:
@@ -1292,7 +1193,7 @@ def main():
             if (p / "targets.json").is_file():
                 targets = p / "targets.json"
                 break
-    R = analyse(a.paths, a.out, targets, a.max_frames)
+    R = analyse(a.paths, a.out, targets, a.max_frames, a.tau)
     print(f"{R['captures']} captures; targets {targets or '(built-in sizes)'}")
     for s, v in sorted(R["at_focus"].items(), key=lambda kv: float(kv[0])):
         print(f"  {s:>7} um: {v['n_beads']:3d} beads at focus, current sizer {v['d_current_median_um']} um "

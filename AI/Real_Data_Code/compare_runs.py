@@ -76,8 +76,11 @@ def main():
     # model's mask area -- an 8% difference in D32 with nothing to flag it.
     # A run predating the field reads None, which differs from "2.0.0", so old
     # and new runs correctly refuse to compare.
+    # Sizer 3.0.0 (2026-10-16) adds the calibration that sized the run: the profile's calibration hash, the edge,
+    # chi_max and d_min. 2.x runs record none of them (None == None), so they compare as before.
     keys = ("score_threshold", "focus_max", "um_per_px", "ci_stride",
-            "sizer_version", "sizer_enabled", "split_um", "core_estimator")
+            "sizer_version", "sizer_enabled", "split_um", "core_estimator",
+            "optics_profile_hash", "sizer_edge", "sizer_chi_max_um", "sizer_d_min_um")
     base = {k: runs[0]["provenance"].get(k) for k in keys}
     mismatched = []
     for lab, r in zip(labels, runs):

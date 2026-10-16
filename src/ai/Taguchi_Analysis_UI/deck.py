@@ -986,6 +986,10 @@ def caveats(results) -> list[tuple[str, str]]:
     if any(str(r.sizer_version) == "2.2.0" for r in results.runs):
         out.append(("Sizer 2.2.0", "D32 is the D32 of round, sharp droplets. Part of any effect on it is selection "
                                    "by the sharpness rule (moved share on the data-quality slide)."))
+    if any(str(r.sizer_version) == "3.0.0" for r in results.runs):
+        out.append(("Sizer 3.0.0", "Sizes are calibrated on certified glass beads (37-155.8 um, provisional) and "
+                                   "count only droplets inside the measurement volume (blur width <= chi_max); below "
+                                   "37 um the bead table is extrapolated."))
     out.append(("Absence of evidence", "Not significant is not 'no effect': a small design only detects large "
                                        "effects."))
     return out
