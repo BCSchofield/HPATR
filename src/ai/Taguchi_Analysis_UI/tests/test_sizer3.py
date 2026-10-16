@@ -27,7 +27,7 @@ TABLE = {"chi_um": [13.0, 20.0, 40.0, 60.0], "nodes_um": [40.0, 80.0],
          "delta_um": [[0.0, 2.0, 6.0, 9.0], [0.0, 1.0, 3.0, 4.0]], "sigma_um": [[1.0] * 4, [1.0] * 4],
          "chi_reach_um": 60.0}
 CAL = {"status": "test", "tau": TAU, "edge_base": "blaisot", "edge_offset_um": 1.5, "chi_sharp_um": 15.0,
-       "chi_max_um": 40.0, "d_min_um": 30.0, "lookup_table": TABLE}
+       "chi_max_um": 40.0, "d_min_um": 30.0, "lookup_table": TABLE, "depth_mm": {"chi_max": 10.0}}
 
 
 def calib():
@@ -133,6 +133,19 @@ def test_a_droplet_touching_another_detection_is_crowded():
     assert md["method"] == "crowded" and not md["in_volume"] and not md["in_focus"]
 
 
+def test_the_border_weight_is_the_frame_over_the_area_a_centre_can_use():
+    assert blur.border_weight(1.0, (1152, 2048)) == pytest.approx(2048 * 1152 / ((2048 - 28) * (1152 - 28)))   # the 14 px minimum
+    assert blur.border_weight(10.0, (1152, 2048)) > blur.border_weight(2.0, (1152, 2048))   # a bigger window
+
+
+def test_crowded_droplets_are_added_back_in_proportion():
+    rows = [{"droplets_in_volume": 60, "droplets_outside": 30, "droplets_no_chi": 10, "droplets_crowded": 10}]
+    mr.UM_PER_PX = 10.0
+    c = mr.concentration(rows, [(60.0, 40.0, 20.0)], (1000, 1000), {"depth_mm": 10.0})
+    assert c["crowded_in_volume_share"] == 0.6 and c["crowded_factor"] == pytest.approx(1 + 0.6 * 10 / 60)
+    assert c["in_volume_per_mm3"] == pytest.approx(60 * (1 + 0.1) / (100 * 10), rel=1e-4)
+
+
 def test_2_x_is_untouched():
     T, masks = frame()
     for sharp in (True, False):
@@ -190,7 +203,7 @@ def test_a_3_0_0_run_records_every_droplet_and_its_calibration(run3):
     meas = run3["meas"]
     with open(meas / "droplet_sizes.csv", newline="") as f:
         rows = list(csv.DictReader(f))
-    assert list(rows[0]) == ["frame", "diameter_um", "in_focus", "chi_um", "in_volume", "size_method"]
+    assert list(rows[0]) == ["frame", "diameter_um", "in_focus", "chi_um", "in_volume", "size_method", "weight"]
     assert len(rows) == 3 * len(CASES)
     assert [r["size_method"] for r in rows[:len(CASES)]] == [c[3] for c in CASES]
     sized = [float(r["diameter_um"]) for r in rows[:len(CASES)] if r["in_focus"] == "1"]
@@ -207,6 +220,13 @@ def test_a_3_0_0_run_records_every_droplet_and_its_calibration(run3):
     assert s["droplets_in_volume"] == 12 and s["droplets_unsized_in_volume"] == 3 and s["droplets_border"] == 3
     assert "measurement volume" in s["definitions"]["d32"]
     assert "sizer 3.0.0: in the volume 12" in run3["stdout"]
+    # the concentration: border-weighted droplets in the volume / (frames x frame area x depth)
+    c = s["concentration"]
+    assert c["volume_mm3"] == pytest.approx(4.8 * 1.8 * 10.0) and c["frames"] == 3 and c["crowded_factor"] == 1.0
+    w = sum(float(r["weight"]) for r in rows if r["in_volume"] == "1")
+    assert c["in_volume_per_mm3"] == pytest.approx(w / (3 * c["volume_mm3"]), rel=1e-4)
+    assert all(float(r["weight"]) > 1.2 for r in rows if r["in_volume"] == "1")      # a small frame: big border
+    assert "concentration (sizer 3.0.0)" in run3["stdout"]
 
 
 def test_the_extremes_backfill_re_measures_a_3_0_0_run_to_the_same_numbers(run3, monkeypatch):
@@ -244,6 +264,14 @@ def test_the_liquid_stage_measures_droplets_at_3_0_0(run3):
     s = json.loads((out / "classical_summary.json").read_text())
     assert s["provenance"]["sizer_version"] == "3.0.0"
     assert s["provenance"]["optics_profile_hash"] == calib()["hash"]
+    with open(out / "classical_per_frame.csv", newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert {"droplet_px_in_volume", "total_liquid_px_in_volume", "atomised_pct_in_volume"} <= set(rows[0])
+    dv = sum(int(r["droplet_px_in_volume"]) for r in rows)
+    tv = sum(int(r["total_liquid_px_in_volume"]) for r in rows)
+    assert s["atomised_pct_in_volume_pooled"] == pytest.approx(100 * dv / tv, abs=1e-3)
+    assert tv < sum(int(r["total_liquid_px"]) for r in rows)          # the far droplet is left out
+    assert "atomised in the volume" in p.stdout
 
 
 def test_a_profile_without_a_calibration_is_refused_plainly(tmp_path):
@@ -262,12 +290,25 @@ def test_the_app_and_the_pipeline_pass_the_version_on():
     pc = spec.rdc_module("process_capture")
     assert pc.sizer_flags(None, True) == ["--sharpness-rule"] and pc.sizer_flags(None, False) == ["--no-sharpness-rule"]
     assert pc.sizer_flags("3.0.0", True) == ["--sizer", "3.0.0"]
-    s = spec.RunSettings(sizer="3.0.0")
-    assert spec.sizer_of(s) == "3.0.0" and spec.sizer_of(spec.RunSettings()) == "2.2.0"
-    assert spec.sizer_of(spec.RunSettings(sharpness_rule=False)) == "2.1.0"
-    cmd = spec.classical_cmd(Path("/tmp/x"), s, {})
-    assert cmd[-2:] == ["--sizer", "3.0.0"]
-    assert spec.classical_cmd(Path("/tmp/x"), spec.RunSettings(), {})[-1] == "--sharpness-rule"
+    assert pc.sizer_flags() == ["--sizer", "3.0.0"]                      # nothing asked for: the default (Ben)
+    assert spec.sizer_of(spec.RunSettings()) == "3.0.0" == spec.DEFAULT_SIZER
+    assert spec.sizer_of(spec.RunSettings(sizer=None)) == "2.2.0"         # an old job: by its sharpness switch
+    assert spec.sizer_of(spec.RunSettings(sizer=None, sharpness_rule=False)) == "2.1.0"
+    assert spec.classical_cmd(Path("/tmp/x"), spec.RunSettings(), {})[-2:] == ["--sizer", "3.0.0"]
+    assert spec.classical_cmd(Path("/tmp/x"), spec.RunSettings(sizer="2.2.0"), {})[-1] == "--sharpness-rule"
+    assert blur.resolve_sizer() == "3.0.0" and blur.resolve_sizer(None, True) == "2.2.0"
+
+
+def test_the_app_flags_runs_measured_with_an_older_sizer_or_bead_calibration(run3, monkeypatch, tmp_path):
+    rd = __import__("src.ai.Taguchi_Analysis_UI.run_discovery", fromlist=["x"])
+    monkeypatch.setenv("HPATR_OPTICS_DIR", run3["env"]["HPATR_OPTICS_DIR"])
+    st = rd.read_analysis_state(run3["run"], 0.30)
+    assert st.measured is False or st.stale is None                     # 3.0.0 with today's calibration
+    assert rd.staleness(run3["run"], "3.0.0", calib()["hash"]) is None
+    assert rd.staleness(run3["run"], "3.0.0", "0ld0ld0ld0ld") == "an older bead calibration"
+    assert rd.staleness(run3["run"], "2.2.0", None) == "sizer 2.2.0, the default is 3.0.0"
+    assert rd.measurement_key("3.0.0", "abc") != rd.measurement_key("3.0.0", "def")
+    assert rd.measurement_key("2.2.0", None) == "2.2.0"
 
 
 def test_a_job_keeps_its_sizer_when_resumed():
@@ -276,3 +317,65 @@ def test_a_job_keeps_its_sizer_when_resumed():
     assert jobstate.settings_from(json.loads(json.dumps(d))).sizer == "3.0.0"
     old = jobstate.settings_from({"score_thresh": 0.3})          # saved before the sharpness rule existed
     assert spec.sizer_of(old) == "2.1.0"
+    before = jobstate.settings_from({"score_thresh": 0.3, "sharpness_rule": True})   # before the sizer setting
+    assert spec.sizer_of(before) == "2.2.0"
+    assert spec.sizer_of(jobstate.settings_from(jobstate._settings_dict(spec.RunSettings()))) == "3.0.0"
+
+
+def test_only_what_is_inside_the_volume_enters_the_atomised_fraction():
+    """A sharp ligament counts, a ligament far out of focus does not, and neither does a droplet beyond chi_max: the
+    in-volume fraction leaves them out of both sides (sizer 3.0.0 plan, Phase 5)."""
+    import argparse
+    cl = spec.rdc_module("classical_liquid")
+    T = np.ones((200, 480), np.float32)
+    drops = [render(T, 60.0, 12.5, 60.0, 60.0), render(T, 100.0, 12.5, 160.0, 60.0),
+             render(T, 60.0, 75.0, 300.0, 60.0)]                               # the last: far out of focus
+
+    def bar(y0, chi, depth):
+        t = np.ones(T.shape, np.float32)
+        t[y0:y0 + 8, 30:450] = depth
+        return cv2.GaussianBlur(t, (0, 0), chi / 20.0)
+    sharp, far = bar(130, 12.5, 0.15), bar(170, 90.0, 0.15)
+    T *= sharp * far
+    m_sharp = np.zeros(T.shape, bool)
+    m_sharp[128:140, 28:452] = True
+    m_far = (far < 0.97)
+    dets = [det(1, m) for m in drops] + [det(1, m_sharp, mr.FILAMENT), det(1, m_far, mr.FILAMENT)]
+    args = argparse.Namespace(seed=0.70, ceiling=0.95, min_area=20, focus_max=0.70, classical_only=False,
+                              static_t=0.97, split_um=40.0, core_estimator="robust", no_sizer=False,
+                              sharpness_rule=False, sizer_version="3.0.0")
+    mr.SIZER3 = calib()
+    try:
+        liquid, dmask, oof = cl.frame_masks(T, dets, args)
+        dvol, und = cl.model_masks.last_vol
+        dv, uv = cl.volume_masks(T, liquid, dmask, oof, dvol, und, args)
+    finally:
+        mr.SIZER3 = None
+    assert uv[134, 200] and not uv[174, 200]                   # the sharp ligament is in, the far one is out
+    assert dv[60, 60] and dv[60, 160] and not dv[60, 300]      # the far droplet is out of the numerator too
+    total_all = liquid | dmask | oof
+    assert total_all[174, 200] and total_all[60, 300]          # ...though the all-objects figure counts both
+
+
+def test_the_app_reads_a_3_0_0_run(run3):
+    """The analysis (taguchi_analysis.load_run, the app's responses) on a 3.0.0 run: the headline atomised fraction
+    is the one inside the volume, the all-objects one comes back as atom_all, and the concentration it computes from
+    droplet_sizes.csv is the one measure_run wrote."""
+    out = run3["run"] / "shadowgraph" / "analysis" / "liquid_0.30"
+    if not (out / "classical_summary.json").is_file():
+        p = subprocess.run([sys.executable, "-W", "ignore", str(spec.paths.RDC_DIR / "classical_liquid.py"), "--root",
+                            str(run3["run"]), "--out-dir", str(out), "--score-thresh", "0.30"],
+                           capture_output=True, text=True, env=run3["env"])
+        assert p.returncode == 0, p.stderr[-2000:]
+    ta = spec.rdc_module("taguchi_analysis")
+    rm = __import__("src.ai.Taguchi_Analysis_UI.run_metrics", fromlist=["x"])
+    rec = ta.load_run(run3["run"], "0.30")
+    cs = json.loads((out / "classical_summary.json").read_text())
+    ms = json.loads((run3["meas"] / "summary.json").read_text())
+    assert rec["vol3"] and rec["atom"] == pytest.approx(cs["atomised_pct_in_volume_pooled"], abs=0.002)
+    v = rm.response_values({}, rec, band=(30.0, 200.0))
+    assert v["atom_all"] == pytest.approx(cs["atomised_pct_pooled"], abs=0.002)
+    assert v["conc"] == pytest.approx(ms["concentration"]["in_volume_per_mm3"], rel=1e-3)
+    assert 0 < v["conc_band"] <= v["conc"]
+    vb = rm.response_values({}, rec, n_boot=50, band=(30.0, 200.0))
+    assert len(vb["boot_conc"]) == 50 and len(vb["boot_atom_all"]) == 50

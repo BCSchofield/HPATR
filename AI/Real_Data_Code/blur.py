@@ -41,6 +41,7 @@ DETECT_T = 0.95               # as extract_candidates: anything darker is part o
 RECENTRE_PX = 3               # how far the darkness may sit from the centre given
 SMOOTH_SIGMA = 1.0            # light smoothing for finding the object and re-centring
 SIZERS = ("3.0.0", "2.2.0", "2.1.0")
+DEFAULT_SIZER = "3.0.0"       # Ben, 2026-10-16: the default everywhere; 2.2.0 / 2.1.0 only when asked for
 
 
 # ---- Blaisot's Gaussian-PSF disc model ----------------------------------------------------------------------
@@ -169,6 +170,15 @@ def half_window(d_px: float) -> int:
     return int(max(14, 1.5 * d_px + 12))
 
 
+def border_weight(d_px: float, shape) -> float:
+    """A droplet is measured only if its window fits in the frame, i.e. its centre lies at least half_window from
+    every edge: of a W x H frame only (W - 2h)(H - 2h) can hold it. Each one measured stands for W H / that many
+    (the border correction for a concentration; sizer 3.0.0 plan, Phase 5)."""
+    H, W = shape
+    h = half_window(d_px)
+    return float(W * H) / max(1.0, (W - 2.0 * h) * (H - 2.0 * h))
+
+
 def locate(T: np.ndarray, cx: float, cy: float, d_px: float, nearest: bool = True,
            blank: np.ndarray | None = None) -> dict | None:
     """Re-centre and cut the window. None if the window does not fit in the frame. Smooths only a crop around the
@@ -269,6 +279,72 @@ def measure(T: np.ndarray, cx: float, cy: float, d_px: float, tau: float, core_f
     return out
 
 
+def _perimeter(region: np.ndarray) -> float:
+    """Outline length of a binary region, its contour smoothed over 5 points so the pixel staircase does not
+    lengthen it (a stepped circle reads ~8 % long unsmoothed)."""
+    cnts, _ = cv2.findContours(region.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    total = 0.0
+    for c in cnts:
+        p = c[:, 0, :].astype(np.float64)
+        if len(p) < 6:
+            total += cv2.arcLength(c, True)
+            continue
+        k = np.ones(5) / 5.0
+        q = np.vstack([np.convolve(np.concatenate([p[-2:, i], p[:, i], p[:2, i]]), k, mode="valid")
+                       for i in range(2)]).T
+        total += float(np.sum(np.hypot(*np.diff(np.vstack([q, q[:1]]), axis=0).T)))
+    return total
+
+
+def object_chi(T: np.ndarray, mask: np.ndarray, x0: int, y0: int, tau: float, core_fn, um_per_px: float,
+               others: np.ndarray | None = None, margin: int = 10) -> dict:
+    """The blur width of an object of ANY shape (a ligament or a blob; sizer 3.0.0 plan, Phase 5): Blaisot's edge
+    width generalised. For a disc, chi = sqrt(2) (r_0.77 - r_0.25) / p_width(C0); here r_0.77 - r_0.25 becomes the
+    area between the object's 0.77 and 0.25 level sets over their mean (smoothed) outline length, which for a disc
+    is exactly r_0.77 - r_0.25. So it agrees with a droplet's chi on discs, and on a long ligament it is its edge's
+    own width. `mask` is the object's mask at (x0, y0) in T; `others` (T-sized) marks every object in the frame:
+    all but this one (grown by 3 px) are set to background first. Returns chi_um (nan if there is no edge to
+    measure), core_t and the contrast."""
+    H, W = T.shape
+    mh, mw = mask.shape
+    gx0, gy0 = max(0, x0 - margin), max(0, y0 - margin)
+    gx1, gy1 = min(W, x0 + mw + margin), min(H, y0 + mh + margin)
+    Tc = np.array(T[gy0:gy1, gx0:gx1], dtype=np.float32)
+    m = np.zeros(Tc.shape, bool)
+    m[y0 - gy0:y0 - gy0 + mh, x0 - gx0:x0 - gx0 + mw] = mask
+    if others is not None:
+        mine = cv2.dilate(m.astype(np.uint8), np.ones((7, 7), np.uint8)).astype(bool)
+        Tc[others[gy0:gy1, gx0:gx1] & ~mine] = 1.0
+    out = {"chi_um": float("nan"), "core_t": float("nan"), "contrast": float("nan")}
+    if not m.any():
+        return out
+    Ts = cv2.GaussianBlur(Tc, (0, 0), SMOOTH_SIGMA)
+    n, lab = cv2.connectedComponents((Ts < DETECT_T).astype(np.uint8), connectivity=8)
+    own = np.isin(lab, np.unique(lab[m & (lab > 0)]))           # its own T < 0.95 piece(s)
+    if not own.any():
+        return out
+    core = float(core_fn(Tc, own & m if (own & m).any() else own))
+    C = (1 - core) / (1 + core)
+    out.update(core_t=round(core, 4), contrast=round(C, 4))
+    up = UPSAMPLE if max(Tc.shape) <= 160 else 1               # big ligaments: native pixels are fine
+    U = cv2.resize(Tc, None, fx=up, fy=up, interpolation=cv2.INTER_CUBIC) if up > 1 else Tc
+    near = cv2.dilate(own.astype(np.uint8), np.ones((5, 5), np.uint8))
+    if up > 1:
+        near = cv2.resize(near, (U.shape[1], U.shape[0]), interpolation=cv2.INTER_NEAREST)
+    near = near.astype(bool)
+    reg = {}
+    for l in (0.25, 0.77):
+        r = (U < core + l * (1.0 - core)) & near
+        reg[l] = fill_holes(r) if r.any() else r
+    a25, a77 = float(reg[0.25].sum()), float(reg[0.77].sum())
+    if a25 <= 0 or a77 <= a25:
+        return out
+    width = (a77 - a25) / ((_perimeter(reg[0.25]) + _perimeter(reg[0.77])) / 2.0) / up
+    pw = p_width(c0_from(round(C, 4), tau))
+    out["chi_um"] = round(math.sqrt(2.0) * width * um_per_px / pw, 3) if pw > 0 else float("nan")
+    return out
+
+
 # ---- the look-up table and the rule ------------------------------------------------------------------------
 
 def table_size(d_read, chi, T: dict):
@@ -343,14 +419,18 @@ def sizer3(profile: dict) -> dict:
             "column": "d_blaisot_um" if cal["edge_base"] == "blaisot" else "d_l0.50",
             "edge_offset_um": float(cal["edge_offset_um"]), "chi_sharp_um": float(cal["chi_sharp_um"]),
             "chi_max_um": float(cal["chi_max_um"]), "d_min_um": float(cal["d_min_um"]),
-            "table": cal["lookup_table"], "status": cal.get("status", "")}
+            "table": cal["lookup_table"], "status": cal.get("status", ""),
+            "depth_mm": float((cal.get("depth_mm") or {}).get("chi_max") or "nan")}
 
 
-def resolve_sizer(sizer: str | None = None, sharpness_rule: bool = True) -> str:
-    """The sizer version: `sizer` when given, else what the old switch meant (2.2.0 with the sharpness rule, 2.1.0
-    without), so every older command, job and run keeps its version."""
+def resolve_sizer(sizer: str | None = None, sharpness_rule: bool | None = None) -> str:
+    """The sizer version: `sizer` when given; else what the old switch says when it is set (2.2.0 with the
+    sharpness rule, 2.1.0 without), so every older command, job and run keeps its version; else (nothing asked
+    for) the default, 3.0.0."""
     if sizer:
         if sizer not in SIZERS:
             raise ValueError(f"unknown sizer {sizer!r}: one of {', '.join(SIZERS)}")
         return sizer
+    if sharpness_rule is None:
+        return DEFAULT_SIZER
     return "2.2.0" if sharpness_rule else "2.1.0"

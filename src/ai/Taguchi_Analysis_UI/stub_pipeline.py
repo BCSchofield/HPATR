@@ -145,6 +145,10 @@ class Stub:
         summary = {"d32_in_focus_um": 90.0, "d32_ci95": [88.0, 92.0], "atomised_pct": 8.0,
                    "atomised_ci95": [7.0, 9.0],
                    "provenance": {"sizer_version": sizer or ("2.2.0" if sharpness_rule else "2.1.0"), "stub": True}}
+        if summary["provenance"]["sizer_version"] == "3.0.0":
+            # as the real measure_run: the calibration that sized it, so the app sees it as up to date
+            from . import run_discovery as rd
+            summary["provenance"]["optics_profile_hash"] = rd.current_calibration(run_dir)
         if "meas_summary" not in omit:
             (out / "summary.json").write_text(json.dumps(summary))
         stage_s["measurement"] = round(time.time() - t, 3)

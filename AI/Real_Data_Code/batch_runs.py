@@ -48,11 +48,11 @@ def main():
                     help="runs that already hold a complete analysis at this stride skip "
                          "extraction/background/inference and are only re-measured "
                          "(process_capture.can_reuse decides); others run in full")
-    ap.add_argument("--sharpness-rule", action=argparse.BooleanOptionalAction, default=True,
+    ap.add_argument("--sharpness-rule", action=argparse.BooleanOptionalAction, default=None,
                     help="sizer 2.2.0 (default) for BOTH stages; --no-sharpness-rule "
                          "for 2.1.0. Passed explicitly to each, so they always agree")
     ap.add_argument("--sizer", choices=("3.0.0", "2.2.0", "2.1.0"), default=None,
-                    help="the sizer version for BOTH stages (3.0.0: opt-in until Phase 6); overrides "
+                    help="the sizer version for BOTH stages (default 3.0.0, Ben 2026-10-16); overrides "
                          "--sharpness-rule")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)

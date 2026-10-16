@@ -52,6 +52,7 @@ import numpy as np
 from . import covariates
 from . import design as dz
 from . import operating
+from . import run_discovery as rd
 from . import run_metrics
 from . import pipeline_spec as spec
 
@@ -696,12 +697,14 @@ def analyse(design: dz.Design, thr: float | None = None,
     if liq:
         results.refused = liq
         return results
-    versions = {r.sizer_version for r in runs}
+    key = lambda r: rd.measurement_key(r.sizer_version, r.rec.get("sizer_calibration"))
+    versions = {key(r) for r in runs}
     if len(versions) > 1:
         groups = {}
         for r in runs:
-            groups.setdefault(r.sizer_version or "pre-2.0.0", []).append(r.name[:6])
-        results.refused = ("these runs were measured with different sizer versions, so their numbers "
+            groups.setdefault(key(r), []).append(r.name[:6])
+        results.refused = ("these runs were measured with different sizer versions or bead calibrations, so "
+                           "their numbers "
                            "are not comparable: " + "; ".join(f"{v}: {', '.join(n)}" for v, n in
                                                               sorted(groups.items())) +
                            ". Re-measure them all with one version (Batch tab, 'Re-measure only').")

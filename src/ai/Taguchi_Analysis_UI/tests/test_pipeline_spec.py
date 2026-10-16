@@ -209,9 +209,13 @@ class BuilderTests(unittest.TestCase):
         # classical_liquid.py defaults to 2.2.0 since 2026-10-08, so omitting the
         # flag no longer means 2.1.0. A job resumed at 2.1.0 must pass
         # --no-sharpness-rule, or its runs straddle two sizer versions.
+        # (since 2026-10-16 the default is --sizer 3.0.0; a job saved before then has sizer None and resumes by
+        # its sharpness switch)
+        dflt = spec.classical_cmd(self.RUN, spec.RunSettings(), spec.default_options())
+        self.assertEqual(dflt[-2:], ["--sizer", "3.0.0"])
         for rule, flag, other in ((True, "--sharpness-rule", "--no-sharpness-rule"),
                                   (False, "--no-sharpness-rule", "--sharpness-rule")):
-            s = spec.RunSettings(sharpness_rule=rule)
+            s = spec.RunSettings(sharpness_rule=rule, sizer=None)
             cmd = spec.classical_cmd(self.RUN, s, spec.default_options())
             self.assertIn(flag, cmd)
             self.assertNotIn(other, cmd)

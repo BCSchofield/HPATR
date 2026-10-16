@@ -130,16 +130,17 @@ def test_without_since_nothing_changes(tmp, monkeypatch):
 def test_a_run_measured_under_the_legacy_folder_names_is_remeasured_alongside(tmp, monkeypatch):
     run = fakes.make_run(tmp, fakes.REAL_10_05[0][0], analysis="legacy", sizer_version=None)
     before = rd.load_run_info(run).analysis
-    assert before.measured and before.legacy_names and before.label == "measured pre-2.0.0 · legacy folders"
+    assert before.measured and before.legacy_names
+    assert before.label == "measured pre-2.0.0 · legacy folders · re-measure: sizer pre-2.0.0, the default is 3.0.0"
     age(run)
     jd, code = batch(tmp, monkeypatch, [run])
     assert code == 0
     an = run / "shadowgraph" / "analysis"
     assert (an / "droplets_0.30").is_dir() and (an / "measurement_0.30").is_dir()   # old kept
     after = rd.load_run_info(run).analysis
-    # the batch measures at 2.2.0 (sharpness rule) by default since 2026-10-08
-    assert after.measured and not after.legacy_names and after.sizer_version == "2.2.0"
-    assert after.label == "measured v2.2.0"          # readers now prefer the new folders
+    # the batch measures at 3.0.0 by default since 2026-10-16 (2.2.0 from 2026-10-08)
+    assert after.measured and not after.legacy_names and after.sizer_version == "3.0.0"
+    assert after.label == "measured v3.0.0"          # readers now prefer the new folders; up to date
 
 
 def test_the_left_pane_would_flag_a_mix_of_old_and_new_results(tmp, monkeypatch):
@@ -149,7 +150,10 @@ def test_the_left_pane_would_flag_a_mix_of_old_and_new_results(tmp, monkeypatch)
     assert rd.sizer_versions(runs) == {"pre-2.0.0", "2.2.0"}
     batch(tmp, monkeypatch, [old])                    # re-analyse only the old one
     runs = [rd.load_run_info(old), rd.load_run_info(new)]
-    assert rd.sizer_versions(runs) == {"2.2.0"}       # the mix is resolved (batch default 2.2.0)
+    assert rd.sizer_versions(runs) == {"2.2.0", rd.measurement_key("3.0.0", rd.current_calibration(old))}
+    batch(tmp, monkeypatch, [new])                    # the old 2.2.0 one too: the mix is resolved (default 3.0.0)
+    runs = [rd.load_run_info(old), rd.load_run_info(new)]
+    assert len(rd.sizer_versions(runs)) == 1
 
 
 def test_a_stale_extraction_is_not_reused_when_the_stride_differs(tmp, monkeypatch):

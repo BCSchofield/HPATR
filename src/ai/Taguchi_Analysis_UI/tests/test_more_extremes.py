@@ -166,7 +166,8 @@ def _measure(run: Path, out: Path, images: str | None):
            str(run / "shadowgraph" / "analysis" / "predictions.json"), "--root", str(run),
            "--val-dir", "shadowgraph/raw", "--background", str(raw / "background_median.tiff"),
            "--sixteen-bit-dir", str(raw / "frames" / "16bit"), "--score-thresh", "0.30",
-           "--out-dir", str(out), "--n-boot", "20"] + (["--images", images] if images else [])
+           "--out-dir", str(out), "--n-boot", "20", "--sharpness-rule"] + (["--images", images] if images else [])
+    # (2.2.0 on purpose: these synthetic runs model focus by pale discs, which is 2.x's rule)
     p = subprocess.run(cmd, capture_output=True, text=True)
     assert p.returncode == 0, p.stdout[-2000:] + p.stderr[-2000:]
     return p.stdout
@@ -396,7 +397,7 @@ dmc = spec.rdc_module("draw_more_classical")
 
 def _classical(run: Path, out: Path):
     cmd = [sys.executable, "-W", "ignore", str(Path(dmc.__file__).with_name("classical_liquid.py")), "--root",
-           str(run), "--out-dir", str(out), "--score-thresh", "0.30", "--images-mode", "extremes"]
+           str(run), "--out-dir", str(out), "--score-thresh", "0.30", "--images-mode", "extremes", "--sharpness-rule"]
     p = subprocess.run(cmd, capture_output=True, text=True)
     assert p.returncode == 0, p.stdout[-2000:] + p.stderr[-2000:]
 

@@ -988,8 +988,11 @@ def caveats(results) -> list[tuple[str, str]]:
                                    "by the sharpness rule (moved share on the data-quality slide)."))
     if any(str(r.sizer_version) == "3.0.0" for r in results.runs):
         out.append(("Sizer 3.0.0", "Sizes are calibrated on certified glass beads (37-155.8 um, provisional) and "
-                                   "count only droplets inside the measurement volume (blur width <= chi_max); below "
-                                   "37 um the bead table is extrapolated."))
+                                   "count only droplets inside the measurement volume (blur width <= chi_max; the "
+                                   "frame area x a calibrated depth, the same for every size); below 37 um the bead "
+                                   "table is extrapolated. The atomised fraction is inside that volume (the "
+                                   "all-objects one is kept as an extra response); concentrations are per mm3, a "
+                                   "snapshot, not a flux. Steadiness responses still count every detection."))
     out.append(("Absence of evidence", "Not significant is not 'no effect': a small design only detects large "
                                        "effects."))
     return out

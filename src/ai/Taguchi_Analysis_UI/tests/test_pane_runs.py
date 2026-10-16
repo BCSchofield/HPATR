@@ -119,9 +119,10 @@ def test_mixed_sizer_versions_raise_a_warning(app, pane, root):
     load(app, pane, [root / "2026" / "10" / "05"])
     assert not pane.warn_label.isHidden()
     assert "2.0.0" in pane.warn_label.text() and "2.1.0" in pane.warn_label.text()
-    # ticking one of them off clears the conflict
+    # ticking one of them off clears the conflict; both are older than the default (3.0.0), which it still says
     items(pane)[1].setCheckState(Qt.CheckState.Unchecked)
-    assert pane.warn_label.isHidden()
+    assert "different sizer versions" not in pane.warn_label.text()
+    assert "older sizer" in pane.warn_label.text() and "Re-measure only" in pane.warn_label.text()
 
 
 def test_adding_the_same_folders_twice_does_not_duplicate(app, pane, root):

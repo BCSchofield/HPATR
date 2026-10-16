@@ -382,9 +382,12 @@ class RunSettings:
     # stage. On by default since 2026-10-08, matching the capture GUI, so runs
     # measured here and runs measured in the lab are one sizer version.
     sharpness_rule: bool = True
-    # The sizer version (sizer 3.0.0 plan, Phase 4): "3.0.0" | "2.2.0" | "2.1.0", or None for what the sharpness
-    # switch says (2.2.0 / 2.1.0), so every job saved before this resumes at its own version.
-    sizer: str | None = None
+    # The sizer version: "3.0.0" | "2.2.0" | "2.1.0". 3.0.0 is the default (Ben, 2026-10-16). None means what the
+    # sharpness switch says (2.2.0 / 2.1.0): a job saved before this resumes at its own version (jobstate).
+    sizer: str | None = "3.0.0"
+
+
+DEFAULT_SIZER = "3.0.0"        # Ben, 2026-10-16
 
 
 def sizer_of(settings: RunSettings) -> str:

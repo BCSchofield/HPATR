@@ -103,6 +103,9 @@ def settings_from(d: dict) -> spec.RunSettings:
     # A job written before the sharpness rule existed was measured at 2.1.0:
     # resuming it must stay 2.1.0, or its runs would straddle two sizer versions.
     d.setdefault("sharpness_rule", False)
+    # ...and one written before the sizer setting existed measured by the sharpness switch: it stays so, rather than
+    # switching to the new default (3.0.0) half way through
+    d.setdefault("sizer", None)
     if d.get("model_dir"):
         d["model_dir"] = Path(d["model_dir"])
     return spec.RunSettings(**d)

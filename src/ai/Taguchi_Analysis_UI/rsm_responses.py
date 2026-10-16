@@ -42,6 +42,7 @@ from . import operating
 from . import pipeline_spec as spec
 from . import rsm_detect as rdet
 from . import rsm_stats as rs
+from . import run_discovery as rd
 from . import stats
 
 # (key, direction, importance). The objective is THROUGHPUT (Ben, 2026-10-14): the spray is collected and
@@ -110,12 +111,12 @@ def load(detected: rdet.Detected, runs_info: dict, thr: float | None = None,
     if lw:
         warnings.append(lw)
     L = Loaded(detected, out, skipped, warnings, thr=s.score_thresh, opts=opts or stats.AnalysisOptions())
-    versions = {r.sizer_version for r in out}
+    versions = {rd.measurement_key(rc.get("sizer_version"), rc.get("sizer_calibration")) for rc in recs}
     liq = stats.mixed_liquid_versions(recs)
     if liq:
         L.refused = liq
     elif len(versions) > 1:
-        L.refused = ("these runs were measured with different sizer versions (" +
+        L.refused = ("these runs were measured with different sizer versions or bead calibrations (" +
                      ", ".join(sorted(str(v) for v in versions)) + "), so their numbers are not comparable; "
                      "re-measure them all with one version")
     elif sum(1 for r in out if r.point.in_fit) < 3:

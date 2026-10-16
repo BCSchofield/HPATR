@@ -127,12 +127,17 @@ MIN_DISTINCT = 4
 EMPTY_FRAC = 0.05       # "near-empty" = under this fraction of the run's mean
 
 
-def pooled_responses(dia_by_frame, frames, S3, S2, DP, TP):
+def pooled_responses(dia_by_frame, frames, S3, S2, DP, TP, steady=None):
     """Every response from one set of frames. Used for both the point estimate
-    and each bootstrap replicate, so they cannot drift apart."""
+    and each bootstrap replicate, so they cannot drift apart.
+
+    `steady` (sizer 3.0.0): (every droplet detection per frame, all-objects liquid px per frame), aligned with
+    `frames`: the steadiness responses keep counting every detection, in focus or not (sizer 3.0.0 plan, Phase 5),
+    while the sizes and the atomised fraction are of what is inside the measurement volume."""
     v = np.concatenate([dia_by_frame[f] for f in frames]) if frames else np.empty(0)
     n_fr = max(len(frames), 1)
-    counts = np.array([len(dia_by_frame[f]) for f in frames], dtype=float)
+    counts = (np.asarray(steady[0], dtype=float) if steady is not None
+              else np.array([len(dia_by_frame[f]) for f in frames], dtype=float))
     out = {
         "d32": S3.sum() / S2.sum() if S2.sum() else float("nan"),
         "atom": 100.0 * DP.sum() / TP.sum() if TP.sum() else float("nan"),
@@ -143,7 +148,7 @@ def pooled_responses(dia_by_frame, frames, S3, S2, DP, TP):
     out["cv_droplets"] = float(counts.std() / cmean) if cmean > 0 else float("nan")
     out["intermit_pct"] = (100.0 * float((counts < EMPTY_FRAC * cmean).mean())
                            if cmean > 0 else float("nan"))
-    tp = np.asarray(TP, dtype=float)
+    tp = np.asarray(TP if steady is None else steady[1], dtype=float)
     out["cv_liquid"] = float(tp.std() / tp.mean()) if tp.size and tp.mean() > 0 else float("nan")
     if len(v):
         out["d_mean"] = float(v.mean())
@@ -179,14 +184,21 @@ def load_run(run: Path, thr: str):
     # the diameters themselves, per frame -- a median or a percentile cannot be
     # rebuilt from sums, and the bootstrap has to recompute them per replicate
     dia = defaultdict(list)
+    # sizer 3.0.0: every detection per frame (steadiness), each sized droplet's border weight and the weighted
+    # count in the volume (the concentration)
+    nall, wt, wvol = defaultdict(int), defaultdict(list), defaultdict(float)
     with open(meas / "droplet_sizes.csv", encoding="utf-8") as f:
         for r in csv.DictReader(f):
+            nall[r["frame"]] += 1
+            if r.get("in_volume") == "1" and r.get("weight"):
+                wvol[r["frame"]] += float(r["weight"])
             if r["in_focus"] == "1":
                 d = float(r["diameter_um"])
                 s3[r["frame"]] += d ** 3
                 s2[r["frame"]] += d ** 2
                 nfocus[r["frame"]] += 1
                 dia[r["frame"]].append(d)
+                wt[r["frame"]].append(float(r["weight"]) if r.get("weight") else 1.0)
     cpf = {}
     with open(cl / "classical_per_frame.csv", encoding="utf-8") as f:
         for r in csv.DictReader(f):
@@ -194,17 +206,28 @@ def load_run(run: Path, thr: str):
     frames = sorted(cpf)
     S3 = np.array([s3.get(fr, 0.0) for fr in frames])
     S2 = np.array([s2.get(fr, 0.0) for fr in frames])
-    DP = np.array([float(cpf[fr]["droplet_px"]) for fr in frames])
-    TP = np.array([float(cpf[fr]["total_liquid_px"]) for fr in frames])
+    DPa = np.array([float(cpf[fr]["droplet_px"]) for fr in frames])
+    TPa = np.array([float(cpf[fr]["total_liquid_px"]) for fr in frames])
+    # sizer 3.0.0 (plan, Phase 5): the headline atomised fraction is the one inside the measurement volume (Ben,
+    # 2026-10-15); the all-objects one is kept alongside (atom_all)
+    vol3 = (summ.get("provenance", {}).get("sizer_version") == "3.0.0"
+            and csumm.get("atomised_pct_in_volume_pooled") is not None)
+    if vol3:
+        DP = np.array([float(cpf[fr]["droplet_px_in_volume"]) for fr in frames])
+        TP = np.array([float(cpf[fr]["total_liquid_px_in_volume"]) for fr in frames])
+    else:
+        DP, TP = DPa, TPa
 
     d32 = S3.sum() / S2.sum()
     atom = 100.0 * DP.sum() / TP.sum()
     # the re-derivation must agree with what each tool already reported
     if abs(d32 - summ["d32_in_focus_um"]) > 0.02:
         sys.exit(f"{run.name}: D32 re-derived {d32:.3f} != summary {summ['d32_in_focus_um']}")
-    if abs(atom - csumm["atomised_pct_pooled"]) > 0.002:
-        sys.exit(f"{run.name}: atomised re-derived {atom:.4f} != "
-                 f"classical summary {csumm['atomised_pct_pooled']}")
+    want = csumm["atomised_pct_in_volume_pooled"] if vol3 else csumm["atomised_pct_pooled"]
+    if abs(atom - want) > 0.002:
+        sys.exit(f"{run.name}: atomised re-derived {atom:.4f} != classical summary {want}")
+    if vol3 and abs(100.0 * DPa.sum() / TPa.sum() - csumm["atomised_pct_pooled"]) > 0.002:
+        sys.exit(f"{run.name}: all-objects atomised re-derived != classical summary {csumm['atomised_pct_pooled']}")
 
     ci_stride = int(summ.get("provenance", {}).get("ci_stride") or 1)
     dia_by_frame = {fr: np.asarray(dia.get(fr, []), dtype=float) for fr in frames}
@@ -216,8 +239,14 @@ def load_run(run: Path, thr: str):
         "d32_ci_summary": summ.get("d32_ci95"), "ci_stride": ci_stride,
         "meas_dir": meas, "cl_dir": cl,
         "sizer_version": summ.get("provenance", {}).get("sizer_version"),
+        "sizer_calibration": summ.get("provenance", {}).get("optics_profile_hash"),
+        "vol3": vol3, "DPa": DPa, "TPa": TPa,
+        "NALL": np.array([float(nall.get(fr, 0)) for fr in frames]),
+        "WVOL": np.array([wvol.get(fr, 0.0) for fr in frames]),
+        "wt": {fr: np.asarray(wt.get(fr, []), dtype=float) for fr in frames},
+        "concentration": summ.get("concentration"),
     }
-    rec.update(pooled_responses(dia_by_frame, frames, S3, S2, DP, TP))
+    rec.update(pooled_responses(dia_by_frame, frames, S3, S2, DP, TP, (rec["NALL"], TPa) if vol3 else None))
     return rec
 
 
@@ -225,14 +254,16 @@ def bootstrap(r, rng):
     idx_pool = np.arange(len(r["frames"]))[::max(1, r["ci_stride"])]
     n = len(idx_pool)
     fr = [r["frames"][i] for i in idx_pool]
+    vol3 = r.get("vol3")
     base = pooled_responses(r["dia"], fr, r["S3"][idx_pool], r["S2"][idx_pool],
-                            r["DP"][idx_pool], r["TP"][idx_pool])
+                            r["DP"][idx_pool], r["TP"][idx_pool],
+                            (r["NALL"][idx_pool], r["TPa"][idx_pool]) if vol3 else None)
     acc = {k: np.empty(N_BOOT) for k in RESP_KEYS}
     for b in range(N_BOOT):
         i = idx_pool[rng.integers(0, n, n)]
         fb = [r["frames"][j] for j in i]
         rep = pooled_responses(r["dia"], fb, r["S3"][i], r["S2"][i],
-                               r["DP"][i], r["TP"][i])
+                               r["DP"][i], r["TP"][i], (r["NALL"][i], r["TPa"][i]) if vol3 else None)
         for k in RESP_KEYS:
             acc[k][b] = rep[k]
     # centre each replicate distribution on the all-frame point estimate

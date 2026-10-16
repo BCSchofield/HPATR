@@ -2,7 +2,7 @@
  "name": "lens1_2026-10",
  "version": 1,
  "valid_from": "2025-01-01",
- "description": "The optics used for every capture up to and including 2026-10: Phantom VEO E-340L, 2048 x 1152 window, the current lens, camera on its rail. One profile per optical set-up: a new lens, aperture, working distance or camera position is a new profile file, not a code edit (sizer 3.0.0 plan, Phase 0).",
+ "description": "The optics used for every capture up to and including 2026-10: Phantom VEO E-340L, 2048 x 1152 window, the current lens (telecentric: the magnification is the same at every depth, so the measurement volume is a box and 10 um/px holds through it; Ben, 2026-10-16), camera on its rail. One profile per optical set-up: a new lens, aperture, working distance or camera position is a new profile file, not a code edit (sizer 3.0.0 plan, Phase 0).",
  "um_per_px": 10.0,
  "um_per_px_status": "Recorded as calibrated before 2026-10 (STATUS, Settled). The falling beads of 2026-10-15 agree: sizer against certificate, slope 1.002. To be measured with the PS20 dot array (profile v2).",
  "calibration": {
@@ -219,5 +219,9 @@
   "LaCie: Calibration/Imaging Work/analysis/2026-10-15/optics_calibration_v1.json (bead calibration, 2026-10-15)",
   "LaCie: Calibration/Imaging Work/analysis/size_limit_2026-10-16/ (size limit model, 2026-10-16)",
   "LaCie: Calibration/Imaging Work/analysis/sizer_calibration_2026-10-16 (sizer calibration, Phase 3, 2026-10-16)"
- ]
+ ],
+ "lens": {
+  "telecentric": true,
+  "note": "Ben, 2026-10-16. To check: the PS20 reticle's dot array stepped through focus (spacing constant over +-5 mm)."
+ }
 }

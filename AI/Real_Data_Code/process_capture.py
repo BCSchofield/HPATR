@@ -187,7 +187,7 @@ def build_background(frames_16bit: Path, out_path: Path, n_sample: int, log):
     return out_path
 
 
-def sizer_flags(sizer=None, sharpness_rule=True) -> list:
+def sizer_flags(sizer=None, sharpness_rule=None) -> list:
     """The sizer flags for measure_run.py and classical_liquid.py. 2.2.0 / 2.1.0 exactly as always (the sharpness
     switch, explicit both ways); 3.0.0 as --sizer 3.0.0."""
     import blur
@@ -201,7 +201,7 @@ def process_capture(cine: Path, run_dir: Path, *, stride=DEFAULT_STRIDE,
                     score_thresh=DEFAULT_SCORE_THRESH, device=None,
                     model_dir: Path = None, images="extremes", ci_stride=None,
                     bg_frames=BG_FRAMES, limit=None, reuse=False,
-                    log=print, sharpness_rule=True, sizer=None) -> dict:
+                    log=print, sharpness_rule=None, sizer=None) -> dict:
     """
     Run the whole chain. Returns measure_run's summary dict.
 
@@ -226,8 +226,8 @@ def process_capture(cine: Path, run_dir: Path, *, stride=DEFAULT_STRIDE,
     not the script's own default -- decides the version. Pair it with the same
     value in run_classical(...) or the two folders disagree.
 
-    `sizer` ("3.0.0" | "2.2.0" | "2.1.0", sizer 3.0.0 plan Phase 4) overrides `sharpness_rule` when given; None
-    keeps the switch's meaning, so every older caller is unchanged.
+    `sizer` ("3.0.0" | "2.2.0" | "2.1.0", sizer 3.0.0 plan Phase 4) overrides `sharpness_rule` when given. With
+    neither, the default: 3.0.0 (Ben, 2026-10-16); `sharpness_rule` True / False alone still means 2.2.0 / 2.1.0.
     """
     if images is True:
         images = "all"
@@ -401,7 +401,7 @@ def process_capture(cine: Path, run_dir: Path, *, stride=DEFAULT_STRIDE,
 
 
 def run_classical(run_dir: Path, *, score_thresh=DEFAULT_SCORE_THRESH, images="extremes",
-                  sharpness_rule=True, ci_stride=1, n_boot=2000, log=print, sizer=None) -> dict:
+                  sharpness_rule=None, ci_stride=1, n_boot=2000, log=print, sizer=None) -> dict:
     """Stage 5: classical_liquid.py into liquid_<thr>/, invoked exactly as
     batch_runs.py and the Taguchi app do (--root and --out-dir always passed).
     Returns classical_summary.json plus `atomised_ci95`: a frame bootstrap of the
@@ -476,10 +476,10 @@ def main():
                          "stride, skip extraction/background/inference and only measure")
     ap.add_argument("--limit", type=int, default=None,
                     help="stop after N frames -- use for a quick smoke test")
-    ap.add_argument("--sharpness-rule", action=argparse.BooleanOptionalAction, default=True,
-                    help="sizer 2.2.0 (default); --no-sharpness-rule for 2.1.0")
+    ap.add_argument("--sharpness-rule", action=argparse.BooleanOptionalAction, default=None,
+                    help="sizer 2.2.0 (with --sizer unset); --no-sharpness-rule for 2.1.0")
     ap.add_argument("--sizer", choices=("3.0.0", "2.2.0", "2.1.0"), default=None,
-                    help="the sizer version (3.0.0: opt-in until Phase 6); overrides --sharpness-rule")
+                    help="the sizer version (default 3.0.0, Ben 2026-10-16); overrides --sharpness-rule")
     args = ap.parse_args()
 
     run_dir = args.run_dir

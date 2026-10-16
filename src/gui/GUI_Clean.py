@@ -5991,10 +5991,10 @@ class AtomisationApp(QMainWindow):
     # liquid_0.30/, both 2.2.0, ready for the Taguchi app's Analyse. The app's
     # own batch still defaults to 2.1.0: do not "Re-measure" these runs there.
     SHARPNESS_RULE = True
-    # The sizer version for both stages (sizer 3.0.0 plan, Phase 4). None = what SHARPNESS_RULE says (2.2.0). Set
-    # "3.0.0" only after Ben's Phase 6 go: it needs the optics profile's calibration block (the lab PC must have
-    # pulled it) and measures with blur.py (numpy + OpenCV, no scipy).
-    SIZER = None
+    # The sizer version for both stages: 3.0.0, the default since 2026-10-16 (Ben). It needs the optics profile's
+    # calibration block (the lab PC must have pulled it) and measures with blur.py (numpy + OpenCV, no scipy).
+    # None = what SHARPNESS_RULE says (2.2.0).
+    SIZER = "3.0.0"
 
     # Inference cost scales with frame AREA, not frame count, so the estimate
     # has to know the resolution.  Measured 2026-09-28 on the RTX 4070 Ti SUPER

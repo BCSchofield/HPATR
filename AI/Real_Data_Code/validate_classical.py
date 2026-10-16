@@ -100,6 +100,9 @@ def main():
                     help="default: 06_validation/v3_predictions.json")
     ap.add_argument("--score-thresh", type=float, default=0.30)
     ap.add_argument("--out", type=Path, default=None, help="write per-frame CSV + summary here")
+    ap.add_argument("--sizer", choices=("3.0.0",), default=None,
+                    help="also score sizer 3.0.0's atomised fraction INSIDE the measurement volume (sizer 3.0.0 "
+                         "plan, Phase 5), from the current optics profile's calibration")
     args = ap.parse_args()
 
     root = args.root or real_data_root()
@@ -119,6 +122,13 @@ def main():
                               droplet_cover=cl.DROPLET_COVER,
                               droplet_max_extent=cl.DROPLET_MAX_EXTENT,
                               focus_max=0.70, classical_only=False)
+    vol3 = args.sizer == "3.0.0"
+    if vol3:
+        import measure_run
+        import optics
+        measure_run.SIZER3 = measure_run.blur.sizer3(optics.current())
+        v_args = SimpleNamespace(**vars(cl_args), static_t=cl.STATIC_T, split_um=40.0, core_estimator="robust",
+                                 no_sizer=False, sharpness_rule=None, sizer_version="3.0.0")
 
     bgs = {}
     gt_by = {}
@@ -130,6 +140,8 @@ def main():
             det_by.setdefault(d["image_id"], []).append(d)
 
     keys = ["gt_drawn_meas", "gt_drawn_all", "gt_hm_meas", "gt_hm_all", "model", "classical"]
+    if vol3:
+        keys.append("classical_vol")
     rows = []
     t0 = time.time()
     for im in sorted(gt["images"], key=lambda i: i["id"]):
@@ -159,6 +171,11 @@ def main():
         r["model_drop"], r["model_tot"] = int(dm.sum()), int(am.sum())
         crow, *_ = cl.measure_frame(T, dets, cl_args)
         r["classical_drop"], r["classical_tot"] = crow["droplet_px"], crow["total_liquid_px"]
+        if vol3:
+            liquid, dmask, oof = cl.frame_masks(T, dets, v_args)
+            dvol, und = cl.model_masks.last_vol
+            dv, uv = cl.volume_masks(T, liquid, dmask, oof, dvol, und, v_args)
+            r["classical_vol_drop"], r["classical_vol_tot"] = int(dv.sum()), int((dv | uv).sum())
         for k in keys:
             r[k + "_pct"] = round(pct(r[k + "_drop"], r[k + "_tot"]), 2)
             r[k + "_unatom"] = r[k + "_tot"] - r[k + "_drop"]
@@ -174,7 +191,8 @@ def main():
 
     labels = {"gt_drawn_meas": "GT drawn, measurable", "gt_drawn_all": "GT drawn, all",
               "gt_hm_meas": "GT half-max, measurable", "gt_hm_all": "GT half-max, all",
-              "model": "model only (old)", "classical": "classical (new)"}
+              "model": "model only (old)", "classical": "classical (new)",
+              "classical_vol": "classical, in the volume (3.0.0)"}
     summary = {"frames": len(rows), "score_thresh": args.score_thresh,
                "predictions": str(pred_path), "elapsed_s": round(elapsed, 1), "groups": {}}
     groups = [("ALL 20 FRAMES", rows)] + [
@@ -187,7 +205,7 @@ def main():
             g[k] = {"atomised_pct": round(p, 3), "unatomised_px": int(u)}
             print(f"  {labels[k]:26s} {p:7.3f}%   un-atomised {u:>10,} px")
         for ref in ("gt_hm_meas", "gt_hm_all"):
-            for k in ("model", "classical"):
+            for k in ("model", "classical") + (("classical_vol",) if vol3 else ()):
                 g[f"{k}_vs_{ref}_rel_pct"] = round(100 * (g[k]["atomised_pct"] /
                                                           g[ref]["atomised_pct"] - 1), 1)
                 g[f"{k}_unatom_ratio_vs_{ref}"] = round(
@@ -200,10 +218,15 @@ def main():
               f"model {g['model_unatom_ratio_vs_gt_hm_meas']:.2f} / {g['model_unatom_ratio_vs_gt_hm_all']:.2f},  "
               f"classical {g['classical_unatom_ratio_vs_gt_hm_meas']:.2f} / "
               f"{g['classical_unatom_ratio_vs_gt_hm_all']:.2f}")
+        if vol3:
+            print(f"  classical IN THE VOLUME (3.0.0): {g['classical_vol']['atomised_pct']:.3f}%, relative to GT "
+                  f"half-max (meas / all) {g['classical_vol_vs_gt_hm_meas_rel_pct']:+.1f}% / "
+                  f"{g['classical_vol_vs_gt_hm_all_rel_pct']:+.1f}%; un-atomised / GT "
+                  f"{g['classical_vol_unatom_ratio_vs_gt_hm_meas']:.2f} / {g['classical_vol_unatom_ratio_vs_gt_hm_all']:.2f}")
         summary["groups"][name] = g
 
     # per-frame agreement: does classical track the truth frame to frame?
-    for k in ("model", "classical"):
+    for k in ("model", "classical") + (("classical_vol",) if vol3 else ()):
         a = np.array([r[k + "_pct"] for r in rows])
         b = np.array([r["gt_hm_meas_pct"] for r in rows])
         ok = np.isfinite(a) & np.isfinite(b)

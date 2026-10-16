@@ -72,6 +72,13 @@ EXTRA_RESPONSES = [
     # so throughput in the band is the objective).
     ("rate", "Droplets produced per second, mass balance (estimated)", "larger", False),
     ("rate_band", "Droplets produced per second in the size band, mass balance (estimated)", "larger", False),
+    # sizer 3.0.0 only (plan, Phase 5; blank for 2.x runs): a CONCENTRATION with a known volume -- droplets per mm3
+    # inside the measurement volume (frame area x the calibrated depth, the same for every size; the lens is
+    # telecentric), each weighted for the frame border, crowded ones added back in proportion. Still a snapshot,
+    # not a flux. `atom_all` is the all-objects atomised fraction, kept beside the in-volume headline one.
+    ("conc", "Droplets per mm3 in the measurement volume (sizer 3.0.0)", "larger", False),
+    ("conc_band", "Droplets per mm3 in the size band, in the measurement volume (sizer 3.0.0)", "larger", False),
+    ("atom_all", "Atomised fraction by area, every object in view (%) (sizer 3.0.0)", "larger", False),
 ]
 DEFAULT_BAND_UM = (20.0, 60.0)     # the size Ben collects (2026-10-14; was 30-50). Both edges fall between
                                    # pixel-lattice diameters (3/4 and 28/29 px of area at 10 um/px), so the
@@ -104,6 +111,21 @@ def _rate_parts(rec: dict | None, band=DEFAULT_BAND_UM):
         nb.append(int(((d >= lo) & (d < hi)).sum()))
         s3.append(float((d ** 3).sum()))
     return np.array(n, float), np.array(nb, float), np.array(s3)
+
+
+def _conc_parts(rec: dict | None, band=DEFAULT_BAND_UM):
+    """Sizer 3.0.0: per frame, the border-weighted count of droplets in the measurement volume (every size) and of
+    sized ones in the band, and k = crowded factor / volume (mm^3), so a concentration is mean x k. None for 2.x."""
+    c = (rec or {}).get("concentration")
+    if not rec or not rec.get("vol3") or not c or not c.get("volume_mm3"):
+        return None
+    lo, hi = band
+    wb = []
+    for f in rec["frames"]:
+        d = np.asarray(rec["dia"].get(f, []), float)
+        w = np.asarray(rec["wt"].get(f, []), float)
+        wb.append(float(w[(d >= lo) & (d < hi)].sum()) if d.size == w.size else 0.0)
+    return np.asarray(rec["WVOL"], float), np.array(wb), float(c["crowded_factor"]) / float(c["volume_mm3"])
 
 
 def mass_balance_rate(ml_min, atom_vol_frac, count, s3_um3):
@@ -521,7 +543,15 @@ def response_values(m: dict, rec: dict | None = None, n_boot: int = 0, seed: int
             "thin_pct": st.get("thin_pct"),
             "lag1": st.get("lag1"),
             "peak_bar": m.get("peak_bar"),
-            "atom_vol": None, "af_flow_vol": None, "band_per_frame": None, "rate": None, "rate_band": None}
+            "atom_vol": None, "af_flow_vol": None, "band_per_frame": None, "rate": None, "rate_band": None,
+            "conc": None, "conc_band": None, "atom_all": None}
+    cp = _conc_parts(rec, band or DEFAULT_BAND_UM)
+    if cp is not None:
+        wv, wb, k = cp
+        vals["conc"] = float(wv.sum() * k / wv.size)
+        vals["conc_band"] = float(wb.sum() * k / wb.size)
+    if rec and rec.get("vol3") and rec["TPa"].sum() > 0:
+        vals["atom_all"] = float(100.0 * rec["DPa"].sum() / rec["TPa"].sum())
     bc = band_counts(rec, band or DEFAULT_BAND_UM)
     if bc is not None and bc.size:
         vals["band_per_frame"] = float(bc.mean())
@@ -580,6 +610,15 @@ def response_values(m: dict, rec: dict | None = None, n_boot: int = 0, seed: int
         if bc is not None and bc.size == len(frames) and n >= 2:
             reps = (W @ bc) / W.sum(axis=1)
             out["boot_band_per_frame"] = (reps - bc[pool].mean() + vals["band_per_frame"]).tolist()
+        if cp is not None and n >= 2:
+            wv, wb, k = cp
+            for key, a in (("conc", wv), ("conc_band", wb)):
+                reps = (W @ a) / W.sum(axis=1) * k
+                out[f"boot_{key}"] = (reps - a[pool].mean() * k + vals[key]).tolist()
+        if vals["atom_all"] is not None and n >= 2:
+            dpa, tpa = rec["DPa"], rec["TPa"]
+            reps = 100.0 * (W @ dpa) / np.where(W @ tpa > 0, W @ tpa, np.nan)
+            out["boot_atom_all"] = (reps - 100.0 * dpa[pool].sum() / tpa[pool].sum() + vals["atom_all"]).tolist()
         if vals["atom_vol"] is not None and n >= 2:
             dv, tv = vols
             reps = 100.0 * (W @ dv) / np.where(W @ tv > 0, W @ tv, np.nan)

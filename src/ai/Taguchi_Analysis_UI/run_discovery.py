@@ -188,13 +188,16 @@ class AnalysisState:
     meas_dir: Path | None = None
     clas_dir: Path | None = None
     sizer_version: str | None = None  # measure_run's provenance; None on old runs
+    calibration: str | None = None    # sizer 3.0.0: the hash of the bead calibration that sized it
+    stale: str | None = None          # why it should be re-measured (an older sizer or calibration), else None
     reusable: bool | None = None      # can_reuse(); None = not evaluated
 
     @property
     def label(self) -> str:
         if self.measured:
             v = f"v{self.sizer_version}" if self.sizer_version else PRE_SIZER
-            return f"measured {v}" + (" \u00b7 legacy folders" if self.legacy_names else "")
+            return (f"measured {v}" + (" \u00b7 legacy folders" if self.legacy_names else "")
+                    + (f" \u00b7 re-measure: {self.stale}" if self.stale else ""))
         if self.droplets_only:
             return "droplets measured, no classical stage"
         if self.reusable:
@@ -300,8 +303,10 @@ def read_analysis_state(run: Path, thr: float, stride: int | None = None,
                 prov = json.loads((m / "summary.json").read_text(encoding="utf-8")
                                   ).get("provenance", {})
                 state.sizer_version = prov.get("sizer_version")
+                state.calibration = prov.get("optics_profile_hash")
             except (OSError, ValueError):
                 pass
+            state.stale = staleness(Path(run), state.sizer_version, state.calibration)
             break
     if not state.measured:
         # Measured by the model stage but never classically (e.g. 10/01's
@@ -573,6 +578,35 @@ def summarise(runs: Iterable[RunInfo]) -> Summary:
     return s
 
 
+def current_calibration(run: Path) -> str | None:
+    """The hash of the sizer 3.0.0 calibration the run's own optics profile holds NOW (None if it has none)."""
+    try:
+        return spec.rdc_module("blur").sizer3(spec.rdc_module("optics").profile_for(run))["hash"]
+    except Exception:
+        return None
+
+
+def staleness(run: Path, version: str | None, calibration: str | None) -> str | None:
+    """Why a measured run is out of date, or None: measured with another sizer than the default (Ben, 2026-10-16:
+    3.0.0), or at 3.0.0 with an older bead calibration than its optics profile holds now -- the profile is updated
+    by sizer_calibration.py --write-profile (the big-bead series, the reticle). 'Re-measure only' brings it up to
+    date from its saved frames and AI predictions."""
+    default = spec.DEFAULT_SIZER
+    if version != default:
+        return f"sizer {version or PRE_SIZER}, the default is {default}"
+    if version == "3.0.0":
+        cur = current_calibration(run)
+        if cur and calibration != cur:
+            return "an older bead calibration"
+    return None
+
+
+def measurement_key(version: str | None, calibration: str | None) -> str:
+    """What must match for two runs' numbers to be comparable: the sizer version, and at 3.0.0 the calibration."""
+    v = version or PRE_SIZER
+    return f"{v} (calibration {calibration})" if v == "3.0.0" and calibration else v
+
+
 def sizer_versions(runs: Iterable[RunInfo]) -> set[str]:
     """Distinct sizer versions among the already-measured runs. More than one
     means the set is not comparable: taguchi_analysis.py refuses to mix them
@@ -580,5 +614,5 @@ def sizer_versions(runs: Iterable[RunInfo]) -> set[str]:
     before the user has spent hours on it. A run whose summary records no
     sizer_version was measured before the sizer existed (diameters from the model
     mask area) -- process_capture's own log calls that "pre-2.0.0"."""
-    return {r.analysis.sizer_version or PRE_SIZER
+    return {measurement_key(r.analysis.sizer_version, r.analysis.calibration)
             for r in runs if r.analysis.measured}

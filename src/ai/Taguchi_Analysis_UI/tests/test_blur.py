@@ -106,3 +106,37 @@ def test_the_sizer_version():
     assert blur.resolve_sizer("3.0.0", False) == "3.0.0"
     with pytest.raises(ValueError):
         blur.resolve_sizer("2.3.0")
+
+
+def _shape(fn, chi, size=(160, 240), tau=0.11):
+    yy, xx = np.mgrid[0:size[0] * UP, 0:size[1] * UP]
+    xs, ys = (xx + 0.5) / UP - 0.5, (yy + 0.5) / UP - 0.5
+    t = cv2.GaussianBlur(np.where(fn(xs, ys), tau, 1.0).astype(np.float32), (0, 0), chi / 2 / 10 * UP)
+    T = cv2.resize(t, (size[1], size[0]), interpolation=cv2.INTER_AREA)
+    m = T < 0.95
+    ys_, xs_ = np.nonzero(m)
+    return T, m[ys_.min():ys_.max() + 1, xs_.min():xs_.max() + 1], xs_.min(), ys_.min()
+
+
+@pytest.mark.parametrize("d_um,chi_um", [(37.36, 25.0), (60.0, 40.0), (155.8, 25.0)])
+def test_any_shape_blur_agrees_with_the_droplet_measurement_on_a_disc(d_um, chi_um):
+    T, m, x0, y0 = _shape(lambda x, y: (x - 120) ** 2 + (y - 80) ** 2 <= (d_um / 20) ** 2, chi_um)
+    disc_chi = blur.measure(T, 120, 80, d_um / 10, 0.11, mr.droplet_core, 10.0)["chi_um"]
+    any_chi = blur.object_chi(T, m, x0, y0, 0.11, mr.droplet_core, 10.0)["chi_um"]
+    assert any_chi == pytest.approx(disc_chi, rel=0.10)
+
+
+@pytest.mark.parametrize("chi_um", [25.0, 40.0, 60.0])
+def test_any_shape_blur_of_a_ligament_and_a_blob(chi_um):
+    bar = lambda x, y: (np.abs((y - 80) * np.cos(0.4) - (x - 120) * np.sin(0.4)) <= 5) & (np.abs(x - 120) < 90)
+    blob = lambda x, y: ((x - 120) / 20) ** 2 + ((y - 80) / 7.5) ** 2 <= 1
+    for fn in (bar, blob):
+        T, m, x0, y0 = _shape(fn, chi_um)
+        assert blur.object_chi(T, m, x0, y0, 0.11, mr.droplet_core, 10.0)["chi_um"] == pytest.approx(chi_um, rel=0.10)
+    # a second object right beside it is blanked out: the ligament's own blur, as if alone
+    T, m, x0, y0 = _shape(bar, chi_um)
+    alone = blur.object_chi(T, m, x0, y0, 0.11, mr.droplet_core, 10.0)["chi_um"]
+    T2, m2, _x, _y = _shape(lambda x, y: bar(x, y) | ((x - 150) ** 2 + (y - 40) ** 2 <= 36), chi_um)
+    others = T2 < 0.95
+    near = blur.object_chi(T2, m, x0, y0, 0.11, mr.droplet_core, 10.0, others=others)["chi_um"]
+    assert near == pytest.approx(alone, rel=0.05)

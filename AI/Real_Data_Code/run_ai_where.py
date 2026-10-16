@@ -133,7 +133,7 @@ def main():
         t0 = time.time()
         print(f"\n=== {i}/{len(runs)}  {run.name}  ({notes}) ===", flush=True)
         try:
-            process_capture(cine, run, stride=stride, reuse=True, sharpness_rule=True)
+            process_capture(cine, run, stride=stride, reuse=True)          # the default sizer (3.0.0)
             print(f"=== done in {time.time() - t0:.0f} s ===", flush=True)
         except Exception as e:                       # noqa: BLE001 -- reported; the others carry on
             failed += 1

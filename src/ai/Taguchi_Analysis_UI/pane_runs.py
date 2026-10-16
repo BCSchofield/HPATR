@@ -477,11 +477,18 @@ class RunsPane(QWidget):
                 f"{n_have} of the {len(inc)} selected runs already have results. "
                 f"For those, Run batch will:")
         versions = rd.sizer_versions(inc)
+        stale = [r for r in inc if r.analysis.measured and r.analysis.stale]
+        msgs = []
         if len(versions) > 1:
-            self.warn_label.setText(
-                "⚠ These measured runs used different sizer versions "
-                f"({', '.join(sorted(versions))}). They are not comparable: re-measure the older "
-                "ones before analysing them together.")
+            msgs.append("⚠ These measured runs used different sizer versions or bead calibrations "
+                        f"({', '.join(sorted(versions))}). They are not comparable: re-measure the older "
+                        "ones before analysing them together.")
+        if stale:
+            msgs.append(f"⚠ {len(stale)} of them were measured with an older sizer or bead calibration than the "
+                        "default now (" + "; ".join(sorted({r.analysis.stale for r in stale})) + "). Choose "
+                        "'Re-measure only' below to bring them up to date from their saved AI predictions.")
+        if msgs:
+            self.warn_label.setText("\n".join(msgs))
             self.warn_label.show()
         else:
             self.warn_label.hide()

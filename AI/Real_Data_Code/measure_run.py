@@ -476,7 +476,8 @@ def measure_droplet_3(T, d, crop, calib, core_estimator="robust", want_mask=Fals
         method = "below_d_min"
     area = math.pi * (size / 2.0 / UM_PER_PX) ** 2 if sized else float(d["area"])
     out = {"in_focus": sized, "area_px": area, "method": method, "core_t": core_t, "reclassified": False,
-           "chi_um": chi, "size_um": size if sized else float("nan"), "in_volume": in_volume}
+           "chi_um": chi, "size_um": size if sized else float("nan"), "in_volume": in_volume,
+           "weight": blur.border_weight(d_px, T.shape) if in_volume else 0.0}
     if want_mask:
         # the atomised numerator's droplet edge: the half-max component of a sized droplet, as 2.x uses for its
         # in-focus ones (no size split now); anything else falls back to the model's mask
@@ -515,14 +516,16 @@ def measure_frame(T, dets, focus_max, split_um=SPLIT_UM, core_estimator="robust"
         atom (%), d32 (um, in-focus only)
         methods (Counter of diameter methods), reclassified (int)
         drawn              render_frame items; empty unless keep_drawn
-        sizer 3.0.0 only:  rows3 (one (area_px, in_focus, chi_um, in_volume, method) per droplet, for
-                           droplet_sizes.csv), in_volume / unsized / border / crowded (counts)
+        sizer 3.0.0 only:  rows3 (one (area_px, in_focus, chi_um, in_volume, method, weight) per droplet, for
+                           droplet_sizes.csv), in_volume / unsized / border / crowded / outside / no_chi (counts),
+                           w_volume / w_sized / w_unsized (border-weighted counts, for the concentration)
     """
     version = version or sizer_version(sharpness_rule)
     calib = sizer3_settings() if version == SIZER_VERSION_3 else None
     others = occupancy(T.shape, dets) if calib is not None else None
     rows3 = []
-    n_volume = n_unsized = n_border = n_crowded = 0
+    n_volume = n_unsized = n_border = n_crowded = n_outside = n_nochi = 0
+    w_volume = w_sized = w_unsized = 0.0
     focus_a, oof_a = [], []
     fil_a, blob_a = [], []
     rle_drop, rle_fil, rle_blob = [], [], []
@@ -543,11 +546,16 @@ def measure_frame(T, dets, focus_max, split_um=SPLIT_UM, core_estimator="robust"
                 continue
             sharp = md["in_focus"]
             if calib is not None:
-                rows3.append((md["area_px"], sharp, md["chi_um"], md["in_volume"], md["method"]))
+                rows3.append((md["area_px"], sharp, md["chi_um"], md["in_volume"], md["method"], md["weight"]))
                 n_volume += md["in_volume"]
                 n_unsized += md["in_volume"] and not sharp
                 n_border += md["method"] == "border"
                 n_crowded += md["method"] == "crowded"
+                n_outside += md["method"] == "outside"
+                n_nochi += md["method"] == "no_chi"
+                w_volume += md["weight"]
+                w_sized += md["weight"] if sharp else 0.0
+                w_unsized += md["weight"] if md["in_volume"] and not sharp else 0.0
             n_reclassified += md["reclassified"]
             # the SIZED area, not the model's, when the sizer ran
             (focus_a if sharp else oof_a).append(md["area_px"])
@@ -578,7 +586,8 @@ def measure_frame(T, dets, focus_max, split_um=SPLIT_UM, core_estimator="robust"
             "d32": d32(focus_a), "methods": methods,
             "reclassified": n_reclassified, "drawn": drawn,
             "rows3": rows3, "in_volume": n_volume, "unsized": n_unsized, "border": n_border,
-            "crowded": n_crowded}
+            "crowded": n_crowded, "outside": n_outside, "no_chi": n_nochi,
+            "w_volume": w_volume, "w_sized": w_sized, "w_unsized": w_unsized}
 
 
 def boot_ci(values_fn, items, n_boot, seed=0):
@@ -828,11 +837,11 @@ def write_distributions(out_dir, per_focus, per_oof, per_fil, per_blob, per_rows
     with open(drop_csv, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         if per_rows3 is not None:
-            w.writerow(["frame", "diameter_um", "in_focus", "chi_um", "in_volume", "size_method"])
+            w.writerow(["frame", "diameter_um", "in_focus", "chi_um", "in_volume", "size_method", "weight"])
             for s in stems:
-                for a, inf, chi, vol, meth in per_rows3.get(s, []):
+                for a, inf, chi, vol, meth, wt in per_rows3.get(s, []):
                     w.writerow([s, csv_um(a), int(bool(inf)), round(chi, 3) if np.isfinite(chi) else "",
-                                int(bool(vol)), meth])
+                                int(bool(vol)), meth, round(wt, 5) if vol else ""])
         else:
             w.writerow(["frame", "diameter_um", "in_focus"])
             for s in stems:
@@ -955,6 +964,36 @@ def sizer3_provenance(calib: dict) -> dict:
             "sizer_table_beads_um": list(T["nodes_um"]), "sizer_calibration_status": calib["status"]}
 
 
+def concentration(rows, parts, shape, calib: dict) -> dict:
+    """Sizer 3.0.0's droplet concentration (sizer 3.0.0 plan, Phase 5; decisions Ben, 2026-10-16):
+       * the measurement volume = the frame's area x the calibrated depth at chi_max (the same for every size; the
+         lens is telecentric, so the area is the same at every depth);
+       * each droplet in the volume counts its border weight (blur.border_weight: near the edge it cannot be
+         measured);
+       * crowded droplets (touching another detection) are added back in proportion: in the volume as often as
+         the droplets that could be judged (in the volume, outside it, or with no chi, which counts as outside);
+       * per mm3 = weighted count x the crowded factor / (frames x volume)."""
+    n_f = len(rows)
+    H, W = shape if shape else (1152, 2048)
+    area_mm2 = W * H * (UM_PER_PX / 1000.0) ** 2
+    depth = calib.get("depth_mm", float("nan"))
+    vol = area_mm2 * depth
+    n_in = sum(r["droplets_in_volume"] for r in rows)
+    judged = n_in + sum(r["droplets_outside"] + r["droplets_no_chi"] for r in rows)
+    crowded = sum(r["droplets_crowded"] for r in rows)
+    p_in = n_in / judged if judged else 0.0
+    factor = 1.0 + (p_in * crowded / n_in if n_in else 0.0)
+    wv, ws, wu = (sum(p[i] for p in parts) for i in range(3))
+    per = (lambda w: round(w * factor / (n_f * vol), 6) if n_f and vol > 0 and math.isfinite(vol) else None)
+    return {"volume_mm3": round(vol, 2), "frame_mm2": round(area_mm2, 3), "depth_mm": depth, "frames": n_f,
+            "crowded": crowded, "crowded_in_volume_share": round(p_in, 4), "crowded_factor": round(factor, 5),
+            "in_volume_per_mm3": per(wv), "sized_per_mm3": per(ws), "below_d_min_per_mm3": per(wu),
+            "definition": "droplets per mm3 of spray in the measurement volume (frame area x depth at chi_max), "
+                          "each weighted for the frame border, crowded ones added back in proportion; a snapshot "
+                          "concentration, not a flux (slow droplets are over-represented against what flows "
+                          "through); only droplets the AI finds"}
+
+
 def sizer3_definitions(calib: dict) -> dict:
     T = calib["table"]
     lo, hi = min(T["nodes_um"]), max(T["nodes_um"])
@@ -1001,15 +1040,15 @@ def main():
                          "area, as before SIZER_VERSION 2.0.0")
     ap.add_argument("--focus-max", type=float, default=0.70,
                     help="must match extract_candidates.py")
-    ap.add_argument("--sharpness-rule", action=argparse.BooleanOptionalAction, default=True,
+    ap.add_argument("--sharpness-rule", action=argparse.BooleanOptionalAction, default=None,
                     help="sizer 2.2.0 (DEFAULT since 2026-10-08): reclassify in-focus "
                          "droplets >= 50 um as out of focus when not round (fill_ratio "
                          "< 0.85) or blurred (extinction_conc < 0.60). Moves D32 only. "
                          "--no-sharpness-rule measures at 2.1.0, bit-identical to before")
     ap.add_argument("--sizer", choices=blur.SIZERS, default=None,
-                    help="the sizer version. 3.0.0 (sizer 3.0.0 plan, Phase 4; opt-in until Phase 6): blur-width "
-                         "focus rule and calibrated sizing from the optics profile. Default: what "
-                         "--sharpness-rule says (2.2.0, or 2.1.0 with --no-sharpness-rule)")
+                    help="the sizer version. 3.0.0 (the DEFAULT since 2026-10-16, Ben): blur-width focus rule and "
+                         "calibrated sizing from the optics profile. --sharpness-rule / --no-sharpness-rule without "
+                         "--sizer still mean 2.2.0 / 2.1.0")
     ap.add_argument("--out-dir", type=Path, default=None,
                     help="default: <val-dir>/measurement_<thresh>")
     ap.add_argument("--images", nargs="?", const="all", default=None,
@@ -1097,6 +1136,8 @@ def main():
     all_focus_areas = []
     per_frame_mean_d = {}        # mean in-focus diameter, for the more-extremes pick
     per_frame_rows3 = {} if calib3 is not None else None      # sizer 3.0.0: every droplet's chi and method
+    conc_parts = []                                             # sizer 3.0.0: border-weighted counts per frame
+    frame_shape = None
     # extremes mode: which frames to draw is only known once every frame is
     # measured, so hold each frame's crops (small) and draw afterwards.
     pending_images = {}
@@ -1107,6 +1148,7 @@ def main():
         T = transmission(sb_dir, stem, bg)
         if T is None:
             sys.exit(f"no 16-bit frame for {stem} under {sb_dir}")
+        frame_shape = T.shape
 
         fr = measure_frame(T, dets, args.focus_max, split_um=args.split_um,
                            core_estimator=args.core_estimator, sizer=not args.no_sizer,
@@ -1141,7 +1183,10 @@ def main():
             # sizer 3.0.0, appended after everything else: in the volume (sized or not), counted but below d_min,
             # too near the frame edge to measure, touching another detection
             rows[-1].update(droplets_in_volume=fr["in_volume"], droplets_unsized_in_volume=fr["unsized"],
-                            droplets_border=fr["border"], droplets_crowded=fr["crowded"])
+                            droplets_border=fr["border"], droplets_crowded=fr["crowded"],
+                            droplets_outside=fr["outside"], droplets_no_chi=fr["no_chi"],
+                            weighted_in_volume=round(fr["w_volume"], 3), weighted_sized=round(fr["w_sized"], 3))
+            conc_parts.append((fr["w_volume"], fr["w_sized"], fr["w_unsized"]))
             per_frame_rows3[stem] = fr["rows3"]
         per_frame_focus_areas[stem] = focus_a
         per_frame_atom_parts[stem] = (a_drop, a_fil, a_blob)
@@ -1428,6 +1473,7 @@ def main():
         "more_extreme_frames": more,
     }
     if calib3 is not None:
+        summary["concentration"] = concentration(rows, conc_parts, frame_shape, calib3)
         summary.update(droplets_in_volume=sum(r["droplets_in_volume"] for r in rows),
                        droplets_unsized_in_volume=sum(r["droplets_unsized_in_volume"] for r in rows),
                        droplets_border=sum(r["droplets_border"] for r in rows),
@@ -1466,6 +1512,11 @@ def main():
     more_dir = write_more_extremes(out_dir, more, more_note,
                                    _draw_more if args.images else None, more_floor)
 
+    if calib3 is not None and summary["concentration"]["in_volume_per_mm3"] is not None:
+        c = summary["concentration"]
+        print(f"  concentration (sizer 3.0.0): {c['in_volume_per_mm3']:.4f} droplets per mm3 in the volume "
+              f"({c['sized_per_mm3']:.4f} sized), volume {c['volume_mm3']} mm3 a frame, crowded factor "
+              f"{c['crowded_factor']}")
     drop_csv, obj_csv, png = write_distributions(
         out_dir, per_frame_focus_areas, per_frame_oof_areas,
         per_frame_fil_areas, per_frame_blob_areas, per_frame_rows3)

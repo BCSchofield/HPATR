@@ -283,6 +283,9 @@ def model_masks(dets, T, focus_max, args_ref=None):
     n_half = n_model = n_static = 0
     static_t = getattr(args_ref, "static_t", STATIC_T) if args_ref is not None else STATIC_T
     others = _others(T, dets, args_ref)
+    vol3 = others is not None                     # sizer 3.0.0: which droplets are inside the measurement volume
+    dvol = np.zeros(T.shape, bool) if vol3 else None
+    undecided = np.zeros(T.shape, bool) if vol3 else None
     for d in dets:
         mb, bx, by, bh, bw = det_crop(d)
         if not mb.any():
@@ -313,6 +316,15 @@ def model_masks(dets, T, focus_max, args_ref=None):
             else:
                 drop[by:by + bh, bx:bx + bw] |= mb
                 n_model += 1
+            if vol3 and md:
+                # in the volume by its own verdict; crowded and frame-edge droplets have none and take their
+                # liquid object's (volume_masks); no-chi ones count as outside (Ben, 2026-10-16)
+                tgt = dvol if md["in_volume"] else undecided if md["method"] in ("crowded", "border") else None
+                if tgt is not None:
+                    if hm is not None:
+                        tgt[hy:hy + hm.shape[0], hx:hx + hm.shape[1]] |= hm
+                    else:
+                        tgt[by:by + bh, bx:bx + bw] |= mb
         else:
             tin = T[by:by + bh, bx:bx + bw][mb]
             if tin.min() > focus_max:
@@ -322,7 +334,45 @@ def model_masks(dets, T, focus_max, args_ref=None):
                     oof[by:by + bh, bx:bx + bw] |= mb
     model_masks.last_counts = (n_half, n_model)
     model_masks.last_static = n_static
+    model_masks.last_vol = (dvol, undecided) if vol3 else None
     return drop, oof
+
+
+def volume_masks(T, liquid, dmask, oof, dvol, undecided, args):
+    """Sizer 3.0.0 (plan, Phase 5): (droplets inside the measurement volume, un-atomised liquid inside it).
+
+    Every connected piece of liquid (a ligament, a blob, or a droplet with its rim) is judged by its own blur width,
+    blur.object_chi, measured with every other piece blanked; inside if chi <= chi_max. Its un-atomised pixels follow
+    that verdict, and so do crowded and frame-edge droplets in it (they have no verdict of their own). A piece that
+    is mostly droplet (its un-atomised part a rim) takes its droplets' verdict instead, by area. A piece with no edge
+    to measure (too faint) is outside."""
+    cal = measure_run.SIZER3
+    total = liquid | dmask if args.classical_only else liquid | dmask | oof
+    un = total & ~dmask
+    dv, uv = dvol.copy(), np.zeros(T.shape, bool)
+    n, lab, stats, _c = cv2.connectedComponentsWithStats(total.astype(np.uint8), connectivity=8)
+    n_meas = n_in = 0
+    for i in range(1, n):
+        x, y, w, h = (int(v) for v in stats[i, :4])
+        sub = lab[y:y + h, x:x + w] == i
+        u_sub = un[y:y + h, x:x + w] & sub
+        und = undecided[y:y + h, x:x + w] & sub
+        if not u_sub.any() and not und.any():
+            continue
+        d_sub = dmask[y:y + h, x:x + w] & sub
+        if not und.any() and d_sub.any() and u_sub.sum() < d_sub.sum():
+            inside = (dvol[y:y + h, x:x + w] & sub).sum() * 2 >= d_sub.sum()
+        else:
+            r = measure_run.blur.object_chi(T, sub, x, y, cal["tau"], measure_run.droplet_core,
+                                            measure_run.UM_PER_PX, others=total)
+            n_meas += 1
+            inside = bool(np.isfinite(r["chi_um"]) and r["chi_um"] <= cal["chi_max_um"])
+        if inside:
+            n_in += 1
+            uv[y:y + h, x:x + w] |= u_sub
+            dv[y:y + h, x:x + w] |= und
+    volume_masks.last_counts = (n_meas, n_in)
+    return dv, uv
 
 
 def frame_masks(T, dets, args):
@@ -536,14 +586,14 @@ def main():
     ap.add_argument("--classical-only", action="store_true",
                     help="leave out-of-focus filaments/blobs unmeasured too. For "
                          "comparison; biases the fraction up by ~1.6%%.")
-    ap.add_argument("--sharpness-rule", action=argparse.BooleanOptionalAction, default=True,
+    ap.add_argument("--sharpness-rule", action=argparse.BooleanOptionalAction, default=None,
                     help="sizer 2.2.0 (DEFAULT since 2026-10-08), as measure_run.py: "
                          "moves D32 membership and drawing colour only, never the atomised "
                          "fraction. --no-sharpness-rule measures at 2.1.0")
     ap.add_argument("--sizer", choices=measure_run.blur.SIZERS, default=None,
-                    help="the sizer version, as measure_run.py (3.0.0: the blur-width rule and calibrated sizes "
-                         "for the droplets; filaments and blobs keep the 0.70 test until Phase 5). Default: what "
-                         "--sharpness-rule says")
+                    help="the sizer version, as measure_run.py (3.0.0, the default since 2026-10-16: the blur-width "
+                         "rule and calibrated sizes, and the atomised fraction inside the measurement volume beside "
+                         "the all-objects one). --sharpness-rule / --no-sharpness-rule still mean 2.2.0 / 2.1.0")
     ap.add_argument("--focus-max", type=float, default=0.70,
                     help="droplet focus gate, as measure_run (default 0.70)")
     ap.add_argument("--droplet-ring", type=int, default=10,
@@ -642,10 +692,15 @@ def main():
         dets = by_img.get(img_id, [])
         liquid, dmask, oof = frame_masks(T, dets, args)
         n_static += getattr(model_masks, "last_static", 0)
+        vol = getattr(model_masks, "last_vol", None)
         sizes[stem] = droplet_part(T, dets, args)
         total = liquid | dmask if args.classical_only else liquid | dmask | oof
         persistence += (total & ~dmask)
-        packed.append((stem, img_id, np.packbits(liquid), np.packbits(dmask), np.packbits(oof)))
+        extra = ()
+        if vol is not None:                                   # sizer 3.0.0: what is inside the volume
+            dv, uv = volume_masks(T, liquid, dmask, oof, vol[0], vol[1], args)
+            extra = (np.packbits(dv), np.packbits(uv))
+        packed.append((stem, img_id, np.packbits(liquid), np.packbits(dmask), np.packbits(oof)) + extra)
         if k % 25 == 0 or k == len(ids):
             el = time.time() - t0
             print(f"  pass 1  {k:4}/{len(ids)}  {el:5.1f}s  ({el / k:.2f} s/frame)")
@@ -665,12 +720,19 @@ def main():
     npx = shape[0] * shape[1]
     unpack = lambda b: np.unpackbits(b)[:npx].reshape(shape).astype(bool)
     t1 = time.time()
-    for k, (stem, img_id, lq, dm, of) in enumerate(packed, 1):
+    for k, (stem, img_id, lq, dm, of, *inv) in enumerate(packed, 1):
         liquid, dmask, oof = unpack(lq), unpack(dm), unpack(of)
         part, comps, unatom = area_part(liquid, dmask, oof, args, exclude=window, volume=args.volume)
         fa, oa = sizes[stem]
         row = _row(part, fa, oa)
         row["frame"] = stem
+        if inv:                                               # sizer 3.0.0: the same measure, inside the volume
+            dv, uv = unpack(inv[0]), unpack(inv[1])
+            if window is not None:
+                dv, uv = dv & ~window, uv & ~window
+            tv = int((dv | uv).sum())
+            row.update(droplet_px_in_volume=int(dv.sum()), total_liquid_px_in_volume=tv,
+                       atomised_pct_in_volume=round(100.0 * int(dv.sum()) / tv, 3) if tv else float("nan"))
         rows.append(row)
         all_comps.extend((stem, a) for a in comps)
         focus_all.extend(fa)
@@ -774,6 +836,11 @@ def main():
               "n_droplet_components_dropped"]
     if args.volume:
         fields += ["droplet_vol_mm3", "total_liquid_vol_mm3", "atomised_vol_pct"]
+    vol3 = args.sizer_version == measure_run.SIZER_VERSION_3
+    if vol3:
+        fields += ["droplet_px_in_volume", "total_liquid_px_in_volume", "atomised_pct_in_volume"]
+    tot_iv = sum(r.get("total_liquid_px_in_volume", 0) for r in rows)
+    drp_iv = sum(r.get("droplet_px_in_volume", 0) for r in rows)
     tot_v = sum(r.get("total_liquid_vol_mm3", 0.0) for r in rows)
     drp_v = sum(r.get("droplet_vol_mm3", 0.0) for r in rows)
     pooled_v = 100.0 * drp_v / tot_v if tot_v else float("nan")
@@ -837,6 +904,11 @@ def main():
                       "in >= window_p of frames are masked out of both measures in every frame; "
                       "out-of-focus model pieces with mean T >= static_t (gone after background "
                       "division) are not counted.",
+            "atomised_pct_in_volume": "sizer 3.0.0: droplet area / liquid area, counting only what is inside the "
+                                      "measurement volume (blur width <= chi_max): droplets by their own verdict "
+                                      "(crowded and frame-edge ones by their liquid piece's, no-chi ones outside), "
+                                      "every other piece of liquid by its own blur width (blur.object_chi). The "
+                                      "all-objects atomised_pct is kept alongside.",
             "atomised_vol_pct": "2.3.0, SECONDARY: droplet volume (spheres) / total liquid volume "
                                 "(un-atomised pieces with a round cross-section, liquid_volume.py). "
                                 "Ranks runs like the area fraction; its absolute scale is good to "
@@ -844,6 +916,9 @@ def main():
         },
         "frames": len(rows),
         "atomised_pct_pooled": round(pooled, 3),
+        # sizer 3.0.0 (plan, Phase 5): the same fraction inside the measurement volume only (Ben, 2026-10-15);
+        # the all-objects figure above is kept alongside
+        "atomised_pct_in_volume_pooled": (round(100.0 * drp_iv / tot_iv, 3) if tot_iv else None) if vol3 else None,
         "atomised_vol_pct_pooled": (round(pooled_v, 3) if args.volume and tot_v else None),
         "total_liquid_vol_mm3": round(tot_v, 6) if args.volume else None,
         "droplet_vol_mm3": round(drp_v, 6) if args.volume else None,
@@ -940,6 +1015,9 @@ def main():
     print(f"  atomised (pooled)      {pooled:.3f} %   [classical denominator]")
     if args.volume:
         print(f"  atomised by volume     {pooled_v:.3f} %   [secondary, +/-40% in scale]")
+    if vol3 and tot_iv:
+        print(f"  atomised in the volume {100.0 * drp_iv / tot_iv:.3f} %   [sizer 3.0.0: inside chi <= "
+              f"{measure_run.SIZER3['chi_max_um']:g} um only]")
     print(f"  total liquid           {tot:,} px")
     print(f"  un-atomised            {tot - drp:,} px")
     print(f"  un-atomised components {len(areas):,}")

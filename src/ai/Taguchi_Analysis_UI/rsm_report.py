@@ -805,7 +805,9 @@ def caveats(models: dict) -> list[str]:
                    "selection by the sharpness rule.")
     if any(str(r.sizer_version) == "3.0.0" for r in R.loaded.runs):
         out.append("Sizer 3.0.0: sizes are calibrated on certified glass beads (37-155.8 um, provisional) and count "
-                   "only droplets inside the measurement volume; below 37 um the bead table is extrapolated.")
+                   "only droplets inside the measurement volume; below 37 um the bead table is extrapolated. The "
+                   "atomised fraction is inside that volume (the all-objects one is an extra response); "
+                   "concentrations are per mm3, a snapshot, not a flux; steadiness still counts every detection.")
     out.append("The surface is trustworthy inside the tested range only; a best point on an edge needs confirming "
                "runs before anything beyond it is believed.")
     return out
