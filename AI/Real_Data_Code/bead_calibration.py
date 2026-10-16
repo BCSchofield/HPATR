@@ -63,6 +63,7 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import measure_run as mr  # noqa: E402
+import optics  # noqa: E402
 
 VERSION = "1.1.0"
 UM_PER_PX = mr.UM_PER_PX
@@ -1072,13 +1073,17 @@ def _figures(out: Path, at_focus: dict, depth: dict, rows_focus: list[dict]):
 
 
 def analyse(paths, out: Path, targets_path: Path | None = None, max_frames: int = MAX_FRAMES) -> dict:
+    global UM_PER_PX
+    profile = optics.profile_for(paths[0])             # the optics these captures were taken with
+    UM_PER_PX = mr.UM_PER_PX = float(profile["um_per_px"])
     caps = find_captures(paths)
     if not caps:
         sys.exit("no calibration captures (Notes starting BEAD or RETICLE) under " + ", ".join(map(str, paths)))
     targets = load_targets(targets_path)
     out.mkdir(parents=True, exist_ok=True)
     result = {"version": VERSION, "made": datetime.now().isoformat(timespec="seconds"),
-              "captures": len(caps), "um_per_px_assumed": UM_PER_PX, "focus_max": FOCUS_MAX,
+              "captures": len(caps), "um_per_px_assumed": UM_PER_PX, "optics_profile": profile["name"],
+              "focus_max": FOCUS_MAX,
               "note": "The current sizer is run with a T < 0.95 component in place of the AI mask; below 40 um "
                       "the real pipeline sizes from the AI mask, so the falling-bead runs are the check there.",
               "through_focus": {}, "at_focus": {}, "falling": [], "array": [], "background_check": []}

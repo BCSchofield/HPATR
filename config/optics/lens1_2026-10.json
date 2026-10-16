@@ -1,0 +1,21 @@
+{
+ "name": "lens1_2026-10",
+ "version": 1,
+ "valid_from": "2025-01-01",
+ "description": "The optics used for every capture up to and including 2026-10: Phantom VEO E-340L, 2048 x 1152 window, the current lens, camera on its rail. One profile per optical set-up: a new lens, aperture, working distance or camera position is a new profile file, not a code edit (sizer 3.0.0 plan, Phase 0).",
+ "um_per_px": 10.0,
+ "um_per_px_status": "Recorded as calibrated before 2026-10 (STATUS, Settled). The falling beads of 2026-10-15 agree: sizer against certificate, slope 1.002. To be measured with the PS20 dot array (profile v2).",
+ "calibration": {
+  "edge_level": null,
+  "chi0_um": null,
+  "chi_k_um_per_mm": null,
+  "chi_max_um": null,
+  "d_min_um": null,
+  "depth_mm": null,
+  "lookup_table": null,
+  "note": "Placeholders, filled in Phase 3 of the sizer 3.0.0 plan from the bead calibration. The current sizer (2.2.0) uses none of them."
+ },
+ "sources": [
+  "LaCie: Calibration/Imaging Work/analysis/2026-10-15/optics_calibration_v1.json (bead calibration, 2026-10-15)"
+ ]
+}

@@ -73,7 +73,12 @@ except ImportError:
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from config_loader import find_lacie_drive  # noqa: E402
 
-UM_PER_PX = 10.0
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import optics  # noqa: E402  (one profile per optical set-up: config/optics/)
+
+# The scale. main() sets it from the run's own optics profile; this default is the newest profile (the rig's
+# set-up now) for callers that measure without a run.
+UM_PER_PX = float(optics.current()["um_per_px"])
 DROPLET, FILAMENT, BLOB = 1, 2, 3
 
 # BGR. Must match preview_predictions.py so the two tools never disagree.
@@ -792,6 +797,7 @@ def plot_distributions(out_dir, focus_d, oof_d, fil_mm2, blob_mm2):
 
 
 def main():
+    global UM_PER_PX
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     # Not required=True: --replot needs neither, and argparse cannot express
@@ -848,6 +854,8 @@ def main():
 
     t_start = time.time()
     root = args.root or real_data_root()
+    profile = optics.profile_for(root)                 # the optics this run was captured with
+    UM_PER_PX = float(profile["um_per_px"])
     val = root / args.val_dir
     sb_dir = args.sixteen_bit_dir or (val / "frames" / "16bit")
     out_dir = args.out_dir or (val / f"droplets_{args.score_thresh:.2f}")
@@ -1138,6 +1146,7 @@ def main():
             "score_threshold": args.score_thresh,
             "focus_max": args.focus_max,
             "um_per_px": UM_PER_PX,
+            "optics_profile": profile["name"],
             # SIZING METHOD -- compare_runs.py guards on these. A run measured
             # with a different sizer_version is NOT comparable with one measured
             # before it, and without this field that difference is invisible.

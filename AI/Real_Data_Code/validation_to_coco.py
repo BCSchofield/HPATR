@@ -68,7 +68,11 @@ for _name in HUMAN_MEASURABLE_LABELS:
 # alias was drawn.
 ID_TO_NAME = {c["id"]: c["name"] for c in CATEGORIES}
 
-UM_PER_PX = 10.0
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import optics  # noqa: E402
+# The scale, from the optics profile (config/optics/). This tool works on the 2026 training / validation
+# data, all one set-up; with several profiles on disk, set HPATR_OPTICS_PROFILE.
+UM_PER_PX = optics.um_per_px()
 
 # An out-of-focus object is REAL but UNMEASURABLE: defocus spreads its edge, so
 # any boundary drawn around it is wrong by an unknown amount. It is therefore

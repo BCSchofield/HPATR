@@ -305,15 +305,22 @@ def pressure_part(xlsx: Path, frames: list[str], counts: dict, fs: float | None)
     return out
 
 
+def mm2_per_px(path: Path) -> float:
+    """The area of one pixel for the run `path` belongs to, from its optics profile (config/optics/)."""
+    from . import pipeline_spec as spec
+    return spec.rdc_module("optics").mm2_per_px(path)
+
+
 def pieces_part(components_csv: Path, n_frames: int) -> dict:
     rows = _read_csv(components_csv)
     a = np.array([_num(r.get("area_px")) for r in rows], float)
     a = a[np.isfinite(a)]
     if a.size == 0:
         return {"n": 0, "per_frame": 0.0}
+    mm2 = mm2_per_px(components_csv)
     return {"n": int(a.size), "per_frame": float(a.size / max(n_frames, 1)),
             "median_px": float(np.median(a)), "largest_px": float(a.max()),
-            "median_mm2": float(np.median(a) * 1e-4), "largest_mm2": float(a.max() * 1e-4),
+            "median_mm2": float(np.median(a) * mm2), "largest_mm2": float(a.max() * mm2),
             "p90_px": float(np.percentile(a, 90)),
             "log10_area_hist": np.histogram(np.log10(a), bins=np.arange(1, 7.01, 0.25))[0].tolist()}
 

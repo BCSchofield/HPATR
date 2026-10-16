@@ -108,6 +108,8 @@ sys.path.insert(0, str(HERE))
 
 from pycocotools import mask as mask_util  # noqa: E402
 import liquid_volume  # noqa: E402
+import measure_run  # noqa: E402
+import optics  # noqa: E402
 from measure_run import (  # noqa: E402
     det_crop, px_to_mm2, equiv_um, d32, annotate, ring_contours,
     measure_droplet, sizer_version, SPLIT_UM,
@@ -501,6 +503,7 @@ def draw_frame(view8, dets, T, unatom, row, args, window=None):
 
 
 def main():
+    global UM_PER_PX
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", type=Path,
@@ -553,6 +556,8 @@ def main():
     args = ap.parse_args()
 
     root = args.root
+    profile = optics.profile_for(root)                 # the optics this run was captured with
+    UM_PER_PX = measure_run.UM_PER_PX = float(profile["um_per_px"])   # measure_run's helpers read its own
     raw = root / "shadowgraph" / "raw"
     pred = args.pred or (root / "shadowgraph" / "analysis" / "predictions_crop.json")
     if not pred.exists():
@@ -781,6 +786,7 @@ def main():
                                        "otherwise (out of focus or below split)",
             "classical_only": args.classical_only,
             "um_per_px": UM_PER_PX,
+            "optics_profile": profile["name"],
             "liquid_version": LIQUID_VERSION,
             "static_t": args.static_t,
             "window_p": args.window_p,

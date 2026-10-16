@@ -22,8 +22,10 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 
@@ -32,11 +34,15 @@ try:
 except ImportError:                       # the GUI starts without OpenCV; the check then says so
     cv2 = None
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "AI" / "Real_Data_Code"))
+import optics  # noqa: E402  (one profile per optical set-up: config/optics/)
+
 DARK = 0.90             # a spot's extent: at least 10% darker than the clean window there
 CORE = 0.80             # ... and its darkest point at least 20% darker
-MIN_AREA_PX = 400       # 0.04 mm^2 at 10 um/px: a ~0.2 mm drop; single droplets in flight are far smaller
+UM_PER_PX = float(optics.current()["um_per_px"])     # the rig's set-up now
+MIN_AREA_MM2 = 0.04     # a ~0.2 mm drop; single droplets in flight are far smaller
+MIN_AREA_PX = int(round(MIN_AREA_MM2 / (UM_PER_PX / 1000.0) ** 2))   # 400 px at 10 um/px
 SMOOTH_PX = 7           # box filter: pixel noise must not make spots
-UM_PER_PX = 10.0
 REFERENCE_DIR = os.path.join(os.path.expanduser("~"), ".hpatr")
 REFERENCE_NAME = "window_reference.npz"
 

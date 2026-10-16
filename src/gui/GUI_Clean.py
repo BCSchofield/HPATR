@@ -80,6 +80,15 @@ try:
     from gui import window_check as _window_check
 except Exception:
     _window_check = None
+# The optics profile (AI/Real_Data_Code/optics.py, profiles in config/optics/, 2026-10-15): the scale, and the
+# profile name every new run records in its run_summary. Optional: the GUI starts without it.
+try:
+    _rdc = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "..", "AI", "Real_Data_Code")
+    if _rdc not in sys.path:
+        sys.path.insert(0, _rdc)
+    import optics as _optics
+except Exception:
+    _optics = None
 # Run sheets (gui/run_sheet.py, 2026-10-14): load a list of runs, fill each run's settings in, ask after each
 # saved run whether it went OK. Optional: the GUI starts without it.
 try:
@@ -4098,10 +4107,15 @@ class AtomisationApp(QMainWindow):
                 if "atomised_pct" in ext:
                     bits.append(f"atomised {ext['atomised_pct']} %")
             elif "unatomised_px" in ext:                       # classical entry
-                un_mm2 = ext["unatomised_px"] * 1e-4           # 10 um/px -> 1e-4 mm^2/px
+                try:                                           # the run's own optics profile (scale)
+                    _mm2_px = _optics.mm2_per_px(cdir) if _optics else None
+                except Exception:
+                    _mm2_px = None
+                un_txt = (f"{ext['unatomised_px'] * _mm2_px:.2f} mm²" if _mm2_px
+                          else f"{ext['unatomised_px']} px")
                 bits = [f"atomised {ext['atomised_pct']} %",
                         f"{ext.get('droplets', '?')} droplets",
-                        f"un-atomised liquid {un_mm2:.2f} mm² in "
+                        f"un-atomised liquid {un_txt} in "
                         f"{ext.get('n_components', '?')} piece(s)"]
                 if ext["unatomised_px"] == 0:
                     bits.append("⚠ no un-atomised liquid — 100% by construction")
@@ -7612,6 +7626,15 @@ class AtomisationApp(QMainWindow):
     _EST_COPY_S = 300
 
     @staticmethod
+    def _optics_profile_name():
+        """The optics profile this run is captured with (config/optics/; the newest one is the rig's set-up now),
+        recorded in run_summary so the analysis uses the right scale even after the optics change."""
+        try:
+            return _optics.current()["name"] if _optics else 'NOT RECORDED'
+        except Exception:
+            return 'NOT RECORDED'
+
+    @staticmethod
     def _ai_code_on_path():
         p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                          "..", "AI", "Real_Data_Code")
@@ -9410,7 +9433,8 @@ class AtomisationApp(QMainWindow):
                       'Fluid', 'Liquid density (kg/m3)',
                       'Gas', 'Gas density (kg/m3)',
                       'Pressure Range (barA)', 'Speed (steps/s)', 'Motor Travel (mm)',
-                      'FPS', 'Notes', 'Run status', 'Window check (before run)'] + list(gas_fields),
+                      'FPS', 'Notes', 'Run status', 'Window check (before run)',
+                      'Optics profile'] + list(gas_fields),
             'Value': [ts_str, orifice, orifice_len, as_number(bubbler_str) if bubbler_str else 'NOT RECORDED',
                       as_number(rpm_str) if rpm_str else 'NOT RECORDED', f_range_str, glr_val,
                       job.get('fluid_tag') or 'NOT RECORDED',
@@ -9420,7 +9444,8 @@ class AtomisationApp(QMainWindow):
                       p_range_str,
                       as_number(speed_str), as_number(distance_str), fps_val, notes,
                       job.get('run_status') or 'NOT RECORDED',
-                      job.get('window_check') or 'NOT RECORDED'] + list(gas_fields.values()),
+                      job.get('window_check') or 'NOT RECORDED',
+                      self._optics_profile_name()] + list(gas_fields.values()),
         }
         # Written to a temporary file and swapped in, so a crash or a drive
         # dropout mid-write leaves the previous run_summary intact.

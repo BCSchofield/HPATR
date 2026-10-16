@@ -46,7 +46,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from config_loader import find_lacie_drive  # noqa: E402
 
-UM_PER_PX = 10.0
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import optics  # noqa: E402
+# The scale, from the optics profile (config/optics/). This tool works on the 2026 training / validation
+# data, all one set-up; with several profiles on disk, set HPATR_OPTICS_PROFILE.
+UM_PER_PX = optics.um_per_px()
 DEFAULT_THRESHOLDS = [0.05, 0.30, 0.50, 0.70, 0.90]
 
 # OpenCV is BGR.

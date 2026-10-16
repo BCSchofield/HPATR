@@ -551,13 +551,18 @@ def fig_pieces(results, out_dir: Path) -> list[Path]:
         return []
     cmap = _cmap(results)
     edges = np.arange(1, 7.01, 0.25)
-    mids = 10 ** ((edges[:-1] + edges[1:]) / 2) * 1e-4           # px -> mm^2 (10 um/px)
+    mids = 10 ** ((edges[:-1] + edges[1:]) / 2)                  # px
+    scales = {run_metrics.mm2_per_px(r.path) for rs in conds.values() for r in rs}
+    if len(scales) == 1:                                         # one optics profile: show mm^2
+        mids, unit = mids * scales.pop(), "mm²"
+    else:                                                        # mixed optics: pixels are not comparable
+        unit = "px, mixed optics"
     fig = Figure(figsize=(11.5, 3.9))
     ax_d, ax_n, ax_m = fig.subplots(1, 3)
     for c, h in hist.items():
         if h.sum() > 0:
             ax_d.semilogx(mids, 100 * h / h.sum(), color=cmap[c], linewidth=1.2)
-    ax_d.set_xlabel("piece area (mm², log scale)", fontsize=8)
+    ax_d.set_xlabel(f"piece area ({unit}, log scale)", fontsize=8)
     ax_d.set_ylabel("% of pieces", fontsize=8)
     ax_d.set_title("Size of un-atomised pieces", fontsize=9, loc="left")
     _axes_style(ax_d)

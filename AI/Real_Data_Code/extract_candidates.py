@@ -78,7 +78,11 @@ def real_data_root() -> Path:
                  "--output-root / --manifest explicitly.")
     return Path(drive) / "Experiments" / "Real_Data"
 
-UM_PER_PX = 10.0
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import optics  # noqa: E402
+# The scale, from the optics profile (config/optics/). This tool works on the 2026 training / validation
+# data, all one set-up; with several profiles on disk, set HPATR_OPTICS_PROFILE.
+UM_PER_PX = optics.um_per_px()
 # 200 um droplet/blob ceiling (Rayleigh-derived, see handoff decision 2).
 DROPLET_CEILING_PX = 200.0 / UM_PER_PX   # 20 px equivalent diameter
 # A filament is an object that is LONG RELATIVE TO ITS OWN WIDTH, measured

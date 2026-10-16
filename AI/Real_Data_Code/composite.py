@@ -82,6 +82,8 @@ except ImportError:
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from config_loader import find_lacie_drive  # noqa: E402
 from _fsutil import list_files, write_image  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import optics  # noqa: E402
 
 # category_id -> name. Recorded in the COCO json, which is self-describing,
 # but keep this stable: Detectron2 maps these to contiguous 0-indexed classes
@@ -464,7 +466,7 @@ def main():
             "intensity_window_8bit": {"low": args.window_lo, "high": args.window_hi,
                                       "note": "matches real frame extraction; inference "
                                               "on real frames must use the same window"},
-            "um_per_px": 10.0,
+            "um_per_px": optics.um_per_px(),
             "scale_randomised": False,
             "excluded_near_validation": sorted(near_val_dropped),
             "seed": args.seed,

@@ -207,6 +207,8 @@ def test_measure_run_picks_draws_and_indexes_the_four_frames(measured):
     assert idx["frames"][0]["value"] == 15 and idx["frames"][1]["value"] == 21
     summary = json.loads((meas / "summary.json").read_text())
     assert summary["more_extreme_frames"] == idx["frames"]
+    assert summary["provenance"]["optics_profile"] == "lens1_2026-10"      # which optics (sizer 3.0.0, Phase 0)
+    assert summary["provenance"]["um_per_px"] == 10.0
     with open(meas / "per_frame.csv", newline="") as f:
         rows = list(csv.reader(f))
     assert rows[0][-1] == "mean_d_in_focus_um" and rows[0][-2] == "blob_area_px"
