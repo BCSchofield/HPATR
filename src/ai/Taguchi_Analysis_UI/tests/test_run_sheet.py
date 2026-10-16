@@ -103,4 +103,4 @@ def test_the_run_sheet_tab_and_master_log_button_in_the_real_window(tmp_path):
                        capture_output=True, text=True, env=env, cwd=str(REPO), timeout=300)
     out = p.stdout + p.stderr
     assert p.returncode == 0 and "ALL WINDOW CHECKS PASSED" in p.stdout, out[-4000:]
-    assert out.count("PASS ") == 9, out[-4000:]
+    assert out.count("PASS ") == 10, out[-4000:]                # 9 + the focus check (sizer 3.0.0 Phase 1)

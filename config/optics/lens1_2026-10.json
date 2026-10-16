@@ -13,9 +13,19 @@
   "d_min_um": null,
   "depth_mm": null,
   "lookup_table": null,
-  "note": "Placeholders, filled in Phase 3 of the sizer 3.0.0 plan from the bead calibration. The current sizer (2.2.0) uses none of them."
+  "note": "Placeholders, filled in Phase 3 of the sizer 3.0.0 plan from the bead calibration. The current sizer (2.2.0) uses none of them.",
+  "d_min_provisional": {
+   "chi_max_15_um": 30.0,
+   "chi_max_20_um": 35.0,
+   "chi_max_25_um": 35.0,
+   "method": "half-max (native or 4x upsample) after the edge correction",
+   "criterion": "median bias within +-10 %, >= 90 % of droplets inside the volume found and passed",
+   "status": "Provisional (sizer 3.0.0 Phase 2, 2026-10-16): an optics model checked against the beads. It matches them near focus (chi up to ~16 um); with more blur real beads grow 6-12 % faster than the model, so the limits for looser chi_max are optimistic. d_min_um is set in Phase 3 once chi_max is chosen; the reticle's 14-28 um dots measure it.",
+   "source": "LaCie: Calibration/Imaging Work/analysis/size_limit_2026-10-16/"
+  }
  },
  "sources": [
-  "LaCie: Calibration/Imaging Work/analysis/2026-10-15/optics_calibration_v1.json (bead calibration, 2026-10-15)"
+  "LaCie: Calibration/Imaging Work/analysis/2026-10-15/optics_calibration_v1.json (bead calibration, 2026-10-15)",
+  "LaCie: Calibration/Imaging Work/analysis/size_limit_2026-10-16/ (size limit model, 2026-10-16)"
  ]
 }

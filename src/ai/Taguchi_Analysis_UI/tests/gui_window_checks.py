@@ -14,6 +14,8 @@ REPO = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(REPO / "src"))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 STATE = Path(os.environ.setdefault("HPATR_RUN_SHEET_STATE", "/tmp/hpatr_run_sheet_checks_state.json"))
+FOCUS_STATE = Path(os.environ.setdefault("HPATR_FOCUS_STATE", "/tmp/hpatr_focus_checks_state.json"))
+FOCUS_STATE.unlink(missing_ok=True)                 # start each run of the checks with no focus records
 # A frozen copy of the full 57-row sheet planned for 2026-10-15 (057a0f3): Cd tests, spray runs and bead rows.
 # Not the live day sheet, which was cut to the bead rows on the day (b55c142) and may change again.
 THURSDAY = Path(__file__).resolve().parent / "data" / "run_sheet_57_rows_2026-10-15.csv"
@@ -209,6 +211,38 @@ def check_calibration_rows_route_the_run_folder_and_shorten_the_capture():
     assert win._run_base(lacie) == os.path.join(lacie, "Experiments")
     asked.clear()
     assert win._standard_capture_diffs() == []
+
+
+def check_the_focus_meter_reads_the_pinhole_and_records_the_axis_plane():
+    """Sizer 3.0.0 Phase 1: a 300 um pinhole (bright on a dark frame, chi 13 um) is read live, two readings at 0
+    and 180 degrees give the axis plane midway, and the next run's snapshot carries it for run_summary."""
+    import cv2
+    import numpy as np
+    up, h, w = 8, 160, 200
+    yy, xx = np.mgrid[0:h * up, 0:w * up]
+    disc = (((xx + 0.5) / up - 0.5 - 97.3) ** 2 + ((yy + 0.5) / up - 0.5 - 81.6) ** 2 <= 15.0 ** 2)
+    patch = cv2.GaussianBlur(np.where(disc, 1.0, 0.05).astype(np.float32), (0, 0), 13.0 / 2 / 10 * up)
+    frame = np.full((1152, 2048), 0.05, np.float32)
+    frame[500:660, 900:1100] = cv2.resize(patch, (w, h), interpolation=cv2.INTER_AREA)
+    frame = np.clip(frame * 230 + np.random.default_rng(0).normal(0, 3, frame.shape), 0, 255).astype(np.uint8)
+    assert G._focus_edge is not None and win._focus_today_text() == "No focus check recorded today."
+    r = win._focus_measure(frame)
+    assert r["ok"] and abs(r["chi_um"] - 13.0) < 1.5 and abs(r["diameter_um"] - 300.0) < 2.0
+    win._focus_on = True
+    win._focus_result(r)
+    assert win._focus_readout.text().startswith("χ 1") and G.CLR_GREEN in win._focus_readout.styleSheet()
+    win._focus_rail_edit.setText("12.30")
+    win._focus_orient_combo.setCurrentIndex(0)
+    win._focus_record()
+    win._focus_rail_edit.setText("12.39")
+    win._focus_orient_combo.setCurrentIndex(1)
+    win._focus_record()
+    assert "axis at rail 12.345 mm (0/180 differ 0.09 mm)" in win._focus_today_lbl.text()
+    assert "axis at rail 12.345 mm" in win._snapshot_run_conditions()["focus_check"]
+    win._focus_rail_edit.setText("not a number")
+    win._focus_record()
+    assert warned and "not a number" in warned[-1][1]
+    win._focus_on = False
 
 
 failed = 0

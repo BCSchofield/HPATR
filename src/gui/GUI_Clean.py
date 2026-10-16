@@ -89,6 +89,12 @@ try:
     import optics as _optics
 except Exception:
     _optics = None
+# The focus meter (AI/Real_Data_Code/focus_edge.py, sizer 3.0.0 Phase 1, 2026-10-16): the blur width of the 300 um
+# pinhole held on the orifice axis, read live. numpy + OpenCV only. Optional: the GUI starts without it.
+try:
+    import focus_edge as _focus_edge
+except Exception:
+    _focus_edge = None
 # Run sheets (gui/run_sheet.py, 2026-10-14): load a list of runs, fill each run's settings in, ask after each
 # saved run whether it went OK. Optional: the GUI starts without it.
 try:
@@ -3543,6 +3549,72 @@ class AtomisationApp(QMainWindow):
             self._window_save_btn.setEnabled(False)
             self._window_now_btn.setEnabled(False)
         vl.addWidget(c_win)
+
+        # Focus check card (sizer 3.0.0 Phase 1, 2026-10-16): focus on the spray centre with the 300 um pinhole
+        self._focus_on = False
+        self._focus_busy = False
+        self._focus_pending_frame = None
+        self._focus_best = None
+        self._focus_last = None
+        self._focus_records = self._focus_load_today()
+        c_foc = card(w)
+        c_foc.layout().addWidget(section_label("FOCUS CHECK (SPRAY CENTRE)"))
+        c_foc.layout().addWidget(separator())
+        _foc_desc = QLabel(
+            "Seat the 300 µm pinhole holder in the insert holder (the foil on the orifice axis). Tick Measure live "
+            "and slide the camera on its rail until χ, the blur of the pinhole's edge, is smallest: green is within "
+            "2 µm of the best (~0.25 mm). Record with the rail reading, turn the holder 180°, focus and record again: "
+            "the axis plane is midway. Take the holder out before spraying. The latest check goes into each run's "
+            "run_summary ('Focus check').")
+        _foc_desc.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
+        _foc_desc.setWordWrap(True)
+        c_foc.layout().addWidget(_foc_desc)
+        self._focus_readout = QLabel("Not measuring.")
+        self._focus_readout.setStyleSheet(f"color:{CLR_TEXT}; font-size:13px; font-weight:600;")
+        self._focus_readout.setWordWrap(True)
+        c_foc.layout().addWidget(self._focus_readout)
+        foc_row = QWidget()
+        frl = QHBoxLayout(foc_row); frl.setContentsMargins(0, 0, 0, 0); frl.setSpacing(8)
+        self._focus_live_chk = QCheckBox("Measure live")
+        self._focus_live_chk.setStyleSheet(f"color:{CLR_TEXT}; font-size:12px;")
+        self._focus_live_chk.setToolTip("Read the pinhole's blur width on every live frame (starts the live view).")
+        self._focus_live_chk.toggled.connect(self._focus_toggle)
+        self._focus_reset_btn = ghost_button("Reset best")
+        self._focus_reset_btn.setToolTip("Forget the best χ so far (after moving the holder or the lighting).")
+        self._focus_reset_btn.clicked.connect(self._focus_reset_best)
+        frl.addWidget(self._focus_live_chk)
+        frl.addStretch()
+        frl.addWidget(self._focus_reset_btn)
+        c_foc.layout().addWidget(foc_row)
+        foc_row2 = QWidget()
+        frl2 = QHBoxLayout(foc_row2); frl2.setContentsMargins(0, 0, 0, 0); frl2.setSpacing(8)
+        _rail_lbl = QLabel("Rail (mm)")
+        _rail_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:12px;")
+        self._focus_rail_edit = QLineEdit()
+        self._focus_rail_edit.setPlaceholderText("e.g. 12.34")
+        self._focus_rail_edit.setFixedWidth(80)
+        self._focus_orient_combo = QComboBox()
+        self._focus_orient_combo.addItems(["0°", "180°"])
+        self._focus_record_btn = ghost_button("Record")
+        self._focus_record_btn.setToolTip("Keep the current reading (with the rail reading and the holder's turn).")
+        self._focus_record_btn.clicked.connect(self._focus_record)
+        frl2.addWidget(_rail_lbl)
+        frl2.addWidget(self._focus_rail_edit)
+        frl2.addWidget(self._focus_orient_combo)
+        frl2.addStretch()
+        frl2.addWidget(self._focus_record_btn)
+        c_foc.layout().addWidget(foc_row2)
+        self._focus_today_lbl = QLabel(self._focus_today_text())
+        self._focus_today_lbl.setStyleSheet(f"color:{CLR_TEXT_SEC}; font-size:11px;")
+        self._focus_today_lbl.setWordWrap(True)
+        c_foc.layout().addWidget(self._focus_today_lbl)
+        if _focus_edge is None:
+            self._focus_live_chk.setEnabled(False)
+            self._focus_record_btn.setEnabled(False)
+            self._focus_readout.setText("Focus meter unavailable: AI/Real_Data_Code/focus_edge.py did not import.")
+        elif not self.camera_available:
+            self._focus_live_chk.setEnabled(False)
+        vl.addWidget(c_foc)
 
         # Full Analyse Cine card
         c_test = card(w)
@@ -7925,6 +7997,7 @@ class AtomisationApp(QMainWindow):
         # Clear live-feed lamella state — overlay pauses but checkbox stays as-is
         self._lamella_result = None
         self._lamella_pending_frame = None
+        self._focus_pending_frame = None                 # the focus meter waits for the next feed
 
     # ── Lamella Analysis ──────────────────────────────────────────────────────
 
@@ -8302,6 +8375,10 @@ class AtomisationApp(QMainWindow):
                     self._lamella_pending_frame = frame
                     if not self._lamella_busy:
                         self._lamella_kick_inference()
+                if getattr(self, "_focus_on", False):          # the focus meter: latest frame only
+                    self._focus_pending_frame = frame
+                    if not self._focus_busy:
+                        QTimer.singleShot(0, self, self._focus_kick)
                 QTimer.singleShot(0, self, lambda: self._live_feed_update(frame))
             except Exception:
                 QTimer.singleShot(0, self, lambda: self._cal_stop_feed())
@@ -8860,6 +8937,152 @@ class AtomisationApp(QMainWindow):
         self._set_status("Start cancelled: wipe the window, then Start again", CLR_ORANGE)
         return False
 
+    # ── Focus check: the 300 um pinhole on the orifice axis (sizer 3.0.0 Phase 1, 2026-10-16) ──────────
+
+    FOCUS_PINHOLE_UM = 300.0
+
+    @staticmethod
+    def _focus_state_path():
+        """Today's focus records, on the LOCAL disk (like the run sheet's progress), never on the LaCie."""
+        return os.environ.get("HPATR_FOCUS_STATE") or os.path.join(os.path.expanduser("~"), ".hpatr",
+                                                                   "focus_check.json")
+
+    def _focus_load_today(self):
+        try:
+            with open(self._focus_state_path(), encoding="utf-8") as f:
+                d = json.load(f)
+            return list(d.get(datetime.now().strftime("%Y-%m-%d"), []))
+        except Exception:
+            return []
+
+    def _focus_save_records(self):
+        path = self._focus_state_path()
+        try:
+            try:
+                with open(path, encoding="utf-8") as f:
+                    d = json.load(f)
+            except Exception:
+                d = {}
+            d[datetime.now().strftime("%Y-%m-%d")] = self._focus_records
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(d, f, indent=1)
+            os.replace(tmp, path)
+        except Exception as e:
+            self._log(f"Focus check: could not save the record ({e}).")
+
+    def _focus_toggle(self, checked):
+        self._focus_on = bool(checked) and _focus_edge is not None
+        if not self._focus_on:
+            self._focus_pending_frame = None
+            self._focus_readout.setText("Not measuring.")
+            self._focus_readout.setStyleSheet(f"color:{CLR_TEXT}; font-size:13px; font-weight:600;")
+            return
+        if not self.phantom or not self.phantom.is_connected:
+            self._focus_readout.setText("Connect the camera first.")
+            return
+        if not self._live_feed_timer.isActive():
+            self._cal_start_feed()
+        self._focus_readout.setText("Measuring…")
+
+    def _focus_measure(self, frame):
+        """One reading of a frame: focus_edge's result (a dict; ok False with 'why' when there is no target)."""
+        try:
+            um = float(_optics.current()["um_per_px"]) if _optics else 10.0
+            return _focus_edge.disc_edge(np.asarray(frame), um, self.FOCUS_PINHOLE_UM)
+        except Exception as e:
+            return {"ok": False, "why": str(e)}
+
+    def _focus_kick(self):
+        """Main thread: measure the latest frame on a worker thread (one at a time, never queued)."""
+        frame = self._focus_pending_frame
+        if frame is None or self._focus_busy or not self._focus_on:
+            return
+        self._focus_pending_frame = None
+        self._focus_busy = True
+
+        def _work():
+            r = self._focus_measure(frame)
+            QTimer.singleShot(0, self, lambda: self._focus_result(r))
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _focus_result(self, r):
+        """Main thread: show the reading; green when within GREEN_TOL of the best so far."""
+        self._focus_busy = False
+        if not self._focus_on:
+            return
+        if not r.get("ok"):
+            self._focus_readout.setText(f"No reading: {r.get('why', 'the fit did not converge')}")
+            self._focus_readout.setStyleSheet(f"color:{CLR_ORANGE}; font-size:13px; font-weight:600;")
+        else:
+            self._focus_last = r
+            chi = r["chi_um"]
+            self._focus_best = chi if self._focus_best is None else min(self._focus_best, chi)
+            good = _focus_edge.in_focus(chi, self._focus_best)
+            off = _focus_edge.z_off_mm(chi, self._focus_best)
+            self._focus_readout.setText(
+                f"χ {chi:.1f} µm   ·   best {self._focus_best:.1f} µm   ·   ≈ {off:.2f} mm from the best   ·   "
+                f"pinhole {r['diameter_um']:.1f} µm ({r.get('scale_error_pct', 0):+.1f}% vs 300)")
+            self._focus_readout.setStyleSheet(
+                f"color:{CLR_GREEN if good else CLR_ORANGE}; font-size:13px; font-weight:600;")
+        if self._focus_on and self._focus_pending_frame is not None:
+            self._focus_kick()
+
+    def _focus_reset_best(self):
+        self._focus_best = None
+        if self._focus_on:
+            self._focus_readout.setText("Best reset: measuring…")
+
+    def _focus_record(self):
+        """Keep the current reading with the rail reading and the holder's turn (0 or 180 degrees)."""
+        r = self._focus_last
+        if not r or not r.get("ok"):
+            self._warn("Focus check", "No reading to record yet: tick Measure live with the pinhole in view.")
+            return
+        rail_txt = self._focus_rail_edit.text().strip()
+        try:
+            rail = float(rail_txt) if rail_txt else None
+        except ValueError:
+            self._warn("Focus check", f"The rail reading '{rail_txt}' is not a number (mm).")
+            return
+        rec = {"when": datetime.now().strftime("%Y-%m-%d %H:%M"), "chi_um": r["chi_um"],
+               "diameter_um": r["diameter_um"], "scale_error_pct": r.get("scale_error_pct"),
+               "rail_mm": rail, "orientation": self._focus_orient_combo.currentText().rstrip("°"),
+               "best_chi_um": self._focus_best}
+        self._focus_records.append(rec)
+        self._focus_save_records()
+        self._focus_today_lbl.setText(self._focus_today_text())
+        self._log(f"Focus check recorded: {_focus_edge.summary_text(rec)} ({rec['orientation']}°)")
+
+    def _focus_today(self):
+        """Today's latest record, with the 0/180 midpoint when both turns have a rail reading."""
+        recs = [r for r in self._focus_records if r.get("chi_um") is not None]
+        if not recs or _focus_edge is None:
+            return None
+        out = dict(recs[-1])
+        last = {}
+        for r in recs:
+            if r.get("rail_mm") is not None:
+                last[r.get("orientation")] = r["rail_mm"]
+        if "0" in last and "180" in last:
+            out.update(_focus_edge.rotation_midpoint(last["0"], last["180"]))
+        return out
+
+    def _focus_today_text(self):
+        t = self._focus_today()
+        if not t:
+            return "No focus check recorded today."
+        s = "Today: " + _focus_edge.summary_text(t)
+        if "ok" in t and not t["ok"]:
+            s += f". The 0° and 180° readings differ by more than {_focus_edge.ROTATION_TOL_MM} mm: re-seat the holder."
+        return s
+
+    def _focus_check_for_run(self):
+        """What a new run's run_summary records as 'Focus check'."""
+        t = self._focus_today()
+        return _focus_edge.summary_text(t) if t else "NOT DONE TODAY"
+
     def _start_experiment(self):
         if not self._require_arduino(): return
         if not self._check_standard_capture(): return
@@ -9205,6 +9428,8 @@ class AtomisationApp(QMainWindow):
             'static':       static,
             # what the window check said at this run's Start ('clean', '2 new dark spots ...', 'off')
             'window_check': getattr(self, '_window_check_result', 'NOT RECORDED'),
+            # today's focus check on the 300 um pinhole (sizer 3.0.0 Phase 1), or 'NOT DONE TODAY'
+            'focus_check': self._focus_check_for_run() if _focus_edge is not None else 'NOT RECORDED',
         }
 
     def _collect_save_job(self) -> dict:
@@ -9434,7 +9659,7 @@ class AtomisationApp(QMainWindow):
                       'Gas', 'Gas density (kg/m3)',
                       'Pressure Range (barA)', 'Speed (steps/s)', 'Motor Travel (mm)',
                       'FPS', 'Notes', 'Run status', 'Window check (before run)',
-                      'Optics profile'] + list(gas_fields),
+                      'Optics profile', 'Focus check'] + list(gas_fields),
             'Value': [ts_str, orifice, orifice_len, as_number(bubbler_str) if bubbler_str else 'NOT RECORDED',
                       as_number(rpm_str) if rpm_str else 'NOT RECORDED', f_range_str, glr_val,
                       job.get('fluid_tag') or 'NOT RECORDED',
@@ -9445,7 +9670,8 @@ class AtomisationApp(QMainWindow):
                       as_number(speed_str), as_number(distance_str), fps_val, notes,
                       job.get('run_status') or 'NOT RECORDED',
                       job.get('window_check') or 'NOT RECORDED',
-                      self._optics_profile_name()] + list(gas_fields.values()),
+                      self._optics_profile_name(),
+                      job.get('focus_check') or 'NOT RECORDED'] + list(gas_fields.values()),
         }
         # Written to a temporary file and swapped in, so a crash or a drive
         # dropout mid-write leaves the previous run_summary intact.
