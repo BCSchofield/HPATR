@@ -47,7 +47,7 @@ from . import stats
 
 # (key, direction, importance). The objective is THROUGHPUT (Ben, 2026-10-14): the spray is collected and
 # size-filtered, so the goal is as many droplets in the size band per second as possible (mass balance,
-# `rate_band`, Settings band default 20-60 um), with atomised fraction as a lighter second goal. A run
+# `rate_band`, Settings band default 30-60 um since 2026-10-17), with atomised fraction as a lighter second goal. A run
 # without the rate (measured before liquid stage 2.3.0, or no syringe flow) leaves atomised fraction alone.
 DEFAULT_GOALS = (("rate_band", "max", 3.0), ("atom", "max", 1.0))
 USABLE_R2_PRED = 0.5                  # below this a surface is not used to choose the best setting

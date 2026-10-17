@@ -950,6 +950,51 @@ def tw_more_run(results, r):
     return f"{cond_text(results, r.condition)}, {r.name[:6]}: busiest and mean-diameter frames", cells, notes
 
 
+LARGEST_SHEET, LARGEST_INDEX = "largest_droplets.png", "largest_droplets.json"   # measure_run, sizer 3.1.0
+BIGGEST_BEAD_UM = 155.8
+
+
+def _largest_sheet(r, thr: float):
+    """The run's largest-droplets sheet (measure_run, sizer 3.1.0), or None."""
+    an = r.path / "shadowgraph" / "analysis"
+    meas = Path((r.rec or {}).get("meas_dir") or an / f"droplets_{thr:.2f}")
+    p = meas / LARGEST_SHEET
+    return p if p.is_file() else None
+
+
+def tw_largest(results, r, sheet: Path):
+    """(title, detail, terms, notes) for one run's sheet of its largest sized droplets."""
+    import json
+    try:
+        j = json.loads(sheet.with_name(LARGEST_INDEX).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        j = {}
+    sizes = [e["size_um"] for e in j.get("droplets", [])]
+    beyond = sum(sz > BIGGEST_BEAD_UM for sz in sizes)
+    detail = (f"The {len(sizes)} largest of {j.get('of_sized', 0):,} sized droplets, {sizes[0]:.0f} to "
+              f"{sizes[-1]:.0f} µm" if sizes else "The largest sized droplets")
+    if beyond:
+        detail += (f"; {beyond} beyond the largest calibration bead ({BIGGEST_BEAD_UM:g} µm), sized by extrapolating "
+                   f"the bead table")
+    notes = ("D32 leans on the largest droplets, so they are worth a look on every run. Each crop is centred on the "
+             "droplet and ringed in its verdict's colour (green: sized directly; blue: through the bead table; "
+             "magenta: table extrapolated). A ring round anything that is not one round droplet -- two touching, a "
+             "piece of a ligament, a speck in a shadow -- is a sizing fault: sizer 3.0.0's read 200-430 um that way, "
+             "which 3.1.0's validity tests now stop.")
+    return f"{cond_text(results, r.condition)}, {r.name[:6]}: the largest sized droplets", detail + ".", "", notes
+
+
+def largest_slides(d, results) -> int:
+    """One slide per run with a largest-droplets sheet (sizer 3.1.0), in condition order; the number added."""
+    n = 0
+    for c, runs in _conds(results).items():
+        for r in runs:
+            sheet = _largest_sheet(r, results.thr)
+            if sheet is not None and d.figure(tw_largest(results, r, sheet), sheet, GREY):
+                n += 1
+    return n
+
+
 def more_grid_slides(d, results) -> int:
     """One 2x2 slide per run with extreme_frames_more/, in condition order; the number added."""
     n = 0
@@ -986,7 +1031,7 @@ def caveats(results) -> list[tuple[str, str]]:
     if any(str(r.sizer_version) == "2.2.0" for r in results.runs):
         out.append(("Sizer 2.2.0", "D32 is the D32 of round, sharp droplets. Part of any effect on it is selection "
                                    "by the sharpness rule (moved share on the data-quality slide)."))
-    if any(str(r.sizer_version) == "3.0.0" for r in results.runs):
+    if any(str(r.sizer_version).startswith("3.") for r in results.runs):
         out.append(("Sizer 3.0.0", "Sizes are calibrated on certified glass beads (37-155.8 um, provisional) and "
                                    "count only droplets inside the measurement volume (blur width <= chi_max; the "
                                    "frame area x a calibrated depth, the same for every size); below 37 um the bead "
@@ -1392,10 +1437,13 @@ def build(path: Path, results, bins, prov, figures_dir: Path, title: str = "Tagu
     gal = [(c, figs / figures_extra.GALLERY_DIR / f"gallery_{c}.png") for c in conds]
     gal = [(c, p) for c, p in gal if p.is_file()]
     more = any(figures_extra._more_frames(r, results.thr) for r in results.runs)
-    if gal or more:
+    big = any(_largest_sheet(r, results.thr) for r in results.runs)
+    if gal or more or big:
         d.section("Appendix: images", "Each condition's least and most atomised frames, then each run's busiest "
-                                      "and mean-diameter frames in a 2x2 grid.")
+                                      "and mean-diameter frames in a 2x2 grid, then each run's largest sized "
+                                      "droplets (sizer 3.1.0).")
         for c, p in gal:
             d.figure(tw_gallery(results, c), p, GREY)
         more_grid_slides(d, results)
+        largest_slides(d, results)
     return d.save(path)

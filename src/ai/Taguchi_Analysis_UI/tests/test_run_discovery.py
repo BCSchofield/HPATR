@@ -179,14 +179,14 @@ def test_big_flow_drift_warns_but_normal_drift_does_not(root):
 def test_measured_under_current_names(root):
     s = rd.load_run_info(fakes.make_run(root, FIRST, analysis="current")).analysis
     assert s.measured and not s.legacy_names and s.sizer_version == "2.1.0"
-    assert s.label == "measured v2.1.0 · re-measure: sizer 2.1.0, the default is 3.0.0"
+    assert s.label == "measured v2.1.0 · re-measure: sizer 2.1.0, the default is 3.1.0"
 
 
 def test_measured_under_legacy_names_like_10_01(root):
     s = rd.load_run_info(fakes.make_run(root, FIRST, analysis="legacy",
                                         sizer_version=None)).analysis
     assert s.measured and s.legacy_names and s.sizer_version is None
-    assert s.label == "measured pre-2.0.0 \u00b7 legacy folders \u00b7 re-measure: sizer pre-2.0.0, the default is 3.0.0"
+    assert s.label == "measured pre-2.0.0 \u00b7 legacy folders \u00b7 re-measure: sizer pre-2.0.0, the default is 3.1.0"
 
 
 def test_droplets_only_is_its_own_state_not_new(root):

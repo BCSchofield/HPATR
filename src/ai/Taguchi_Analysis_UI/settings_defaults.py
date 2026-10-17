@@ -290,8 +290,10 @@ def count_band() -> Default:
     from .run_metrics import DEFAULT_BAND_UM
     lo, hi = DEFAULT_BAND_UM
     return Default(DEFAULT_BAND_UM, f"this app's own default, {lo:g}-{hi:g} um: the size range collected after the "
-                                    "spray is filtered (Ben, 2026-10-14). The in-band responses count droplets in this "
-                                    "band (lo <= d < hi): per frame, and per second by mass balance (the default goal)")
+                                    "spray is filtered (Ben, 2026-10-14), from 30 um while sizer 3.x sizes nothing "
+                                    "smaller (2026-10-17). The in-band responses count droplets in this band "
+                                    "(lo <= d < hi): per frame, per second by mass balance (the default goal) and the "
+                                    "liquid they carry (mL/min)")
 
 
 def parse_band(text: str, what: str = "size band") -> tuple:

@@ -803,7 +803,7 @@ def caveats(models: dict) -> list[str]:
     if any(str(r.sizer_version) == "2.2.0" for r in R.loaded.runs):
         out.append("Sizer 2.2.0: size responses are of round, sharp droplets, and part of any effect on them is "
                    "selection by the sharpness rule.")
-    if any(str(r.sizer_version) == "3.0.0" for r in R.loaded.runs):
+    if any(str(r.sizer_version).startswith("3.") for r in R.loaded.runs):
         out.append("Sizer 3.0.0: sizes are calibrated on certified glass beads (37-155.8 um, provisional) and count "
                    "only droplets inside the measurement volume; below 37 um the bead table is extrapolated. The "
                    "atomised fraction is inside that volume (the all-objects one is an extra response); "

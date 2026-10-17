@@ -80,12 +80,13 @@ class AnalysisOptions:
     band_um: tuple = run_metrics.DEFAULT_BAND_UM            # the size band the droplet count counts
 
 
-def no_spray_reason(atom: float | None, opts: AnalysisOptions | None = None) -> str | None:
-    """Why this run is "no spray", or None if it sprays (or its atomised fraction is unknown)."""
+def no_spray_reason(atom: float | None, opts: AnalysisOptions | None = None, over: str = "") -> str | None:
+    """Why this run is "no spray", or None if it sprays (or its atomised fraction is unknown). `over` names what the
+    fraction is taken over when it is not the headline one ("every object" at sizer 3.0.0)."""
     limit = (opts or AnalysisOptions()).no_spray_atom_pct
     if atom is None or not math.isfinite(atom) or atom >= limit:
         return None
-    return f"atomised {atom:.2f}% < {limit:g}%"
+    return f"atomised {atom:.2f}%{f' ({over})' if over else ''} < {limit:g}%"
 
 
 def _blank_no_spray(rec: dict, values: dict, ci: dict, metrics: dict, reason: str) -> dict:
@@ -602,12 +603,55 @@ def load_measured_run(path: Path, info, thr: float, rng, do_bootstrap: bool, met
     rec["operating"] = operating.operating_point(Path(path) / "run_summary.xlsx", info.sccm if info else None,
                                                  (opts or AnalysisOptions()).supply_ceiling_bar)
     covariates.with_operating(context, rec["operating"])     # the gas flux from the gas it got in the window
-    reason = no_spray_reason(values.get("atom"), opts)
+    # The 2 % cut was set on the atomised fraction over every object (2026-10-13). At sizer 3.0.0 the headline
+    # fraction is the one inside the measurement volume, which a dribble can push over the cut: CCD C3 (112022)
+    # reads 0.19 % over every object but 4.3 % in the volume (its stream is mostly outside it). So the cut keeps
+    # reading every object.
+    every = rec.get("atom_all") if rec.get("vol3") else None
+    reason = (no_spray_reason(every, opts, "every object") if every is not None
+              else no_spray_reason(values.get("atom"), opts))
     if reason:
         metrics = _blank_no_spray(rec, values, ci, metrics, reason)
         warnings.append(f"{name}: no spray ({reason}): its droplet size and steadiness are not reported "
                         "(a dribble's few stray droplets say nothing about atomisation)")
+    warnings.extend(sizer31_warnings(name, rec))
     return rec, values, ci, context, metrics
+
+
+LARGE_SHARE_PCT = 15.0      # sizer 3.1.0: warn when droplets beyond the largest calibration bead carry this much d^3
+
+
+def sizer31_warnings(name: str, rec: dict | None) -> list[str]:
+    """Sizer 3.1.0's run checks for the report (plan 2026-10-17, Phase 4): drops that landed on the window (the rolling
+    background divides them out, but the window wants cleaning), and a D32 resting on droplets beyond the largest
+    calibration bead (sized by extrapolating the table; look at the run's largest-droplets slide)."""
+    out = []
+    try:
+        summ = json.loads((Path(rec["meas_dir"]) / "summary.json").read_text(encoding="utf-8"))
+    except (KeyError, TypeError, OSError, ValueError):
+        return out
+    prov = summ.get("provenance") or {}
+    if prov.get("sizer_version") != "3.1.0":
+        return out
+    drops = prov.get("window_drops_first_frames") or []
+    if drops:
+        out.append(f"{name}: {len(drops)} drop(s) landed on the camera window during the run (first seen from "
+                   f"{', '.join(f.split('_n')[0] for f in drops)}); the rolling background divides them out, but "
+                   f"clean the window before the next run")
+    d = np.concatenate([np.asarray(v, float) for v in (rec.get("dia") or {}).values()] or [np.zeros(0)])
+    if d.size:
+        share = 100.0 * float((d[d > 155.8] ** 3).sum() / (d ** 3).sum())
+        if share >= LARGE_SHARE_PCT:
+            out.append(f"{name}: droplets larger than the largest calibration bead (155.8 um, sized by extrapolating "
+                       f"the bead table) carry {share:.0f} % of the d^3, so its D32 rests on them: look at its "
+                       f"largest-droplets slide")
+    n_un = {k: summ.get(f"droplets_{k}") or 0 for k in ("attached", "dark_surround", "inconsistent")}
+    sized = summ.get("droplets_in_focus") or 0
+    if sized and sum(n_un.values()) > 0.2 * sized:
+        out.append(f"{name}: {sum(n_un.values()):,} droplets could not be measured ({n_un['attached']:,} sitting on "
+                   f"liquid, {n_un['dark_surround']:,} in dark surroundings, {n_un['inconsistent']:,} far above their "
+                   f"mask) against {sized:,} sized: a crowded or messy run")
+    return out
 
 
 def mixed_liquid_versions(recs: list[dict]) -> str | None:

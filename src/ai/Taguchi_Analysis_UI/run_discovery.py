@@ -587,14 +587,14 @@ def current_calibration(run: Path) -> str | None:
 
 
 def staleness(run: Path, version: str | None, calibration: str | None) -> str | None:
-    """Why a measured run is out of date, or None: measured with another sizer than the default (Ben, 2026-10-16:
-    3.0.0), or at 3.0.0 with an older bead calibration than its optics profile holds now -- the profile is updated
+    """Why a measured run is out of date, or None: measured with another sizer than the default (3.1.0 since
+    2026-10-17; 3.0.0 from 2026-10-16), or at 3.x with an older bead calibration than its optics profile holds now -- the profile is updated
     by sizer_calibration.py --write-profile (the big-bead series, the reticle). 'Re-measure only' brings it up to
     date from its saved frames and AI predictions."""
     default = spec.DEFAULT_SIZER
     if version != default:
         return f"sizer {version or PRE_SIZER}, the default is {default}"
-    if version == "3.0.0":
+    if str(version).startswith("3."):
         cur = current_calibration(run)
         if cur and calibration != cur:
             return "an older bead calibration"
@@ -602,9 +602,9 @@ def staleness(run: Path, version: str | None, calibration: str | None) -> str | 
 
 
 def measurement_key(version: str | None, calibration: str | None) -> str:
-    """What must match for two runs' numbers to be comparable: the sizer version, and at 3.0.0 the calibration."""
+    """What must match for two runs' numbers to be comparable: the sizer version, and at 3.x the calibration."""
     v = version or PRE_SIZER
-    return f"{v} (calibration {calibration})" if v == "3.0.0" and calibration else v
+    return f"{v} (calibration {calibration})" if v.startswith("3.") and calibration else v
 
 
 def sizer_versions(runs: Iterable[RunInfo]) -> set[str]:

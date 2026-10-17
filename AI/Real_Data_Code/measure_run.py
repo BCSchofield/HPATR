@@ -77,6 +77,8 @@ from config_loader import find_lacie_drive  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import optics  # noqa: E402  (one profile per optical set-up: config/optics/)
 import blur  # noqa: E402  (sizer 3.0.0: the blur width and the size, measured as the beads were)
+import liquid_map  # noqa: E402  (sizer 3.1.0: every piece of liquid in a frame, AI or not)
+import background  # noqa: E402  (sizer 3.1.0: the rolling background)
 
 # The scale. main() sets it from the run's own optics profile; this default is the newest profile (the rig's
 # set-up now) for callers that measure without a run.
@@ -88,6 +90,25 @@ GREEN = (0, 200, 0)
 MAGENTA = (200, 0, 200)
 ORANGE = (0, 165, 255)
 BLUE = (255, 120, 0)
+# Sizer 3.x frame images (plan 2026-10-17, Phase 4; Ben: "a small key on each image"): each droplet ringed in the colour
+# of its verdict (BGR; the deck's palette, 2026-10-16, plus 3.1.0's), filaments and blobs outlined thin brown, and
+# a key in the bottom-left corner naming only the verdicts in that frame, with their counts. 2.x images unchanged.
+VERDICT_STYLE = {
+    "direct": ((118, 230, 0), "sized directly (blur <= chi_sharp)"),
+    "table": ((255, 121, 41), "sized through the bead table"),
+    "table_extrapolated": ((249, 0, 213), "sized, table extrapolated"),
+    "below_d_min": ((0, 234, 255), "below d_min: counted, not sized"),
+    "outside": ((68, 23, 255), "outside the measurement volume"),
+    "no_chi": ((255, 229, 0), "no blur width: outside"),
+    "border": ((150, 150, 150), "too near the frame edge"),
+    "crowded": ((0, 145, 255), "crowded: touching other liquid"),
+    "attached": ((176, 39, 156), "sitting on liquid: not sized"),
+    "dark_surround": ((139, 125, 96), "dark surroundings: not sized"),
+    "inconsistent": ((128, 128, 255), "size far above its mask"),
+    "static": ((255, 255, 255), "static speck (dust): not spray"),
+}
+LIGAMENT_STYLE = ((72, 85, 121), "filament / blob")
+RING_EDGE = (17, 17, 17)
 BLACK = (0, 0, 0)
 DROPLET_RING_PX = 10         # droplet outline offset (--droplet-ring)
 
@@ -176,10 +197,29 @@ def det_crop(d):
 SIZER_VERSION = "2.1.0"
 SIZER_VERSION_SHARPNESS = "2.2.0"
 SIZER_VERSION_3 = "3.0.0"
+SIZER_VERSION_31 = "3.1.0"    # 3.0.0 + the validity tests (plan 2026-10-17): every undetected piece of liquid round a
+                              # droplet is blanked too; a droplet sitting on liquid is 'attached', one whose size reads
+                              # far above its own mask 'inconsistent', one in a dark window 'dark_surround', a speck
+                              # in the same place frame after frame 'static' -- none of them sized
 SIZER3 = None                 # sizer 3.0.0's settings (blur.sizer3): main() sets them from the run's own profile
 IN_VOLUME = ("direct", "table", "table_extrapolated")
 CROWD_PX = 3                  # sizer 3.0.0: another detection this close to a droplet's mask = crowded (not measured);
                               # further off, its mask grown by this much is blanked out before the droplet is measured
+# sizer 3.1.0's validity tests (plan 2026-10-17). Set on 2026-10-17 from every 10th-12th frame of CCD 143415 and
+# 125754 and the 37.36 / 56.28 / 155.8 um bead pours (~22,700 droplets): every 3.0.0 runaway (size > 1.6x its mask)
+# was caught (4 crowded by undetected liquid, 3 attached, 1 measured right once the liquid was blanked); after the
+# tests, sized droplets read 0.62-0.91x their mask (median), 0.94x at most on spray and 1.03x on the beads
+ATTACH_FRAC = 1.0             # liquid joined to the droplet beyond its own grown mask, as a share of the mask area, ...
+ATTACH_MIN_PX = 20            # ... and at least this many px: it sits on a ligament, a liquid body or a window drop
+DARK_WINDOW_T = 0.90          # mean T of its measuring window (everything else blanked) below this: dark surroundings
+                              # (0.1-0.2 % of measurable spray droplets, none of the beads)
+INCONSISTENT_MAX = 1.3        # a measured size more than this many times its own mask-equivalent size is not believed
+STATIC_R_PX = 2.5             # static: a droplet detection with another within this many px of its centre ...
+STATIC_AREA = 1.6             # ... whose mask area is within this factor ...
+STATIC_W = 10                 # ... in at least STATIC_K of the +/- STATIC_W neighbouring frames (a speck on the window
+STATIC_K = 3                  #     or the optics; a spray droplet never repeats: it moves 10-20 mm between frames)
+UNMEASURED = ("crowded", "attached", "dark_surround", "inconsistent")   # in the spray but not measurable: counted in
+                              # the concentration in proportion (like crowded), never sized
 SPLIT_UM = 40.0              # classical sizing acts at/above this diameter
 DILATE_PX = 5                # search region beyond the model mask
 CORE_MIN_PX = 3              # floor for the robust core, see droplet_core
@@ -342,9 +382,9 @@ def measure_droplet(T, d, focus_max, split_um=SPLIT_UM, core_estimator="robust",
     run's own; None or "2.2.0" / "2.1.0" is the sharpness switch, exactly as before.
     """
     mb, bx, by, bh, bw = crop if crop is not None else det_crop(d)
-    if version == SIZER_VERSION_3:
+    if blur.is_sizer3(version):
         return measure_droplet_3(T, d, (mb, bx, by, bh, bw), calib or sizer3_settings(), core_estimator, want_mask,
-                                 others)
+                                 others, version=version)
     if not mb.any():
         return None
     H, W = T.shape
@@ -397,18 +437,58 @@ def measure_droplet(T, d, focus_max, split_um=SPLIT_UM, core_estimator="robust",
     return out
 
 
-def occupancy(T_shape, dets):
+def occupancy(T_shape, dets, liquid=None):
     """Sizer 3.0.0: (every detection's mask, the same grown by CROWD_PX) for one frame, so each droplet can be
-    measured on its own profile (measure_droplet_3's `others`)."""
+    measured on its own profile (measure_droplet_3's `others`). Sizer 3.1.0 adds `liquid`, the frame's liquid map
+    (liquid_map.hysteresis: every piece of liquid, AI or not), returned labelled as a third item so every undetected
+    piece round a droplet is blanked too, and a droplet sitting on one is found."""
     occ = np.zeros(T_shape, bool)
     for d in dets:
         mb, bx, by, bh, bw = det_crop(d)
         occ[by:by + bh, bx:bx + bw] |= mb
     k = np.ones((2 * CROWD_PX + 1,) * 2, np.uint8)
-    return occ, cv2.dilate(occ.astype(np.uint8), k).astype(bool)
+    grown = cv2.dilate(occ.astype(np.uint8), k).astype(bool)
+    if liquid is None:
+        return occ, grown
+    _n, lab = cv2.connectedComponents(liquid.astype(np.uint8), connectivity=8)
+    return occ, grown, lab
 
 
-def measure_droplet_3(T, d, crop, calib, core_estimator="robust", want_mask=False, others=None):
+def mark_static(dets_by_image, order):
+    """Sizer 3.1.0: flag (d["_static"] = True) every droplet detection that sits still -- another droplet detection
+    within STATIC_R_PX of its centre, with a mask area within STATIC_AREA of its own, in at least STATIC_K of the
+    +/- STATIC_W neighbouring frames of `order` (the run's frames in time order). Dust on the window or the optics
+    sits at the same pixel in every run of a day (CCD 2026-10-12: (1870, 920), (1820, 650), (330, 850) ...), and the
+    AI, fed the raw frame, calls it a droplet; at stride 10 a spray droplet moves 10-20 mm between frames, so a
+    chance repeat at 2.5 px in 3 of 20 frames is ~1 in 10^5. Returns the number flagged."""
+    pos = {img: k for k, img in enumerate(order)}
+    pts = {}
+    for img, dets in dets_by_image.items():
+        if img not in pos:
+            continue
+        drops = [d for d in dets if d["category_id"] == DROPLET]
+        if drops:
+            pts[pos[img]] = (drops, np.array([(d["bbox"][0] + d["bbox"][2] / 2, d["bbox"][1] + d["bbox"][3] / 2,
+                                               float(d["area"])) for d in drops], float))
+    n = 0
+    for f, (drops, P) in pts.items():
+        for d, (x, y, a) in zip(drops, P):
+            hits = 0
+            for g in range(f - STATIC_W, f + STATIC_W + 1):
+                if g == f or g not in pts:
+                    continue
+                Q = pts[g][1]
+                hits += bool(((np.abs(Q[:, 0] - x) <= STATIC_R_PX) & (np.abs(Q[:, 1] - y) <= STATIC_R_PX)
+                              & (Q[:, 2] <= a * STATIC_AREA) & (Q[:, 2] >= a / STATIC_AREA)).any())
+                if hits >= STATIC_K:
+                    break
+            if hits >= STATIC_K:
+                d["_static"] = True
+                n += 1
+    return n
+
+
+def measure_droplet_3(T, d, crop, calib, core_estimator="robust", want_mask=False, others=None, version=None):
     """Sizer 3.0.0 for ONE droplet detection. Returns None for an empty mask, else measure_droplet's dict plus
         chi_um     the blur width (nan where it could not be measured)
         size_um    the 3.0.0 diameter (nan unless sized)
@@ -423,10 +503,25 @@ def measure_droplet_3(T, d, crop, calib, core_estimator="robust", want_mask=Fals
     `others` = occupancy(T.shape, the frame's detections): the beads were isolated, a spray droplet is not, so every
     OTHER detection's mask (grown by CROWD_PX) is set to background before measuring, and the droplet's own centre
     must be dark (no fallback to a nearby piece: in a spray that is the jet). Without it (a lone object) the
-    measurement is exactly the beads'."""
+    measurement is exactly the beads'.
+
+    Sizer 3.1.0 (`version` "3.1.0", `others` with the liquid map, plan 2026-10-17) adds the validity tests, each a
+    method of its own and none sized:
+        static         flagged by mark_static (a speck in the same place frame after frame): not spray, not counted
+        attached       the piece of liquid the droplet sits in reaches well beyond its own mask (a bump on a
+                       ligament, a droplet on a liquid body or a window drop): its profile is not its own
+        dark_surround  with every other piece of liquid and detection blanked, its measuring window is still dark
+        inconsistent   its measured size is more than INCONSISTENT_MAX times its own mask-equivalent size
+    and crowded now also covers undetected liquid within CROWD_PX. Attached, dark_surround and inconsistent count in
+    the concentration like crowded (UNMEASURED). The beads (isolated, clear surroundings) never meet any of them."""
     mb, bx, by, bh, bw = crop
     if not mb.any():
         return None
+    v31 = version == SIZER_VERSION_31
+    if v31 and d.get("_static"):
+        return {"in_focus": False, "area_px": float(d["area"]), "method": "static", "core_t": float("nan"),
+                "reclassified": False, "chi_um": float("nan"), "size_um": float("nan"), "in_volume": False,
+                "weight": 0.0, **({"mask": None, "mask_xy": (bx, by)} if want_mask else {})}
     H, W = T.shape
     pad = DILATE_PX + 2
     y0, y1 = max(0, by - pad), min(H, by + bh + pad)
@@ -445,9 +540,9 @@ def measure_droplet_3(T, d, crop, calib, core_estimator="robust", want_mask=Fals
     X0, X1 = max(0, int(round(cx)) - reach), min(W, int(round(cx)) + reach + 1)
     Y0, Y1 = max(0, int(round(cy)) - reach), min(H, int(round(cy)) + reach + 1)
     TL = T[Y0:Y1, X0:X1]
-    crowded = False
+    crowded = attached = dark = False
     if others is not None:
-        occ, occ_grown = others
+        occ, occ_grown = others[0], others[1]
         own = np.zeros(TL.shape, bool)
         oy0, ox0 = max(by, Y0), max(bx, X0)
         oy1, ox1 = min(by + bh, Y1), min(bx + bw, X1)
@@ -456,12 +551,33 @@ def measure_droplet_3(T, d, crop, calib, core_estimator="robust", want_mask=Fals
         own_grown = cv2.dilate(own.astype(np.uint8), k).astype(bool)
         crowded = bool((occ[Y0:Y1, X0:X1] & own_grown & ~own).any())
         blank = occ_grown[Y0:Y1, X0:X1] & ~own_grown
+        if v31 and len(others) > 2:
+            # every piece of liquid, AI or not: the one(s) under the droplet's own mask are its own; any other is
+            # blanked like another detection (crowded if it comes within CROWD_PX); its own reaching far beyond
+            # its mask means it sits on liquid
+            labL = others[2][Y0:Y1, X0:X1]
+            ids = np.unique(labL[own])
+            ids = ids[ids > 0]
+            mine = np.isin(labL, ids) if ids.size else np.zeros(TL.shape, bool)
+            other = (labL > 0) & ~mine
+            crowded = crowded or bool((other & own_grown).any())
+            attached = int((mine & ~own_grown).sum()) >= max(ATTACH_MIN_PX, ATTACH_FRAC * int(own.sum()))
+            blank = blank | (cv2.dilate(other.astype(np.uint8), k).astype(bool) & ~own_grown)
+            if not (crowded or attached):
+                half_w = blur.half_window(d_px)
+                ccx, ccy = int(round(cx)) - X0, int(round(cy)) - Y0
+                wy0, wx0 = max(0, ccy - half_w), max(0, ccx - half_w)
+                sel = ~(own_grown | blank | mine)[wy0:ccy + half_w + 1, wx0:ccx + half_w + 1]
+                tw = TL[wy0:ccy + half_w + 1, wx0:ccx + half_w + 1][sel]
+                dark = bool(tw.size) and float(tw.mean()) < DARK_WINDOW_T
         if blank.any():
             TL = TL.copy()
             TL[blank] = 1.0
-    r = None if crowded else blur.measure(TL, cx - X0, cy - Y0, d_px, calib["tau"], droplet_core, UM_PER_PX,
-                                          nearest=others is None)
-    chi, size, method = float("nan"), float("nan"), "crowded" if crowded else "border"
+    skip = crowded or attached or dark
+    r = None if skip else blur.measure(TL, cx - X0, cy - Y0, d_px, calib["tau"], droplet_core, UM_PER_PX,
+                                       nearest=others is None)
+    chi, size = float("nan"), float("nan")
+    method = "crowded" if crowded else "attached" if attached else "dark_surround" if dark else "border"
     if r is not None:
         chi, base = float(r["chi_um"]), float(r.get(calib["column"], float("nan")))
         if not (np.isfinite(chi) and np.isfinite(base)):
@@ -470,6 +586,8 @@ def measure_droplet_3(T, d, crop, calib, core_estimator="robust", want_mask=Fals
             sz, mt = blur.size_3([base - calib["edge_offset_um"]], [chi], calib["table"], calib["chi_sharp_um"],
                                  calib["chi_max_um"])
             size, method = float(sz[0]), str(mt[0])
+    if v31 and method in IN_VOLUME and np.isfinite(size) and size > INCONSISTENT_MAX * d_px * UM_PER_PX:
+        method, size = "inconsistent", float("nan")        # read far above its own mask: something else is in it
     in_volume = method in IN_VOLUME
     sized = in_volume and bool(np.isfinite(size)) and size >= calib["d_min_um"]
     if in_volume and not sized:
@@ -477,7 +595,9 @@ def measure_droplet_3(T, d, crop, calib, core_estimator="robust", want_mask=Fals
     area = math.pi * (size / 2.0 / UM_PER_PX) ** 2 if sized else float(d["area"])
     out = {"in_focus": sized, "area_px": area, "method": method, "core_t": core_t, "reclassified": False,
            "chi_um": chi, "size_um": size if sized else float("nan"), "in_volume": in_volume,
-           "weight": blur.border_weight(d_px, T.shape) if in_volume else 0.0}
+           "weight": blur.border_weight(d_px, T.shape) if in_volume else 0.0,
+           # the size as measured even below d_min (not reported as a size; the liquid stage's volume uses it)
+           "size_raw_um": float(size) if np.isfinite(size) else float("nan"), "mask_d_um": d_px * UM_PER_PX}
     if want_mask:
         # the atomised numerator's droplet edge: the half-max component of a sized droplet, as 2.x uses for its
         # in-focus ones (no size split now); anything else falls back to the model's mask
@@ -519,12 +639,18 @@ def measure_frame(T, dets, focus_max, split_um=SPLIT_UM, core_estimator="robust"
         sizer 3.0.0 only:  rows3 (one (area_px, in_focus, chi_um, in_volume, method, weight) per droplet, for
                            droplet_sizes.csv), in_volume / unsized / border / crowded / outside / no_chi (counts),
                            w_volume / w_sized / w_unsized (border-weighted counts, for the concentration)
+        sizer 3.1.0 also:  rows3 items carry (x, y, mask_d_um) at the end; attached / dark_surround / inconsistent /
+                           static (counts)
     """
     version = version or sizer_version(sharpness_rule)
-    calib = sizer3_settings() if version == SIZER_VERSION_3 else None
-    others = occupancy(T.shape, dets) if calib is not None else None
+    calib = sizer3_settings() if blur.is_sizer3(version) else None
+    v31 = version == SIZER_VERSION_31
+    others = None
+    if calib is not None:
+        others = occupancy(T.shape, dets, liquid_map.hysteresis(T)[0] if v31 else None)
     rows3 = []
     n_volume = n_unsized = n_border = n_crowded = n_outside = n_nochi = 0
+    n_more = Counter()                                  # 3.1.0: attached, dark_surround, inconsistent, static
     w_volume = w_sized = w_unsized = 0.0
     focus_a, oof_a = [], []
     fil_a, blob_a = [], []
@@ -546,7 +672,14 @@ def measure_frame(T, dets, focus_max, split_um=SPLIT_UM, core_estimator="robust"
                 continue
             sharp = md["in_focus"]
             if calib is not None:
-                rows3.append((md["area_px"], sharp, md["chi_um"], md["in_volume"], md["method"], md["weight"]))
+                row3 = (md["area_px"], sharp, md["chi_um"], md["in_volume"], md["method"], md["weight"])
+                if v31:
+                    ys_, xs_ = np.nonzero(mb)
+                    row3 += (bx + float(xs_.mean()), by + float(ys_.mean()),
+                             2.0 * math.sqrt(float(d["area"]) / math.pi) * UM_PER_PX)
+                    if md["method"] in ("attached", "dark_surround", "inconsistent", "static"):
+                        n_more[md["method"]] += 1
+                rows3.append(row3)
                 n_volume += md["in_volume"]
                 n_unsized += md["in_volume"] and not sharp
                 n_border += md["method"] == "border"
@@ -564,17 +697,19 @@ def measure_frame(T, dets, focus_max, split_um=SPLIT_UM, core_estimator="robust"
             # atomised liquid, so the atomised fraction never sees focus.
             rle_drop.append(d["segmentation"])
             colour = GREEN if sharp else MAGENTA
+            verdict = md["method"]
         elif cid == FILAMENT:
             rle_fil.append(d["segmentation"])
             fil_a.append(d["area"])
-            colour = ORANGE
+            colour, verdict = ORANGE, "ligament"
         else:
             rle_blob.append(d["segmentation"])
             blob_a.append(d["area"])
-            colour = BLUE
-        # Crop only; render_frame builds the frame-sized mask if it draws.
+            colour, verdict = BLUE, "ligament"
+        # Crop only; render_frame builds the frame-sized mask if it draws. Sizer 3.x adds the verdict, which
+        # render_frame draws in its colour with a key.
         if keep_drawn:
-            drawn.append((d, mb, bx, by, bh, bw, colour))
+            drawn.append((d, mb, bx, by, bh, bw, colour) + ((verdict,) if calib is not None else ()))
 
     a_drop = union_area(rle_drop)
     a_fil = union_area(rle_fil)
@@ -587,6 +722,8 @@ def measure_frame(T, dets, focus_max, split_um=SPLIT_UM, core_estimator="robust"
             "reclassified": n_reclassified, "drawn": drawn,
             "rows3": rows3, "in_volume": n_volume, "unsized": n_unsized, "border": n_border,
             "crowded": n_crowded, "outside": n_outside, "no_chi": n_nochi,
+            "attached": n_more["attached"], "dark_surround": n_more["dark_surround"],
+            "inconsistent": n_more["inconsistent"], "static": n_more["static"],
             "w_volume": w_volume, "w_sized": w_sized, "w_unsized": w_unsized}
 
 
@@ -653,16 +790,61 @@ def render_frame(view_path, items, f_d32, atom, droplet_ring, out_path):
     """
     view = cv2.imread(str(view_path), cv2.IMREAD_UNCHANGED)
     canvas = cv2.cvtColor(view, cv2.COLOR_GRAY2BGR) if view.ndim == 2 else view.copy()
-    for d, mb, bx, by, bh, bw, col in items:
+    counts = Counter()
+    for item in items:
+        d, mb, bx, by, bh, bw, col = item[:7]
+        verdict = item[7] if len(item) > 7 else None          # sizer 3.x: draw by verdict
         m = np.zeros(canvas.shape[:2], np.uint8)
         m[by:by + bh, bx:bx + bw] = mb
         if d["category_id"] == DROPLET and droplet_ring > 0:
-            cnts = ring_contours(m, d["bbox"], droplet_ring, canvas.shape[:2])
+            cnts = ring_contours(m, d["bbox"], max(droplet_ring, 3) if verdict else droplet_ring, canvas.shape[:2])
         else:
             cnts, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        cv2.drawContours(canvas, cnts, -1, col, 1)
+        if verdict is None:
+            cv2.drawContours(canvas, cnts, -1, col, 1)
+            continue
+        counts[verdict] += 1
+        if verdict == "ligament":
+            cv2.drawContours(canvas, cnts, -1, LIGAMENT_STYLE[0], 1, cv2.LINE_AA)
+        else:                                  # a thin ring: a dark edge either side of the colour
+            cv2.drawContours(canvas, cnts, -1, RING_EDGE, 3, cv2.LINE_AA)
+            cv2.drawContours(canvas, cnts, -1, VERDICT_STYLE.get(verdict, (GREEN, ""))[0], 1, cv2.LINE_AA)
     annotate(canvas, f_d32, atom)
+    if counts:
+        draw_key(canvas, counts)
     cv2.imwrite(str(out_path), canvas)
+
+
+def draw_key(canvas, counts, scale=None, extra=()):
+    """Bottom-left: what each ring colour means, for the verdicts in this frame only, with their counts (sizer 3.x
+    frame images; Ben, 2026-10-17). `extra`: more (BGR, label, count or None) rows (the liquid stage's fill)."""
+    H, W = canvas.shape[:2]
+    scale = scale or max(0.6, W / 2048.0)
+    fs, th = 0.62 * scale, max(1, int(round(1.4 * scale)))
+    rows = [(VERDICT_STYLE[v][0], VERDICT_STYLE[v][1], counts[v]) for v in VERDICT_STYLE if counts.get(v)]
+    if counts.get("ligament"):
+        rows.append((LIGAMENT_STYLE[0], LIGAMENT_STYLE[1], counts["ligament"]))
+    rows += list(extra)
+    if not rows:
+        return canvas
+    texts = [f"{label}  ({n:,})" if n is not None else label for _c, label, n in rows]
+    sizes = [cv2.getTextSize(t, cv2.FONT_HERSHEY_SIMPLEX, fs, th)[0] for t in texts]
+    pad, sw = int(10 * scale), int(14 * scale)
+    lh = int(max(h for _w, h in sizes) * 2.0)
+    bw = pad * 3 + sw + max(w for w, _h in sizes)
+    bh = pad + lh * len(rows)
+    y0 = max(0, H - bh)
+    plate = canvas[y0:H, 0:bw].copy()
+    canvas[y0:H, 0:bw] = cv2.addWeighted(plate, 0.2, np.full_like(plate, 255), 0.8, 0)
+    y = y0 + pad + lh // 2
+    for (col, _label, _n), t in zip(rows, texts):
+        c = (pad + sw // 2, y)
+        cv2.circle(canvas, c, sw // 2 + 1, RING_EDGE, max(3, th + 2), cv2.LINE_AA)
+        cv2.circle(canvas, c, sw // 2 + 1, col, max(1, th), cv2.LINE_AA)
+        cv2.putText(canvas, t, (pad * 2 + sw, y + int(lh * 0.22)), cv2.FONT_HERSHEY_SIMPLEX, fs, BLACK, th,
+                    cv2.LINE_AA)
+        y += lh
+    return canvas
 
 
 # ============================================================================
@@ -802,6 +984,70 @@ def write_more_extremes(out_dir, frames, note, draw=None, floor=MIN_DROPLETS_FOR
     return final
 
 
+LARGEST_SHEET = "largest_droplets.png"
+LARGEST_INDEX = "largest_droplets.json"
+LARGEST_N = 25
+
+
+def write_largest_sheet(out_dir, per_frame_rows3, view_dir, n=LARGEST_N, cell=220):
+    """Sizer 3.1.0 (plan 2026-10-17, Phase 4; Ben): the run's n largest SIZED droplets, each cropped from its frame,
+    ringed in its verdict's colour and labelled with its size, blur width and frame -- the check an expert makes on
+    every run, because D32 leans on the largest. The 3.0.0 runaways (a speck in a window drop's shadow read 330 um,
+    a bump on a ligament 276 um) would have been obvious here. Writes LARGEST_SHEET and LARGEST_INDEX into out_dir;
+    None when the rows carry no positions (before 3.1.0) or nothing was sized."""
+    found = []
+    for stem, rows in per_frame_rows3.items():
+        for r in rows:
+            if len(r) > 8 and r[1]:
+                found.append({"frame": stem, "size_um": round(float(csv_um(r[0])), 1),
+                              "chi_um": round(float(r[2]), 1) if np.isfinite(r[2]) else None, "method": r[4],
+                              "x": round(float(r[6]), 1), "y": round(float(r[7]), 1),
+                              "mask_d_um": round(float(r[8]), 1)})
+    if not found:
+        return None
+    top = sorted(found, key=lambda e: -e["size_um"])[:n]
+    cols = 5
+    rows_n = (len(top) + cols - 1) // cols
+    cap = 46
+    sheet = np.full((rows_n * (cell + cap) + 8, cols * cell + (cols + 1) * 8, 3), 255, np.uint8)
+    views = {}
+    for i, e in enumerate(top):
+        if e["frame"] not in views:
+            v = cv2.imread(str(Path(view_dir) / f"{e['frame']}.png"), cv2.IMREAD_UNCHANGED)
+            views[e["frame"]] = None if v is None else (cv2.cvtColor(v, cv2.COLOR_GRAY2BGR) if v.ndim == 2 else v)
+        v = views[e["frame"]]
+        if v is None:
+            continue
+        H, W = v.shape[:2]
+        r_px = e["size_um"] / UM_PER_PX / 2.0
+        half = int(max(30, 2.2 * max(r_px, e["mask_d_um"] / UM_PER_PX / 2.0) + 12))
+        x0, y0 = int(round(e["x"])) - half, int(round(e["y"])) - half
+        pad = np.full((2 * half, 2 * half, 3), 255, np.uint8)
+        xs, ys, xe, ye = max(0, x0), max(0, y0), min(W, x0 + 2 * half), min(H, y0 + 2 * half)
+        pad[ys - y0:ye - y0, xs - x0:xe - x0] = v[ys:ye, xs:xe]
+        sc = cell / (2.0 * half)
+        crop = cv2.resize(pad, (cell, cell), interpolation=cv2.INTER_CUBIC if sc > 1 else cv2.INTER_AREA)
+        ctr, rr = (cell // 2, cell // 2), int(round((r_px + 3) * sc))
+        cv2.circle(crop, ctr, rr, RING_EDGE, 4, cv2.LINE_AA)
+        cv2.circle(crop, ctr, rr, VERDICT_STYLE.get(e["method"], (GREEN, ""))[0], 2, cv2.LINE_AA)
+        r, c = divmod(i, cols)
+        X, Y = 8 + c * (cell + 8), 8 + r * (cell + cap)
+        sheet[Y:Y + cell, X:X + cell] = crop
+        how = {"direct": "direct", "table": "table", "table_extrapolated": "table, extrap."}.get(e["method"], e["method"])
+        chi = f"chi {e['chi_um']:.0f}" if e["chi_um"] is not None else "chi -"
+        cv2.putText(sheet, f"#{i + 1}  {e['size_um']:.0f} um  {chi}", (X + 2, Y + cell + 18),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, BLACK, 1, cv2.LINE_AA)
+        cv2.putText(sheet, f"{how}, {e['frame'].split('_n')[0]}", (X + 2, Y + cell + 37),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (60, 60, 60), 1, cv2.LINE_AA)
+    out_dir = Path(out_dir)
+    cv2.imwrite(str(out_dir / LARGEST_SHEET), sheet)
+    (out_dir / LARGEST_INDEX).write_text(json.dumps(
+        {"n": len(top), "of_sized": len(found), "droplets": top,
+         "note": "the run's largest sized droplets, largest first; each crop is 2.2x its radius around it, ringed "
+                 "in its verdict's colour (measure_run.VERDICT_STYLE)"}, indent=1), encoding="utf-8")
+    return out_dir / LARGEST_SHEET
+
+
 DROPLET_BIN_UM = 25.0
 
 # Matplotlib hex equivalents of the BGR constants above, so a histogram bar
@@ -829,7 +1075,8 @@ def write_distributions(out_dir, per_focus, per_oof, per_fil, per_blob, per_rows
 
     Sizer 3.0.0 (`per_rows3`): one row per droplet in measuring order, with three more columns: chi_um, in_volume
     and size_method. in_focus = 1 still means "sized, in D32" (in the volume and >= d_min), so every reader of the
-    first three columns reads a 3.0.0 run unchanged.
+    first three columns reads a 3.0.0 run unchanged. Sizer 3.1.0 adds x, y (its mask's centroid, px) and mask_d_um
+    (its mask's equivalent diameter), so checks like the static and runaway ones need no re-measuring.
     """
     stems = sorted(per_focus)
 
@@ -837,11 +1084,15 @@ def write_distributions(out_dir, per_focus, per_oof, per_fil, per_blob, per_rows
     with open(drop_csv, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         if per_rows3 is not None:
-            w.writerow(["frame", "diameter_um", "in_focus", "chi_um", "in_volume", "size_method", "weight"])
+            v31 = any(len(r) > 6 for rs in per_rows3.values() for r in rs)
+            w.writerow(["frame", "diameter_um", "in_focus", "chi_um", "in_volume", "size_method", "weight"]
+                       + (["x", "y", "mask_d_um"] if v31 else []))
             for s in stems:
-                for a, inf, chi, vol, meth, wt in per_rows3.get(s, []):
+                for r in per_rows3.get(s, []):
+                    a, inf, chi, vol, meth, wt = r[:6]
                     w.writerow([s, csv_um(a), int(bool(inf)), round(chi, 3) if np.isfinite(chi) else "",
-                                int(bool(vol)), meth, round(wt, 5) if vol else ""])
+                                int(bool(vol)), meth, round(wt, 5) if vol else ""]
+                               + ([round(r[6], 1), round(r[7], 1), round(r[8], 1)] if v31 else []))
         else:
             w.writerow(["frame", "diameter_um", "in_focus"])
             for s in stems:
@@ -964,7 +1215,7 @@ def sizer3_provenance(calib: dict) -> dict:
             "sizer_table_beads_um": list(T["nodes_um"]), "sizer_calibration_status": calib["status"]}
 
 
-def concentration(rows, parts, shape, calib: dict) -> dict:
+def concentration(rows, parts, shape, calib: dict, n_frames=None) -> dict:
     """Sizer 3.0.0's droplet concentration (sizer 3.0.0 plan, Phase 5; decisions Ben, 2026-10-16):
        * the measurement volume = the frame's area x the calibrated depth at chi_max (the same for every size; the
          lens is telecentric, so the area is the same at every depth);
@@ -972,15 +1223,19 @@ def concentration(rows, parts, shape, calib: dict) -> dict:
          measured);
        * crowded droplets (touching another detection) are added back in proportion: in the volume as often as
          the droplets that could be judged (in the volume, outside it, or with no chi, which counts as outside);
-       * per mm3 = weighted count x the crowded factor / (frames x volume)."""
-    n_f = len(rows)
+       * per mm3 = weighted count x the crowded factor / (frames x volume).
+    Sizer 3.1.0: attached, dark-surround and inconsistent droplets are added back like crowded ones (UNMEASURED);
+    static ones are not spray and are not counted; `n_frames` is every frame of the run (3.0.0 divided by the
+    frames that had a detection, which reads high when frames are empty)."""
+    n_f = n_frames or len(rows)
     H, W = shape if shape else (1152, 2048)
     area_mm2 = W * H * (UM_PER_PX / 1000.0) ** 2
     depth = calib.get("depth_mm", float("nan"))
     vol = area_mm2 * depth
     n_in = sum(r["droplets_in_volume"] for r in rows)
     judged = n_in + sum(r["droplets_outside"] + r["droplets_no_chi"] for r in rows)
-    crowded = sum(r["droplets_crowded"] for r in rows)
+    crowded = sum(r["droplets_crowded"] + r.get("droplets_attached", 0) + r.get("droplets_dark_surround", 0)
+                  + r.get("droplets_inconsistent", 0) for r in rows)
     p_in = n_in / judged if judged else 0.0
     factor = 1.0 + (p_in * crowded / n_in if n_in else 0.0)
     wv, ws, wu = (sum(p[i] for p in parts) for i in range(3))
@@ -1026,6 +1281,11 @@ def main():
     ap.add_argument("--background", type=Path, default=None,
                     help="temporal-median background for THIS run. The wrong one "
                          "silently corrupts every transmission value.")
+    ap.add_argument("--background-rolling", default="auto",
+                    help="sizer 3.1.0: 'auto' (default) = the run's rolling background in "
+                         "shadowgraph/analysis/background_rolling/, built if missing, when the frames are the run's "
+                         "own sequence (the static --background otherwise); a folder to use that one; 'none' for the "
+                         "static --background only. Ignored before 3.1.0")
     ap.add_argument("--sixteen-bit-dir", type=Path, default=None,
                     help="default: <val-dir>/frames/16bit")
     ap.add_argument("--score-thresh", type=float, default=0.30)
@@ -1080,7 +1340,7 @@ def main():
     UM_PER_PX = float(profile["um_per_px"])
     version = sizer_version(args.sharpness_rule, args.sizer)
     calib3 = None
-    if version == SIZER_VERSION_3:
+    if blur.is_sizer3(version):
         if args.no_sizer:
             sys.exit("--no-sizer and --sizer 3.0.0 contradict each other: 3.0.0 always sizes")
         try:
@@ -1089,6 +1349,12 @@ def main():
             sys.exit(str(e))
     val = root / args.val_dir
     sb_dir = args.sixteen_bit_dir or (val / "frames" / "16bit")
+    roll = None
+    if version == SIZER_VERSION_31 and args.background_rolling != "none" and not args.replot:
+        rdir = (background.auto_dir(root, sb_dir) if args.background_rolling == "auto"
+                else Path(args.background_rolling))
+        if rdir is not None:
+            roll = background.ensure_rolling(sb_dir, rdir)
     out_dir = args.out_dir or (val / f"droplets_{args.score_thresh:.2f}")
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1124,6 +1390,11 @@ def main():
 
     print(f"frames {len(name_by_id)}   detections >= {args.score_thresh:.2f}, "
           f"not truncated: {len(kept)} of {len(preds)}\n")
+    n_static = 0
+    if version == SIZER_VERSION_31:
+        n_static = mark_static(by_img, sorted(name_by_id, key=lambda i: name_by_id[i]))
+        print(f"  sizer 3.1.0: {n_static} static droplet detections (a speck in the same place in {STATIC_K}+ of "
+              f"the +/-{STATIC_W} neighbouring frames): not spray, not counted\n")
 
     rows = []
     methods = Counter()          # how each in-focus diameter was actually obtained
@@ -1145,7 +1416,7 @@ def main():
     for img_id in sorted(by_img):
         stem = name_by_id[img_id]
         dets = by_img[img_id]
-        T = transmission(sb_dir, stem, bg)
+        T = transmission(sb_dir, stem, roll.for_stem(stem) if roll is not None else bg)
         if T is None:
             sys.exit(f"no 16-bit frame for {stem} under {sb_dir}")
         frame_shape = T.shape
@@ -1186,6 +1457,9 @@ def main():
                             droplets_border=fr["border"], droplets_crowded=fr["crowded"],
                             droplets_outside=fr["outside"], droplets_no_chi=fr["no_chi"],
                             weighted_in_volume=round(fr["w_volume"], 3), weighted_sized=round(fr["w_sized"], 3))
+            if version == SIZER_VERSION_31:     # 3.1.0, appended after everything else: the validity tests
+                rows[-1].update(droplets_attached=fr["attached"], droplets_dark_surround=fr["dark_surround"],
+                                droplets_inconsistent=fr["inconsistent"], droplets_static=fr["static"])
             conc_parts.append((fr["w_volume"], fr["w_sized"], fr["w_unsized"]))
             per_frame_rows3[stem] = fr["rows3"]
         per_frame_focus_areas[stem] = focus_a
@@ -1278,6 +1552,10 @@ def main():
               f"{sum(r['droplets_unsized_in_volume'] for r in rows)}; too near the frame edge "
               f"{sum(r['droplets_border'] for r in rows)}; touching another detection "
               f"{sum(r['droplets_crowded'] for r in rows)}")
+        if version == SIZER_VERSION_31:
+            print(f"  sizer 3.1.0, not sized: sitting on liquid {sum(r['droplets_attached'] for r in rows)}; dark "
+                  f"surroundings {sum(r['droplets_dark_surround'] for r in rows)}; size far above its own mask "
+                  f"{sum(r['droplets_inconsistent'] for r in rows)}; static {sum(r['droplets_static'] for r in rows)}")
     print()
     print(f"  D32 (in-focus only)       : {pooled_d32:.1f} um"
           f"   95% CI [{d_lo:.1f}, {d_hi:.1f}]   +/-{(d_hi - d_lo) / 2:.1f}"
@@ -1393,6 +1671,8 @@ def main():
             "predictions": str(args.pred),
             "val_dir": args.val_dir,
             "background": str(args.background),
+            **(roll.provenance() if roll is not None else
+               {"background_kind": "static"} if version == SIZER_VERSION_31 else {}),
             "sixteen_bit_dir": str(sb_dir),
             "score_threshold": args.score_thresh,
             "focus_max": args.focus_max,
@@ -1473,12 +1753,22 @@ def main():
         "more_extreme_frames": more,
     }
     if calib3 is not None:
-        summary["concentration"] = concentration(rows, conc_parts, frame_shape, calib3)
+        summary["concentration"] = concentration(rows, conc_parts, frame_shape, calib3,
+                                                 n_frames=len(name_by_id) if version == SIZER_VERSION_31 else None)
         summary.update(droplets_in_volume=sum(r["droplets_in_volume"] for r in rows),
                        droplets_unsized_in_volume=sum(r["droplets_unsized_in_volume"] for r in rows),
                        droplets_border=sum(r["droplets_border"] for r in rows),
                        droplets_crowded=sum(r["droplets_crowded"] for r in rows))
+        if version == SIZER_VERSION_31:
+            summary.update(droplets_attached=sum(r["droplets_attached"] for r in rows),
+                           droplets_dark_surround=sum(r["droplets_dark_surround"] for r in rows),
+                           droplets_inconsistent=sum(r["droplets_inconsistent"] for r in rows),
+                           droplets_static=sum(r["droplets_static"] for r in rows))
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2))
+    if version == SIZER_VERSION_31 and per_frame_rows3:
+        sheet = write_largest_sheet(out_dir, per_frame_rows3, val / "frames" / "8bit")
+        if sheet is not None:
+            print(f"  the {LARGEST_N} largest sized droplets: {sheet.name}")
 
     # The four frames the GUI's Extremes tab shows (raw D32 low/high, atomised
     # low/high), plus the sparse-frame-guarded D32 extremes when they differ --

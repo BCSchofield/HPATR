@@ -158,8 +158,8 @@ def test_analyse_carries_the_extra_responses(tmp):
     design = dz.detect(rd.load_runs(runs, thr=0.30))
     res = stats.analyse(design, 0.30, metrics_cache=tmp / "cache")
     keys = [k for k, *_ in stats.responses_table()]
-    assert keys[-13:] == ["dv50", "af_flow", "thin_pct", "lag1", "peak_bar", "atom_vol", "af_flow_vol",
-                          "band_per_frame", "rate", "rate_band", "conc", "conc_band", "atom_all"]
+    assert keys[-14:] == ["dv50", "af_flow", "thin_pct", "lag1", "peak_bar", "atom_vol", "af_flow_vol",
+                          "band_per_frame", "rate", "rate_band", "conc", "conc_band", "atom_all", "band_flow"]
     assert res.responses["band_per_frame"].anova is not None
     # the fakes' liquid stage predates 2.3.0: no volume columns, so the volume responses (and the mass-balance
     # rate, which needs the volume fraction) are blank

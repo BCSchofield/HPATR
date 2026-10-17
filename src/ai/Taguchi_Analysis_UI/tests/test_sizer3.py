@@ -290,23 +290,25 @@ def test_the_app_and_the_pipeline_pass_the_version_on():
     pc = spec.rdc_module("process_capture")
     assert pc.sizer_flags(None, True) == ["--sharpness-rule"] and pc.sizer_flags(None, False) == ["--no-sharpness-rule"]
     assert pc.sizer_flags("3.0.0", True) == ["--sizer", "3.0.0"]
-    assert pc.sizer_flags() == ["--sizer", "3.0.0"]                      # nothing asked for: the default (Ben)
-    assert spec.sizer_of(spec.RunSettings()) == "3.0.0" == spec.DEFAULT_SIZER
+    assert pc.sizer_flags() == ["--sizer", "3.1.0"]                      # nothing asked for: the default
+    assert spec.sizer_of(spec.RunSettings()) == "3.1.0" == spec.DEFAULT_SIZER == blur.DEFAULT_SIZER
     assert spec.sizer_of(spec.RunSettings(sizer=None)) == "2.2.0"         # an old job: by its sharpness switch
     assert spec.sizer_of(spec.RunSettings(sizer=None, sharpness_rule=False)) == "2.1.0"
-    assert spec.classical_cmd(Path("/tmp/x"), spec.RunSettings(), {})[-2:] == ["--sizer", "3.0.0"]
+    assert spec.classical_cmd(Path("/tmp/x"), spec.RunSettings(), {})[-2:] == ["--sizer", "3.1.0"]
+    assert spec.classical_cmd(Path("/tmp/x"), spec.RunSettings(sizer="3.0.0"), {})[-2:] == ["--sizer", "3.0.0"]
     assert spec.classical_cmd(Path("/tmp/x"), spec.RunSettings(sizer="2.2.0"), {})[-1] == "--sharpness-rule"
-    assert blur.resolve_sizer() == "3.0.0" and blur.resolve_sizer(None, True) == "2.2.0"
+    assert blur.resolve_sizer() == "3.1.0" and blur.resolve_sizer(None, True) == "2.2.0"
 
 
 def test_the_app_flags_runs_measured_with_an_older_sizer_or_bead_calibration(run3, monkeypatch, tmp_path):
     rd = __import__("src.ai.Taguchi_Analysis_UI.run_discovery", fromlist=["x"])
     monkeypatch.setenv("HPATR_OPTICS_DIR", run3["env"]["HPATR_OPTICS_DIR"])
     st = rd.read_analysis_state(run3["run"], 0.30)
-    assert st.measured is False or st.stale is None                     # 3.0.0 with today's calibration
-    assert rd.staleness(run3["run"], "3.0.0", calib()["hash"]) is None
-    assert rd.staleness(run3["run"], "3.0.0", "0ld0ld0ld0ld") == "an older bead calibration"
-    assert rd.staleness(run3["run"], "2.2.0", None) == "sizer 2.2.0, the default is 3.0.0"
+    assert st.measured is False or st.stale == "sizer 3.0.0, the default is 3.1.0"   # 3.0.0: re-measure at 3.1.0
+    assert rd.staleness(run3["run"], "3.1.0", calib()["hash"]) is None
+    assert rd.staleness(run3["run"], "3.1.0", "0ld0ld0ld0ld") == "an older bead calibration"
+    assert rd.staleness(run3["run"], "3.0.0", calib()["hash"]) == "sizer 3.0.0, the default is 3.1.0"
+    assert rd.staleness(run3["run"], "2.2.0", None) == "sizer 2.2.0, the default is 3.1.0"
     assert rd.measurement_key("3.0.0", "abc") != rd.measurement_key("3.0.0", "def")
     assert rd.measurement_key("2.2.0", None) == "2.2.0"
 
@@ -319,7 +321,7 @@ def test_a_job_keeps_its_sizer_when_resumed():
     assert spec.sizer_of(old) == "2.1.0"
     before = jobstate.settings_from({"score_thresh": 0.3, "sharpness_rule": True})   # before the sizer setting
     assert spec.sizer_of(before) == "2.2.0"
-    assert spec.sizer_of(jobstate.settings_from(jobstate._settings_dict(spec.RunSettings()))) == "3.0.0"
+    assert spec.sizer_of(jobstate.settings_from(jobstate._settings_dict(spec.RunSettings()))) == "3.1.0"
 
 
 def test_only_what_is_inside_the_volume_enters_the_atomised_fraction():
@@ -379,3 +381,26 @@ def test_the_app_reads_a_3_0_0_run(run3):
     assert 0 < v["conc_band"] <= v["conc"]
     vb = rm.response_values({}, rec, n_boot=50, band=(30.0, 200.0))
     assert len(vb["boot_conc"]) == 50 and len(vb["boot_atom_all"]) == 50
+
+
+def test_no_spray_reads_every_object_at_3_0_0(run3, tmp_path):
+    """The no-spray cut was set on the fraction over every object. At 3.0.0 the headline fraction is the in-volume one,
+    which a dribble can push over the cut (CCD C3: 0.19 % every object, 4.3 % in the volume), so the cut keeps
+    reading every object."""
+    out = run3["run"] / "shadowgraph" / "analysis" / "liquid_0.30"
+    if not (out / "classical_summary.json").is_file():
+        p = subprocess.run([sys.executable, "-W", "ignore", str(spec.paths.RDC_DIR / "classical_liquid.py"), "--root",
+                            str(run3["run"]), "--out-dir", str(out), "--score-thresh", "0.30"],
+                           capture_output=True, text=True, env=run3["env"])
+        assert p.returncode == 0, p.stderr[-2000:]
+    from src.ai.Taguchi_Analysis_UI import run_discovery as rd, stats
+    cs = json.loads((out / "classical_summary.json").read_text())
+    every, inside = cs["atomised_pct_pooled"], cs["atomised_pct_in_volume_pooled"]
+    assert every < inside
+    info = rd.load_run_info(run3["run"], check_reuse=False)
+    opts = stats.AnalysisOptions(no_spray_atom_pct=(every + inside) / 2)       # between the two: a dribble by every object
+    rec, values, _ci, _ctx, _m = stats.load_measured_run(run3["run"], info, 0.30, np.random.default_rng(0), False,
+                                                          tmp_path / "cache", [], [], opts)
+    assert rec["vol3"] and values["atom"] == pytest.approx(inside, abs=0.002)
+    assert rec["no_spray"] == f"atomised {every:.2f}% (every object) < {opts.no_spray_atom_pct:g}%"
+    assert values["d32"] is None

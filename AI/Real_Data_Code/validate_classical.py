@@ -100,7 +100,7 @@ def main():
                     help="default: 06_validation/v3_predictions.json")
     ap.add_argument("--score-thresh", type=float, default=0.30)
     ap.add_argument("--out", type=Path, default=None, help="write per-frame CSV + summary here")
-    ap.add_argument("--sizer", choices=("3.0.0",), default=None,
+    ap.add_argument("--sizer", choices=("3.1.0", "3.0.0"), default=None,
                     help="also score sizer 3.0.0's atomised fraction INSIDE the measurement volume (sizer 3.0.0 "
                          "plan, Phase 5), from the current optics profile's calibration")
     args = ap.parse_args()
@@ -122,13 +122,13 @@ def main():
                               droplet_cover=cl.DROPLET_COVER,
                               droplet_max_extent=cl.DROPLET_MAX_EXTENT,
                               focus_max=0.70, classical_only=False)
-    vol3 = args.sizer == "3.0.0"
+    vol3 = args.sizer in ("3.1.0", "3.0.0")
     if vol3:
         import measure_run
         import optics
         measure_run.SIZER3 = measure_run.blur.sizer3(optics.current())
         v_args = SimpleNamespace(**vars(cl_args), static_t=cl.STATIC_T, split_um=40.0, core_estimator="robust",
-                                 no_sizer=False, sharpness_rule=None, sizer_version="3.0.0")
+                                 no_sizer=False, sharpness_rule=None, sizer_version=args.sizer)
 
     bgs = {}
     gt_by = {}
@@ -192,7 +192,7 @@ def main():
     labels = {"gt_drawn_meas": "GT drawn, measurable", "gt_drawn_all": "GT drawn, all",
               "gt_hm_meas": "GT half-max, measurable", "gt_hm_all": "GT half-max, all",
               "model": "model only (old)", "classical": "classical (new)",
-              "classical_vol": "classical, in the volume (3.0.0)"}
+              "classical_vol": f"classical, in the volume ({args.sizer})"}
     summary = {"frames": len(rows), "score_thresh": args.score_thresh,
                "predictions": str(pred_path), "elapsed_s": round(elapsed, 1), "groups": {}}
     groups = [("ALL 20 FRAMES", rows)] + [
@@ -219,7 +219,7 @@ def main():
               f"classical {g['classical_unatom_ratio_vs_gt_hm_meas']:.2f} / "
               f"{g['classical_unatom_ratio_vs_gt_hm_all']:.2f}")
         if vol3:
-            print(f"  classical IN THE VOLUME (3.0.0): {g['classical_vol']['atomised_pct']:.3f}%, relative to GT "
+            print(f"  classical IN THE VOLUME ({args.sizer}): {g['classical_vol']['atomised_pct']:.3f}%, relative to GT "
                   f"half-max (meas / all) {g['classical_vol_vs_gt_hm_meas_rel_pct']:+.1f}% / "
                   f"{g['classical_vol_vs_gt_hm_all_rel_pct']:+.1f}%; un-atomised / GT "
                   f"{g['classical_vol_unatom_ratio_vs_gt_hm_meas']:.2f} / {g['classical_vol_unatom_ratio_vs_gt_hm_all']:.2f}")

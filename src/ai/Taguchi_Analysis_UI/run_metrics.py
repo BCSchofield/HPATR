@@ -79,10 +79,31 @@ EXTRA_RESPONSES = [
     ("conc", "Droplets per mm3 in the measurement volume (sizer 3.0.0)", "larger", False),
     ("conc_band", "Droplets per mm3 in the size band, in the measurement volume (sizer 3.0.0)", "larger", False),
     ("atom_all", "Atomised fraction by area, every object in view (%) (sizer 3.0.0)", "larger", False),
+    # sizer 3.1.0 (plan Phase 3, rates.py, the same function GUI_Clean writes into master_log): the liquid the
+    # in-band droplets carry, syringe flow x their share of ALL the liquid inside the measurement volume (sizes and
+    # liquid in one volume, by one rule). At 3.1.0 `rate` / `rate_band` come from the same function: syringe flow x
+    # droplets per mm3 of liquid in view; the unsized droplets' volume is only in the denominator (3.0.0's formula
+    # gave it to the sized ones, so 3.0.0 runs get none). Snapshot = flux and one window = the spray: assumptions.
+    ("band_flow", "In-band liquid flow, mass balance (mL/min) (sizer 3.1.0)", "larger", False),
 ]
-DEFAULT_BAND_UM = (20.0, 60.0)     # the size Ben collects (2026-10-14; was 30-50). Both edges fall between
-                                   # pixel-lattice diameters (3/4 and 28/29 px of area at 10 um/px), so the
-                                   # band starts at 4 px (22.6 um): the 1-3 px droplets (11-20 um) are left out
+DEFAULT_BAND_UM = (30.0, 60.0)     # the size Ben collects (2026-10-17: 30-60 um until the reticle brings d_min,
+                                   # 30 um, down; 20-60 from 2026-10-14, 30-50 before). Below 30 um sizer 3.x does
+                                   # not size, so a band reaching below it would count only what it could size
+
+
+def _rates():
+    """AI/Real_Data_Code/rates.py: the throughput function GUI_Clean uses too."""
+    from . import paths
+    paths.ensure_rdc_on_path()
+    import rates
+    return rates
+
+
+def _v31(rec: dict | None) -> bool:
+    """Measured at sizer 3.1.0: the liquid stage wrote the in-volume liquid volume per frame."""
+    cpf = (rec or {}).get("cpf") or {}
+    first = next(iter(cpf.values()), None)
+    return bool(first) and bool(first.get("vol_liquid_in_volume_mm3"))
 
 
 def band_counts(rec: dict | None, band=DEFAULT_BAND_UM):
@@ -544,7 +565,7 @@ def response_values(m: dict, rec: dict | None = None, n_boot: int = 0, seed: int
             "lag1": st.get("lag1"),
             "peak_bar": m.get("peak_bar"),
             "atom_vol": None, "af_flow_vol": None, "band_per_frame": None, "rate": None, "rate_band": None,
-            "conc": None, "conc_band": None, "atom_all": None}
+            "conc": None, "conc_band": None, "atom_all": None, "band_flow": None}
     cp = _conc_parts(rec, band or DEFAULT_BAND_UM)
     if cp is not None:
         wv, wb, k = cp
@@ -562,7 +583,24 @@ def response_values(m: dict, rec: dict | None = None, n_boot: int = 0, seed: int
         vals["af_flow_vol"] = ml * vals["atom_vol"] / 100 if ml is not None else None
     rp = _rate_parts(rec, band or DEFAULT_BAND_UM)
     ml = (m.get("throughput") or {}).get("liquid_ml_min")
-    if vals["atom_vol"] is not None and ml is not None and rp is not None and rp[0].sum() > 0:
+    tp = None
+    if _v31(rec) and ml is not None:
+        # sizer 3.1.0: rates.py, in-band share of the liquid inside the volume (plan Phase 3)
+        R = _rates()
+        frames = list(rec["frames"])
+        vliq = np.array([float(rec["cpf"][f].get("vol_liquid_in_volume_mm3") or 0.0) for f in frames])
+        wb, v3 = R.band_parts(frames, rec["dia"], rec["wt"], band or DEFAULT_BAND_UM)
+        kf = float((rec.get("concentration") or {}).get("crowded_factor") or 1.0)
+        pool = np.arange(len(frames))[::max(1, int(rec.get("ci_stride") or 1))]
+        q = ml * 1000.0 / 60.0
+        tp = R.throughput(q, wb, v3, vliq, kf, n_boot, seed, pool, band or DEFAULT_BAND_UM)
+        vals["rate_band"], vals["band_flow"] = tp["band_rate_per_s"], tp["band_flow_ml_min"]
+        wvol = np.asarray(rec.get("WVOL", []), float)
+        if wvol.size == vliq.size and vliq.sum() > 0:
+            vals["rate"] = float(q * wvol.sum() * kf / vliq.sum())
+    elif rec and rec.get("vol3"):
+        pass                    # sizer 3.0.0: its mass-balance formula is known wrong (to-do item 3): none
+    elif vals["atom_vol"] is not None and ml is not None and rp is not None and rp[0].sum() > 0:
         n_f, nb_f, s3_f = rp
         r = float(mass_balance_rate(ml, vals["atom_vol"] / 100, n_f.sum(), s3_f.sum()))
         if np.isfinite(r):
@@ -627,7 +665,7 @@ def response_values(m: dict, rec: dict | None = None, n_boot: int = 0, seed: int
             if vals["af_flow_vol"] is not None and vals["atom_vol"]:
                 out["boot_af_flow_vol"] = (np.asarray(out["boot_atom_vol"]) * vals["af_flow_vol"]
                                            / vals["atom_vol"]).tolist()
-            if vals["rate"] is not None and rp is not None:
+            if vals["rate"] is not None and rp is not None and tp is None and not rec.get("vol3"):
                 n_f, nb_f, s3_f = rp
                 frac = (W @ dv) / np.where(W @ tv > 0, W @ tv, np.nan)
                 reps = mass_balance_rate(ml, frac, W @ n_f, W @ s3_f)
@@ -637,4 +675,7 @@ def response_values(m: dict, rec: dict | None = None, n_boot: int = 0, seed: int
                 share = (W @ nb_f) / np.where(W @ n_f > 0, W @ n_f, np.nan)
                 share0 = nb_f[pool].sum() / n_f[pool].sum() if n_f[pool].sum() > 0 else np.nan
                 out["boot_rate_band"] = (reps * share - base * share0 + vals["rate_band"]).tolist()
+        if tp is not None and tp.get("boot_band_rate_per_s") is not None:
+            out["boot_rate_band"] = tp["boot_band_rate_per_s"]
+            out["boot_band_flow"] = tp["boot_band_flow_ml_min"]
     return out

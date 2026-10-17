@@ -1,6 +1,6 @@
 # STATUS — real-data droplet pipeline and Taguchi study
 
-**Last updated: 2026-10-16 late (Mac: Phase 5 + 3.0.0 as the default committed and pushed; Ben's questions answered in `docs/notes/2026-10-17_todo.md` (master_log columns and size bands, the app writing master_log, droplets/s kept but wrong at 3.0.0 until fixed, why the in-volume atomised fraction is higher: 80 % of filament/blob area is outside the volume against 45 % of droplet area, the AI, partly in-focus ligaments, frame size); next: the CCD day re-measured at 3.0.0 overnight on the Mac, at Ben's go). Earlier 2026-10-16 evening (Mac: sizer 3.0.0 Phase 5 DONE: concentration per mm3 (depth 10.3 mm, the lens is telecentric so the volume is a box; CCD 125754: 0.057 per mm3) and the atomised fraction inside the volume (125754: 41.6 % in the volume vs 20.5 % all objects); pours 96-99 % in the volume (37 um crowded pour 88 %: the AI misses beads); **3.0.0 is now the DEFAULT sizer** (Ben) in the app, GUI_Clean and the pipeline, and the app flags runs measured with an older sizer or bead calibration for 'Re-measure only'; deck 46 slides). Earlier 2026-10-16 (Mac: sizer 3.0.0 Phase 4 code DONE, opt-in (`--sizer 3.0.0`; 2.2.0 stays the default until Ben's Phase 6 go; 2.2.0 output byte-identical to the committed code on CCD 125754): shared blur.py (numpy + OpenCV, identical to the bead measurement on 4,118 real objects), each spray droplet measured on its own profile (other detections blanked; touching = crowded), CCD 125754 at 3.0.0: D32 51.0 um (2.2.0: 54.0), 84 % of in-volume droplets below d_min 30 um, 98 % of sized droplets sized through the table; Phases 3-4 committed and pushed with the deck's 12 new slides; next Phase 5). Earlier 2026-10-16 (Mac: Phases 1-2 committed and pushed, 3e3ab27; sizer 3.0.0 Phase 3 DONE, provisional: edge = Blaisot's contrast-corrected size - 5.6 um, chi_sharp 15 um, chi_max 50 um with the look-up table (built on the static beads, checked on the falling ones: every size 37-155.8 um within +4.7 %), depth 10.3 mm and the same for every size, written into the optics profile; big-bead through-focus run sheet written (93 rows, needs neither the pinhole nor the meter); Ben chose option 1: 30-37 um droplets sized through the extrapolated table, one volume for every size; Phase 4 started). Earlier 2026-10-16 (Mac: sizer 3.0.0 Phase 1 code DONE: focus_edge.py + GUI_Clean Focus check card + docs/FOCUS_CHECK.md, ready for the pinhole; deck updated with the plan and Phase 2). Earlier 2026-10-16 (Mac: sizer 3.0.0 Phase 2 DONE: provisional d_min 30-35 um (half-max), the model matches the beads near focus only, a tight chi cut over-counts small droplets; next Phase 1 code). Earlier 2026-10-16 (Mac: Phase 1 focus target is now a 300 um precision pinhole (Ben; arrives the week of 2026-10-19), plan updated). 2026-10-15 late (Mac: sizer 3.0.0 plan APPROVED (docs/notes/2026-10-15_sizer_3.0.0_plan.md); Phase 0 DONE: one optics profile, config/optics/ + optics.py, no number changes (checked on a real CCD run); next Phases 1 + 2). Earlier the same evening (Mac: falling beads re-measured bead by bead: a blur-width (chi) focus rule brings them back to the static values; the at-focus bias looks like a fixed ~+6 um edge offset, not the 8.6 % scale error read earlier (the 155.8 slide was ~1 mm off focus); the AI calls far-out-of-focus spheres filament/blob, so pure spheres read 62-89 % atomised; spray check: chi <= 20 would move D32 ~55 -> ~36 um (not yet a result); deck now 20 slides with a draft sizer 3.0.0 plan; rig ask: big-bead through-focus series). 2026-10-15 ~21:00 (Mac: pulled the home PC's step 2 and merged STATUS; step 3 DONE on the LaCie: bead results + a boxed PNG per capture; the falling beads' error is defocus (they read like static beads 2.5 mm off focus), not the edge). 2026-10-15 late evening (Mac: bead_calibration 1.1.0 written and run on the copied stills, preliminary: every size reads ~8.6 % large at focus (a scale error?, 9.21 um/px fits), the in-focus rule counts beads over 9-15 mm of depth while size holds over 1-2.5 mm; a boxed PNG per capture is written when the LaCie is back; deck of what was tried). 2026-10-15 19:10 (home PC: step 2 DONE 18:19-19:05, all five pours through the AI, no failures; falling beads read high, measured ~= 0.94 x nominal + 22 um; LaCie free to go back to the Mac for step 3; merged with the Mac's at 20:45). 2026-10-15 evening (Mac: TONIGHT's steps rewritten as a hand-off: home PC runs the AI on the five pours only (Claude there; commands in Next steps); Cd analysed: 0.5 mm 0.844, 0.8 mm 0.814, 1.2 mm 0.527 = the insert passes ~35% less gas than a clean bore, not written to the Cd table; the static bead photos are crowded / full of specks, so bead_calibration 1.1.0 (sparse regions only, a boxed PNG per capture) is being written). 2026-10-15 (lab PC: falling beads: only ~10% of frames have beads, kept at stride 10 with trimmed cines; today is Cd tests + bead calibration only, no silicone; spray runs postponed, the three Cd tests DONE 11:12-11:34 (`Calibration/Orifice Cd/2026/10/15/`, not yet analysed); run sheet now 36 bead rows: ONE capture per single-size sandwich at focus (no patches or bg: the slide cannot move sideways, background from the photo itself), then the mixed through-focus series ±8 mm (optional; the only depth-of-field data), then the falling beads; pulled 057a0f3 at 07:52 and GUI_Clean restarted at 07:52 on it; python-pptx 1.0.2 confirmed; the Portenta switch filter is still recorded as not flashed). 2026-10-14 (Mac: throughput is now the default: response-surface goals in-band droplets per second x3 + atomised fraction x1, Settings size band 20-60 um; Ben's new tasks added to the open list in `docs/notes/2026-10-14_plan_for_wednesday.md`; the CCD run-33 bubbler stall false trip is resolved (Ben: "I didn't plug it in"); the silicone is one part, not curing). 2026-10-13 (Mac: CCD follow-up plan approved, `docs/notes/2026-10-13_CCD_followup_plan.md`, 12 phases; phase 1 done: app bugs 3 and 6 fixed, atomised fraction / flow relabelled "by area"; phase 2 done: "no spray" runs (atomised < 2%) have size and steadiness blanked; phase 3 done: gas regimes (pressure-limited runs left out of the surfaces by default, own section), goals used/dropped and best observed runs in Best settings; F2/H1 checks done (window drops in 8 runs; volume ranks like area); liquid stage 2.3.0 built (window drops masked, volume) and being re-run on the Mac for the CCD day, old outputs archived to _liquid2.2.0/; phase 4 done: band-count response (in-focus droplets per frame, 30-50 um, Settings); phase 5 done: GUI_Clean live gas regime + run_summary gas fields (rig check pending); phase 6 done: orifice on a log scale, fitted span when runs are left out; master_log gains a Mean Diameter column and the 33 CCD rows now hold D32, mean and atomised % (atomised % updated to liquid 2.3.0 at 15:30, backup kept); liquid 2.3.0 re-run done 33/33; phase 8 done (rate: count is a concentration, gas speeds the liquid up, cines cannot give velocity; docs/notes/2026-10-13_droplet_rate_investigation.md); phase 9 done (CCD re-analysed: in the flow-controlled region atomised fraction = gas + orifice only, predicted R2 0.89; best ~10,700 sccm on 1.2 mm; the 35% runs are pressure-limited 0.5 mm; docs/notes/2026-10-13_CCD_reanalysis.md); three RSM bugs found and fixed in the re-analysis (goal gate on the wrong model, strengthen runs outside the fitted span, free factors reported as edge optima); opt-in mass-balance rate responses added (`rate`, `rate_band`: droplets produced per second, all sizes / in the band); velocity capture plan written: `docs/VELOCITY_CAPTURE_PLAN.md` (exposure series ~20 min, then a 15-capture calibration set, ~3.5 h, on a narrow strip at ~10 kfps, 1 us; PCC check of rows-vs-width first). Earlier 2026-10-13, home PC: CCD batch finished 33/33 at 2.2.0 and analysed once; the 0.5 mm block was gas-starved at a ~9.5 barA ceiling (see Recent changes and docs/notes/2026-10-13_CCD_day_explained.md); app bugs 3 (stale run list) and 6 (no atomised liquid flow on Python 3.9) found. 2026-10-12 home PC: python-pptx 1.0.2 installed in the Detectron env; CCD day checked on the LaCie: 33/33 cines + summaries, detects as a complete 4-factor CCF, quick self-test READY; batch not started. Lab PC: 33-run CCD day captured, all cines saved, run 33 valid (the GUI's stall check false-tripped; label removed); GUI_Clean camera save hardened after a lost auto-trigger capture (untried on the rig); STATUS commit refs fixed, tracked __pycache__ removed, front limit switch tested on the rig, emoji removed from GUI_Clean console messages, switch noise filter in firmware (needs flashing), GUI_Clean SCCM ramp + bubbler starts with Start Experiment (untried on the rig); Mac: CCD plan complete, Phase 7 committed 2ebc9f0; Mac light-mode theme fix; batch bugs 1-2, goal-ramp bug, feed floor 2,000 steps/s; mean diameter now a headline response and the default size goal; GUI_Clean auto-trigger at end of test and pressure cut-off (both untried on the rig); GUI_Clean review fixes + front limit switch firmware (committed 58f1b94; firmware flashed and switch-tested on the lab rig 2026-10-12, all passed); next is the 33-run CCD day).** This is the live state of the work. Claude keeps it current
+**Last updated: 2026-10-17 evening (Mac: Phase 5 READY for Ben: the whole re-measure chain rehearsed on a scratch copy of CCD 125754 (7 min a run: 3.0.0 kept in _sizer3.0.0/, rolling background, static specks, largest-droplets sheet) and the app's master_log fill rehearsed on a copy of the live log (migrated to the new layout, row filled: 77,289 droplets/s 30-60 um, 0.156 mL/min, Sizer 3.1.0); Ben's steps, with the timing (~4 h, one run at a time) and the old model copied into a new output folder: docs/notes/2026-10-17_phase5_remeasure_ccd_in_the_app.md). Earlier 2026-10-17 (Mac: sizer 3.1.0 Phase 4 DONE (uncommitted): master_log in one shared module (master_log.py) for GUI_Clean and the app, the app fills the analysed runs' rows after every analysis, new columns right of Droplets/s (30-60 um): <30 / 30-40 / 40-60 / 60-100 / 100+ um per cm3, in-band flow, concentration, atomised in volume, Sizer (Ben); the six 3.0.0 columns go; Re-measure keeps the old results in _sizer<old>/; frame images coloured by verdict with a key; a largest-droplets sheet + slide per run; deck 63 slides; NEXT: Phase 5, Ben re-measures the CCD day in the app (docs/notes/2026-10-17_phase5_remeasure_ccd_in_the_app.md); **lab PC must git pull before its next capture**). Earlier 2026-10-17 (Mac: sizer 3.1.0 Phase 3 DONE: throughput by one shared function (rates.py): in-band droplets/s = syringe flow x in-band droplets per mm3 of liquid in the measurement volume, in-band liquid flow (mL/min) = syringe flow x their share of it; band 30-60 um (Ben); CCD 125754 77,000/s (0.16 mL/min), 143415 19,000/s, 123534 4,500/s, CIs +-50-60 %; master_log layout decided (Ben): Droplets/s stays, becomes 30-60, new columns to its right (Phase 4); next Phase 4). Earlier 2026-10-17 (Mac: sizer 3.1.0 Phase 2 DONE: the rolling background (25-frame blocks, median of +/-25 frames, in analysis/background_rolling/) divides out drops that land on the window mid-run and logs them (123534: 2 drops from frames 250/275, its shadow droplets sized again); **3.1.0 is now the DEFAULT sizer**; next Phase 3, throughput). Earlier 2026-10-17 (Mac: sizer 3.1.0 Phase 1 DONE (selectable as --sizer 3.1.0): every undetected piece of liquid round a droplet is blanked, and droplets that are attached / in dark surroundings / far above their mask / static dust are not sized; CCD D32 123534 101.9 -> 56.9, 143415 83.8 -> 52.3, 125754 51.0 -> 49.2 um, concentration and atomised unchanged; dust specks at fixed pixels in every CCD run found; plan `docs/notes/2026-10-17_sizer_3.1.0_plan.md`, approved by Ben; air purge ruled out (Ben); next Phase 2, the rolling background). 2026-10-16 night (Mac: the CCD day re-measured at 3.0.0, 33/33, 2.2.0 kept in each run's _sizer2.2.0/, comparison + PROVISIONAL response surfaces in `Taguchi/CCD/CCD sizer 3.0.0 remeasure 16-10-2026/`, master_log gains six 3.0.0 columns at the end (backup kept); found: small droplets beside dark liquid the AI did not detect read 200-430 um and inflate the 3.0.0 D32 (fix first, to-do item 0a); no-spray cut fixed to read every object (uncommitted)). Earlier 2026-10-16 late (Mac: Phase 5 + 3.0.0 as the default committed and pushed, f022452; Ben's questions answered in `docs/notes/2026-10-17_todo.md` (master_log columns and size bands, the app writing master_log, droplets/s kept but wrong at 3.0.0 until fixed, why the in-volume atomised fraction is higher: 80 % of filament/blob area is outside the volume against 45 % of droplet area, the AI, partly in-focus ligaments, frame size); next: the CCD day re-measured at 3.0.0 overnight on the Mac, at Ben's go). Earlier 2026-10-16 evening (Mac: sizer 3.0.0 Phase 5 DONE: concentration per mm3 (depth 10.3 mm, the lens is telecentric so the volume is a box; CCD 125754: 0.057 per mm3) and the atomised fraction inside the volume (125754: 41.6 % in the volume vs 20.5 % all objects); pours 96-99 % in the volume (37 um crowded pour 88 %: the AI misses beads); **3.0.0 is now the DEFAULT sizer** (Ben) in the app, GUI_Clean and the pipeline, and the app flags runs measured with an older sizer or bead calibration for 'Re-measure only'; deck 46 slides). Earlier 2026-10-16 (Mac: sizer 3.0.0 Phase 4 code DONE, opt-in (`--sizer 3.0.0`; 2.2.0 stays the default until Ben's Phase 6 go; 2.2.0 output byte-identical to the committed code on CCD 125754): shared blur.py (numpy + OpenCV, identical to the bead measurement on 4,118 real objects), each spray droplet measured on its own profile (other detections blanked; touching = crowded), CCD 125754 at 3.0.0: D32 51.0 um (2.2.0: 54.0), 84 % of in-volume droplets below d_min 30 um, 98 % of sized droplets sized through the table; Phases 3-4 committed and pushed with the deck's 12 new slides; next Phase 5). Earlier 2026-10-16 (Mac: Phases 1-2 committed and pushed, 3e3ab27; sizer 3.0.0 Phase 3 DONE, provisional: edge = Blaisot's contrast-corrected size - 5.6 um, chi_sharp 15 um, chi_max 50 um with the look-up table (built on the static beads, checked on the falling ones: every size 37-155.8 um within +4.7 %), depth 10.3 mm and the same for every size, written into the optics profile; big-bead through-focus run sheet written (93 rows, needs neither the pinhole nor the meter); Ben chose option 1: 30-37 um droplets sized through the extrapolated table, one volume for every size; Phase 4 started). Earlier 2026-10-16 (Mac: sizer 3.0.0 Phase 1 code DONE: focus_edge.py + GUI_Clean Focus check card + docs/FOCUS_CHECK.md, ready for the pinhole; deck updated with the plan and Phase 2). Earlier 2026-10-16 (Mac: sizer 3.0.0 Phase 2 DONE: provisional d_min 30-35 um (half-max), the model matches the beads near focus only, a tight chi cut over-counts small droplets; next Phase 1 code). Earlier 2026-10-16 (Mac: Phase 1 focus target is now a 300 um precision pinhole (Ben; arrives the week of 2026-10-19), plan updated). 2026-10-15 late (Mac: sizer 3.0.0 plan APPROVED (docs/notes/2026-10-15_sizer_3.0.0_plan.md); Phase 0 DONE: one optics profile, config/optics/ + optics.py, no number changes (checked on a real CCD run); next Phases 1 + 2). Earlier the same evening (Mac: falling beads re-measured bead by bead: a blur-width (chi) focus rule brings them back to the static values; the at-focus bias looks like a fixed ~+6 um edge offset, not the 8.6 % scale error read earlier (the 155.8 slide was ~1 mm off focus); the AI calls far-out-of-focus spheres filament/blob, so pure spheres read 62-89 % atomised; spray check: chi <= 20 would move D32 ~55 -> ~36 um (not yet a result); deck now 20 slides with a draft sizer 3.0.0 plan; rig ask: big-bead through-focus series). 2026-10-15 ~21:00 (Mac: pulled the home PC's step 2 and merged STATUS; step 3 DONE on the LaCie: bead results + a boxed PNG per capture; the falling beads' error is defocus (they read like static beads 2.5 mm off focus), not the edge). 2026-10-15 late evening (Mac: bead_calibration 1.1.0 written and run on the copied stills, preliminary: every size reads ~8.6 % large at focus (a scale error?, 9.21 um/px fits), the in-focus rule counts beads over 9-15 mm of depth while size holds over 1-2.5 mm; a boxed PNG per capture is written when the LaCie is back; deck of what was tried). 2026-10-15 19:10 (home PC: step 2 DONE 18:19-19:05, all five pours through the AI, no failures; falling beads read high, measured ~= 0.94 x nominal + 22 um; LaCie free to go back to the Mac for step 3; merged with the Mac's at 20:45). 2026-10-15 evening (Mac: TONIGHT's steps rewritten as a hand-off: home PC runs the AI on the five pours only (Claude there; commands in Next steps); Cd analysed: 0.5 mm 0.844, 0.8 mm 0.814, 1.2 mm 0.527 = the insert passes ~35% less gas than a clean bore, not written to the Cd table; the static bead photos are crowded / full of specks, so bead_calibration 1.1.0 (sparse regions only, a boxed PNG per capture) is being written). 2026-10-15 (lab PC: falling beads: only ~10% of frames have beads, kept at stride 10 with trimmed cines; today is Cd tests + bead calibration only, no silicone; spray runs postponed, the three Cd tests DONE 11:12-11:34 (`Calibration/Orifice Cd/2026/10/15/`, not yet analysed); run sheet now 36 bead rows: ONE capture per single-size sandwich at focus (no patches or bg: the slide cannot move sideways, background from the photo itself), then the mixed through-focus series ±8 mm (optional; the only depth-of-field data), then the falling beads; pulled 057a0f3 at 07:52 and GUI_Clean restarted at 07:52 on it; python-pptx 1.0.2 confirmed; the Portenta switch filter is still recorded as not flashed). 2026-10-14 (Mac: throughput is now the default: response-surface goals in-band droplets per second x3 + atomised fraction x1, Settings size band 20-60 um; Ben's new tasks added to the open list in `docs/notes/2026-10-14_plan_for_wednesday.md`; the CCD run-33 bubbler stall false trip is resolved (Ben: "I didn't plug it in"); the silicone is one part, not curing). 2026-10-13 (Mac: CCD follow-up plan approved, `docs/notes/2026-10-13_CCD_followup_plan.md`, 12 phases; phase 1 done: app bugs 3 and 6 fixed, atomised fraction / flow relabelled "by area"; phase 2 done: "no spray" runs (atomised < 2%) have size and steadiness blanked; phase 3 done: gas regimes (pressure-limited runs left out of the surfaces by default, own section), goals used/dropped and best observed runs in Best settings; F2/H1 checks done (window drops in 8 runs; volume ranks like area); liquid stage 2.3.0 built (window drops masked, volume) and being re-run on the Mac for the CCD day, old outputs archived to _liquid2.2.0/; phase 4 done: band-count response (in-focus droplets per frame, 30-50 um, Settings); phase 5 done: GUI_Clean live gas regime + run_summary gas fields (rig check pending); phase 6 done: orifice on a log scale, fitted span when runs are left out; master_log gains a Mean Diameter column and the 33 CCD rows now hold D32, mean and atomised % (atomised % updated to liquid 2.3.0 at 15:30, backup kept); liquid 2.3.0 re-run done 33/33; phase 8 done (rate: count is a concentration, gas speeds the liquid up, cines cannot give velocity; docs/notes/2026-10-13_droplet_rate_investigation.md); phase 9 done (CCD re-analysed: in the flow-controlled region atomised fraction = gas + orifice only, predicted R2 0.89; best ~10,700 sccm on 1.2 mm; the 35% runs are pressure-limited 0.5 mm; docs/notes/2026-10-13_CCD_reanalysis.md); three RSM bugs found and fixed in the re-analysis (goal gate on the wrong model, strengthen runs outside the fitted span, free factors reported as edge optima); opt-in mass-balance rate responses added (`rate`, `rate_band`: droplets produced per second, all sizes / in the band); velocity capture plan written: `docs/VELOCITY_CAPTURE_PLAN.md` (exposure series ~20 min, then a 15-capture calibration set, ~3.5 h, on a narrow strip at ~10 kfps, 1 us; PCC check of rows-vs-width first). Earlier 2026-10-13, home PC: CCD batch finished 33/33 at 2.2.0 and analysed once; the 0.5 mm block was gas-starved at a ~9.5 barA ceiling (see Recent changes and docs/notes/2026-10-13_CCD_day_explained.md); app bugs 3 (stale run list) and 6 (no atomised liquid flow on Python 3.9) found. 2026-10-12 home PC: python-pptx 1.0.2 installed in the Detectron env; CCD day checked on the LaCie: 33/33 cines + summaries, detects as a complete 4-factor CCF, quick self-test READY; batch not started. Lab PC: 33-run CCD day captured, all cines saved, run 33 valid (the GUI's stall check false-tripped; label removed); GUI_Clean camera save hardened after a lost auto-trigger capture (untried on the rig); STATUS commit refs fixed, tracked __pycache__ removed, front limit switch tested on the rig, emoji removed from GUI_Clean console messages, switch noise filter in firmware (needs flashing), GUI_Clean SCCM ramp + bubbler starts with Start Experiment (untried on the rig); Mac: CCD plan complete, Phase 7 committed 2ebc9f0; Mac light-mode theme fix; batch bugs 1-2, goal-ramp bug, feed floor 2,000 steps/s; mean diameter now a headline response and the default size goal; GUI_Clean auto-trigger at end of test and pressure cut-off (both untried on the rig); GUI_Clean review fixes + front limit switch firmware (committed 58f1b94; firmware flashed and switch-tested on the lab rig 2026-10-12, all passed); next is the 33-run CCD day).** This is the live state of the work. Claude keeps it current
 (see "How this file is maintained" at the bottom). History, evidence and full reasoning are in
 `docs/archive/HANDOFF_real_data_pipeline_LEGACY.md` (frozen 2026-10-07, newest section first).
 
@@ -328,7 +328,16 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
 
 ## Next steps, in order
 
-**From 2026-10-17: work through `docs/notes/2026-10-17_todo.md`** (Ben's questions after Phase 5, with answers):
+**NOW (2026-10-17): sizer 3.1.0, approved by Ben: `docs/notes/2026-10-17_sizer_3.1.0_plan.md`.** Five phases:
+1. the sizing validity tests (attached, dark surroundings, inconsistent, static);
+2. the rolling background;
+3. throughput by the shared function, band 30-60 µm;
+4. outputs: the largest-droplets slide per run, 'Re-measure only' keeps the old results, master_log;
+5. Ben re-measures and re-analyses the CCD day in the UI from Claude's steps.
+
+Phase-gated.
+
+**Then, or alongside: `docs/notes/2026-10-17_todo.md`** (Ben's questions after Phase 5, with answers):
 1. master_log columns: concentration, in-volume atomised fraction, Sizer; concentration per size band (DECIDE
    bands and sheet).
 2. The app writes its numbers into master_log.
@@ -346,9 +355,13 @@ runs), richer figures/data for both analyses, and a PowerPoint deck. First real-
   below d_min, outside, no chi, frame edge, crowded; dark-edged rings) with a legend, so a run's own pictures say
   what happened to each droplet. 2.x images unchanged. The palette is in the deck's frame slides (see the 3.0.0
   frames in `Calibration/Imaging Work/analysis/sizer3_frames_2026-10-16/`).
-- **Re-run the CCD day (2026-10-12, 33 runs) at 3.0.0 and see whether the conclusions move:** re-measure from the
-  saved predictions (no AI re-run), keep 2.2.0 alongside, re-run the response-surface analysis. This is Phase 6's
-  side-by-side (two runs, Ben's go) and then Phase 7 (remeasure_droplets.py, every day).
+- **CCD day (2026-10-12) at 3.0.0: re-measured 2026-10-16 (33/33 runs; the 2.2.0 results are in each run's
+  `_sizer2.2.0/`).** Results and caveats: `Experiments/Taguchi/CCD/CCD sizer 3.0.0 remeasure 16-10-2026/README.md`.
+  Next:
+  - fix the size runaway next to undetected liquid (to-do item 0a), then re-measure the day;
+  - fix droplets/s;
+  - only then read the 3.0.0 response surfaces.
+  Phase 7 (`remeasure_droplets.py`, every other day) waits for these.
 
 **TONIGHT 2026-10-15: analyse the calibration day. ONE LaCie, so in turn: Mac (done) -> home PC (AI on the pours) -> Mac.**
 What was captured (all on the LaCie):
@@ -727,8 +740,12 @@ made", "Bit depth", and the dated sections).
   10 the effective rate is 39 Hz, which has no integer ratio with the bubbler's 5 / 10 / 15 Hz, so
   no aliasing (190 fps was the earlier suggestion for the same reason). Shorter captures than the
   suggested 25 s are deliberate: don't "correct" them.
-- Sizer **2.2.0** (sharpness rule) is the project's measurement, for good unless Ben says
-  otherwise. Supersedes "focus rejection deferred".
+- Sizer **3.0.0** has been the default since 2026-10-16 (Ben), with 2.2.0 kept for comparison; 3.1.0 is being built
+  (plan 2026-10-17). It superseded 2.2.0 (sharpness rule, 2026-10-08), which superseded "focus rejection deferred".
+- **A window air purge is not an option** (Ben, 2026-10-17; tested earlier).
+  - Even at high-ish pressure it does not stop large, high-inertia droplets.
+  - It disrupts the spray: secondary atomisation, so its extra droplets could not be separated from the nozzle's.
+  - Drops on the window are handled in the analysis instead: the rolling background and the window mask.
 
 ## Standing rules
 
@@ -739,7 +756,118 @@ made", "Bit depth", and the dated sections).
 
 ## Recent changes (newest first; trim to ~10 entries, older ones live in git history)
 
-- 2026-10-16 evening (Mac): **Sizer 3.0.0 Phase 5, and 3.0.0 made the default sizer (Ben).** Uncommitted.
+- 2026-10-17 (Mac): **Sizer 3.1.0 Phase 4: outputs** (uncommitted).
+  - **master_log** is one shared module (`AI/Real_Data_Code/master_log.py`) used by GUI_Clean and the app.
+    - The app fills the analysed runs' existing rows (measured columns only) at the end of every Taguchi / RSM
+      analysis, with a daily backup, and refuses while Excel has it open.
+    - **New layout, Ben's columns:** Droplets/s (30-60 um), then <30 / 30-40 / 40-60 / 60-100 / 100+ um (per cm³,
+      adding up to the concentration), in-band flow (mL/min), concentration, atomised in volume, Sizer.
+    - The six 'Sizer 3.0.0' columns of 2026-10-16 are removed by the migration.
+    - Checked on copies of the live log, incl. GUI_Clean's real save: 370 images moved with their columns, every
+      other cell unchanged.
+  - **The old results are kept:** 'Re-measure only' (and any re-measure through process_capture) moves the earlier
+    `droplets_` / `liquid_` into `_sizer<old>/` first, never overwriting an archive.
+  - **Frame images:** coloured by 3.x verdict, with a key of the verdicts in that frame and their counts
+    (measure_run, the liquid stage, the Extremes tab).
+  - **The largest-droplets sheet:** 25 crops per run (measure_run), and one slide per run in both decks.
+  - **Report warnings:** window drops, a D32 resting on droplets beyond the largest bead, many unmeasurable
+    droplets.
+  - **Bead deck:** +9 slides (63).
+  - **Tests:** test_master_log (5) and test_sizer31 +3.
+  - **The lab PC must `git pull` before its next capture** (the master_log layout, 3.1.0).
+- 2026-10-17 (Mac): **Sizer 3.1.0 Phase 3: throughput by one shared function** (uncommitted).
+  - **`rates.py`:**
+    - in-band share = in-band droplet volume ÷ all the liquid inside the measurement volume;
+    - in-band flow = syringe flow × share;
+    - in-band droplets/s = syringe flow × in-band droplets per mm³ of liquid in view;
+    - 95% CIs by resampling frames.
+  - **The droplets below d_min are only in the denominator.** That was 3.0.0's bug, so 3.0.0 runs get no rate.
+  - **The liquid stage at 3.1.0** writes the in-volume liquid volume per frame, each piece by its best size (sized:
+    calibrated; below d_min: measured; unmeasured: mask × the run's size/mask ratio; ligaments: bodies of
+    revolution).
+  - **App:** `rate_band` / `rate` at 3.1.0 from rates.py, new `band_flow` (mL/min); band default **30-60 µm** (Ben).
+  - **CCD (scratch):**
+    - 125754: 77,000/s (0.16 mL/min);
+    - 143415: 19,000/s;
+    - 123534: 4,500/s;
+    - CIs ±50-60%: the liquid in view is heavy-tailed.
+    - By volume inside the volume, atomised is 0.2-2.7%: ligaments and jets hold nearly all the liquid.
+  - **master_log layout decided (Ben):** 'Droplets/s' stays and becomes 30-60 µm; the new columns go to its right.
+    GUI_Clean moves to rates.py in Phase 4 with that migration.
+  - **Tests:** test_sizer31 +3.
+- 2026-10-17 (Mac): **Sizer 3.1.0 Phase 2: the rolling background; 3.1.0 the default** (uncommitted).
+  - **Code:** `background.py`. Each block of 25 frames is divided by the median of the ±25 frames round it, stored in
+    the run's `analysis/background_rolling/` (16-bit PNGs plus index.json, ~36 MB, ~2 min a run, built
+    automatically).
+  - **Window log:** drops landing on the window are logged as events, grouped into drops with the frame first seen
+    (provenance `window_drops`).
+  - **Where:** measure_run and the liquid stage (`--background-rolling auto|DIR|none`; separate frames such as the
+    hand-labelled set keep the static background) and render_more_extremes.
+  - **123534:** droplets in the window drop's shadow are measured again (dark surroundings 559 → 29); D32 57.0 µm.
+  - **143415 / 125754:** D32 52.4 / 49.2 µm.
+  - **Bead pours unchanged** (medians 38.0 / 77.2 µm, in-volume atomised within 0.1 point).
+  - **Concentration** within 1%; atomised fractions move ≤ 0.5 point.
+  - **Default:** 3.1.0 in blur, pipeline_spec and GUI_Clean. The app flags 3.0.0 runs for re-measure.
+  - **The lab PC must pull before using it.**
+  - **Tests:** +2 in test_sizer31; pinned defaults updated.
+- 2026-10-17 (Mac): **Sizer 3.1.0 Phase 1: the validity tests** (plan `docs/notes/2026-10-17_sizer_3.1.0_plan.md`;
+  uncommitted).
+  - **Liquid map:** `liquid_map.py` holds the hysteresis, moved out of classical_liquid.
+  - **3.1.0 blanks every piece of liquid round a droplet,** AI-detected or not.
+  - **New verdicts, none sized:**
+    - `attached`: sits on liquid;
+    - `dark_surround`: dark measuring window;
+    - `inconsistent`: > 1.3× its own mask;
+    - `static`: the same place in 3 of ±10 frames: dust.
+  - **Counting:** the first three count like crowded; static is not counted.
+  - **New outputs:** `droplet_sizes.csv` gains x, y, mask_d_um; per_frame and summary count each test; the
+    concentration divides by every frame.
+  - **Thresholds** from ~22,700 droplets in 3 CCD runs and 3 bead pours. Every 3.0.0 runaway was caught; the beads
+    are unchanged (< 0.3%).
+  - **CCD at 3.1.0:**
+    - D32 123534 101.9 → 56.9, 143415 83.8 → 52.3, 125754 51.0 → 49.2 µm;
+    - concentration and atomised fraction unchanged;
+    - 341-835 dust detections per run left out. Dust sits at the same pixels in every run of the day.
+  - **Version threading:** 3.1.0 recognised wherever 3.0.0 is (`blur.is_sizer3`; app refusals, run discovery,
+    pipeline_spec, batch, validate_classical, render_more_extremes, the remeasure tools). Default still 3.0.0 until
+    Phase 2.
+  - **Tests:** `test_sizer31.py` (10; each fault reproduced synthetically: a 40 µm droplet on a ligament's edge reads
+    232-281 µm at 3.0.0).
+
+- 2026-10-16 night (Mac): **The CCD day re-measured at sizer 3.0.0 (Ben: "reanalyse the CCD runs ... save the old data so we can compare").**
+  - **The re-measure:** 33/33 runs, from the saved predictions (no AI), 1 h 32 min, four at a time.
+    - 2.2.0 results moved into each run's `shadowgraph/analysis/_sizer2.2.0/`.
+    - The 2.2.0 analyses and decks in `Taguchi/CCD/` are untouched.
+  - **Output:** `Experiments/Taguchi/CCD/CCD sizer 3.0.0 remeasure 16-10-2026/`:
+    - the comparison workbook and figure;
+    - both saved response-surface analyses re-run at 3.0.0, marked PROVISIONAL;
+    - a README with the caveats.
+  - **master_log:** six 'Sizer 3.0.0 ...' columns appended AFTER 'Mass Flow Graph'. GUI_Clean writes only A-T, so
+    they survive the lab PC's saves.
+    - 33 CCD rows filled; the 2.2.0 columns are unchanged.
+    - A-T and all 370 images checked identical.
+    - Backup: `Logs/Backups/master_log BACKUP 2026-10-16 before sizer 3.0.0 columns.xlsx`.
+  - **Findings:**
+    - Within the bead calibration, 3.0.0 D32 is 47-58 um, a few um below 2.2.0 for every run.
+    - But **small droplets next to dark liquid the AI did not detect read 200-430 um.** The liquid is a jet edge, a
+      ligament, or an out-of-focus drop on the window. The ring outside them reads T 0.36-0.72; each is > 1.6x its
+      AI mask size (mask ~35-70 um).
+      - They are 2-3 % of sized droplets but ~85 % of the d3 where they occur.
+      - 123534: D32 64.5 -> 101.9; 143415: 57.4 -> 83.8. 2.2.0 rejected them.
+      - Fix in measure_droplet_3 first (to-do item 0a).
+    - Atomised in the volume is ~2x the every-object figure (rank correlation with 2.2.0 0.66).
+    - Concentration 29-101 per cm3.
+  - **Fixed (uncommitted):** the no-spray cut reads the every-object fraction at 3.0.0. Dribble 112022 reads 4.3 % in
+    the volume against 0.19 % over every object. `stats.py`, plus a test.
+    - Full suite 967 passed: 966 in the run, plus one GUI test that timed out while the batch held the LaCie and
+      passes alone.
+  - **Deck:** 8 comparison slides added (54 now; artifact GwVFTvtkgDMR9N5bLG25PG). Full exports are refreshed in
+    `Calibration/Imaging Work/analysis/2026-10-15/slides/`; the section alone ('CCD day - sizer 2.2.0 vs 3.0.0',
+    PDF + editable PPTX) is in the re-measure folder.
+  - **To-do updated:** `docs/notes/2026-10-17_todo.md` items 0 and 7 (frame size: nothing breaks, but counts per
+    frame compare badly across ROI sizes).
+
+- 2026-10-16 evening (Mac): **Sizer 3.0.0 Phase 5, and 3.0.0 made the default sizer (Ben).** Committed and pushed, f022452.
   - **Concentration** (measure_run): droplets per mm3 in the measurement volume = frame area x the calibrated depth
     (10.29 mm at chi 50, the same for every size; the lens is TELECENTRIC (Ben), so the area is the same at every
     depth and the volume is a box). Each droplet in the volume is weighted for the frame edge, W H / ((W-2h)(H-2h))

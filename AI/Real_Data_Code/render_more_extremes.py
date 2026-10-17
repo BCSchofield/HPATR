@@ -100,7 +100,7 @@ def settings(prov, thr):
             "core_estimator": prov.get("core_estimator", "min" if pre2 else "robust"),
             "sizer": bool(prov.get("sizer_enabled", not pre2)),
             "sharpness_rule": bool(prov.get("sharpness_rule", False)),
-            "version": prov.get("sizer_version") if prov.get("sizer_version") == mr.SIZER_VERSION_3 else None}
+            "version": prov.get("sizer_version") if mr.blur.is_sizer3(prov.get("sizer_version")) else None}
 
 
 def remeasure(run, meas, prov, stems, thr):
@@ -114,11 +114,18 @@ def remeasure(run, meas, prov, stems, thr):
     if bg is None:
         raise RuntimeError(f"no background at {bg_path}")
     bg = bg.astype(np.float32)
+    roll = None
+    if prov.get("background_kind") == "rolling":   # sizer 3.1.0: the run's own rolling background, as it was measured
+        import background
+        rdir = local(prov.get("background_rolling"), meas.parent)
+        if not (rdir / "index.json").exists():
+            raise RuntimeError(f"measured with a rolling background, not found at {rdir}: re-measure the run first")
+        roll = background.Rolling(rdir)
     manifest = json.loads((val / "instances.json").read_text(encoding="utf-8"))
     id_by_name = {Path(im["file_name"]).stem: im["id"] for im in manifest["images"]}
     want = {id_by_name[s]: s for s in stems}
     s = settings(prov, thr)
-    if s["version"] == mr.SIZER_VERSION_3:
+    if mr.blur.is_sizer3(s["version"]):
         # the calibration that sized the run, or the pictures would not match its numbers
         mr.UM_PER_PX = float(optics.profile_for(run)["um_per_px"])
         mr.SIZER3 = mr.blur.sizer3(optics.profile_for(run))
@@ -126,12 +133,15 @@ def remeasure(run, meas, prov, stems, thr):
             raise RuntimeError(f"measured with sizer calibration {prov['optics_profile_hash']}, the profile now "
                                f"holds {mr.SIZER3['hash']}: re-measure the run first")
     dets = defaultdict(list)
+    v31 = s["version"] == mr.SIZER_VERSION_31
     for d in json.loads(preds_path.read_text(encoding="utf-8")):
-        if d["image_id"] in want and d["score"] >= s["score"] and not d.get("truncated", False):
+        if (d["image_id"] in want or v31) and d["score"] >= s["score"] and not d.get("truncated", False):
             dets[d["image_id"]].append(d)
+    if v31:   # a static speck is found across the whole run, as measure_run found it
+        mr.mark_static(dets, [im["id"] for im in sorted(manifest["images"], key=lambda im: Path(im["file_name"]).stem)])
     out = {}
     for img_id, stem in want.items():
-        T = mr.transmission(sb_dir, stem, bg)
+        T = mr.transmission(sb_dir, stem, roll.for_stem(stem) if roll is not None else bg)
         if T is None:
             raise RuntimeError(f"no 16-bit frame for {stem} under {sb_dir}")
         out[stem] = mr.measure_frame(T, dets[img_id], s["focus_max"], split_um=s["split_um"],

@@ -1694,121 +1694,33 @@ def _replace_atomically(path, write):
     _commit_tmp(tmp, path)
 
 
-def migrate_master_mean_diameter(ws) -> bool:
-    """Insert 'Mean Diameter (um)' between 'D32 (um)' and 'Atomised (%)' in a
-    master_log sheet still in the 17-column layout, moving every image from that
-    column rightwards one column with it (insert_cols moves cell values, never
-    images). Returns True if it changed the sheet; once the column is in, K reads
-    'Mean Diameter (um)' and this cannot fire twice. Module-level so a one-off
-    back-fill of an existing log uses exactly the GUI's migration."""
-    from openpyxl.utils import get_column_letter, column_index_from_string
-    if not (ws.cell(row=1, column=10).value == 'D32 (um)'
-            and ws.cell(row=1, column=11).value == 'Atomised (%)'):
-        return False
-    ws.insert_cols(11)
-    ws.cell(row=1, column=11).value = 'Mean Diameter (um)'
-    for _img in ws._images:
-        _anc = _img.anchor
-        if isinstance(_anc, str):
-            _m = re.match(r'^([A-Z]+)(\d+)$', _anc)
-            if _m and column_index_from_string(_m.group(1)) >= 11:
-                _new_col = get_column_letter(column_index_from_string(_m.group(1)) + 1)
-                _img.anchor = f'{_new_col}{_m.group(2)}'
-        elif hasattr(_anc, '_from'):
-            if _anc._from.col >= 10:   # 0-indexed: 10 == Excel col K
-                _anc._from.col += 1
-            if hasattr(_anc, 'to') and _anc.to and _anc.to.col >= 10:
-                _anc.to.col += 1
-    return True
+# master_log's layout, migrations and measured numbers live in AI/Real_Data_Code/master_log.py since sizer 3.1.0
+# (2026-10-17): the analysis app fills the same measured columns after an analysis, so both must write one layout
+# with one set of numbers. The names below stay so older code and back-fill scripts keep working.
+import master_log as _mlog  # noqa: E402  (AI/Real_Data_Code is on sys.path: see the optics import above)
+migrate_master_mean_diameter = _mlog.migrate_master_mean_diameter
+migrate_master_orifice_length = _mlog.migrate_master_orifice_length
+migrate_master_droplet_rate = _mlog.migrate_master_droplet_rate
+migrate_master_sizer31 = _mlog.migrate_master_sizer31
+MASTER_RATE_BAND_UM = _mlog.RATE_BAND_UM          # 30-60 um since 2026-10-17 (Ben); 20-60 before
+MASTER_RATE_HEADER = _mlog.RATE_HEADER
 
 
-def migrate_master_orifice_length(ws) -> bool:
-    """Insert 'Orifice Length (mm)' after 'Orifice' in a master_log sheet in the 18-column layout
-    (B = Orifice, C = Bubbler Height), moving every image from column C rightwards one column with it.
-    Returns True if it changed the sheet; once the column is in, C reads 'Orifice Length (mm)' and this
-    cannot fire twice. Runs after migrate_master_mean_diameter, which keys on the layout before it."""
-    from openpyxl.utils import get_column_letter, column_index_from_string
-    if not (ws.cell(row=1, column=2).value == 'Orifice'
-            and ws.cell(row=1, column=3).value == 'Bubbler Height (mm)'):
-        return False
-    ws.insert_cols(3)
-    ws.cell(row=1, column=3).value = 'Orifice Length (mm)'
-    for _img in ws._images:
-        _anc = _img.anchor
-        if isinstance(_anc, str):
-            _m = re.match(r'^([A-Z]+)(\d+)$', _anc)
-            if _m and column_index_from_string(_m.group(1)) >= 3:
-                _new_col = get_column_letter(column_index_from_string(_m.group(1)) + 1)
-                _img.anchor = f'{_new_col}{_m.group(2)}'
-        elif hasattr(_anc, '_from'):
-            if _anc._from.col >= 2:    # 0-indexed: 2 == Excel col C
-                _anc._from.col += 1
-            if hasattr(_anc, 'to') and _anc.to and _anc.to.col >= 2:
-                _anc.to.col += 1
-    return True
-
-
-MASTER_RATE_BAND_UM = (20.0, 60.0)   # master_log's droplets/s column: the band kept after filtering (Ben, 2026-10-13)
-MASTER_RATE_HEADER = f"Droplets/s ({MASTER_RATE_BAND_UM[0]:g}-{MASTER_RATE_BAND_UM[1]:g} um)"
-
-
-def droplet_rate_band(results: dict, speed_steps_s, band=MASTER_RATE_BAND_UM):
-    """In-band droplets produced per second, by mass balance, exactly as the analysis app's
-    run_metrics.mass_balance_rate: syringe flow x atomised fraction BY VOLUME (liquid stage >= 2.3.0)
-    / (pi/6 <d^3>) over the run's in-focus droplets, x the in-focus share with lo <= d < hi. The
-    per-second comes from the syringe, not the camera, so the recording length does not enter. ''
-    when anything is missing (no AI results, an older liquid stage, speed 0)."""
-    import csv as _csv
-    import math as _math
+def master_measured_values(results: dict, speed_steps_s) -> dict:
+    """The MEASURED master_log columns of this run (D32, mean, atomised, droplets/s 30-60 um, the five size-band
+    concentrations, in-band flow, concentration, atomised in the volume, sizer), from its AI chain's own result
+    folders by master_log.measured_values -- exactly what the analysis app writes. Blank before the chain has run,
+    never a stale value from another run."""
+    blank = {h: '' for h in _mlog.MEASURED}
     try:
-        sps = float(speed_steps_s)
-        cls = results.get('_classical') or {}
-        vol_pct = float(cls['atomised_vol_pct_pooled'])
-        try:                                   # pooled from the per-frame volumes, as the app does (the
-            with open(os.path.join(cls['_liquid_dir'], 'classical_per_frame.csv'), newline='',
-                      encoding='utf-8') as fh:            # summary rounds to 3 dp)
-                rows = list(_csv.DictReader(fh))
-            tot = sum(float(r['total_liquid_vol_mm3']) for r in rows)
-            if tot > 0:
-                vol_pct = 100.0 * sum(float(r['droplet_vol_mm3']) for r in rows) / tot
-        except (KeyError, TypeError, ValueError, OSError):
-            pass
-        sizes = os.path.join(results['_measurement_dir'], 'droplet_sizes.csv')
-        with open(sizes, newline='', encoding='utf-8') as fh:
-            d = np.array([float(r['diameter_um']) for r in _csv.DictReader(fh) if r.get('in_focus') == '1'])
-    except (KeyError, TypeError, ValueError, OSError):
-        return ''
-    if sps <= 0 or d.size == 0:
-        return ''
-    q_mm3_s = _math.pi * (20.27 / 2) ** 2 * (sps / 6800)          # the GUI's syringe (GLR uses the same)
-    v_mean_mm3 = _math.pi / 6 * float((d ** 3).mean()) * 1e-9
-    share = float(((d >= band[0]) & (d < band[1])).mean())
-    return int(round(q_mm3_s * vol_pct / 100 / v_mean_mm3 * share))
-
-
-def migrate_master_droplet_rate(ws) -> bool:
-    """Insert the droplets/s column after 'Atomised (%)' in a master_log sheet in the 19-column layout
-    (M = Atomised, N = Avg Lamella Thickness), moving every image from column N rightwards with it.
-    Returns True if it changed the sheet; cannot fire twice. Runs after migrate_master_orifice_length."""
-    from openpyxl.utils import get_column_letter, column_index_from_string
-    if not (ws.cell(row=1, column=13).value == 'Atomised (%)'
-            and ws.cell(row=1, column=14).value == 'Avg Lamella Thickness'):
-        return False
-    ws.insert_cols(14)
-    ws.cell(row=1, column=14).value = MASTER_RATE_HEADER
-    for _img in ws._images:
-        _anc = _img.anchor
-        if isinstance(_anc, str):
-            _m = re.match(r'^([A-Z]+)(\d+)$', _anc)
-            if _m and column_index_from_string(_m.group(1)) >= 14:
-                _new_col = get_column_letter(column_index_from_string(_m.group(1)) + 1)
-                _img.anchor = f'{_new_col}{_m.group(2)}'
-        elif hasattr(_anc, '_from'):
-            if _anc._from.col >= 13:   # 0-indexed: 13 == Excel col N
-                _anc._from.col += 1
-            if hasattr(_anc, 'to') and _anc.to and _anc.to.col >= 13:
-                _anc.to.col += 1
-    return True
+        meas = results['_measurement_dir']
+        liq = (results.get('_classical') or {})['_liquid_dir']
+    except (KeyError, TypeError):
+        return blank
+    try:
+        return _mlog.measured_values(meas, liq, speed_steps_s)
+    except (OSError, ValueError, KeyError):
+        return blank
 
 
 # ── Main application window ───────────────────────────────────────────────────
@@ -5991,10 +5903,11 @@ class AtomisationApp(QMainWindow):
     # liquid_0.30/, both 2.2.0, ready for the Taguchi app's Analyse. The app's
     # own batch still defaults to 2.1.0: do not "Re-measure" these runs there.
     SHARPNESS_RULE = True
-    # The sizer version for both stages: 3.0.0, the default since 2026-10-16 (Ben). It needs the optics profile's
-    # calibration block (the lab PC must have pulled it) and measures with blur.py (numpy + OpenCV, no scipy).
+    # The sizer version for both stages: 3.1.0, the default since 2026-10-17 (3.0.0 + the validity tests and the
+    # rolling background; 3.0.0 from 2026-10-16, Ben). It needs the optics profile's calibration block (the lab PC
+    # must have pulled it) and measures with blur.py, liquid_map.py and background.py (numpy + OpenCV, no scipy).
     # None = what SHARPNESS_RULE says (2.2.0).
-    SIZER = "3.0.0"
+    SIZER = "3.1.0"
 
     # Inference cost scales with frame AREA, not frame count, so the estimate
     # has to know the resolution.  Measured 2026-09-28 on the RTX 4070 Ti SUPER
@@ -6007,30 +5920,18 @@ class AtomisationApp(QMainWindow):
     # told a 2560x1600 user 6 min for a job that actually took 23.
     INFERENCE_S_PER_MEGAPIXEL = 1.25
 
-    # Canonical master_log.xlsx layout, A..R. MASTER_HEADERS is stamped onto row 1
-    # on every save, so a rename here reaches existing workbooks and a column added
-    # by a migration cannot end up nameless or unstyled (which is how 'Mass Flow
-    # Graph' ended up the only unbold, unfilled header in the file).
-    # _write_excel finds every column by its NAME in this tuple -- never by
-    # letter -- so adding a column here cannot misplace the images again.
-    # Shadowgraph (P) is sized for the 300 px images placed there; the cone (O)
-    # and the two graph columns (Q, R) are widened further from their actual
-    # rendered image sizes when those images exist.
-    # Mean Diameter (in-focus droplets, from summary.json like D32) added
-    # 2026-10-13 (Ben); migrate_master_mean_diameter() moves older logs to it.
-    # Orifice Length (C) added the same day (Ben: the exit orifice length
-    # sometimes changes); migrate_master_orifice_length() moves logs to it.
-    # Droplets/s (N, in-band droplets produced per second by mass balance,
-    # droplet_rate_band) the same day; migrate_master_droplet_rate().
-    MASTER_HEADERS = ('Timestamp', 'Orifice', 'Orifice Length (mm)', 'Bubbler Height (mm)', 'Bubbler RPM',
-                      'Flow Range (sccm)', 'GLR', 'Pressure Range (barA)',
-                      'Speed (steps/s)',
-                      'Motor Travel (mm)', 'D32 (um)', 'Mean Diameter (um)', 'Atomised (%)',
-                      MASTER_RATE_HEADER, 'Avg Lamella Thickness', 'Notes',
-                      'Cone Image', 'Shadowgraph', 'Pressure Graph', 'Mass Flow Graph')
-    MASTER_COL_COUNT  = 20
-    MASTER_COL_LETTERS = 'ABCDEFGHIJKLMNOPQRST'
-    MASTER_COL_WIDTHS = (20, 8, 10, 16, 12, 18, 10, 18, 14, 12, 11, 12, 12, 14, 12, 35, 36.5, 43, 56, 56)
+    # Canonical master_log.xlsx layout, from master_log.py (since sizer 3.1.0, 2026-10-17; the analysis app writes
+    # the same). MASTER_HEADERS is stamped onto row 1 on every save, so a rename reaches existing workbooks and a
+    # column added by a migration cannot end up nameless or unstyled. _write_excel finds every column by its NAME in
+    # this tuple -- never by letter -- so adding a column cannot misplace the images. The Shadowgraph column is sized
+    # for the 300 px images placed there; the cone and the two graph columns are widened further from their actual
+    # rendered image sizes when those images exist. Migrations, in order: mean diameter (2026-10-13), orifice length,
+    # droplets/s, and sizer 3.1.0's (Droplets/s -> 30-60 um, the five size-band concentrations, in-band flow,
+    # concentration, atomised in the volume and Sizer to its right; the 'Sizer 3.0.0 ...' columns of 2026-10-16 go).
+    MASTER_HEADERS = _mlog.MASTER_HEADERS
+    MASTER_COL_COUNT = len(MASTER_HEADERS)
+    MASTER_COL_LETTERS = tuple(_mlog._column_letters(i) for i in range(1, len(MASTER_HEADERS) + 1))
+    MASTER_COL_WIDTHS = _mlog.MASTER_COL_WIDTHS
 
     # Header row style, matched to what the existing master_log.xlsx already uses:
     # theme-1 fill at 0.15 tint (dark grey) with bold white Calibri.
@@ -9546,17 +9447,9 @@ class AtomisationApp(QMainWindow):
         # the run's summary.json. Blank when the AI chain has not run --
         # never a stale value from a previous run (cleared at run start).
         _ai = job['ai']
-        d32_val  = _ai.get('d32_in_focus_um', '')
-        # Classical (the quoted figure) since 2026-10-08; earlier rows hold
-        # measure_run's model-only fraction.
-        atom_val = (_ai.get('_classical') or {}).get('atomised_pct_pooled',
-                                                      _ai.get('atomised_pct', ''))
-        # In-focus mean diameter, from the same summary.json as D32.
-        mean_val = _ai.get('droplet_d_mean_um', '')
-        if mean_val is None:
-            mean_val = ''
-        # In-band droplets produced per second (mass balance), a number; blank before the AI chain.
-        rate_val = droplet_rate_band(_ai, job.get('speed_str'))
+        # D32, mean, atomised (classical, every object), droplets/s 30-60 um and sizer 3.1.0's columns, all from the
+        # run's own result folders by master_log.py (what the analysis app writes); blank before the AI chain.
+        measured = master_measured_values(_ai, job.get('speed_str'))
 
         snap = job['snap']
         camera_windows = snap.get('camera_windows', [])
@@ -9883,6 +9776,8 @@ class AtomisationApp(QMainWindow):
             migrate_master_orifice_length(ws)
             # ── ... then the droplets/s column (after orifice length) ────────
             migrate_master_droplet_rate(ws)
+            # ── ... then sizer 3.1.0's columns (after droplets/s) ─────────────
+            migrate_master_sizer31(ws)
 
             _mf_col = self.MASTER_COL_COUNT
             if ws.cell(row=1, column=_mf_col).value != 'Mass Flow Graph':
@@ -9993,10 +9888,7 @@ class AtomisationApp(QMainWindow):
             'Pressure Range (barA)': p_range_str,
             'Speed (steps/s)':       as_number(speed_str),
             'Motor Travel (mm)':     as_number(distance_str),
-            'D32 (um)':              d32_val,
-            'Mean Diameter (um)':    mean_val,
-            'Atomised (%)':          atom_val,
-            MASTER_RATE_HEADER:      rate_val,
+            **measured,
             'Avg Lamella Thickness': _lamella_cell_val,
             # A stopped run is flagged where it is seen: at the front of its
             # Notes. (run_summary.xlsx has its own "Run status" field; its

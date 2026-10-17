@@ -19,6 +19,9 @@ import pytest
 
 os.environ["TAGUCHI_UI_NO_SETTINGS"] = "1"
 
+# 4. Never touch the real master_log.xlsx: an analysis fills the analysed runs' rows there (publish.update_master_log).
+os.environ["HPATR_MASTER_LOG"] = "off"
+
 # 3. Never touch this machine's real ETA memory (~/.hpatr/eta_calibration.json): every test that
 #    runs a worker gets a throwaway calibration file even if it forgets to set one itself.
 import tempfile as _tempfile

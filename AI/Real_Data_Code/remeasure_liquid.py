@@ -65,8 +65,8 @@ def one(run: Path, thr: float, dry: bool) -> str:
     except (OSError, ValueError, KeyError):
         prov = {}
     sharp = prov.get("sharpness_rule", True)
-    # the run's own sizer: 3.0.0 named, 2.2.0 / 2.1.0 by the sharpness switch, exactly as before
-    sizer = ["--sizer", "3.0.0"] if prov.get("sizer_version") == "3.0.0" else \
+    # the run's own sizer: 3.x named, 2.2.0 / 2.1.0 by the sharpness switch, exactly as before
+    sizer = ["--sizer", prov["sizer_version"]] if str(prov.get("sizer_version", "")).startswith("3.") else \
         ["--sharpness-rule" if sharp else "--no-sharpness-rule"]
     archive = an / f"_liquid{old}" / name if old else None
     if dry:

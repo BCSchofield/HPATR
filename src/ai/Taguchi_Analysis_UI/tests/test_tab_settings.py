@@ -301,7 +301,7 @@ def test_the_no_spray_threshold_validates_resets_and_reaches_analyse(app):
 def test_the_count_band_and_ceiling_validate_reset_and_reach_analyse(app):
     tab = make(app)
     o = tab.analysis_options()
-    assert o.band_um == (20.0, 60.0) and o.supply_ceiling_bar == 9.5 and tab.band_row.editor.text() == "20-60"
+    assert o.band_um == (30.0, 60.0) and o.supply_ceiling_bar == 9.5 and tab.band_row.editor.text() == "30-60"
     type_in(tab.band_row, "30 to 50")
     assert tab.analysis_options().band_um == (30.0, 50.0) and tab.band_row.tag.text() == "edited"
     type_in(tab.band_row, "50-30")
@@ -309,7 +309,7 @@ def test_the_count_band_and_ceiling_validate_reset_and_reach_analyse(app):
     type_in(tab.band_row, "abc")
     assert "two sizes" in tab.band_row.error.text()
     tab.band_row.reset_btn.click()
-    assert tab.analysis_options().band_um == (20.0, 60.0) and tab.band_row.error.text() == ""
+    assert tab.analysis_options().band_um == (30.0, 60.0) and tab.band_row.error.text() == ""
     type_in(tab.ceiling, "8")
     assert tab.analysis_options().supply_ceiling_bar == 8.0
     type_in(tab.ceiling, "0.5")

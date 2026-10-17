@@ -54,6 +54,7 @@ class Deliverables:
     odd: odd.OddResult | None = None
     problems: list[str] = field(default_factory=list)
     seconds: float = 0.0
+    master_log: dict | None = None                     # what update_master_log did (None: not attempted / failed)
 
     @property
     def ok(self) -> bool:
@@ -85,6 +86,36 @@ def write_flat_csvs(output_dir: Path, results, bins, prov) -> Path:
                                  for rk, fk, p, q in results.multiple],
         "tables": data})
     return out
+
+
+def update_master_log(run_paths, thr: float | None, log: Log) -> dict | None:
+    """After an analysis: fill the MEASURED columns of the analysed runs' existing master_log rows from each run's
+    own results (AI/Real_Data_Code/master_log.py, the numbers GUI_Clean writes too; Ben, 2026-10-17: "it autofills
+    after CCD analysis"). Nothing else in a row changes and no row is added. Never fails the analysis: a log open in
+    Excel, no LaCie, or a run with no row is reported and the analysis stands. HPATR_MASTER_LOG=off (the test suite)
+    turns it off; HPATR_MASTER_LOG=<file> points it at another workbook."""
+    try:
+        from . import paths
+        paths.ensure_rdc_on_path()
+        import master_log as ML
+    except Exception as e:                              # noqa: BLE001
+        log(f"master_log not updated: {type(e).__name__}: {e}", "warn")
+        return None
+    try:
+        rep = ML.update_runs([Path(p) for p in run_paths], thr if thr is not None else 0.30,
+                             log=lambda text: log(text, "info"))
+    except ML.MasterLogBusy as e:
+        log(f"master_log not updated: {e}", "warn")
+        return None
+    except Exception as e:                              # noqa: BLE001 -- the analysis stands
+        log(f"master_log not updated: {type(e).__name__}: {e}", "warn")
+        return None
+    if rep.get("no_row"):
+        log(f"master_log: {len(rep['no_row'])} analysed run(s) have no row there (not captured with GUI_Clean, or "
+            f"another log): {', '.join(n[:6] for n in rep['no_row'][:12])}", "warn")
+    for why in rep.get("skipped") or []:
+        log(f"master_log: {why}", "info")
+    return rep
 
 
 def publish(design: dz.Design, output_dir: Path, *, thr: float | None = None,
@@ -172,5 +203,6 @@ def publish(design: dz.Design, output_dir: Path, *, thr: float | None = None,
     if options.get("flat_csvs"):
         d.csv_dir = step("flat CSVs", lambda: write_flat_csvs(output_dir, results, d.bins, d.prov))
 
+    d.master_log = update_master_log(list(design.runs), thr, log)
     d.seconds = time.time() - t0
     return d

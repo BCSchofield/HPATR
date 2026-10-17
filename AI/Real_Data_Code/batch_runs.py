@@ -51,7 +51,7 @@ def main():
     ap.add_argument("--sharpness-rule", action=argparse.BooleanOptionalAction, default=None,
                     help="sizer 2.2.0 (default) for BOTH stages; --no-sharpness-rule "
                          "for 2.1.0. Passed explicitly to each, so they always agree")
-    ap.add_argument("--sizer", choices=("3.0.0", "2.2.0", "2.1.0"), default=None,
+    ap.add_argument("--sizer", choices=("3.1.0", "3.0.0", "2.2.0", "2.1.0"), default=None,
                     help="the sizer version for BOTH stages (default 3.0.0, Ben 2026-10-16); overrides "
                          "--sharpness-rule")
     args = ap.parse_args()

@@ -76,6 +76,7 @@ class RsmDeliverables:
     figures: list[Path] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)
     seconds: float = 0.0
+    master_log: dict | None = None                     # what publish.update_master_log did
 
     @property
     def ok(self) -> bool:
@@ -238,5 +239,7 @@ def publish(design: rsm_detect.RsmDesign, output_dir: Path, models: list[ModelSp
                                                      output_dir / FIGURES_DIR, title,
                                                      shared if shared is not None and not shared.refused else None,
                                                      bins))
+    from .publish import update_master_log
+    d.master_log = update_master_log(list(design.base.runs), thr, log)
     d.seconds = time.time() - t0
     return d

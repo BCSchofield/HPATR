@@ -212,7 +212,7 @@ class BuilderTests(unittest.TestCase):
         # (since 2026-10-16 the default is --sizer 3.0.0; a job saved before then has sizer None and resumes by
         # its sharpness switch)
         dflt = spec.classical_cmd(self.RUN, spec.RunSettings(), spec.default_options())
-        self.assertEqual(dflt[-2:], ["--sizer", "3.0.0"])
+        self.assertEqual(dflt[-2:], ["--sizer", "3.1.0"])
         for rule, flag, other in ((True, "--sharpness-rule", "--no-sharpness-rule"),
                                   (False, "--no-sharpness-rule", "--sharpness-rule")):
             s = spec.RunSettings(sharpness_rule=rule, sizer=None)

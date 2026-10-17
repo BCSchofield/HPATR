@@ -424,4 +424,5 @@ def build(path: Path, models: dict, prov, figures_dir: Path, title: str = "Respo
             if p.is_file():
                 d.figure(dk.tw_gallery(shared, c), p, dk.GREY)
         dk.more_grid_slides(d, shared)
+        dk.largest_slides(d, shared)
     return d.save(path)

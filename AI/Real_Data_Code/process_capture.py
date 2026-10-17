@@ -43,6 +43,8 @@ Usage:
     python process_capture.py <cine> --run-dir <run folder> --stride 10 --images
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
@@ -192,9 +194,40 @@ def sizer_flags(sizer=None, sharpness_rule=None) -> list:
     switch, explicit both ways); 3.0.0 as --sizer 3.0.0."""
     import blur
     version = blur.resolve_sizer(sizer, sharpness_rule)
-    if version == "3.0.0":
+    if blur.is_sizer3(version):
         return ["--sizer", version]
     return ["--sharpness-rule" if version == "2.2.0" else "--no-sharpness-rule"]
+
+
+def archive_previous(analysis: Path, score_thresh: float, version: str, calib_hash: str | None, log=print):
+    """Keep a run's earlier results before it is re-measured with ANOTHER measurement (Ben, 2026-10-17: "make sure
+    we have somewhere that the old runs are saved"): droplets_<thr>/ and liquid_<thr>/ move (an instant rename, same
+    drive) into analysis/_sizer<old version>/, or _sizer<old version> (2)/ ... when that is taken -- an archive is
+    never overwritten. Another measurement = another sizer version, or at 3.x another bead calibration. The same
+    measurement again (an interrupted batch resumed) overwrites as before. Returns the archive folder, or None."""
+    meas = analysis / f"droplets_{score_thresh:.2f}"
+    liq = analysis / f"liquid_{score_thresh:.2f}"
+    try:
+        prov = json.loads((meas / "summary.json").read_text(encoding="utf-8")).get("provenance") or {}
+    except (OSError, ValueError):
+        return None
+    old_v = prov.get("sizer_version") or "pre-2.0.0"
+    old_hash = prov.get("optics_profile_hash")
+    import blur
+    if old_v == version and (not blur.is_sizer3(version) or old_hash == calib_hash):
+        return None
+    base = analysis / f"_sizer{old_v}"
+    dest, k = base, 2
+    while dest.exists():
+        dest = analysis / f"_sizer{old_v} ({k})"
+        k += 1
+    dest.mkdir(parents=True)
+    for d in (meas, liq):
+        if d.exists():
+            d.rename(dest / d.name)
+    log(f"kept the earlier results (sizer {old_v}{', calibration ' + old_hash if old_hash else ''}) in "
+        f"{dest.relative_to(analysis.parent.parent)}")
+    return dest
 
 
 def process_capture(cine: Path, run_dir: Path, *, stride=DEFAULT_STRIDE,
@@ -339,6 +372,16 @@ def process_capture(cine: Path, run_dir: Path, *, stride=DEFAULT_STRIDE,
 
     # ---- 4. measurement --------------------------------------------------
     log("\n=== 4/4  measurement ===")
+    import blur
+    import optics
+    _version = blur.resolve_sizer(sizer, sharpness_rule)
+    _hash = None
+    if blur.is_sizer3(_version):
+        try:
+            _hash = blur.sizer3(optics.profile_for(run_dir))["hash"]
+        except blur.CalibrationMissing:
+            _hash = None                    # measure_run refuses plainly on its own
+    archive_previous(analysis, score_thresh, _version, _hash, log)
     # droplets_<thr>: AI DETECTION + classical half-max SIZING. Named for what
     # it holds, not how it was made -- "measurement_" said nothing, and "AI_"
     # would be wrong now that the diameters are measured classically.
@@ -478,7 +521,7 @@ def main():
                     help="stop after N frames -- use for a quick smoke test")
     ap.add_argument("--sharpness-rule", action=argparse.BooleanOptionalAction, default=None,
                     help="sizer 2.2.0 (with --sizer unset); --no-sharpness-rule for 2.1.0")
-    ap.add_argument("--sizer", choices=("3.0.0", "2.2.0", "2.1.0"), default=None,
+    ap.add_argument("--sizer", choices=("3.1.0", "3.0.0", "2.2.0", "2.1.0"), default=None,
                     help="the sizer version (default 3.0.0, Ben 2026-10-16); overrides --sharpness-rule")
     args = ap.parse_args()
 

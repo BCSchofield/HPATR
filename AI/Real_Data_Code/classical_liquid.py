@@ -95,6 +95,7 @@ Usage:
 import argparse
 import csv
 import json
+import math
 import sys
 import time
 from datetime import datetime, timezone
@@ -108,6 +109,7 @@ sys.path.insert(0, str(HERE))
 
 from pycocotools import mask as mask_util  # noqa: E402
 import liquid_volume  # noqa: E402
+import background  # noqa: E402  (sizer 3.1.0: the rolling background)
 import measure_run  # noqa: E402
 import optics  # noqa: E402
 from measure_run import (  # noqa: E402
@@ -118,9 +120,9 @@ from measure_run import (  # noqa: E402
     PLOT_GREEN, PLOT_MAGENTA, PLOT_ORANGE,
 )
 
-SEED_THR = 0.70      # strict: definitely liquid. Same value as the focus gate.
-CEILING_THR = 0.95   # bounds region growing only -- never an edge itself
-MIN_AREA = 20        # px; below this nothing can carry a measurement
+# The liquid map (seed T < 0.70, each piece grown to its own half-max) lives in liquid_map.py since sizer 3.1.0:
+# measure_run blanks every undetected piece of liquid round a droplet with it, so both stages share one definition.
+from liquid_map import SEED_THR, CEILING_THR, MIN_AREA, hysteresis  # noqa: E402,F401
 DROPLET_COVER = 0.50
 DROPLET_MAX_EXTENT = 100
 
@@ -133,68 +135,6 @@ WINDOW_MAX_EXTENT = 400    # ... compact: at most this many px across (4 mm) ...
 WINDOW_ASPECT = 3.0        # ... and not long and thin (a stream is) ...
 WINDOW_PLATEAU = 0.60      # ... and flat-topped: this share of it within 70% of its peak persistence
 WINDOW_GROW = 3            # px added round a window object (its edge flickers frame to frame)
-
-
-def hysteresis(T, seed_thr=SEED_THR, ceiling=CEILING_THR, min_area=MIN_AREA):
-    """Liquid mask: seed on dark cores, grow each seed to ITS OWN half-max edge.
-
-    Two thresholds are needed because one cannot work. T<0.95 (what
-    extract_candidates.py uses to generate CANDIDATES, before curation) gives
-    36,695 components per frame, 89% of the area sitting at transmission
-    0.90-0.95 -- sensor and illumination noise. T<0.70 alone loses the faint
-    edges of real objects.
-
-    The grow threshold is PER COMPONENT, at that component's own half-maximum
-    (t_min + 1) / 2, not a fixed value. This matters and a fixed grow is wrong:
-
-      * It is the edge definition the rest of the project already uses. Hand
-        labels, extract_candidates.py and therefore the model's own training
-        targets all put an object's edge at its own half-max. Measuring droplets
-        at half-max (via the model) and un-atomised liquid at some other
-        threshold would mix two edge definitions inside one ratio.
-
-      * A fixed grow over-segments dark objects. A thread with t_min 0.06 has its
-        true edge at 0.53; growing it to 0.90 inflated it by ~1.5x, visible as an
-        orange halo wider than the thread itself.
-
-      * It was double-counting droplets. Growing a droplet past its half-max left
-        a rim outside the model's mask, which then scored as un-atomised liquid.
-        On frame_0099_n989 that rim was 85.5% of all "un-atomised" area, dragging
-        a genuinely ~97% atomised frame down to 74%. At half-max it is 5.9%.
-
-    Growing from the seed rather than refining an existing mask also keeps
-    regions connected: measured on Trial_1, post-hoc refinement of a fixed-grow
-    mask SPLIT components (76 -> 81), while growing to the same edge from the
-    seed merges them (76 -> 51) for the same final area.
-
-    `ceiling` only bounds the region growing; it is never an edge itself.
-    """
-    grow = (T < ceiling).astype(np.uint8)
-    n, lab, stats, _ = cv2.connectedComponentsWithStats(grow, 8)
-    seeded = {i for i in np.unique(lab[T < seed_thr]) if i != 0}
-    if not seeded:
-        return np.zeros(T.shape, bool), 0
-
-    # Work inside each component's BOUNDING BOX, which
-    # connectedComponentsWithStats already gives us. `lab == i` over the whole
-    # frame builds a 2.4 M-element boolean per component, and there are hundreds
-    # of components per frame -- that one line was 56% of the classical pass
-    # (0.30 s/frame). A component lies entirely within its own bbox by
-    # definition, so this is the same computation on a smaller array and the
-    # result is bit-identical.
-    out = np.zeros(T.shape, bool)
-    for i in seeded:
-        x0 = stats[i, cv2.CC_STAT_LEFT]
-        y0 = stats[i, cv2.CC_STAT_TOP]
-        sl = (slice(y0, y0 + stats[i, cv2.CC_STAT_HEIGHT]),
-              slice(x0, x0 + stats[i, cv2.CC_STAT_WIDTH]))
-        comp = lab[sl] == i
-        Tc = T[sl]
-        out[sl] |= comp & (Tc < (Tc[comp].min() + 1.0) / 2.0)
-
-    n2, lab2, stats2, _ = cv2.connectedComponentsWithStats(out.astype(np.uint8), 8)
-    big = [j for j in range(1, n2) if stats2[j, cv2.CC_STAT_AREA] >= min_area]
-    return np.isin(lab2, big), len(big)
 
 
 def drop_droplet_components(liquid, droplet_mask,
@@ -241,15 +181,31 @@ def drop_droplet_components(liquid, droplet_mask,
     return kept, dropped, n_kept, n_drop
 
 
-def _others(T, dets, args_ref):
+def _others(T, dets, args_ref, liquid=None):
     """Sizer 3.0.0: the frame's occupancy (measure_run.occupancy) from the same detections measure_run measures
-    (tile-truncated pieces left out, as there), so a droplet gets the same verdict in both stages. None for 2.x."""
-    if getattr(args_ref, "sizer_version", None) != measure_run.SIZER_VERSION_3:
+    (tile-truncated pieces left out, as there), so a droplet gets the same verdict in both stages. None for 2.x.
+    Sizer 3.1.0 adds the frame's liquid map (the same hysteresis measure_run uses, given here as `liquid`)."""
+    v = getattr(args_ref, "sizer_version", None)
+    if not measure_run.blur.is_sizer3(v):
         return None
-    return measure_run.occupancy(T.shape, [d for d in dets if not d.get("truncated", False)])
+    if v == measure_run.SIZER_VERSION_31 and liquid is None:
+        liquid, _ = hysteresis(T)
+    return measure_run.occupancy(T.shape, [d for d in dets if not d.get("truncated", False)],
+                                 liquid if v == measure_run.SIZER_VERSION_31 else None)
 
 
-def model_masks(dets, T, focus_max, args_ref=None):
+def _sizer_liquid(liquid, args_ref):
+    """The liquid map measure_run blanks with (sizer 3.1.0) is the plain hysteresis at its default thresholds. This
+    stage's own map is that one unless --seed / --ceiling / --min-area changed it; then None (rebuilt at the
+    defaults), so a droplet always gets the same verdict in both stages."""
+    if liquid is None or args_ref is None:
+        return liquid
+    same = (getattr(args_ref, "seed", SEED_THR) == SEED_THR and getattr(args_ref, "ceiling", CEILING_THR) == CEILING_THR
+            and getattr(args_ref, "min_area", MIN_AREA) == MIN_AREA)
+    return liquid if same else None
+
+
+def model_masks(dets, T, focus_max, args_ref=None, liquid=None):
     """(droplet_union, out_of_focus_unatomised_union).
 
     The second return is deliberately ONLY out-of-focus non-droplet detections.
@@ -282,8 +238,10 @@ def model_masks(dets, T, focus_max, args_ref=None):
     oof = np.zeros(T.shape, bool)
     n_half = n_model = n_static = 0
     static_t = getattr(args_ref, "static_t", STATIC_T) if args_ref is not None else STATIC_T
-    others = _others(T, dets, args_ref)
+    others = _others(T, dets, args_ref, _sizer_liquid(liquid, args_ref))
     vol3 = others is not None                     # sizer 3.0.0: which droplets are inside the measurement volume
+    v31 = getattr(args_ref, "sizer_version", None) == measure_run.SIZER_VERSION_31
+    drops = []                                    # 3.1.0: (method, in_volume, sized, size, size_raw, mask_d, bx, by, mb)
     dvol = np.zeros(T.shape, bool) if vol3 else None
     undecided = np.zeros(T.shape, bool) if vol3 else None
     for d in dets:
@@ -308,6 +266,11 @@ def model_masks(dets, T, focus_max, args_ref=None):
                                  crop=(mb, bx, by, bh, bw), want_mask=True,
                                  sharpness_rule=getattr(args_ref, "sharpness_rule", False),
                                  version=getattr(args_ref, "sizer_version", None), others=others)
+            if md and md["method"] == "static":
+                continue                        # 3.1.0: a speck in the same place every frame is not spray
+            if v31 and md:
+                drops.append((md["method"], md["in_volume"], md["in_focus"], md["size_um"],
+                              md.get("size_raw_um", float("nan")), md.get("mask_d_um", float("nan")), bx, by, mb))
             hm = md.get("mask") if md else None
             if hm is not None:
                 hx, hy = md["mask_xy"]
@@ -319,7 +282,8 @@ def model_masks(dets, T, focus_max, args_ref=None):
             if vol3 and md:
                 # in the volume by its own verdict; crowded and frame-edge droplets have none and take their
                 # liquid object's (volume_masks); no-chi ones count as outside (Ben, 2026-10-16)
-                tgt = dvol if md["in_volume"] else undecided if md["method"] in ("crowded", "border") else None
+                tgt = dvol if md["in_volume"] else \
+                    undecided if md["method"] in measure_run.UNMEASURED + ("border",) else None
                 if tgt is not None:
                     if hm is not None:
                         tgt[hy:hy + hm.shape[0], hx:hx + hm.shape[1]] |= hm
@@ -335,6 +299,7 @@ def model_masks(dets, T, focus_max, args_ref=None):
     model_masks.last_counts = (n_half, n_model)
     model_masks.last_static = n_static
     model_masks.last_vol = (dvol, undecided) if vol3 else None
+    model_masks.last_drops = drops
     return drop, oof
 
 
@@ -375,10 +340,59 @@ def volume_masks(T, liquid, dmask, oof, dvol, undecided, args):
     return dv, uv
 
 
+VOLUME_FIELDS = ("vol_sized_in_volume_mm3", "vol_below_d_min_in_volume_mm3", "vol_unmeasured_in_volume_mm3",
+                 "vol_unatomised_in_volume_mm3", "vol_droplets_in_volume_mm3", "vol_liquid_in_volume_mm3")
+
+
+def inside_droplets(drops, dv):
+    """Sizer 3.1.0: the droplets of one frame that ended inside the measurement volume, by their own verdict or
+    (crowded, attached, frame edge ...) by their liquid object's (most of their mask in `dv`), as
+    (method, sized, size, size_raw, mask_d, cx, cy)."""
+    out = []
+    for meth, inv, sized, size, raw, mask_d, bx, by, mb in drops:
+        if not inv:
+            if meth not in measure_run.UNMEASURED + ("border",):
+                continue
+            if float(dv[by:by + mb.shape[0], bx:bx + mb.shape[1]][mb].mean()) < 0.5:
+                continue
+        ys, xs = np.nonzero(mb)
+        out.append((meth, bool(sized), float(size), float(raw), float(mask_d), bx + float(xs.mean()),
+                    by + float(ys.mean())))
+    return out
+
+
+def unmeasured_size_factor(drops3):
+    """The run's median measured size / mask-equivalent size of its sized droplets inside the volume (~0.65: the AI's
+    masks run large), the stand-in for a droplet that could not be sized."""
+    r = [d[2] / d[4] for ds in drops3.values() for d in ds if d[1] and d[4] > 0 and math.isfinite(d[2])]
+    return round(float(np.median(r)), 4) if r else 0.65
+
+
+def liquid_volume_in_volume(drops, dv, uv, window, k_mask):
+    """Sizer 3.1.0 (plan Phase 3): the liquid volume inside the measurement volume of one frame, mm^3, each piece by
+    its best size: sized droplets from their calibrated size, droplets below d_min from their measured size, ones
+    that could not be measured from their mask's size x k_mask, and the un-atomised liquid (ligaments, blobs) as
+    bodies of revolution (liquid_volume.body_volume_px3, as the all-objects volume). The throughput's denominator
+    (rates.py): sizes and liquid in one volume, by one rule."""
+    if window is not None:
+        drops = [d for d in drops if not window[min(window.shape[0] - 1, int(round(d[6]))),
+                                                  min(window.shape[1] - 1, int(round(d[5])))]]
+    um3 = math.pi / 6.0 * 1e-9                       # pi/6 d^3, um^3 -> mm^3
+    v_s = um3 * sum(d[2] ** 3 for d in drops if d[1])
+    v_b = um3 * sum(d[3] ** 3 for d in drops if d[0] == "below_d_min" and math.isfinite(d[3]))
+    v_u = um3 * sum((k_mask * d[4]) ** 3 for d in drops if not d[1] and d[0] != "below_d_min"
+                    and math.isfinite(d[4]))
+    v_un = liquid_volume.body_volume_px3(uv, fill=dv) * (UM_PER_PX * 1e-3) ** 3
+    return {"vol_sized_in_volume_mm3": round(v_s, 9), "vol_below_d_min_in_volume_mm3": round(v_b, 9),
+            "vol_unmeasured_in_volume_mm3": round(v_u, 9), "vol_unatomised_in_volume_mm3": round(v_un, 9),
+            "vol_droplets_in_volume_mm3": round(v_s + v_b + v_u, 9),
+            "vol_liquid_in_volume_mm3": round(v_s + v_b + v_u + v_un, 9)}
+
+
 def frame_masks(T, dets, args):
     """(liquid, droplet mask, out-of-focus un-atomised mask) for one frame."""
     liquid, _ = hysteresis(T, args.seed, args.ceiling, args.min_area)
-    dmask, oof_unatom = model_masks(dets, T, args.focus_max, args)
+    dmask, oof_unatom = model_masks(dets, T, args.focus_max, args, liquid=liquid)
     return liquid, dmask, oof_unatom
 
 
@@ -419,7 +433,7 @@ def area_part(liquid, dmask, oof_unatom, args, exclude=None, volume=False):
     return part, comp_areas, unatom
 
 
-def droplet_part(T, dets, args):
+def droplet_part(T, dets, args, liquid=None):
     """(in-focus areas, out-of-focus areas) of the frame's droplets, from measure_run's
     shared measure_droplet. Independent of the window mask."""
     # Droplet focus AND sizing come from measure_run.measure_droplet -- the one
@@ -427,7 +441,7 @@ def droplet_part(T, dets, args):
     # twice, and the copies drifted: 85.58 um here against 85.57 um there for the
     # same run. Only the un-atomised denominator is re-derived classically.
     focus_a, oof_a = [], []
-    others = _others(T, dets, args)
+    others = _others(T, dets, args, _sizer_liquid(liquid, args))
     for d in dets:
         if d["category_id"] != DROPLET:
             continue
@@ -476,7 +490,7 @@ def measure_frame(T, dets, args, exclude=None):
     liquid, dmask, oof_unatom = frame_masks(T, dets, args)
     part, comp_areas, unatom = area_part(liquid, dmask, oof_unatom, args, exclude,
                                          volume=getattr(args, "volume", False))
-    focus_a, oof_a = droplet_part(T, dets, args)
+    focus_a, oof_a = droplet_part(T, dets, args, liquid)
     return _row(part, focus_a, oof_a), comp_areas, focus_a, oof_a, unatom
 
 
@@ -532,6 +546,8 @@ def draw_frame(view8, dets, T, unatom, row, args, window=None):
     canvas[unatom] = (np.asarray(ORANGE, np.float32) * alpha
                       + canvas[unatom].astype(np.float32) * (1 - alpha)).astype(np.uint8)
     others = _others(T, dets, args)
+    from collections import Counter
+    counts = Counter()
     for d in dets:
         if d["category_id"] != DROPLET:
             continue
@@ -553,16 +569,28 @@ def draw_frame(view8, dets, T, unatom, row, args, window=None):
         # Ring, not outline: a 9 px droplet's own contour is invisible at full
         # frame scale. Same convention as measure_run so these images read the
         # same way as the ones already in the run folder.
-        if args.droplet_ring > 0:
-            cnts = ring_contours(full, d["bbox"], args.droplet_ring, canvas.shape[:2])
+        v3 = others is not None and md is not None              # sizer 3.x: rings by verdict, with a key
+        ring = max(args.droplet_ring, 3) if v3 else args.droplet_ring
+        if ring > 0:
+            cnts = ring_contours(full, d["bbox"], ring, canvas.shape[:2])
         else:
             cnts, _ = cv2.findContours(full, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        cv2.drawContours(canvas, cnts, -1, GREEN if sharp else MAGENTA, 2)
-    if window is not None and window.any():
+        if v3:
+            counts[md["method"]] += 1
+            cv2.drawContours(canvas, cnts, -1, measure_run.RING_EDGE, 3, cv2.LINE_AA)
+            cv2.drawContours(canvas, cnts, -1, measure_run.VERDICT_STYLE.get(md["method"], (GREEN, ""))[0], 1,
+                             cv2.LINE_AA)
+        else:
+            cv2.drawContours(canvas, cnts, -1, GREEN if sharp else MAGENTA, 2)
+    win_any = window is not None and window.any()
+    if win_any:
         # the masked window drops, outlined in blue: not counted in either measure
         cnts, _ = cv2.findContours(window.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         cv2.drawContours(canvas, cnts, -1, (255, 130, 10), 2)
     annotate(canvas, row["d32_in_focus_um"], row["atomised_pct"])
+    if counts:
+        measure_run.draw_key(canvas, counts, extra=[(ORANGE, "un-atomised liquid (filled)", None)]
+                             + ([((255, 130, 10), "drop on the window: masked", None)] if win_any else []))
     return canvas
 
 
@@ -573,6 +601,10 @@ def main():
     ap.add_argument("--root", type=Path,
                     default=Path("/Volumes/LaCie/Experiments/2026/09/28/Trial_1"))
     ap.add_argument("--pred", type=Path, default=None)
+    ap.add_argument("--background-rolling", default="auto",
+                    help="sizer 3.1.0: 'auto' (default) = the run's rolling background (shadowgraph/analysis/"
+                         "background_rolling/, built if missing), as measure_run uses; a folder to use that one; "
+                         "'none' for raw/background_median.tiff only. Ignored before 3.1.0")
     ap.add_argument("--out-dir", type=Path, default=None,
                     help="default: <root>/shadowgraph/analysis/skeletonisation_testing")
     ap.add_argument("--seed", type=float, default=SEED_THR)
@@ -627,7 +659,7 @@ def main():
     profile = optics.profile_for(root)                 # the optics this run was captured with
     UM_PER_PX = measure_run.UM_PER_PX = float(profile["um_per_px"])   # measure_run's helpers read its own
     args.sizer_version = sizer_version(args.sharpness_rule, args.sizer)
-    if args.sizer_version == measure_run.SIZER_VERSION_3:
+    if measure_run.blur.is_sizer3(args.sizer_version):
         try:                                           # the run's own profile's calibration, never another's
             measure_run.SIZER3 = measure_run.blur.sizer3(profile)
         except measure_run.blur.CalibrationMissing as e:
@@ -643,6 +675,13 @@ def main():
     if bg is None:
         sys.exit(f"no background at {raw / 'background_median.tiff'}")
     bg = bg.astype(np.float32)
+    roll = None
+    if args.sizer_version == measure_run.SIZER_VERSION_31 and args.background_rolling != "none":
+        sb = raw / "frames" / "16bit"
+        rdir = background.auto_dir(root, sb) if args.background_rolling == "auto" else Path(args.background_rolling)
+        if rdir is not None:
+            roll = background.ensure_rolling(sb, rdir)
+    bg_for = (lambda stem: roll.for_stem(stem)) if roll is not None else (lambda stem: bg)
 
     preds = json.loads(pred.read_text())
     inst = json.loads((raw / "instances.json").read_text())
@@ -652,6 +691,11 @@ def main():
     for d in preds:
         if d["score"] >= args.score_thresh:
             by_img.setdefault(d["image_id"], []).append(d)
+    if args.sizer_version == measure_run.SIZER_VERSION_31:
+        # the same static specks measure_run leaves out (it never sees tile-truncated pieces, so neither does this)
+        n_st = measure_run.mark_static({k: [d for d in v if not d.get("truncated", False)] for k, v in by_img.items()},
+                                       sorted(stem_by_id, key=lambda i: stem_by_id[i]))
+        print(f"  sizer 3.1.0: {n_st} static droplet detections left out (not spray)")
 
     ids = sorted(stem_by_id)
     if args.frames:
@@ -682,24 +726,28 @@ def main():
     sizes = {}           # stem -> (focus areas, out-of-focus areas)
     persistence = np.zeros(shape, np.uint16)
     n_static = 0
+    v31 = args.sizer_version == measure_run.SIZER_VERSION_31
+    drops3 = {}          # 3.1.0: stem -> the droplets inside the volume, for the liquid volume there
     for k, img_id in enumerate(ids, 1):
         stem = stem_by_id[img_id]
         raw16 = cv2.imread(str(raw / "frames" / "16bit" / f"{stem}.tiff"), cv2.IMREAD_UNCHANGED)
         if raw16 is None:
             print(f"  !! {stem}: no 16-bit frame, skipped")
             continue
-        T = raw16.astype(np.float32) / np.maximum(bg, 1.0)
+        T = raw16.astype(np.float32) / np.maximum(bg_for(stem), 1.0)
         dets = by_img.get(img_id, [])
         liquid, dmask, oof = frame_masks(T, dets, args)
         n_static += getattr(model_masks, "last_static", 0)
         vol = getattr(model_masks, "last_vol", None)
-        sizes[stem] = droplet_part(T, dets, args)
+        sizes[stem] = droplet_part(T, dets, args, liquid)
         total = liquid | dmask if args.classical_only else liquid | dmask | oof
         persistence += (total & ~dmask)
         extra = ()
         if vol is not None:                                   # sizer 3.0.0: what is inside the volume
             dv, uv = volume_masks(T, liquid, dmask, oof, vol[0], vol[1], args)
             extra = (np.packbits(dv), np.packbits(uv))
+            if v31:
+                drops3[stem] = inside_droplets(getattr(model_masks, "last_drops", []), dv)
         packed.append((stem, img_id, np.packbits(liquid), np.packbits(dmask), np.packbits(oof)) + extra)
         if k % 25 == 0 or k == len(ids):
             el = time.time() - t0
@@ -715,6 +763,10 @@ def main():
     if n_static:
         print(f"  {n_static} out-of-focus model piece(s) with nothing left after background division "
               f"(mean T >= {args.static_t:g}) not counted as liquid")
+
+    # sizer 3.1.0: a droplet inside the volume that could not be sized (crowded, attached, ...) gets its mask's size
+    # times this run's median size/mask ratio of the sized ones (AI masks run ~1.5x the true size)
+    k_mask = unmeasured_size_factor(drops3) if v31 else None
 
     # PASS 2: areas (and volumes) with the window masked out of both measures.
     npx = shape[0] * shape[1]
@@ -733,6 +785,8 @@ def main():
             tv = int((dv | uv).sum())
             row.update(droplet_px_in_volume=int(dv.sum()), total_liquid_px_in_volume=tv,
                        atomised_pct_in_volume=round(100.0 * int(dv.sum()) / tv, 3) if tv else float("nan"))
+            if v31:
+                row.update(liquid_volume_in_volume(drops3.get(stem, []), dv, uv, window, k_mask))
         rows.append(row)
         all_comps.extend((stem, a) for a in comps)
         focus_all.extend(fa)
@@ -741,7 +795,7 @@ def main():
             view8 = cv2.imread(str(raw / "frames" / "8bit" / f"{stem}.png"), cv2.IMREAD_UNCHANGED)
             raw16 = cv2.imread(str(raw / "frames" / "16bit" / f"{stem}.tiff"), cv2.IMREAD_UNCHANGED)
             if view8 is not None and raw16 is not None:
-                T = raw16.astype(np.float32) / np.maximum(bg, 1.0)
+                T = raw16.astype(np.float32) / np.maximum(bg_for(stem), 1.0)
                 cv2.imwrite(str(img_dir / f"{stem}.png"),
                             draw_frame(view8, by_img.get(img_id, []), T, unatom, row, args, window))
         elif draw_extremes:
@@ -808,7 +862,7 @@ def main():
                 continue
             raw16 = cv2.imread(str(raw / "frames" / "16bit" / f"{stem}.tiff"),
                                cv2.IMREAD_UNCHANGED)
-            T_e = raw16.astype(np.float32) / np.maximum(bg, 1.0)
+            T_e = raw16.astype(np.float32) / np.maximum(bg_for(stem), 1.0)
             cv2.imwrite(str(img_dir / f"{stem}.png"),
                         draw_frame(view8, dets_e, T_e, unatom_e, row_e, args, window))
         if extremes:
@@ -836,9 +890,11 @@ def main():
               "n_droplet_components_dropped"]
     if args.volume:
         fields += ["droplet_vol_mm3", "total_liquid_vol_mm3", "atomised_vol_pct"]
-    vol3 = args.sizer_version == measure_run.SIZER_VERSION_3
+    vol3 = measure_run.blur.is_sizer3(args.sizer_version)
     if vol3:
         fields += ["droplet_px_in_volume", "total_liquid_px_in_volume", "atomised_pct_in_volume"]
+    if v31:
+        fields += list(VOLUME_FIELDS)
     tot_iv = sum(r.get("total_liquid_px_in_volume", 0) for r in rows)
     drp_iv = sum(r.get("droplet_px_in_volume", 0) for r in rows)
     tot_v = sum(r.get("total_liquid_vol_mm3", 0.0) for r in rows)
@@ -872,9 +928,11 @@ def main():
             # post-2.1.0 atomised % look identical and would be compared
             # silently -- a ~3% difference with nothing to flag it.
             "sizer_version": args.sizer_version,
+            **(roll.provenance() if roll is not None else
+               {"background_kind": "static"} if args.sizer_version == measure_run.SIZER_VERSION_31 else {}),
             "sharpness_rule": args.sharpness_rule,
             **(measure_run.sizer3_provenance(measure_run.SIZER3)
-               if args.sizer_version == measure_run.SIZER_VERSION_3 else {}),
+               if measure_run.blur.is_sizer3(args.sizer_version) else {}),
             "atomised_numerator_edge": "half-max where measured, model mask "
                                        "otherwise (out of focus or below split)",
             "classical_only": args.classical_only,
@@ -919,6 +977,12 @@ def main():
         # sizer 3.0.0 (plan, Phase 5): the same fraction inside the measurement volume only (Ben, 2026-10-15);
         # the all-objects figure above is kept alongside
         "atomised_pct_in_volume_pooled": (round(100.0 * drp_iv / tot_iv, 3) if tot_iv else None) if vol3 else None,
+        **({"liquid_in_volume_mm3": round(sum(r["vol_liquid_in_volume_mm3"] for r in rows), 6),
+            "droplets_in_volume_mm3": round(sum(r["vol_droplets_in_volume_mm3"] for r in rows), 6),
+            "atomised_vol_pct_in_volume_pooled": (round(100.0 * sum(r["vol_droplets_in_volume_mm3"] for r in rows)
+                                                        / sum(r["vol_liquid_in_volume_mm3"] for r in rows), 3)
+                                                  if sum(r["vol_liquid_in_volume_mm3"] for r in rows) else None),
+            "unmeasured_size_factor": k_mask} if v31 else {}),
         "atomised_vol_pct_pooled": (round(pooled_v, 3) if args.volume and tot_v else None),
         "total_liquid_vol_mm3": round(tot_v, 6) if args.volume else None,
         "droplet_vol_mm3": round(drp_v, 6) if args.volume else None,

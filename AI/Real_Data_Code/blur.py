@@ -40,8 +40,15 @@ UPSAMPLE = 4                  # the level curves are measured on a 4x bicubic up
 DETECT_T = 0.95               # as extract_candidates: anything darker is part of the object
 RECENTRE_PX = 3               # how far the darkness may sit from the centre given
 SMOOTH_SIGMA = 1.0            # light smoothing for finding the object and re-centring
-SIZERS = ("3.0.0", "2.2.0", "2.1.0")
-DEFAULT_SIZER = "3.0.0"       # Ben, 2026-10-16: the default everywhere; 2.2.0 / 2.1.0 only when asked for
+SIZERS = ("3.1.0", "3.0.0", "2.2.0", "2.1.0")
+SIZERS_3 = ("3.1.0", "3.0.0")  # the blur-width sizers (one optics-profile calibration, a measurement volume)
+DEFAULT_SIZER = "3.1.0"       # the default everywhere: 3.0.0 + the validity tests and the rolling background (plan
+                              # 2026-10-17, Ben's go); 3.0.0 (Ben, 2026-10-16), 2.2.0 / 2.1.0 only when asked for
+
+
+def is_sizer3(version) -> bool:
+    """True for a blur-width sizer (3.0.0, 3.1.0): the ones with a calibration, a volume and verdicts per droplet."""
+    return str(version) in SIZERS_3
 
 
 # ---- Blaisot's Gaussian-PSF disc model ----------------------------------------------------------------------

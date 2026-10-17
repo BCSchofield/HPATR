@@ -379,8 +379,9 @@ def test_the_simulated_day_optimum_does_not_stop_at_the_first_setting_that_score
 
 def test_the_default_goals_are_throughput_in_the_band():
     """2026-10-14: the spray is collected and size-filtered, so the default goals are in-band droplets per
-    second (importance 3) and atomised fraction (1), over the 20-60 um band; a new Model page starts there."""
+    second (importance 3) and atomised fraction (1), over the 30-60 um band (20-60 until 2026-10-17); a new Model
+    page starts there."""
     from src.ai.Taguchi_Analysis_UI import rsm_responses as rr, run_metrics as rm, settings_defaults as sd
     assert rr.DEFAULT_GOALS == (("rate_band", "max", 3.0), ("atom", "max", 1.0))
-    assert rm.DEFAULT_BAND_UM == (20.0, 60.0) and sd.count_band().value == (20.0, 60.0)
+    assert rm.DEFAULT_BAND_UM == (30.0, 60.0) and sd.count_band().value == (30.0, 60.0)
     assert {k for k, *_ in rm.EXTRA_RESPONSES} >= {"rate_band"}

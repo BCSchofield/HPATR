@@ -210,7 +210,7 @@ def load_run(run: Path, thr: str):
     TPa = np.array([float(cpf[fr]["total_liquid_px"]) for fr in frames])
     # sizer 3.0.0 (plan, Phase 5): the headline atomised fraction is the one inside the measurement volume (Ben,
     # 2026-10-15); the all-objects one is kept alongside (atom_all)
-    vol3 = (summ.get("provenance", {}).get("sizer_version") == "3.0.0"
+    vol3 = (str(summ.get("provenance", {}).get("sizer_version", "")).startswith("3.")
             and csumm.get("atomised_pct_in_volume_pooled") is not None)
     if vol3:
         DP = np.array([float(cpf[fr]["droplet_px_in_volume"]) for fr in frames])

@@ -112,7 +112,7 @@ def one(run: Path, thr: float, dry: bool, force: bool, tmp_root: "Path | None", 
                 f"{', '.join(todo)}")
     prov = summary.get("provenance") or {}
     sharp = prov.get("sharpness_rule", True)
-    sizer = ["--sizer", "3.0.0"] if prov.get("sizer_version") == "3.0.0" else \
+    sizer = ["--sizer", prov["sizer_version"]] if str(prov.get("sizer_version", "")).startswith("3.") else \
         ["--sharpness-rule" if sharp else "--no-sharpness-rule"]
     t0 = time.time()
     with tempfile.TemporaryDirectory(dir=tmp_root, prefix=f"more_{run.name[:6]}_") as d:
