@@ -542,8 +542,8 @@ def draw_frame(view8, dets, T, unatom, row, args, window=None):
     measure_run so these read the same way as the existing run images.
     """
     canvas = cv2.cvtColor(view8, cv2.COLOR_GRAY2BGR) if view8.ndim == 2 else view8.copy()
-    alpha = 0.45
-    canvas[unatom] = (np.asarray(ORANGE, np.float32) * alpha
+    alpha = 0.6                       # 2026-10-19 (Ben: brighter): the filament outline's orange, stronger
+    canvas[unatom] = (np.asarray(measure_run.LIGAMENT_STYLE[0], np.float32) * alpha
                       + canvas[unatom].astype(np.float32) * (1 - alpha)).astype(np.uint8)
     others = _others(T, dets, args)
     from collections import Counter
@@ -577,9 +577,9 @@ def draw_frame(view8, dets, T, unatom, row, args, window=None):
             cnts, _ = cv2.findContours(full, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if v3:
             counts[md["method"]] += 1
-            cv2.drawContours(canvas, cnts, -1, measure_run.RING_EDGE, 3, cv2.LINE_AA)
-            cv2.drawContours(canvas, cnts, -1, measure_run.VERDICT_STYLE.get(md["method"], (GREEN, ""))[0], 1,
-                             cv2.LINE_AA)
+            cv2.drawContours(canvas, cnts, -1, measure_run.RING_EDGE, measure_run.RING_EDGE_PX, cv2.LINE_AA)
+            cv2.drawContours(canvas, cnts, -1, measure_run.VERDICT_STYLE.get(md["method"], (GREEN, ""))[0],
+                             measure_run.RING_PX, cv2.LINE_AA)
         else:
             cv2.drawContours(canvas, cnts, -1, GREEN if sharp else MAGENTA, 2)
     win_any = window is not None and window.any()
@@ -589,7 +589,7 @@ def draw_frame(view8, dets, T, unatom, row, args, window=None):
         cv2.drawContours(canvas, cnts, -1, (255, 130, 10), 2)
     annotate(canvas, row["d32_in_focus_um"], row["atomised_pct"])
     if counts:
-        measure_run.draw_key(canvas, counts, extra=[(ORANGE, "un-atomised liquid (filled)", None)]
+        measure_run.draw_key(canvas, counts, extra=[(measure_run.LIGAMENT_STYLE[0], "un-atomised liquid (filled)", None)]
                              + ([((255, 130, 10), "drop on the window: masked", None)] if win_any else []))
     return canvas
 

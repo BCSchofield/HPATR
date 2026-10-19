@@ -91,24 +91,28 @@ MAGENTA = (200, 0, 200)
 ORANGE = (0, 165, 255)
 BLUE = (255, 120, 0)
 # Sizer 3.x frame images (plan 2026-10-17, Phase 4; Ben: "a small key on each image"): each droplet ringed in the colour
-# of its verdict (BGR; the deck's palette, 2026-10-16, plus 3.1.0's), filaments and blobs outlined thin brown, and
-# a key in the bottom-left corner naming only the verdicts in that frame, with their counts. 2.x images unchanged.
+# of its verdict, filaments and blobs outlined orange (the un-atomised colour), and a key in the bottom-left corner
+# naming only the verdicts in that frame, with their counts. 2.x images unchanged.
+# Palette 2026-10-19 (Ben: brighter, easier to tell apart): ten clearly different colours (BGR), the three rare
+# "not sized: unreliable surroundings" verdicts sharing brown; a 3 px ring with a 1 px dark edge each side (it was 1 px
+# of colour inside 3 px of near-black, which read as muddy once a frame was shrunk onto a slide).
 VERDICT_STYLE = {
-    "direct": ((118, 230, 0), "sized directly (blur <= chi_sharp)"),
-    "table": ((255, 121, 41), "sized through the bead table"),
-    "table_extrapolated": ((249, 0, 213), "sized, table extrapolated"),
-    "below_d_min": ((0, 234, 255), "below d_min: counted, not sized"),
-    "outside": ((68, 23, 255), "outside the measurement volume"),
-    "no_chi": ((255, 229, 0), "no blur width: outside"),
-    "border": ((150, 150, 150), "too near the frame edge"),
-    "crowded": ((0, 145, 255), "crowded: touching other liquid"),
-    "attached": ((176, 39, 156), "sitting on liquid: not sized"),
-    "dark_surround": ((139, 125, 96), "dark surroundings: not sized"),
-    "inconsistent": ((128, 128, 255), "size far above its mask"),
-    "static": ((255, 255, 255), "static speck (dust): not spray"),
+    "direct": ((77, 230, 0), "sized directly (blur <= chi_sharp)"),          # green   #00E64D
+    "table": ((255, 107, 31), "sized through the bead table"),               # blue    #1F6BFF
+    "table_extrapolated": ((224, 32, 182), "sized, table extrapolated"),     # violet  #B620E0
+    "below_d_min": ((25, 225, 255), "below d_min: counted, not sized"),      # yellow  #FFE119
+    "outside": ((42, 42, 255), "outside the measurement volume"),            # red     #FF2A2A
+    "no_chi": ((216, 138, 255), "no blur width: outside"),                   # pink    #FF8AD8
+    "border": ((160, 160, 160), "too near the frame edge"),                  # grey    #A0A0A0
+    "crowded": ((229, 229, 0), "crowded: touching other liquid"),            # cyan    #00E5E5
+    "attached": ((19, 69, 139), "sitting on liquid: not sized"),             # brown   #8B4513
+    "dark_surround": ((19, 69, 139), "dark surroundings: not sized"),        # brown
+    "inconsistent": ((19, 69, 139), "size far above its mask"),              # brown
+    "static": ((255, 255, 255), "static speck (dust): not spray"),           # white
 }
-LIGAMENT_STYLE = ((72, 85, 121), "filament / blob")
+LIGAMENT_STYLE = ((0, 149, 255), "filament / blob")                          # orange  #FF9500
 RING_EDGE = (17, 17, 17)
+RING_PX, RING_EDGE_PX = 3, 5             # colour width, and the dark edge drawn under it (1 px showing each side)
 BLACK = (0, 0, 0)
 DROPLET_RING_PX = 10         # droplet outline offset (--droplet-ring)
 
@@ -805,10 +809,10 @@ def render_frame(view_path, items, f_d32, atom, droplet_ring, out_path):
             continue
         counts[verdict] += 1
         if verdict == "ligament":
-            cv2.drawContours(canvas, cnts, -1, LIGAMENT_STYLE[0], 1, cv2.LINE_AA)
+            cv2.drawContours(canvas, cnts, -1, LIGAMENT_STYLE[0], 2, cv2.LINE_AA)
         else:                                  # a thin ring: a dark edge either side of the colour
-            cv2.drawContours(canvas, cnts, -1, RING_EDGE, 3, cv2.LINE_AA)
-            cv2.drawContours(canvas, cnts, -1, VERDICT_STYLE.get(verdict, (GREEN, ""))[0], 1, cv2.LINE_AA)
+            cv2.drawContours(canvas, cnts, -1, RING_EDGE, RING_EDGE_PX, cv2.LINE_AA)
+            cv2.drawContours(canvas, cnts, -1, VERDICT_STYLE.get(verdict, (GREEN, ""))[0], RING_PX, cv2.LINE_AA)
     annotate(canvas, f_d32, atom)
     if counts:
         draw_key(canvas, counts)
@@ -820,7 +824,7 @@ def draw_key(canvas, counts, scale=None, extra=()):
     frame images; Ben, 2026-10-17). `extra`: more (BGR, label, count or None) rows (the liquid stage's fill)."""
     H, W = canvas.shape[:2]
     scale = scale or max(0.6, W / 2048.0)
-    fs, th = 0.62 * scale, max(1, int(round(1.4 * scale)))
+    fs, th = 0.74 * scale, max(1, int(round(1.6 * scale)))
     rows = [(VERDICT_STYLE[v][0], VERDICT_STYLE[v][1], counts[v]) for v in VERDICT_STYLE if counts.get(v)]
     if counts.get("ligament"):
         rows.append((LIGAMENT_STYLE[0], LIGAMENT_STYLE[1], counts["ligament"]))
@@ -839,8 +843,8 @@ def draw_key(canvas, counts, scale=None, extra=()):
     y = y0 + pad + lh // 2
     for (col, _label, _n), t in zip(rows, texts):
         c = (pad + sw // 2, y)
-        cv2.circle(canvas, c, sw // 2 + 1, RING_EDGE, max(3, th + 2), cv2.LINE_AA)
-        cv2.circle(canvas, c, sw // 2 + 1, col, max(1, th), cv2.LINE_AA)
+        cv2.circle(canvas, c, sw // 2 + 1, RING_EDGE, max(5, th + 4), cv2.LINE_AA)
+        cv2.circle(canvas, c, sw // 2 + 1, col, max(3, th + 2), cv2.LINE_AA)
         cv2.putText(canvas, t, (pad * 2 + sw, y + int(lh * 0.22)), cv2.FONT_HERSHEY_SIMPLEX, fs, BLACK, th,
                     cv2.LINE_AA)
         y += lh
@@ -1028,8 +1032,8 @@ def write_largest_sheet(out_dir, per_frame_rows3, view_dir, n=LARGEST_N, cell=22
         sc = cell / (2.0 * half)
         crop = cv2.resize(pad, (cell, cell), interpolation=cv2.INTER_CUBIC if sc > 1 else cv2.INTER_AREA)
         ctr, rr = (cell // 2, cell // 2), int(round((r_px + 3) * sc))
-        cv2.circle(crop, ctr, rr, RING_EDGE, 4, cv2.LINE_AA)
-        cv2.circle(crop, ctr, rr, VERDICT_STYLE.get(e["method"], (GREEN, ""))[0], 2, cv2.LINE_AA)
+        cv2.circle(crop, ctr, rr, RING_EDGE, 6, cv2.LINE_AA)
+        cv2.circle(crop, ctr, rr, VERDICT_STYLE.get(e["method"], (GREEN, ""))[0], 4, cv2.LINE_AA)
         r, c = divmod(i, cols)
         X, Y = 8 + c * (cell + 8), 8 + r * (cell + cap)
         sheet[Y:Y + cell, X:X + cell] = crop
