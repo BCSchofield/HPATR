@@ -135,6 +135,9 @@ def main():
     ap.add_argument("--settle-s", type=float, default=3.0)
     ap.add_argument("--line-loss-run", type=Path,
                     help="the gas-only run on the bare 1.8 mm bubbler (no insert), as the line-loss reference")
+    ap.add_argument("--orifice-length-mm", type=float,
+                    help="use this insert length for every run instead of run_summary's 'Orifice length (mm)' "
+                         "(the 2026-10-15 runs recorded 8; every insert is 7.5 mm, Ben 2026-10-22)")
     ap.add_argument("--write", action="store_true", help=f"update {CD_TABLE.relative_to(REPO)}")
     args = ap.parse_args()
     T = args.temp_c + 273.15
@@ -149,7 +152,7 @@ def main():
         if args.tag and args.tag.lower() not in notes.lower():
             continue
         d = _num(meta.get("Orifice"))
-        length = _num(meta.get("Orifice length (mm)"))
+        length = args.orifice_length_mm if args.orifice_length_mm is not None else _num(meta.get("Orifice length (mm)"))
         rho = _num(meta.get("Gas density (kg/m3)"))
         g, R, gas = gas_props(str(meta.get("Gas") or ""))
         if d is None or rho is None:

@@ -218,17 +218,12 @@ recordings:
   the AI's classes: every object in a pour is a sphere, so anything called filament or blob is a misclassification
   (on 2026-10-15: far-out-of-focus beads). It adds ~15 min to a run (the crowded 37.36 pour is most of it).
   `falling_detail(run, None, tau, frame_step=10)` runs the same measurement on any spray run.
-- **Big beads through focus (run sheet `docs/notes/2026-10-22_big_beads_through_focus_run_sheet.csv`, 32 bead
-  rows, ~30-35 min, then the 1.2 mm insert's Cd check; it replaces the 93-row 2026-10-16 sheet):** the mixed slide
-  has too few usable big beads through focus (2026-10-15: 108 at 37.36 um, 31 at 56.28, **2** at 76.39, none at
-  98.1 or 155.8), because the small beads crowded it. So the same −8..+8 mm series goes on a new, clean
-  **sandwich of the three big sizes only, 155.8 + 98.1 + 76.39 um** (Ben, 2026-10-21, to save rig time; Notes
-  `BEAD 155.8+98.1+76.39 z-1.25` etc.). The script matches its beads against those three sizes only, so dark dirt
-  of another size is dropped rather than taken for a bead. 76.39 is only 22 % below 98.1: at best focus a bead
-  reads within a few % of its certified size, so identity holds, and a bead between the two is dropped, not mis-sorted.
-  If too few 76.39 beads come out (under ~10), its own slide goes through focus at a later date. A `BEAD blank
-  bg` capture of the empty field comes first (the dust map). The coverslip rests on the 155.8 beads, so the
-  smaller ones are not clamped: a bead that moves shows on the per-capture region PNGs. It needs neither the pinhole nor the focus meter: the table works from χ and the size
+- **Big beads through focus: DROPPED 2026-10-22 (Ben: the beads do not stick to the slide well enough: turned upright into the camera's focus window they fall off; not a glass/optics problem, so the 10-15 sandwich data stand).** The
+  plan was the −8..+8 mm series on clean sandwiches of 155.8, 98.1 and 76.39 um (the 2026-10-15 mixed slide gave
+  only 2 usable 76.39 beads through focus, none at 98.1 or 155.8); the sheet is in git history
+  (`docs/notes/2026-10-22_big_beads_through_focus_run_sheet.csv`). The big sizes are covered instead by the falling
+  pours (2026-10-15, within +4.7 % to chi 50 with the table) and, for depth and the table's big nodes, by the
+  reticle's dots through focus when it arrives. Kept below for the record: It needs neither the pinhole nor the focus meter: the table works from χ and the size
   read, and best focus comes out of the χ curve. Analyse it with the 2026-10-15 τ (χ depends on τ; the
   calibration refuses analyses whose τ differ), then redo the sizer calibration with both days:
 
