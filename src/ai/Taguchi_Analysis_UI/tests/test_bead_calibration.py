@@ -113,6 +113,18 @@ def test_notes_are_parsed_as_the_run_sheet_writes_them():
     assert bc.parse_notes("RETICLE array tl") == ("reticle", "reticle", "array", None, "tl")
     assert bc.parse_notes("RETICLE z+0.40")[2:4] == ("z", 0.4)
     assert bc.parse_notes("S2 #01 anchor centre") is None and bc.parse_notes(None) is None
+    assert bc.parse_notes("BEAD 155.8+98.1+76.39 z-1.25") == ("bead", "155.8+98.1+76.39", "z", -1.25, "")
+
+
+def test_a_big_bead_sandwich_is_matched_against_its_own_sizes_only():
+    targets = bc.load_targets(None)
+    assert bc._slide_sizes("155.8+98.1+76.39", "bead", targets) == [76.39, 98.1, 155.8]
+    assert bc._slide_sizes("155.8+98.1", "bead", targets) == [98.1, 155.8]
+    assert bc._slide_sizes("98.1", "bead", targets) == [98.1]
+    assert len(bc._slide_sizes("mix", "bead", targets)) == 5
+    # a 70 um speck on the two-size slide is no bead; on the five-size one it would pass as a 76.39
+    ids, _ = bc.assign_sizes([104.0, 103.0, 162.0, 160.0, 70.0], [98.1, 155.8])
+    assert ids == [98.1, 98.1, 155.8, 155.8, None]
 
 
 def test_the_model_reduces_to_a_sharp_disc_and_widens_with_blur():
@@ -357,3 +369,19 @@ def test_falling_beads_are_remeasured_one_by_one(tmp_path):
     assert all(r["pipeline_d_um"] == pytest.approx(76.39, rel=0.12) for r in sharp)
     s = bc.falling_summary(rows, 76.39, static_ratio=1.0)
     assert s["detections"] == 4 and s["chi_rule"]["20"]["n"] == 2 and s["chi_rule"]["40"]["n"] == 2
+
+
+def test_the_big_bead_sandwich_runs_through_focus_as_the_2026_10_22_sheet_writes_it(tmp_path):
+    d = tmp_path / "2026" / "10" / "22"
+    write_run(d, "090000_0sccm_blank", "BEAD blank bg", np.ones((H, W)), seed=40)
+    for k, z in enumerate([-1.0, -0.4, 0.0, 0.4, 1.0]):
+        T = np.ones((H, W))
+        for (x, y), s in zip(GRID, [155.8, 98.1, 76.39, 155.8, 98.1, 76.39]):
+            bead_T(T, x, y, s, chi_of(z))
+        bead_T(T, 110, 115, 56.28, chi_of(z))              # dark, round and alone, but not one of its sizes
+        write_run(d, f"09{k + 1:02d}00_0sccm_big", f"BEAD 155.8+98.1+76.39 z{z:+.2f}", T, seed=41 + k)
+    R = bc.analyse([d], tmp_path / "analysis", None, max_frames=3)
+    assert R["captures"] == 6
+    tf = R["through_focus"]["155.8+98.1+76.39"]
+    assert tf["info"]["n_beads"] == 6
+    assert {k for k in tf if k != "info"} == {"155.8", "98.1", "76.39"}

@@ -282,12 +282,14 @@ OUTPUTS = (
     Output("clas_hist", "size_histograms.png", f"{_AN}/{{clas}}/size_histograms.png", "run",
            "classical", True, note="always written"),
     # classical_liquid.py -- extreme_images/ holds the atomised lo/hi from the
-    # CLASSICAL fraction (the one quoted) and, since 2026-10-08, the D32 lo/hi
-    # drawn the classical way: up to 4 PNGs, fewer when frames coincide.
+    # CLASSICAL fraction (the one quoted), since 2026-10-08 the D32 lo/hi, and since
+    # 2026-10-14 measure_run's four extreme_frames_more frames (busiest, mean diameter),
+    # all drawn the classical way: up to 8 PNGs, fewer when frames coincide.
     Output("clas_extremes", "extreme_images/*.png",
            f"{_AN}/{{clas}}/extreme_images/*.png", "run", "classical", True,
-           kind="glob", count="1-4", only_when=("images", ("extremes",)),
-           note="1-4 PNGs: classical atomised + D32 extremes (replaced by images/ if 'every frame' is ticked)"),
+           kind="glob", count="1-8", only_when=("images", ("extremes",)),
+           note="1-8 PNGs: classical atomised + D32 extremes and the busiest / mean-diameter frames "
+                "(replaced by images/ if 'every frame' is ticked)"),
     Output("clas_all", "images/*.png  EVERY frame",
            f"{_AN}/{{clas}}/images/*.png", "run", "classical", False, default_on=False,
            kind="glob", count="n_frames", option="images", option_value="all",

@@ -1,5 +1,12 @@
 # Size calibration with glass beads (and later the reticle)
 
+**Status 2026-10-17.** The beads of 2026-10-15 calibrated sizer 3.0.0 (section "Sizer 3.0.0 calibration"
+below), which with sizer 3.1.0's validity tests is the default everywhere since 2026-10-17. Its acceptance
+(Phase 6 of the 3.0.0 plan) passed: falling beads within +4.7% of their certificates at every size from 37.36
+to 155.8 µm, one measurement depth (10.3 mm) for every size, pours 96–99% atomised in the volume (the crowded
+37.36 µm pour 88%: the AI misses beads there, not the sizer). The "Why" below is the question as it stood on
+2026-10-14. Still to do: the big-bead through-focus series and the reticle.
+
 Written 2026-10-14 for Thursday 2026-10-15. The bead work is the LAST part of the day, after the Cd tests (Ben).
 On 2026-10-15 the spray runs were postponed: that day is Cd tests + beads only, no silicone. The plan is `/Users/benschofield/.claude/plans/cozy-orbiting-swing.md`; the background is
 `docs/DROPLET_MEASUREMENT_METHOD.md`.
@@ -211,11 +218,17 @@ recordings:
   the AI's classes: every object in a pour is a sphere, so anything called filament or blob is a misclassification
   (on 2026-10-15: far-out-of-focus beads). It adds ~15 min to a run (the crowded 37.36 pour is most of it).
   `falling_detail(run, None, tau, frame_step=10)` runs the same measurement on any spray run.
-- **Big beads through focus (run sheet `docs/notes/2026-10-16_big_bead_through_focus_run_sheet.csv`, 93 rows,
-  ~1.5 h):** the mixed slide has too few usable big beads through focus (2026-10-15: 108 at 37.36 um, 31 at
-  56.28, **2** at 76.39, none at 98.1 or 155.8). So the same −8..+8 mm series goes on the 155.8, 98.1 and 76.39
-  single-size slides (Notes `BEAD 155.8 z-1.25` etc.); the script reads each as that slide's own series with
-  every bead's size known. It needs neither the pinhole nor the focus meter: the table works from χ and the size
+- **Big beads through focus (run sheet `docs/notes/2026-10-22_big_beads_through_focus_run_sheet.csv`, 32 bead
+  rows, ~30-35 min, then the 1.2 mm insert's Cd check; it replaces the 93-row 2026-10-16 sheet):** the mixed slide
+  has too few usable big beads through focus (2026-10-15: 108 at 37.36 um, 31 at 56.28, **2** at 76.39, none at
+  98.1 or 155.8), because the small beads crowded it. So the same −8..+8 mm series goes on a new, clean
+  **sandwich of the three big sizes only, 155.8 + 98.1 + 76.39 um** (Ben, 2026-10-21, to save rig time; Notes
+  `BEAD 155.8+98.1+76.39 z-1.25` etc.). The script matches its beads against those three sizes only, so dark dirt
+  of another size is dropped rather than taken for a bead. 76.39 is only 22 % below 98.1: at best focus a bead
+  reads within a few % of its certified size, so identity holds, and a bead between the two is dropped, not mis-sorted.
+  If too few 76.39 beads come out (under ~10), its own slide goes through focus at a later date. A `BEAD blank
+  bg` capture of the empty field comes first (the dust map). The coverslip rests on the 155.8 beads, so the
+  smaller ones are not clamped: a bead that moves shows on the per-capture region PNGs. It needs neither the pinhole nor the focus meter: the table works from χ and the size
   read, and best focus comes out of the χ curve. Analyse it with the 2026-10-15 τ (χ depends on τ; the
   calibration refuses analyses whose τ differ), then redo the sizer calibration with both days:
 
@@ -242,15 +255,21 @@ and with `--write-profile` writes them into the optics profile's `calibration` b
   that CSV.
 
 Results 2026-10-16: `analysis/sizer_calibration_2026-10-16/` (report.md). Provisional until the big-bead series
-replaces the 2-bead 76 µm node and adds 98 / 155.8 µm nodes.
+replaces the 2-bead 76 µm node and adds 98 / 155.8 µm nodes. **Sizes above the largest bead (155.8 µm) are
+reported, not flagged** (Ben, 2026-10-17): the 3.1.0 largest-droplets sheets show real, round drops there, and
+the falling 155.8 µm beads read within the +4.7% of the other sizes. (The profile's `calibration.status` text
+still calls sizes beyond the table's beads provisional; that describes the table's nodes, not what is reported.)
 
 ## Later: the reticle (Graticules Optics PS20), when it arrives
 
 It adds three things the beads cannot give:
 
 1. **Scale and distortion across the field,** from the 0.25 mm dot array at 0.5 mm pitch. Captures at
-   z0: centre and four corners (Notes `RETICLE array c|tl|tr|bl|br`). Today 10 µm/px is hardcoded in
-   seven places; if the array disagrees, that becomes one value from the calibration file.
+   z0: centre and four corners (Notes `RETICLE array c|tl|tr|bl|br`). 10 µm/px is recorded as calibrated
+   and the beads agree (slope 1.002 against certificate: the at-focus bias is a fixed ~+6 µm edge offset,
+   not a scale error). Since sizer 3.0.0's Phase 0 it is one value, `um_per_px` in the optics profile
+   (`config/optics/lens1_2026-10.json`); the array measures it directly, and if it disagrees or varies
+   across the field, that becomes profile v2.
 2. **Opaque discs of certified size,** 39.6, 56.0, 79.2, 112, 158, 224 and 317 µm (±0.5 µm), stepped
    through the same z list as the mixed sandwich (Notes `RETICLE z-1.25` …), plus a clear-glass
    background (`RETICLE bg`). Mount it **chrome side towards the camera**. This is Blaisot & Yon's own

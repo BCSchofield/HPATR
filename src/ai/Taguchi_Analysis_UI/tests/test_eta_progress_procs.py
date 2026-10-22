@@ -101,6 +101,41 @@ def test_priors_follow_the_operating_system():
     assert other.batch_remaining_s == win.batch_remaining_s       # unknown OS: GPU figures
 
 
+def test_a_re_measure_batch_is_costed_without_the_ai():
+    """Re-measure only (reuse) skips extraction, background and inference: the CCD day's 4 h re-measure read
+    28 h when every pending run was costed with CPU inference (2026-10-17)."""
+    prior = lambda s: eta.priors_for("Darwin")[eta._prior_key(s, "extremes")][1]
+    full = eta.estimate(state(run("pending", frames=None)), "extremes", host=HOST, now=0)
+    re = eta.estimate({**state(run("pending", frames=None)), "reuse": True}, "extremes", host=HOST, now=0)
+    assert re.batch_remaining_s == pytest.approx(prior("measurement") + prior("classical"))
+    assert re.batch_remaining_s < full.batch_remaining_s / 3 and "inference" not in re.note
+    # once runs finish, what they actually did decides: one of two could not reuse its predictions
+    secs = {"measurement": 270, "classical": 180}
+    done = [dict(run("done", seconds=secs), reused=True),
+            dict(run("done", seconds={**secs, "extract": 40, "inference": 400}), reused=False)]
+    mixed = eta.estimate({**state(*done, run("pending")), "reuse": True}, "extremes", host=HOST, now=0)
+    only = eta.estimate({**state(done[0], run("pending")), "reuse": True}, "extremes", host=HOST, now=0)
+    assert only.batch_remaining_s == pytest.approx(450)
+    assert mixed.batch_remaining_s > only.batch_remaining_s + 200      # half a run's inference and extraction
+
+
+def test_this_jobs_runs_outrank_the_remembered_rates(tmp_path):
+    calib = eta.Calibration(path=tmp_path / "c.json")
+    key = eta.obs_key(HOST, "measurement", None, "extremes")
+    calib.add(key, 0.1)
+    calib.add(key, 0.1)                                    # two remembered runs of older, faster code
+    done = dict(run("done", seconds={"measurement": 0.5 * 497, "classical": 0.3 * 497}), reused=True)
+    est = eta.estimate({**state(done, run("pending")), "reuse": True}, "extremes", host=HOST, calib=calib, now=0)
+    assert est.batch_remaining_s == pytest.approx(0.8 * 497)
+
+
+def test_the_job_state_records_reuse():
+    from src.ai.Taguchi_Analysis_UI import jobstate
+    job = {"job_id": "j", "options": {"images": "extremes"}, "runs": ["/a"], "settings": {"reuse": True}}
+    assert jobstate.initial_state(job)["reuse"] is True
+    assert jobstate.initial_state({**job, "settings": {}})["reuse"] is False
+
+
 def test_background_is_a_fixed_cost_not_per_frame():
     secs = {"extract": 40, "background": 2.0, "inference": 400, "measurement": 4, "classical": 2}
     est = eta.estimate(state(run("done", frames=40, seconds=secs), run("pending", frames=497)),

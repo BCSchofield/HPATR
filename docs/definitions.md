@@ -9,8 +9,11 @@ Where a definition is pinned to code, the file and function are named. If this
 document and the code ever disagree, **the code is right and this is stale** —
 fix it here.
 
-**Partly stale (2026-10-07):** the current, exact step-by-step description of the pipeline is
-`IMAGING_PIPELINE_REFERENCE.md`; its §14 lists which statements below are out of date.
+**Sizer 3.1.0 (the default since 2026-10-17):** what every reported number means now is in
+"Sizer 3.1.0 — what each reported number is", at the top of Part 2. Entries further down that describe
+sizer 2.x say so where 3.x differs. The exact step-by-step description, with the maths, is
+`IMAGING_PIPELINE_REFERENCE.md` (§6.4, §7.1, §9c, §9d for 3.x); its §14 lists older statements here
+that are out of date.
 
 Companion documents: `STATUS.md` (current operational state; history in
 `archive/HANDOFF_real_data_pipeline_LEGACY.md`) and
@@ -64,7 +67,19 @@ It is per-run and must not be shared between runs: the lamp and the dust move.
 **Sensor dust is invisible in T, and that is correct, not a bug.** A speck is
 static, so it is *in* the median: dark ÷ equally dark = 1.0. It is plainly
 visible in the 8-bit image a human labels on, and absent from T. Both readings
-are right — they are different quantities.
+are right — they are different quantities. (The AI, fed the 8-bit image, can
+still call it a droplet; sizer 3.1.0 drops such detections as **static specks**,
+Part 2.)
+
+**Rolling background (sizer 3.1.0).** One median for the whole run cannot follow
+a drop that lands on the window part-way through. At 3.1.0 each block of 25
+frames is divided by its own background, the per-pixel median of the frames
+within ±25 of the block's centre (`background.py`, stored in
+`analysis/background_rolling/`). A drop that lands is divided out from about
+25 frames later. Where the background darkens (below 0.85×, a drop landed) or
+clears (above 1.15×) over a compact patch (50 px to 400 px across) between one
+block and the next, that is a **window event**; landed events are grouped into
+**window drops**, each logged with the frame it was first seen in.
 
 ## t_min
 
@@ -104,6 +119,11 @@ physics, applied to something too small to hold it.
 
 ## In focus / out of focus (green vs magenta)
 
+*Sizer 2.x.* At sizer 3.x "in focus" means **sized**: inside the measurement
+volume (blur width χ ≤ 50 µm), past every validity test and at least 30 µm
+(Part 2, sizer 3.1.0). The images then ring each droplet by its verdict, with
+a key, instead of green / magenta.
+
 A predicted droplet is **in focus** if `t_min <= 0.70`, else **out of focus**.
 
 - **In focus (green)** — size is trustworthy. Used for D32.
@@ -117,11 +137,18 @@ it would shrink the numerator while its filaments stayed in the denominator.
 
 ## µm per pixel
 
-**`UM_PER_PX = 10.0`** (`measure_run.py:74`). One pixel is 10 µm at the object
-plane. The 2560×1600 sensor therefore sees 25.6 × 16.0 mm.
+**`um_per_px = 10.0`**, read from the optics profile
+(`config/optics/lens1_2026-10.json` via `optics.py`; `measure_run.UM_PER_PX`).
+One pixel is 10 µm at the object plane. The 2048 × 1152 window used for every
+capture therefore sees 20.48 × 11.52 mm (the full 2560 × 1600 sensor would see
+25.6 × 16.0 mm). The lens is telecentric, so the scale holds through the
+measurement depth.
 
-Every micron figure in the project rests on this one constant. It is a
-calibration, and if the optics change it must be re-measured.
+Every micron figure in the project rests on this one constant. **Status:**
+recorded as calibrated before 2026-10, and the certified glass beads agree
+(falling beads against certificate, slope 1.002: the small at-focus bias is a
+fixed ~+6 µm edge offset, not a scale error). The PS20 reticle's dot array will
+measure it directly, and across the field. A change of optics is a new profile.
 
 ## The pinned 8-bit window
 
@@ -160,6 +187,170 @@ display transform.
 ---
 
 # PART 2 — SIZE AND COMPOSITION STATISTICS
+
+## Sizer 3.1.0 — what each reported number is (current since 2026-10-17)
+
+Sizer 3.1.0 is the default in the capture GUI, the analysis app and the
+scripts. It is sizer 3.0.0 (bead-calibrated sizing and a calibrated focus rule,
+2026-10-16) plus validity tests, a static-speck filter and the rolling
+background. The CCD day (2026-10-12) is measured with it and is the reference
+dataset; the Taguchi day (2026-10-05) and the first L9 (2026-10-01) keep their
+2.x results (Ben, 2026-10-17). Maths and constants:
+`IMAGING_PIPELINE_REFERENCE.md` §6.4, §7.1, §9c, §9d.
+
+### Blur width χ and the measurement volume
+
+**χ (µm)**: how wide a droplet's edge is blurred, measured on its own
+transmission profile as Blaisot & Yon do (from the radii at relative grey
+levels 0.25 and 0.77 and the contrast). About 13 µm at best focus, growing
+about 9.6 µm per mm out of focus, much the same for every size.
+
+**The measurement volume**: everything with χ ≤ **χ_max = 50 µm**, a slab
+**10.29 mm** deep, the same depth for every size. The lens is telecentric, so
+the volume is a box: 20.48 × 11.52 mm × 10.29 mm = **2,428 mm³ ≈ 2.43 cm³ per
+frame**. Only what is inside it is sized, counted in the concentration or put
+in the in-volume atomised fraction.
+
+### Sized droplet and d_min
+
+A droplet is **sized** when it is in the volume, passes every validity test
+(below) and reads at least **d_min = 30 µm**. Its size is the
+contrast-corrected diameter at level 0.61 minus a fixed **5.6 µm** edge offset,
+taken directly when χ ≤ 15 µm and corrected through the bead look-up table when
+15 < χ ≤ 50 µm. The table was built on certified glass beads (37.36, 56.28 and
+76.39 µm static through focus) and checked on falling beads from 37.36 to
+155.8 µm (within +4.7% at every size). Outside the beads' range it is held at
+the end values (`table_extrapolated`). **Sizes above the largest bead
+(155.8 µm) are reported** (Ben, 2026-10-17); the app warns only if they carry
+≥ 15% of a run's d³.
+
+Droplets in the volume but under 30 µm are **counted, not sized**: they are in
+the concentration and the `<30 um` band, in no size statistic.
+
+### The verdicts
+
+Every AI droplet gets one (`size_method` in `droplet_sizes.csv`; its ring
+colour in the frame images, explained by the key on each image).
+
+| verdict | meaning | in the concentration | sized |
+|---|---|---|---|
+| `direct` | in the volume, χ ≤ 15 µm: sized directly | yes | yes |
+| `table` | in the volume, 15 < χ ≤ 50 µm: sized through the bead table | yes | yes |
+| `table_extrapolated` | as `table`, beyond the beads' range | yes | yes |
+| `below_d_min` | in the volume, under 30 µm | yes | no |
+| `outside` | χ > 50 µm: outside the measurement volume | no | no |
+| `no_chi` | no edge to measure: counts as outside | no | no |
+| `border` | too near the frame edge to measure (its window does not fit) | no: the others' border weights stand for it | no |
+| `crowded` | another detection, or (3.1.0) undetected liquid, within 3 px of its mask | added back in proportion | no |
+| `attached` (3.1.0) | the liquid it sits in reaches well beyond its own mask (≥ max(20 px, 1× its mask)): a bump on a ligament, a droplet on a liquid body or a window drop | added back in proportion | no |
+| `dark_surround` (3.1.0) | with everything else blanked, its measuring window still averages T < 0.90 | added back in proportion | no |
+| `inconsistent` (3.1.0) | its measured size is more than 1.3× its own mask's size | added back in proportion | no |
+| `static` (3.1.0) | a speck in the same place (2.5 px, area within 1.6×) in at least 3 of the ±10 neighbouring frames: dust on the window or optics | no (not spray) | no |
+
+"Added back in proportion": crowded, attached, dark-surround and inconsistent
+droplets are in the spray but cannot be measured, so the concentration counts
+them in the volume as often as the droplets that could be judged were
+(the **crowded factor**). 3.1.0 also blanks every other piece of liquid round a
+droplet before measuring it, not only the other AI detections; that, the
+validity tests and the rolling background are what stopped 3.0.0's runaway
+sizes (up to 288 µm run D32 on the CCD day).
+
+### D32 and mean diameter (3.x)
+
+Σd³/Σd² and the mean, over the **sized** droplets only (in the volume,
+≥ 30 µm), pooled over the run; not border-weighted. For a no-spray run
+(atomised every object < 2%) neither is reported (`/` in master_log). CCD day,
+31 spraying runs: median D32 49.5 µm at 3.1.0 (2.2.0: 54.5; 3.0.0: 57.1).
+
+### Atomised (%) — every object in view
+
+Droplet area ÷ all liquid area (droplets, filaments and blobs, the liquid stage's
+classical union), over every object in the frame, sharp or blurred, pooled over
+the run. The same definition as at 2.x. Kept for comparing with runs measured
+before 3.0.0; it is the figure the no-spray rule uses.
+
+### Atomised in volume (%)
+
+The same ratio, counting only what is inside the measurement volume: droplets by
+their own verdict (crowded and other unmeasurable ones by the liquid piece they
+are part of), every other piece of liquid by its own blur width (`blur.object_chi`:
+Blaisot's edge width generalised to any shape). Anything outside leaves both the
+top and the bottom of the ratio. **The one to use**: the app models it at 3.x.
+
+It is higher than every-object (CCD 125754: 41.6% against 20.4%) because blurred
+liquid is mostly filaments and blobs (80% of their area lies outside the volume,
+against 45% of the droplets'), and because the AI calls far-out-of-focus spheres
+filament or blob (bead pours: 96–99% in the volume, 62–89% every object). On the
+20 hand-labelled frames it reads 8.1% against the labels' 8.7–10.3% (every object
+6.0%).
+
+### Concentration (/cm³)
+
+**Droplets per cm³ of spray in the measurement volume, at the instant of a frame.**
+
+    concentration = Σ border weights of in-volume droplets × crowded factor / (frames × 2.43 cm³)
+
+- all sizes: those under 30 µm are counted, not sized;
+- **border weight** W H / ((W − 2h)(H − 2h)): a droplet near the frame edge cannot be measured, so each
+  one measured stands for a little more;
+- crowded and other unmeasurable droplets added back in proportion; static specks not counted;
+- divided by every frame of the run (3.0.0: the frames with a detection).
+
+CCD day: 29–100 per cm³ on the spraying runs, **76–87% of it under 30 µm**.
+
+It is a snapshot, not a rate: no speed is needed to count droplets in a known
+volume at one instant (a 4 µs exposure freezes the spray to 2–3 px). But it is
+**not a goal to maximise on its own**: it rises when more droplets are made, and
+also when the same droplets move slower or the spray is narrower; faster gas can
+lower it while making more. Slow droplets linger in view and are over-represented
+against what flows through (to-do 7b, weighting by speed). Only droplets the AI
+finds are counted. `summary.json` gives it per mm³ (`in_volume_per_mm3`, and
+`sized_per_mm3`, `below_d_min_per_mm3`); master_log per cm³.
+
+### Size-band concentrations (master_log `<30`, `30-40`, `40-60`, `60-100`, `100+ um (/cm3)`)
+
+The concentration split by size, the same weights and crowded factor;
+`<30 um` holds every in-volume droplet below d_min (counted, not sized). The
+five add up to *Concentration (/cm3)*. They describe the spray's size spread at
+one instant, not production.
+
+### Droplets/s in the band (master_log *Droplets/s (30-60 um)*) and in-band flow
+
+A **production rate by mass balance** (`rates.py`), the same number in the app,
+GUI_Clean and master_log:
+
+    droplets/s      = syringe flow (mm³/s) × in-band droplets per mm³ of liquid in the volume
+    in-band flow    = syringe flow × the in-band droplets' share of that liquid       (mL/min)
+
+"In-band droplets": sized droplets with 30 ≤ d < 60 µm (Settings band, default
+30–60 µm since 2026-10-17), border-weighted, crowded ones added back. "Liquid in
+the volume": every piece of liquid in the measurement volume, by its best size
+(sized droplets, droplets below d_min, unmeasurable ones from their mask, and
+ligaments and blobs as bodies of revolution; `vol_liquid_in_volume_mm3`).
+
+**No speed is needed:** in-band droplets passing per second are n × v × A and
+the syringe flow is c × v × A (n droplets and c liquid per mm³ of spray, v the
+speed, A the spray area), so their ratio n / c does not depend on v or A. That
+**assumes** the droplets move with the rest of the liquid, and that one window
+stands for the spray; ligament volumes come from 2-D; only droplets the AI finds.
+Frame-bootstrap CIs ±50–60% a run on the CCD day. The 2.x formula (below) gave
+the unsized droplets' volume to the sized ones and read ~3× higher (CCD day
+median), in a different order. On the CCD day the rate's response surface
+predicts new runs poorly (predicted R² 0.44; centre repeats CV 21%): more
+repeats or longer captures before it can steer a design.
+
+### Static speck, window drop, rolling background, largest-droplets sheet
+
+- **Static speck**: verdict `static` above. CCD day: 24,743 such detections,
+  66–3,857 a run.
+- **Window drop**: a drop that landed on the camera window during a run, found by
+  the rolling background (Part 1, Background). The report names the run and the
+  frame it landed; the rolling background divides it out. CCD day: 23 drops in 15
+  of 33 runs.
+- **Largest-droplets sheet** (`droplets_<thr>/largest_droplets.png`): a run's 25
+  largest sized droplets, each cropped from its frame, ringed by verdict and
+  labelled with size, χ and frame; a slide per run in the app's decks. D32 leans
+  on the largest, so this is the check to make.
 
 ## Equivalent diameter (d)
 
@@ -213,6 +404,14 @@ measured identically. It must never be quoted as an absolute droplet size
 without the bias stated alongside it.
 
 ## Atomised area fraction
+
+*This entry describes `measure_run`'s model-only fraction, the first version.
+The quoted figure has been the classical one since 2026-10-08 (next subsection
+and "Classical un-atomised liquid"), and at sizer 3.x the one to use is the
+fraction inside the measurement volume (sizer 3.1.0 section above). The "known
+open bug" and "weak response" paragraphs below apply to the model-only figure:
+the classical fraction uses one union, and on the replicated designs it is
+strongly resolved.*
 
 **The share of detected liquid area that is in droplets rather than in
 unbroken structures.**
@@ -364,14 +563,20 @@ two dribbles (G 3 to 5 kg/m²/s) had set the flux exponent for atomised fraction
 
 The number of in-focus droplets per analysed frame with lo ≤ d < hi (half-open, as the size bins),
 counted from the same diameters as D32 and averaged over every analysed frame (a frame with none counts
-as 0). The band is a Settings value, default **20–60 µm** (the size collected after filtering; 30–50 µm before
-2026-10-14). At 10 µm/px the band starts at 4 px of area (22.6 µm); 1–3 px droplets fall below it. Mean diameter cannot tell 5 droplets at 40 µm
+as 0). The band is a Settings value, default **30–60 µm** since 2026-10-17 (nothing below d_min 30 µm is
+sized at 3.x; 20–60 µm from 2026-10-14, 30–50 µm before). (At 2.x and 10 µm/px a 20 µm band edge sat below the 4 px sizing floor, 22.6 µm; at 3.x the band starts at
+d_min.) Mean diameter cannot tell 5 droplets at 40 µm
 from 100,000; this can. Caveats: it is a **concentration** (droplets in view per frame), not a production
 rate, so it understates fast, high-gas sprays; the 2.2.0 sharpness rule removes more droplets at high gas;
 below 50 µm sizes sit near the pixel lattice. It overlaps with atomised fraction and atomised liquid flow
 (all rise when more liquid becomes droplets): lower its importance if all three are goals.
 
 ## Droplets produced per second, mass balance (`rate`, `rate_band`; liquid stage ≥ 2.3.0, added 2026-10-13)
+
+*The sizer 2.x formula. At sizer 3.1.0 droplets/s is `rates.py`'s (sizer 3.1.0 section above): the band
+is 30–60 µm and the denominator is all the liquid in the measurement volume, so the unsized droplets'
+volume no longer goes to the sized ones (this formula read ~3× higher on the CCD day). At 3.0.0 neither is
+offered.*
 
 A production **rate**, not a concentration:
 
@@ -434,7 +639,11 @@ bias above: an **index** for comparing runs, not a measured mL/min of droplets.
 in `per_frame.csv`.
 
 - `droplet_sizes.csv` — frame, `diameter_um` (equivalent diameter), `in_focus`
-  (1/0). One row per droplet above the score threshold.
+  (1/0). One row per droplet above the score threshold. At sizer 3.x also
+  `chi_um`, `in_volume`, `size_method` (the verdict), `weight` (border weight,
+  in-volume droplets), and at 3.1.0 `x`, `y` (centre, px) and `mask_d_um` (the AI
+  mask's equivalent diameter); `diameter_um` is then the calibrated size for a
+  sized droplet (`in_focus` = sized), else the mask's.
 - `object_areas.csv` — frame, `class` (filament/blob), `area_px`, `area_mm2`
   where `area_mm2 = area_px × µm_per_px² / 10⁶`.
 
@@ -954,3 +1163,13 @@ as the model's real-world accuracy.
 | AP, AP50 | `score_v2.py` | `run_eval()`, `ap_at_max()` |
 | loss components | detectron2 | written to `metrics.json` |
 | pinned 8-bit window | `cine_extract.py` | `PINNED_WINDOW` |
+| χ, the 3.x size and verdict | `measure_run.py`, `blur.py` | `measure_droplet_3()`, `blur.measure()`, `blur.size_3()` |
+| static specks | `measure_run.py` | `mark_static()` |
+| concentration (per mm³) | `measure_run.py` | `concentration()` |
+| liquid map | `liquid_map.py` | `hysteresis()` |
+| rolling background, window drops | `background.py` | `build_rolling()`, `window_drops()` |
+| atomised fraction, every object and in the volume | `classical_liquid.py` | `area_part()`, `volume_masks()` |
+| liquid volume in the volume | `classical_liquid.py` | `liquid_volume_in_volume()` |
+| droplets/s in the band, in-band flow | `rates.py` | `throughput()`, `from_run_files()` |
+| master_log columns, band concentrations | `master_log.py` | `measured_values()`, `band_concentrations()` |
+| largest-droplets sheet | `measure_run.py` | `write_largest_sheet()` |

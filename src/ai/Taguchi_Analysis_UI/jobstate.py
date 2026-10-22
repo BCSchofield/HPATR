@@ -115,6 +115,7 @@ def initial_state(job: dict) -> dict:
     return {
         "schema": SCHEMA, "job_id": job["job_id"], "status": "pending", "updated": now_iso(),
         "images": job["options"].get("images"),
+        "reuse": bool((job.get("settings") or {}).get("reuse")),       # the ETA skips reused stages
         "runs": [{"index": i, "path": p, "name": Path(p).name, "status": "pending",
                   "attempts": 0, "stage": None, "seconds": {}, "error": None}
                  for i, p in enumerate(job["runs"])],

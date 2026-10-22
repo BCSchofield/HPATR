@@ -7,6 +7,7 @@ Captures are GUI_Clean runs found by their Notes (run_summary.xlsx):
 
     BEAD mix z-1.25     the mixed sandwich (all sizes), 1.25 mm before best focus   (through focus)
     BEAD mix z0 p3      the mixed sandwich at best focus, third patch                 (at focus)
+    BEAD 155.8+98.1+76.39 z-1.25   a sandwich of just those sizes, through focus
     BEAD 56.28 z0 p1    a single-size sandwich at its best focus                      (at focus)
     BEAD 56.28 bg       a patch with no beads (a cross-check of the background)
     BEAD fall 56.28     beads poured through the field: read from the AI pipeline's droplet_sizes.csv
@@ -461,8 +462,8 @@ def _slide_sizes(slide: str, target: str, targets: dict) -> list[float]:
     all_sizes = [float(s["certified_um"]) for s in targets["beads"]["sizes"]]
     if slide == "mix":
         return all_sizes
-    v = float(slide)
-    return [min(all_sizes, key=lambda s: abs(s - v))]
+    # "155.8+98.1+76.39": a sandwich of just those sizes (2026-10-21), so dirt is matched against them only
+    return sorted({min(all_sizes, key=lambda s: abs(s - float(v))) for v in slide.split("+")})
 
 
 def dust_positions(T: np.ndarray) -> list[tuple[float, float]]:

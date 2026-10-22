@@ -80,6 +80,9 @@ PRIOR_SOURCE_BY_OS = {
     "Darwin": "a MacBook Air's measured figures (CPU, one light condition)",
 }
 FIXED_STAGES = frozenset({"background"})          # seconds per run, not per frame
+# what a run costs when its frames and AI predictions are reused (Re-measure only: process_capture skips
+# extraction, background and inference)
+REUSED_STAGES = ("measurement", "classical")
 
 
 def priors_for(os_name: str) -> dict:
@@ -180,7 +183,9 @@ class Estimate:
 def _rates(stage: str, images: str | None, device: str | None, host: str,
            job_obs: dict[str, list[float]], calib: Calibration | None):
     key = obs_key(host, stage, device, images)
-    seen = list(job_obs.get(key, [])) + (calib.rates(key) if calib else [])
+    # this job's own finished runs first: the remembered rates can be from older, faster code (2026-10-17:
+    # sizer 3.1.0 measures ~5x slower than the 2.2.0 runs remembered, and two old rates outvoted the new ones)
+    seen = list(job_obs.get(key, [])) or (calib.rates(key) if calib else [])
     if seen:
         return statistics.median(seen), min(seen), max(seen), True
     lo, typ, hi = priors_for(host.split("|")[-1])[_prior_key(stage, images)]
@@ -243,11 +248,22 @@ def estimate(state: dict, images: str | None, *, now: float | None = None,
             t, lo, hi = t + rem, lo + rem * (rlo / r), hi + rem * (rhi / r)
         cur = (t, lo, hi)
 
+    # A re-measure batch (state["reuse"]) skips extraction, background and inference for every run whose frames
+    # and predictions are still valid: those stages are costed only for the share of finished runs that could
+    # not reuse them (before any has finished: none). 2026-10-17: costing them for every run put a 4 h
+    # re-measure of the CCD day at 28 h.
+    tried = [r for r in done if "reused" in r]
+    p_reuse = (sum(bool(r["reused"]) for r in tried) / len(tried) if tried
+               else 1.0 if state.get("reuse") else 0.0)
+
     # each pending run at its OWN frame count where known (e.g. a re-run), else the typical
     batch, low, high = cur
     for r in pending:
-        t, lo, hi = run_cost(r.get("frames") or typ_frames, STAGE_ORDER)
-        batch, low, high = batch + t, low + lo, high + hi
+        frames = r.get("frames") or typ_frames
+        for share, stages in ((p_reuse, REUSED_STAGES), (1.0 - p_reuse, STAGE_ORDER)):
+            if share > 0:
+                t, lo, hi = run_cost(frames, stages)
+                batch, low, high = batch + share * t, low + share * lo, high + share * hi
 
     if current is None and not pending:
         return Estimate(0.0, 0.0, 0.0, 0.0, True, len(done), "nothing left to run")

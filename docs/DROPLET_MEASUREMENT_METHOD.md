@@ -2,7 +2,33 @@
 
 **Written 2026-10-07** after the sizer 2.1.0 vs 2.2.0 comparison. This is the plan for making the
 droplet sizes and the droplet/ligament fraction defensible as *measurements*, not just consistent
-rankings. It is not started. Current state of the pipeline: `docs/STATUS.md`.
+rankings. Current state of the pipeline: `docs/STATUS.md`; how it works now:
+`docs/IMAGING_PIPELINE_REFERENCE.md` §6.4.
+
+## Where it stands (2026-10-17)
+
+Much of this plan is now built, as **sizer 3.0.0** (2026-10-16: bead-calibrated sizing and focus rule,
+concentration, the in-volume atomised fraction) and **sizer 3.1.0** (2026-10-17, the default: validity
+tests, static-speck filter, rolling background, throughput by mass balance). Plans:
+`docs/notes/2026-10-15_sizer_3.0.0_plan.md`, `docs/notes/2026-10-17_sizer_3.1.0_plan.md`. The 3.0.0
+acceptance (Phase 6) passed on 2026-10-17: falling beads within +4.7% at every size from 37.36 to 155.8 µm,
+one depth (10.3 mm) for every size, bead pours 96–99% atomised in the volume, and the CCD day side by side
+under 2.2.0, 3.0.0 and 3.1.0. The CCD day (2026-10-12) at 3.1.0 is the reference dataset; the Taguchi day
+(2026-10-05) and the first L9 (2026-10-01) are not re-measured (Ben).
+
+| item below | status |
+|---|---|
+| 1. Calibration of edge and focus | **Done with certified glass beads** (37.36–155.8 µm, `docs/BEAD_CALIBRATION.md`): edge = Blaisot's contrast-corrected size at l = 0.61 minus 5.6 µm; focus = blur width χ, sized directly to χ 15 µm and through a defocus look-up table to χ_max 50 µm; d_min 30 µm. Stored per optical set-up in `config/optics/lens1_2026-10.json`. **Open:** the reticle (opaque certified dots: scale and distortion across the field, the transparency effect, sizes below 37 µm), and the big-bead through-focus series (table nodes above 76.39 µm) |
+| 2. Size-dependent DOF; border | **Done:** one χ_max gives one measurement depth (10.29 mm) for every size, as Blaisot & Yon, so no 1/DOF(d) weight is needed; border weights (W H / ((W − 2h)(H − 2h))) in the concentration and the throughput. Tile-seam truncation still excludes a droplet from sizing |
+| 3. Focus and shape confused | **Focus done** (the calibrated χ test only; the 2.2.0 roundness rule is gone at 3.x). The 3.1.0 validity tests (on liquid, dark surroundings, size far above its mask) are measurability tests, not shape. **Open:** shape classes and volume sizing of deformed fragments and ligaments (droplets are still area-equivalent spheres); splitting touching pairs (to-do 5b) |
+| 4. D32 fragile; Dv50 | Dv50 and size bins (by count and volume) are reported; at 3.1.0 every run gets a **largest-droplets sheet** (the 25 largest sized, cropped and labelled) to check what D32 leans on. Sizes above 155.8 µm are reported (Ben, 2026-10-17). The droplet/blob boundary is still the AI's class |
+| 5. Resolution | d_min 30 µm: droplets below it are counted (in the concentration) but not sized; 76–87% of the CCD day's concentration. **Open:** the reticle's 14–28 µm dots, a zoom (3×) lens, rescuing small droplets the AI misses (to-do 5a) |
+| 6. Concentration, not flux | Concentration (droplets per cm³ in the volume) is reported as such. Droplets per second in the 30–60 µm band come from the syringe flow by mass balance, in which speed cancels if droplets move with the rest of the liquid (`rates.py`). **Open:** the velocity capture (exposure series, then a high-fps strip) and weighting each size by its speed (to-do 7b) |
+| 7. Liquid fraction depends on the field of view | Partly: the atomised fraction is now taken inside the measurement volume (the one to use) beside every object, and 3.1.0 computes the liquid volume in the volume. **Open:** fixing and recording the axial station; a liquid volume fraction by shape class |
+
+Target pipeline below: step 1 done for beads (reticle open); step 2 done except shape metrics; step 3 focus
+done, shape classes open; step 4 border weights done, velocity open; step 5 mostly done (bins, D32, Dv50,
+concentration, in-volume fraction, frame-bootstrap CIs); step 6 open.
 
 **What this is for:** (1) the fraction of the spray that is droplets vs ligaments (a Taguchi
 response; ranking accuracy is enough), and (2) droplet sizes as accurately as the images allow:
@@ -175,7 +201,9 @@ can trip the 2.2.0 rule. The beads measure how often this happens.
    the slide's own attenuation.
 4. **Find best focus:** step the stage until a 112-317 um dot has the steepest edge. Call that
    z = 0. Confirm the 10 um/px scale from the 0.5 mm-pitch dot array (and look for distortion
-   towards the frame corners).
+   towards the frame corners). (10 µm/px is recorded as calibrated, and the beads agree: slope 1.002
+   against certificate, the at-focus bias being a fixed ~+6 µm edge offset, not a scale error; the dot
+   array measures it directly.)
 5. **Traverse:** z from -5 to +5 mm; 0.1 mm steps within +/-1 mm of focus, 0.25 mm beyond. At each
    step record ~20 frames (averages out camera noise). Move laterally between the dots of the
    root-2 progression as needed so each of 39.6-317 um is imaged at every z.

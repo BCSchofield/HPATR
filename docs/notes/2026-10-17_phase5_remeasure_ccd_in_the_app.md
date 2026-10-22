@@ -52,6 +52,8 @@ caffeinate -dims -t 21600
 5. Back on the Batch tab, press **Run batch**. The confirmation should say the frames and AI predictions are
    reused. If it says the AI will run again, cancel: the Mac cannot run it.
 
+**What actually happened, 2026-10-17:** one at a time the batch would have ended ~20:30, so after 2 runs the app's batch was stopped ("Stop after this run") and the other 31 re-measured four at a time by `Experiments/Taguchi/CCD/CCD sizer 3.1.0 remeasure 17-10-2026/scripts/remeasure_ccd_31.py`: the same chain (batch_runs.py --reuse --sizer 3.1.0), each run checked against the app's own output contract. Do not press Resume in the app while it runs; go straight to step 4 when its progress.log says BATCH DONE. The app runs one run at a time; running several is a to-do.
+
 ## 3. Check it finished
 
 All 33 "ok". A failed run is recorded and the batch moves on; **Retry failed** redoes just those.
