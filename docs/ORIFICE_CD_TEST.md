@@ -71,6 +71,10 @@ they stay out of the spray runs' day folder:
 Line loss is ignored (Ben, 2026-10-14); add `--line-loss-run "<run folder>"` only if a line-loss run was
 made.
 
+**Every exit insert is 7.5 mm long** (Ben, 2026-10-22). The 2026-10-15 runs' run_summary says 8 (typed wrong,
+left as recorded); `--orifice-length-mm 7.5` overrides it. L/D is 15 / 9.4 / 6.25 for 0.5 / 0.8 / 1.2 mm: short
+tubes, so all three should read about 0.8-0.85.
+
 It writes:
 
 - `orifice_cd_points.csv`: every steady step, with P0, flow, ideal flow, Cd, and whether it was choked;
