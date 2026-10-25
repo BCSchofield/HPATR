@@ -1,0 +1,4 @@
+# results are written here, not committed (PLAN.md, folder layout)
+output/
+__pycache__/
+.pytest_cache/

@@ -1,0 +1,36 @@
+# Ben's idea (2026-10-23): the collection area on the FLOOR, a side jet to push the small droplets aside, and a jet
+# from above to push the band down into the collection area. Starts from the first scenario, so the band is 0-30 um
+# (Ben's change the same day). A plate collects by impaction, which turns fines away: for this band the delivery to
+# a plate is an upper bound; an extraction outlet would take them in with the air.
+#
+# Caution: Phase 1's jets do not see the floor, so whether a droplet that reaches the collection area would stick
+# (impaction) or turn away with the air is NOT modelled here; the report's floor Stokes numbers say which sizes are
+# in doubt.
+
+base: first_scenario.yaml
+name: floor collection
+
+inlets:
+  - name: side jet                         # pushes the small droplets aside (the 4 mm / 32,000 sccm 'fines cut')
+    wall: right
+    centre_mm: !design {y: 100, z: 175}
+    shape: round
+    diameter_mm: !design 4
+    flow_sccm: !design 32000
+  - name: down jet                         # from the lid, above the collection area, pointing down
+    wall: lid
+    centre_mm: !design {x: 120, y: 100}
+    shape: round
+    diameter_mm: !design 6
+    flow_sccm: !design 8000
+
+outlets:
+  - name: left outlet                      # the exhaust: where the gas, and the small droplets, leave
+    wall: left
+    centre_mm: !design {y: 100, z: 175}
+    shape: round
+    diameter_mm: !design 25
+
+target:
+  outlet: null
+  box_mm: !design {from: [100, 80, 0], to: [140, 120, 2]}   # a 40 x 40 mm collection area on the floor, 2 mm deep

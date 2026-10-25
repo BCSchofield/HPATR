@@ -1,0 +1,124 @@
+# The chamber box in CfdOF, built for you: the answer key for CFDOF_GUIDE.md parts 2-3 (and part 4 with SPRAY).
+# Run it in FreeCAD: Macro > Macros... > (this file's folder) > Execute, or open it and press the green run arrow.
+# It builds the same model the guide walks through by hand; then mesh and run it from the CFD tree as in the guide.
+# Numbers (PLAN.md's first scenario): chamber 300 x 200 x 350 mm (x along the 300, z up); 6 mm inlet on the right
+# wall at 8,000 sccm; 25 mm outlet on the left wall; both centred at y 100, z 175. Air at 20 degC, 1 atm.
+# sccm -> chamber flow: sccm x 1.184 / 1.204 (standard to chamber density), so 8,000 sccm = 1.311e-4 m^3/s.
+
+SPRAY = False   # True adds the spray: 0.91 mm at the lid centre, 8,995 sccm = 1.474e-4 m^3/s (226 m/s)
+
+import os
+import FreeCAD
+import FreeCADGui
+from FreeCAD import Vector, Rotation, Placement
+
+doc = FreeCAD.newDocument("chamber_spray" if SPRAY else "chamber_box")
+
+box = doc.addObject("Part::Box", "Chamber")
+box.Length, box.Width, box.Height = 300, 200, 350
+
+inlet = doc.addObject("Part::Cylinder", "InletPipe")
+inlet.Radius, inlet.Height = 3, 10
+inlet.Placement = Placement(Vector(300, 100, 175), Rotation(Vector(0, 1, 0), 90))     # points +x, out of the right wall
+
+outlet = doc.addObject("Part::Cylinder", "OutletPipe")
+outlet.Radius, outlet.Height = 12.5, 10
+outlet.Placement = Placement(Vector(0, 100, 175), Rotation(Vector(0, 1, 0), -90))     # points -x, out of the left wall
+
+parts = [box, inlet, outlet]
+if SPRAY:
+    spray = doc.addObject("Part::Cylinder", "SprayNozzle")
+    spray.Radius, spray.Height = 0.455, 5
+    spray.Placement = Placement(Vector(150, 100, 350), Rotation())                    # points +z, out of the lid
+    parts.append(spray)
+
+air = doc.addObject("Part::MultiFuse", "AirVolume")
+air.Shapes = parts
+air.Refine = True
+for p in parts:
+    p.Visibility = False
+doc.recompute()
+
+
+def faces(test):
+    return tuple(f"Face{i + 1}" for i, f in enumerate(air.Shape.Faces) if test(f.CenterOfMass))
+
+
+inlet_end = faces(lambda c: abs(c.x - 310) < 1e-6)
+outlet_end = faces(lambda c: abs(c.x + 10) < 1e-6)
+pipe_faces = faces(lambda c: c.x > 300.001 or c.x < -0.001)
+spray_end = faces(lambda c: abs(c.z - 355) < 1e-6)
+spray_faces = faces(lambda c: c.z > 350.001)
+
+FreeCADGui.activateWorkbench("CfdOFWorkbench")
+from CfdOF import CfdAnalysis, CfdTools
+from CfdOF.Solve import (CfdPhysicsSelection, CfdFluidMaterial, CfdInitialiseFlowField, CfdSolverFoam,
+                         CfdFluidBoundary)
+from CfdOF.Mesh import CfdMesh, CfdMeshRefinement
+
+analysis = CfdAnalysis.makeCfdAnalysis("CfdAnalysis")
+CfdTools.setActiveAnalysis(analysis)
+analysis.addObject(CfdPhysicsSelection.makeCfdPhysicsSelection())
+analysis.addObject(CfdFluidMaterial.makeCfdFluidMaterial("FluidProperties"))
+analysis.addObject(CfdInitialiseFlowField.makeCfdInitialFlowField())
+analysis.addObject(CfdSolverFoam.makeCfdSolverFoam())
+doc.recompute()
+
+phys = doc.PhysicsModel
+phys.Time, phys.Flow, phys.Phase = "Steady", "Isothermal", "Single"
+phys.Turbulence, phys.TurbulenceModel = "RANS", "kOmegaSST"
+phys.gx, phys.gy, phys.gz = "0 mm/s^2", "0 mm/s^2", "-9810 mm/s^2"
+
+material = dict(doc.FluidProperties.Material)
+material.update({"Name": "Air", "Density": "1.204 kg/m^3", "DynamicViscosity": "1.81e-5 kg/m/s"})
+doc.FluidProperties.Material = material
+
+
+def boundary(label, btype, subtype, refs, **props):
+    bc = CfdFluidBoundary.makeCfdFluidBoundary(label)
+    analysis.addObject(bc)
+    bc.BoundaryType, bc.BoundarySubType = btype, subtype
+    for k, v in props.items():
+        setattr(bc, k, v)
+    bc.ShapeRefs = [(air, refs)] if refs else []
+    bc.Label = label
+    return bc
+
+
+inlet_bc = boundary("inlet", "inlet", "volumetricFlowRateInlet", inlet_end, VolFlowRate="1.311e-4 m^3/s",
+                    TurbulenceInletSpecification="intensityAndLengthScale", TurbulenceIntensityPercentage=5,
+                    TurbulenceLengthScale="0.42 mm")
+if SPRAY:
+    boundary("spray", "inlet", "volumetricFlowRateInlet", spray_end, VolFlowRate="1.474e-4 m^3/s",
+             TurbulenceInletSpecification="intensityAndLengthScale", TurbulenceIntensityPercentage=5,
+             TurbulenceLengthScale="0.064 mm")
+outlet_bc = boundary("outlet", "outlet", "staticPressureOutlet", outlet_end, Pressure="0 Pa")
+walls = boundary("walls", "wall", "fixedWall", ())
+walls.DefaultBoundary = True     # every face not chosen above is a no-slip wall (CfdOF's own default is a SLIP wall)
+
+init = doc.InitialiseFields
+init.PotentialFlow, init.UseInletUValues = True, False
+init.UseOutletPValue, init.BoundaryP = True, outlet_bc
+init.UseInletTurbulenceValues = False
+init.k, init.omega = "0.0001 m^2/s^2", "1 1/s"
+
+solver = doc.CfdSolver
+solver.Parallel, solver.ParallelCores = True, 10
+solver.MaxIterations, solver.ConvergenceTol = 2000, 1e-4
+
+mesh = CfdMesh.makeCfdMesh("AirVolume_Mesh")
+mesh.Part = air
+analysis.addObject(mesh)
+mesh.MeshUtility = "cfMesh"
+mesh.CharacteristicLengthMax = "8 mm"
+doc.recompute()
+pipes = CfdMeshRefinement.makeCfdMeshRefinement(mesh, "PipeRefinement")
+pipes.ShapeRefs = [(air, pipe_faces)]
+pipes.RelativeLength = 0.1            # 0.8 mm cells in the pipes: ~7 across the 6 mm inlet
+if SPRAY:
+    nozzle = CfdMeshRefinement.makeCfdMeshRefinement(mesh, "NozzleRefinement")
+    nozzle.ShapeRefs = [(air, spray_faces)]
+    nozzle.RelativeLength = 0.0125    # 0.1 mm cells at the nozzle: ~9 across 0.91 mm
+doc.recompute()
+FreeCADGui.SendMsgToActiveView("ViewFit")
+FreeCADGui.activeDocument().activeView().viewIsometric()

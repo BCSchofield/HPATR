@@ -1,0 +1,23 @@
+# The best layout so far for the 0-30 um band (2026-10-23): the side jet carries the fines across to a wall-wide slot
+# outlet on the left wall, lowered to where they arrive (z = 150 mm); the big droplets fall to the floor. Starts from
+# the first scenario. The jet model's caveats apply (no recirculation; the jets pass through each other and the walls).
+
+base: first_scenario.yaml
+name: fines to the side
+
+inlets:
+  - name: side jet                           # 4 mm at 32,000 sccm: ~42 m/s, 26 mN, two-thirds of the spray's momentum
+    wall: right
+    centre_mm: !design {y: 100, z: 175}
+    shape: round
+    diameter_mm: !design 4
+    flow_sccm: !design 32000
+
+outlets:
+  - name: left outlet                        # the target: a slot the width of the wall, centred where the fines arrive
+    wall: left
+    centre_mm: !design {y: 100, z: 150}
+    shape: slot
+    width_mm: !design 80
+    length_mm: !design 200
+    long_side_along: y

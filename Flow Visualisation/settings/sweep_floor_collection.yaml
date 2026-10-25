@@ -1,0 +1,17 @@
+# Ben's floor-collection idea: where to put the collection area (x of its centre, 40 mm square) against the down
+# jet's flow. 5 x 3 = 15 runs; everything else as floor_collection.yaml.
+
+base: floor_collection.yaml
+name: floor collection, area position and down jet
+
+sweep:
+  - path: target.box_mm
+    values:
+      - {from: [90, 80, 0], to: [130, 120, 2]}
+      - {from: [100, 80, 0], to: [140, 120, 2]}
+      - {from: [110, 80, 0], to: [150, 120, 2]}
+      - {from: [120, 80, 0], to: [160, 120, 2]}
+      - {from: [130, 80, 0], to: [170, 120, 2]}
+    labels: [x 90-130, x 100-140, x 110-150, x 120-160, x 130-170]     # how the figures and tables name them
+  - path: inlets.1.flow_sccm
+    values: [0, 8000, 16000]

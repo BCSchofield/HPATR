@@ -1,0 +1,11 @@
+# Example sweep: the right inlet's size against its flow (3 x 3 = 9 runs), everything else as the first scenario.
+# Change the first scenario and this follows it. One run per combination; sweep_report.md and sweep.csv compare them.
+
+base: first_scenario.yaml
+name: inlet size and flow
+
+sweep:
+  - path: inlets.0.diameter_mm        # the first inlet's diameter
+    values: [4, 6, 10]
+  - path: inlets.0.flow_sccm
+    values: [8000, 16000, 32000]

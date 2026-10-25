@@ -1,0 +1,12 @@
+# Example sweep: tilt the nozzle towards the left outlet (the target), everything else as the first scenario.
+# The spray's own jet is the strongest flow in the chamber, so this asks how far aiming it moves each size.
+
+base: first_scenario.yaml
+name: nozzle tilt towards the outlet
+
+spray:
+  lean_toward_deg: !design 180        # lean towards the left wall (the outlet)
+
+sweep:
+  - path: spray.tilt_deg
+    values: [0, 15, 30, 45, 60]

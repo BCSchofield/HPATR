@@ -1,0 +1,75 @@
+# Flow Visualisation Phase 3a: droplets through the CfdOF chamber flow, with OpenFOAM's particle tracker
+# (PLAN.md, Phase 3a; Ben, 2026-10-25). Run it with run_droplets.py (README.md, "Droplets through the CFD flow").
+#
+# Units are in the names. Every number about the rig is tagged with how it is known:
+#   !measured   measured on the rig, or in a dated measurement
+#   !estimated  an estimate or a literature value, until it is measured
+#   !design     a design choice (Ben's, or a placeholder to sweep)
+# Untagged numbers are run controls.
+#
+# Coordinates are the CAD's, in mm (OpenFOAM works in metres). Chamber v1 has Y up.
+
+name: droplets baseline
+
+flow:                                        # the air flow the droplets move through (read only: it is copied)
+  case: ~/OpenFOAM/cfdof_cases/Chamber_v1_jet/case   # Ben's guide Part 6 run: jet refined, 1.0 mm spray hole
+  iteration: 2000                            # which saved iteration (every 100 is saved)
+  spray_patch: inlet                         # the CfdOF boundary names: the spray hole (droplets that go back up it
+  port_patches: [outlet]                     #   leave), and the port mesh (droplets that reach it stop there)
+  air_density_kg_m3: !estimated 1.204        # CfdOF's air, 20 degC
+
+chamber:
+  inside_mm: !design {x: [80, 270], y: [13, 705], z: [-297.6, -17.5]}   # the inside walls in the CAD (chamber v1)
+  up: y                                      # gravity points down this axis
+  # wall_names: {x_min: ..., x_max: ..., z_min: ..., z_max: ...}       # optional names for the side walls
+
+liquid:
+  density_kg_m3: !estimated 1070             # EcoFlex 00-30 datasheet, mixed; one part (not curing) may differ
+
+spray:
+  hole_mm: !design [163.7, 241, -212.5]      # the spray hole's exit in the CAD (centre of its bottom face)
+  direction: !design [0, -1, 0]              # firing straight down
+  droplets:
+    standoff_mm: !estimated 55               # hole to the shadowgraph window, along the jet: where they start
+    start_radius_mm: !estimated 5            # the spray's half-width there
+    cone_half_angle_deg: !estimated 10       # the widest a droplet's direction leans out from the jet's axis
+    speed_m_s: !estimated 6                  # mass balance, 4-8 m/s; Phase 5 measures it by size ([[um, m/s], ...])
+    sizes_um: {from: 2, to: 200, step: 2}    # the sizes fired, the same number of each
+    per_size: 600                            # droplets of each size (a multiple of 20: one per frame of the exposure);
+                                             #   one of each per time step, so the step is exposure / per_size: 600
+                                             #   gives 8.3 ms, the longest the fines tolerate (report.md, check 7)
+    distribution: data/ccd_131450_sizes.csv  # measured (import_sizes.py): how many of each size the spray makes
+    below_d_min_from_um: !estimated 10       # the counted-not-sized droplets are spread from here to d_min
+
+slide_test:                                  # the rig sequence (Ben, 2026-10-25); the warm-up is not modelled
+  exposure_s: !design 5                      # bin away, slides uncovered, spray on
+  settle_s: !design 300                      # wait after switch-off before the slides come out
+  flow_after_switch_off_s: !estimated [0, 2, 10]   # how long the circulation lasts after switch-off: bracketed,
+                                             #   one run each (the flow kept as it was, then still air)
+
+physics:
+  turbulent_gusts: [on, off]                 # the droplets jostled by the flow's turbulence (from k), and not: one run
+                                             #   each. Stuck where they touch a wall; one-way (they do not push the air)
+
+checks:                                      # extra OpenFOAM cases run alongside (Phase 3a Part C; report.md, Checks)
+  tracers: 1800                              # 0.5 µm droplets fed in like the spray, per gusts setting: they follow
+                                             #   the air, so any that touch a wall show the tracking's artefact
+                                             #   (fired in streams of per_size: rounded up to a multiple of it)
+  column_mm: [240, 690, -60]                 # every size let go from rest here, in still air and in a uniform
+  cross_flow_m_s: [0, 0, -0.2]               #   cross-flow: settling speeds and paths against Phase 1's integrator
+                                             #   (free air below and downstream: clear of the atomiser and the port)
+
+run:
+  frames:                                    # how often the droplets are saved (the ParaView animation's frames)
+    spray_every_s: 0.25
+    still_air_every_s: 10                    # also the still-air time step (nothing changes fast in still air)
+  parallel: 6                                # runs at once (the Mac has 15 cores; each run uses one)
+  runs_folder: ~/OpenFOAM/droplet_runs       # each run's folder goes here: its report, figures, ParaView views (double-
+                                             #   click paraview/<run>.command) and OpenFOAM cases. No spaces (OpenFOAM)
+  openfoam_bashrc: /Applications/OpenFOAM-v2606.app/Contents/Resources/etc/bashrc
+  paraview_bin: /Applications/ParaView-6.2.0.app/Contents/bin
+
+paraview:
+  slice_normal: z                            # the flow shown on a cut through the spray hole, square to this axis
+  flow_slices_normal: x                      # Ben's CfdOF views (hidden layers, and the split tab): cuts through the
+                                             #   hole and the port square to this axis, and streamlines

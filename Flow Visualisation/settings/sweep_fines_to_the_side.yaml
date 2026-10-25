@@ -1,0 +1,15 @@
+# For the 0-30 um band: the left outlet's size against the side jet's flow, everything else as fines_to_the_side.yaml.
+# 3 x 2 = 6 runs (the 16,000 sccm runs take ~3 min each: small droplets take long paths before they land).
+
+base: fines_to_the_side.yaml
+name: fines to the side, outlet size and side jet
+
+sweep:
+  - path: outlets.0
+    values:
+      - {name: left outlet, wall: left, centre_mm: {y: 100, z: 150}, shape: round, diameter_mm: 25}
+      - {name: left outlet, wall: left, centre_mm: {y: 100, z: 150}, shape: slot, width_mm: 40, length_mm: 100, long_side_along: y}
+      - {name: left outlet, wall: left, centre_mm: {y: 100, z: 150}, shape: slot, width_mm: 80, length_mm: 200, long_side_along: y}
+    labels: [round 25 mm, slot 100 x 40 mm, slot 200 x 80 mm]
+  - path: inlets.0.flow_sccm
+    values: [16000, 32000]

@@ -1,0 +1,90 @@
+# Flow Visualisation: the first scenario (PLAN.md, "The first scenario's defaults"; Ben, 2026-10-23).
+#
+# Units are in the names. Every number about the rig is tagged with how it is known:
+#   !measured   measured on the rig, or in a dated measurement
+#   !estimated  an estimate or a literature value, until it is measured
+#   !design     a design choice (Ben's, or a placeholder to sweep)
+# The report lists them all. Untagged numbers are run controls.
+#
+# Coordinates: x along the 300 mm length (0 = the left wall with the outlet, 300 = the right wall with the inlet),
+# y across the 200 mm (0 = the front wall), z up from the floor. Walls: left, right, front, back, floor, lid.
+# A port's centre is given on its wall in the wall's two coordinates (e.g. y and z on the left and right walls).
+
+name: first scenario
+
+chamber:
+  size_mm: !design [300, 200, 350]          # Fusion model, Ben 2026-10-23 (about)
+
+gas:                                         # the chamber's air (the 5 bar is the supply side)
+  temperature_C: !estimated 20
+  pressure_Pa: !estimated 101325
+  standard_density_kg_m3: !measured 1.184    # the Alicat's standard (air, 25 degC, 1 atm): sccm -> kg/s
+
+liquid:
+  density_kg_m3: !estimated 1070             # EcoFlex 00-30 datasheet, mixed; one part (not curing) may differ
+
+inlets:
+  - name: right inlet
+    wall: right
+    centre_mm: !design {y: 100, z: 175}      # placeholder: centre of the wall, mid-height
+    shape: round                             # round, or slot (then width_mm, length_mm, long_side_along: y or z)
+    diameter_mm: !design 6                   # placeholder
+    flow_sccm: !estimated 8000               # Ben: "probably about 8,000 sccm"
+    # direction: [-1, 0, 0]                  # square to the wall unless given (must point into the chamber)
+
+outlets:
+  - name: left outlet
+    wall: left
+    centre_mm: !design {y: 100, z: 175}      # placeholder
+    shape: round
+    diameter_mm: !design 25                  # placeholder
+
+spray:
+  nozzle_mm: !design [150, 100, 350]         # top centre (Ben)
+  tilt_deg: !design 0                        # from straight down
+  lean_toward_deg: !design 0                 # which way it leans: 0 = the right wall (+x), 90 = the back, 180 = the left
+  gas_flow_sccm: !measured 8995              # CCD run 131450 (9,000 set, 100 rpm, 4,000 sps), its measured mean
+  orifice_mm: !measured 1.2
+  orifice_cd: !measured 0.527                # Cd test 2026-10-15 (0.5 / 0.8 mm inserts: 0.84 / 0.81; its residue / bore check pending)
+  liquid_flow_ml_min: !measured 11.389       # 131450's syringe flow (for the liquid-momentum note only)
+  droplets:
+    standoff_mm: !estimated 55               # orifice exit to the shadowgraph image centre: Ben ~55 mm (2026-10-23); measure on the rig day
+    start_radius_mm: !estimated 5            # the spray's half-width there
+    cone_half_angle_deg: !estimated 10       # direction at the disc's edge
+    speed_m_s: !estimated 6                  # mass balance, 4-8 m/s; Phase 5 measures it by size ([[um, m/s], ...])
+    sizes_um: {from: 2, to: 200, step: 2}    # the sizes fired (2-8 um: no measured count, shown but not weighted)
+    per_size: 200
+    distribution: data/ccd_131450_sizes.csv  # measured (import_sizes.py); none = no purity
+    below_d_min_from_um: !estimated 10       # the counted-not-sized droplets go in spread from here to d_min
+                                             # (~10 um: the smallest detected are ~2 px before calibration)
+
+target:
+  outlet: left outlet                        # Ben; or box_mm: {from: [x, y, z], to: [x, y, z]}
+  band_um: !design [0, 30]                   # Ben, 2026-10-23: only the droplets under 30 um (was 30-60)
+
+planes:                                      # where each droplet crosses these is recorded (the headline)
+  - {axis: z, at_mm: 25, name: near the floor}   # the first plane is the report's headline: below any inlet jet
+  - {axis: z, at_mm: 175, name: inlet height}
+
+physics:
+  gravity: true
+  drag: schiller_naumann                     # or stokes
+  entrainment: true                          # the jets' inflow (part of the textbook jet)
+  jets:                                      # Hussein, Capp & George 1994; plane jet: Gutmark & Wygnanski 1976
+    round_B: !estimated 5.8
+    round_S: !estimated 0.094
+    slot_B: !estimated 2.4
+    slot_S: !estimated 0.10
+  random_walk:                               # off by default (Phase 3 takes the turbulence from the flow solution)
+    on: false
+    intensity: !estimated 0.25               # rms / mean gas speed
+    time_scale_s: !estimated 0.005
+
+run:
+  step_mm: 0.5                               # the most a droplet moves in one step
+  max_step_s: 0.01
+  max_time_s: 30
+  seed: 1
+  compare_without_inlets: true               # the same droplets with the inlets off: the deflection
+  paths_per_size: 12
+  path_sizes_um: [2, 6, 10, 14, 18, 22, 26, 30, 60, 150]

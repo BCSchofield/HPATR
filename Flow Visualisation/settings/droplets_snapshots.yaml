@@ -1,0 +1,26 @@
+# Phase 3a Part D: the snapshot check (PLAN.md, Phase 3a, Part D). The baseline's droplets through four snapshots of
+# the flow, then compared: if the deposit maps agree, one steady snapshot is enough; if not, the time-dependent solver
+# (pimpleFoam) moves up the list. Run it with run_droplets.py (README.md, "Droplets through the CFD flow").
+#
+# A sweep: everything comes from the base file; each entry below changes only what it names (mappings merge). The
+# same file shape runs one droplets setting through each orifice's flow later (Phase 2's scripted flows).
+
+base: droplets_baseline.yaml
+name: droplets snapshots
+
+sweep:
+  show: gusts_on_after_2s                    # the run the comparison's maps and size curves show
+  against: iteration 2000                    # the reference (the baseline's own iteration)
+  tolerance: {floor_pp: 5, centre_mm: 10, spread_mm: 10, moved_pct: 10}   # beyond the droplet-count noise but within
+                                             #   these: "close"; beyond both: "differs" (comparison.md says how)
+  runs:
+    # Ben's Part 6 case (jet refined, 220,433 cells): a steady solver's iterations are not time, but these wander
+    # because the jet never settles (residuals ~1e-2), so their spread stands in for the flow's swaying
+    - {label: iteration 1000, flow: {iteration: 1000}}
+    - {label: iteration 1500, flow: {iteration: 1500}}
+    - {label: iteration 2000, flow: {iteration: 2000}}
+    # Ben's Part 5 case: the same chamber and hole, the jet not refined (85,535 cells; its first ~100 mm smeared)
+    - {label: Part 5 (jet not refined), flow: {case: ~/OpenFOAM/cfdof_cases/Chamber_v1/case, iteration: 2000}}
+
+run:
+  parallel: 10                               # the six runs and four checks of each entry at once (15 cores)
