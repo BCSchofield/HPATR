@@ -14,8 +14,9 @@ THE MODEL (docs/notes/2026-10-13_phase12_physical_variables.md, "Follow-up: the 
               displacement, so in steady running it IS the silicone leaving the nozzle)
     h         (d/2)(1 - sqrt(alpha)): the film on the wall for an annular exit (gas core, silicone film)
 Assumes separated, frozen flow, the gas choked in its share, 20 degC; P0 is read upstream (Alicat), so the
-nozzle pressure is lower and alpha is underestimated. Cd is unknown until each insert is measured gas-only
-(AI/Real_Data_Code/orifice_cd.py, docs/ORIFICE_CD_TEST.md); until then Cd = 1 and the outputs say so.
+nozzle pressure is lower and alpha is underestimated. Cd: since 2026-10-26 ONE value, 0.85, for every insert
+(orifice_cd.json 'default_cd'; Ben): the exits measured 0.82-0.86 gas-only once the line + aerator-hole loss is
+taken out (0.5 / 0.8 / 1.2 mm, docs/ORIFICE_CD_TEST.md). A per-insert 'cd' in the table still overrides it.
 """
 from __future__ import annotations
 
@@ -30,6 +31,7 @@ T_K = 293.15                 # 20 degC
 GASES = {"air": (1.4, 287.05), "nitrogen": (1.4, 296.8), "co2": (1.29, 188.9)}
 CD_FILE = Path(__file__).with_name("orifice_cd.json")
 IDEAL = "ideal (not measured)"
+DEFAULT_SOURCE = "0.85 for every insert"   # used when orifice_cd.json has no 'default_note'
 DIAMETER_TOL_MM = 0.01
 LENGTH_TOL_MM = 0.05
 
@@ -66,8 +68,21 @@ def gas_only_flux(p0_bar: float, gamma: float, R: float, T: float = T_K, pa_bar:
 
 # ---- discharge coefficients --------------------------------------------------------------------------------
 
+def load_default(path: Path | None = None) -> tuple:
+    """(Cd, source) used for every insert without its own measured Cd: orifice_cd.json's 'default_cd' and
+    'default_note'; (1.0, IDEAL) if the file or the key is missing."""
+    try:
+        data = json.loads(Path(path or CD_FILE).read_text(encoding="utf-8"))
+        cd = data.get("default_cd")
+        if cd is None:
+            return 1.0, IDEAL
+        return float(cd), str(data.get("default_note") or DEFAULT_SOURCE)
+    except (OSError, ValueError, TypeError, AttributeError):
+        return 1.0, IDEAL
+
+
 def load_cd(path: Path | None = None) -> list[dict]:
-    """The inserts of orifice_cd.json ([] if it is missing or unreadable: every insert is then ideal)."""
+    """The inserts of orifice_cd.json ([] if it is missing or unreadable: every insert then takes the default)."""
     try:
         data = json.loads(Path(path or CD_FILE).read_text(encoding="utf-8"))
         return [e for e in data.get("inserts", []) if isinstance(e, dict)]
@@ -75,12 +90,15 @@ def load_cd(path: Path | None = None) -> list[dict]:
         return []
 
 
-def lookup_cd(d_mm: float | None, length_mm: float | None = None, inserts: list | None = None) -> tuple:
+def lookup_cd(d_mm: float | None, length_mm: float | None = None, inserts: list | None = None,
+              default: tuple | None = None) -> tuple:
     """(Cd, source) for an insert: matched by diameter (within 0.01 mm) and, when both the run and the entry
-    have a length, by length too (within 0.05 mm). No match, or cd null: (1.0, 'ideal (not measured)')."""
+    have a length, by length too (within 0.05 mm). No match, or cd null: the default (load_default(): 0.85 for
+    every insert since 2026-10-26)."""
     inserts = load_cd() if inserts is None else inserts
+    default = load_default() if default is None else default
     if d_mm is None:
-        return 1.0, IDEAL
+        return default
     found = []
     for e in inserts:
         try:
@@ -95,7 +113,7 @@ def lookup_cd(d_mm: float | None, length_mm: float | None = None, inserts: list 
     # a length match first, then a measured Cd
     found.sort(key=lambda e: (not (e.get("length_mm") is not None and length_mm is not None), e.get("cd") is None))
     if not found or found[0].get("cd") is None:
-        return 1.0, IDEAL
+        return default
     e = found[0]
     return float(e["cd"]), ("measured " + str(e.get("measured") or "")).strip()
 
@@ -139,8 +157,9 @@ EXPLANATION = (
     "displacement, so in steady running Q_L is the silicone leaving the nozzle.",
     "Film h = (d/2)(1 - sqrt(alpha)): the silicone film on the wall if the exit is annular (gas core, film).",
     "Assumptions and caveats:",
-    "- Cd 'ideal (not measured)' = 1.0 until the insert is measured gas-only (orifice_cd.json, "
-    "docs/ORIFICE_CD_TEST.md); a Cd of 0.8 would raise alpha by 25%.",
+    "- Cd = 0.85 for EVERY orifice size (since 2026-10-26): the 0.5 / 0.8 / 1.2 mm exits measured 0.82-0.86 "
+    "gas-only once the line and aerator-hole loss is taken out (orifice_cd.json, docs/ORIFICE_CD_TEST.md). "
+    "Alpha scales as 1/Cd, so +-0.03 in Cd moves alpha by about +-4%.",
     "- P0 is read upstream at the Alicat: line and bubbler losses make the nozzle pressure lower, so alpha is "
     "underestimated.",
     "- Separated, frozen flow with the gas choked in its share; the real exit pattern (annular, slug, bubbly) is "

@@ -167,12 +167,14 @@ def test_the_film_figure_and_the_model_diagram_are_on_slides_in_order(logged):
     assert len(ws._images) == 1
     text = [c.value for row in ws.iter_rows() for c in row if isinstance(c.value, str)]
     assert any(t.startswith("How the gas flux and the silicone film are estimated") for t in text)
-    assert any("ideal (not measured)" in t for t in text)
+    assert any("0.85 for every insert" in t for t in text)
+    assert any("Cd = 0.85 for EVERY orifice size" in t for t in text)
     rows = [dict(zip(head, [c.value for c in r])) for r in ws.iter_rows(min_row=2, max_row=28)]
     assert len(rows) == 27 and all(r["film h (um)"] and 0 < r["gas share alpha"] < 1 for r in rows)
     report = (logged["root"] / "out" / "taguchi_report.md").read_text(encoding="utf-8")
     assert "## Silicone film at the exit" in report and "](figures/fig_orifice_model.png)" in report
-    assert "27 of 27 runs have a film estimate. Cd: ideal (not measured)" in report
+    assert "27 of 27 runs have a film estimate. Cd: 0.85 for every insert" in report
+    assert "**The orifice Cd is about 0.85 for every size.**" in report
 
 
 def test_a_figure_that_was_not_drawn_drops_its_slide(world, tmp_path):

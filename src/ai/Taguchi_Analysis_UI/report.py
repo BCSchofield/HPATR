@@ -582,8 +582,13 @@ def film_section(results, figs: set[str]) -> str:
     lines.append(f"{len(have)} of {len(rows)} runs have a film estimate. Cd: {', '.join(cds)}"
                  + (" (1.0 for every insert until each is measured gas-only, `orifice_cd.json`)"
                     if cds == ["ideal (not measured)"] else "") + ".\n")
+    lines.append("> **The orifice Cd is about 0.85 for every size.** Gas-only tests (2026-10-26, "
+                 "`docs/ORIFICE_CD_TEST.md`) gave the 0.5 / 0.8 / 1.2 mm exits 0.85 / 0.86 / 0.82 once the "
+                 "pressure lost in the line and the aerator holes upstream was taken out, so ONE Cd, 0.85, is used "
+                 "for every insert (`orifice_cd.json`, default_cd). α scales as 1/Cd: ±0.03 in Cd is about ±4% in "
+                 "α. Runs analysed before 2026-10-26 used 1.0.\n")
     lines.append("> An estimate, not a measurement, and a covariate, not a factor (made from the gas, the "
-                 "pressure and the orifice). Caveats: a Cd of 0.8 would raise α by 25%; P0 is read upstream at the "
+                 "pressure and the orifice). Caveats: P0 is read upstream at the "
                  "Alicat, so the nozzle pressure is lower and α is underestimated; it assumes separated, frozen "
                  "flow with the gas choked in its share, and the real exit pattern (annular, slug, bubbly) is not "
                  "observed. No-spray runs are plotted, not fitted.\n")

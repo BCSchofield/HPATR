@@ -3,9 +3,18 @@
 Written 2026-10-13, for later in the week. It measures how much gas each exit orifice insert really
 passes compared with an ideal orifice (Cd). The analysis app uses Cd to split the orifice between gas and
 silicone, giving the gas share, the silicone speed and the film thickness at the exit
-(`docs/notes/2026-10-13_phase12_physical_variables.md`). Until an insert is measured, the app uses 1.0
-and says so. Cd = 1.0 overstates the gas capacity, which makes the gas share read low and the silicone
-film read thick.
+(`docs/notes/2026-10-13_phase12_physical_variables.md`). Cd = 1.0 overstates the gas capacity, which makes
+the gas share read low and the silicone film read thick.
+
+**RESULT (2026-10-26): Cd is about 0.85 for every size, and the app uses 0.85 for ALL inserts** (Ben;
+`default_cd` in `src/ai/Taguchi_Analysis_UI/orifice_cd.json`; no re-analysis of earlier runs). The 1.2 mm
+insert had read 0.53-0.55 because its bore was undersize (Ben re-drilled it to 1.2 mm) and because the gas
+also passes the aerator holes upstream (18 x 0.3 mm + 1 x 0.4 mm, only 1.24x the 1.2 mm exit's area). A
+no-exit run (Orifice box 2mm as a label, Notes `LINE LOSS no exit holes only`, 1.195 barA at 12,000 sccm)
+measured the line + holes as an orifice of ~1.03 mm2. Solving each step for the pressure behind the exit gave
+exit-only Cd 0.85 / 0.86 / 0.82 for 0.5 / 0.8 / 1.2 mm (bare 1.8 mm exit 0.59, uncertain). orifice_cd.py
+does not yet do this series correction (it uses a fixed 1.01325 bar ambient and a kQ^2 line loss); the
+calculation was a one-off script.
 
 ## What it can and cannot measure
 

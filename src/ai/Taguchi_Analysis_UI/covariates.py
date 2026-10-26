@@ -42,7 +42,7 @@ quantity; exit_velocity_std = G / rho_gas is only its standard-density equivalen
 
 SILICONE FILM AT THE EXIT (2026-10-13, orifice.py): from G and the camera-window upstream pressure P0, the gas
 share of the orifice area alpha = G / G_gas(P0) (G_gas = Cd x the ideal gas-only flux; Cd from
-orifice_cd.json, 1.0 until measured), the silicone speed u_L = Q_L / ((1 - alpha) A) and, for an annular exit,
+orifice_cd.json: 0.85 for every insert since 2026-10-26), the silicone speed u_L = Q_L / ((1 - alpha) A) and, for an annular exit,
 the film thickness h = (d/2)(1 - sqrt(alpha)). Only with a camera window (P0 and G from the same 13 s). Also a
 covariate, not a factor. On the CCD day the film ordered atomised fraction best of all (Spearman -0.90 over
 the 31 spraying runs; C7/C8 had the thinnest film, ~126 um).

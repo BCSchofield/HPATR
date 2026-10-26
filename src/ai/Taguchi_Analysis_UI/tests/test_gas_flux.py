@@ -211,17 +211,22 @@ def test_gas_properties_from_the_gas_tag():
 def test_cd_lookup():
     assert [e["diameter_mm"] for e in orifice.load_cd()] == [0.5, 0.8, 1.2, 1.8]   # the shipped file
     assert all(e["cd"] is None for e in orifice.load_cd())
-    assert orifice.lookup_cd(1.2, None) == (1.0, orifice.IDEAL)                   # cd null: ideal
+    default = orifice.load_default()                                               # the shipped file: 0.85, every size
+    assert default[0] == 0.85 and default[1].startswith("0.85 for every insert")
+    assert orifice.lookup_cd(1.2, None) == default                               # cd null: the default
+    assert orifice.lookup_cd(0.3, None) == default and orifice.lookup_cd(None) == default   # any size
+    ideal = (1.0, orifice.IDEAL)
     table = [{"diameter_mm": 1.2, "length_mm": 3.0, "cd": 0.82, "measured": "2026-10-15"},
              {"diameter_mm": 1.2, "length_mm": 5.0, "cd": 0.78, "measured": "2026-10-16"},
              {"diameter_mm": 0.8, "length_mm": None, "cd": 0.85, "measured": "2026-10-15"}]
     assert orifice.lookup_cd(1.2, 5.02, table) == (0.78, "measured 2026-10-16")    # diameter and length
     assert orifice.lookup_cd(1.2, 3.0, table) == (0.82, "measured 2026-10-15")
-    assert orifice.lookup_cd(1.2, 4.0, table) == (1.0, orifice.IDEAL)              # no insert of that length
+    assert orifice.lookup_cd(1.2, 4.0, table, ideal) == ideal                      # no insert of that length
     assert orifice.lookup_cd(0.8, 6.0, table) == (0.85, "measured 2026-10-15")     # the entry has no length
     assert orifice.lookup_cd(0.805, None, table) == (0.85, "measured 2026-10-15")  # within 0.01 mm
-    assert orifice.lookup_cd(1.8, None, table) == (1.0, orifice.IDEAL)             # not in the table
-    assert orifice.lookup_cd(1.2, None, []) == (1.0, orifice.IDEAL)
+    assert orifice.lookup_cd(1.8, None, table, ideal) == ideal                     # not in the table
+    assert orifice.lookup_cd(1.8, None, table) == default
+    assert orifice.lookup_cd(1.2, None, [], ideal) == ideal
 
 
 def test_the_camera_window_gives_the_film(tmp):
@@ -231,9 +236,9 @@ def test_the_camera_window_gives_the_film(tmp):
     assert c.film_um is None and "no camera window" in c.film_note             # the fakes' short log
     add_pressure_log(run, 7000, 5370, 9.18)
     cv.with_operating(c, operating.operating_point(run / "run_summary.xlsx", 7000))
-    assert c.gas_model == "nitrogen" and c.cd == 1.0 and c.cd_source == orifice.IDEAL and c.choked
-    assert c.p0_bar == pytest.approx(9.18, abs=0.02) and c.gas_share == pytest.approx(0.245, abs=0.005)
-    assert c.film_um == pytest.approx(126, abs=2) and c.u_liquid_m_s == pytest.approx(0.96, abs=0.02)
+    assert c.gas_model == "nitrogen" and c.cd == 0.85 and c.cd_source.startswith("0.85") and c.choked
+    assert c.p0_bar == pytest.approx(9.18, abs=0.02) and c.gas_share == pytest.approx(0.288, abs=0.006)
+    assert c.film_um == pytest.approx(116, abs=2) and c.u_liquid_m_s == pytest.approx(1.02, abs=0.02)
 
 
 def test_no_spray_runs_are_plotted_not_fitted():

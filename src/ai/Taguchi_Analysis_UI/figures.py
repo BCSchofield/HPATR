@@ -447,7 +447,9 @@ def fig_film_thickness(results, out_dir: Path) -> list[Path]:
     """Each headline response against the silicone film thickness at the exit (orifice.py, annular estimate)."""
     cds = {r.context.cd_source for r in results.runs if r.context and r.context.film_um is not None}
     cd = ("Cd = 1 (ideal, not measured)" if cds == {"ideal (not measured)"} else
-          "Cd as measured" if "ideal (not measured)" not in cds else "Cd measured for some inserts, 1 for others")
+          "Cd 1 for some inserts" if "ideal (not measured)" in cds else
+          "Cd = 0.85 for every orifice size (measured 0.82–0.86)" if all(c.startswith("0.85") for c in cds) else
+          "Cd as measured")
     return _by_orifice(results, out_dir, "film_um", "fig_film_thickness",
                        "Silicone film thickness at the exit, annular estimate (µm)",
                        f"An estimate, not a measurement: h = (d/2)(1 − √α), α = measured gas flux / gas-only "

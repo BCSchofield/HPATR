@@ -828,7 +828,8 @@ since the length is not a factor and its effect would be mixed into the others.
 camera-window P0, G_gas = Cd · P0 · √(γ/(R T)) · (2/(γ+1))^((γ+1)/(2(γ−1))) when choked (P0 ≥ 1.89 Pa; the
 subsonic isentropic form below), 20 °C, γ and R from the *Gas* tag, is the gas share α of the orifice area.
 Then u_L = Q_L / ((1 − α) A) (syringe flow) and, for an annular exit, h = (d/2)(1 − √α). Cd per insert from
-`orifice_cd.json` (1.0, "ideal (not measured)", until measured gas-only). A covariate (`film_um`), with
+`orifice_cd.json`: **0.85 for every orifice size since 2026-10-26** (exits measured 0.82–0.86 gas-only; before
+that 1.0, "ideal (not measured)"). A covariate (`film_um`), with
 `fig_film_thickness`, the diagram `fig_orifice_model`, a report section, the workbook sheet *Silicone film at
 exit* (diagram and maths beside the table) and deck slides, in both analyses. CCD day: Spearman −0.90 with
 atomised fraction over 31 spraying runs. P0 is read upstream, so α is underestimated; separated, frozen flow

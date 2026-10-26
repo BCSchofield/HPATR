@@ -93,7 +93,8 @@ DEFINE = {
                  "choked flux); the share of the orifice area the gas occupies.",
     "film": "Film thickness h: (d/2)(1 − √α), the silicone film on the orifice wall if the exit is annular; an "
             "estimate, not a measurement.",
-    "Cd": "Cd (discharge coefficient): real / ideal gas-only flow of an insert; 1.0 until measured gas-only.",
+    "Cd": "Cd (discharge coefficient): real / ideal gas-only flow of an insert; about 0.85 for every size "
+          "(0.82–0.86 measured gas-only, 2026-10-26), so 0.85 is used for all inserts.",
     "no spray": "No spray: atomised fraction below the Settings threshold (default 2%); plotted, not fitted.",
     "r": "r (Pearson): linear correlation, −1 to +1.",
     "count CV": "Droplet-count CV: SD / mean of the droplets per frame (all droplets).",

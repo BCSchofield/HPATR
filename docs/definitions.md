@@ -540,15 +540,22 @@ spraying runs); C7/C8 had the thinnest film of the day.
 
 **Cd (discharge coefficient)**, per insert, gas only, in `src/ai/Taguchi_Analysis_UI/orifice_cd.json`
 (written by `AI/Real_Data_Code/orifice_cd.py`, `docs/ORIFICE_CD_TEST.md`). Looked up by diameter (within
-0.01 mm) and, when both the run and the entry record one, by length (within 0.05 mm). Until an insert is
-measured its Cd is 1.0 and the outputs say **ideal (not measured)**; a Cd of 0.8 would raise α by 25%.
+0.01 mm) and, when both the run and the entry record one, by length (within 0.05 mm).
 
-| Insert d (mm) | Length (mm) | Cd | Measured |
+**Since 2026-10-26 the Cd is about 0.85 for every orifice size, and 0.85 is used for ALL inserts** (Ben;
+`default_cd` in `orifice_cd.json`; the outputs say "0.85 for every insert (exits measured 0.82-0.86,
+2026-10-26)"). Gas-only tests, with the pressure lost in the line and the aerator holes (18 × 0.3 mm + 1 ×
+0.4 mm) taken out using a no-exit run, gave each exit's own Cd:
+
+| Insert d (mm) | Length (mm) | Exit-only Cd | Measured |
 |---|---|---|---|
-| 0.5 | – | not measured (1.0 used) | – |
-| 0.8 | – | not measured (1.0 used) | – |
-| 1.2 | – | not measured (1.0 used) | – |
-| 1.8 | – | not measured (1.0 used) | – |
+| 0.5 | 7.5 | 0.85 | 2026-10-15 |
+| 0.8 | 7.5 | 0.86 | 2026-10-15 |
+| 1.2 (re-drilled to 1.2 mm) | 7.5 | 0.82 | 2026-10-26 |
+| 1.8 (bare bubbler exit) | – | 0.59, uncertain (0.09 bar across it); 0.85 used | 2026-10-26 |
+
+α scales as 1/Cd, so ±0.03 in Cd is about ±4% in α. A per-insert `cd` in the table overrides the default.
+Runs analysed before 2026-10-26 used Cd 1.0 ("ideal (not measured)") and were not re-analysed.
 
 Caveats: P0 is read upstream at the Alicat, so the nozzle pressure is lower and α is underestimated; the model
 assumes separated, frozen flow with the gas choked in its share; the real exit pattern (annular, slug, bubbly)
