@@ -386,6 +386,114 @@ planned and dropped the same day:
 
 ---
 
+## Phase 2a. The scripted flow builder ("plan 1"): one command, a flow per orifice size — PLAN, awaiting Ben's go
+
+**Why.** Ben (2026-10-25): "setting this all up so we can do many runs of this with different orifice sizes, and see
+what happens". Today each flow is clicked through CfdOF by hand. The droplets side is ready for many flows (Phase 3a
+Part D: a sweep file and `comparison.md`), and Part D showed what the flows need: one steady solve per orifice is
+enough (iterations 1000-2000 give the same deposit), but the mesh matters (the Part 5 mesh moved the 0-30 µm band's
+floor share by 13-19 points; its tracers land 99 % against 62 %). So the builder also carries Phase 2's first steps:
+the near-wall layer (fix (b) of the tracking artefact) and the grid check.
+
+**What it does.** One settings file lists the orifice sizes; one command builds, meshes and solves a flow for each,
+each a normal CfdOF case Ben can open in FreeCAD (and in ParaView), then writes the droplets sweep file that runs
+the same droplets through them all and compares them.
+
+**Agreed order (Ben, 2026-10-25):** (1) Ben makes the new CAD, the tip pointed and undrilled; (2) together, a guided
+click-through in FreeCAD / CfdOF on it, for one size: the bore drilled (a cylinder fused to the air volume), the
+better mesh (hole refinement, jet cones, the floor layer), the boundaries, the solve, written up as a new part of
+`cfdof/CFDOF_GUIDE.md` and checked with the droplets tool (the tracer check), so Ben knows what each step does; (3)
+then the code, Parts A-D below, repeating those steps for every size, with Ben's hand-made case as the template the
+script must reproduce.
+
+**The hole in the CAD is the momentum-equivalent hole, not the bore.** The solver is incompressible, so the real
+exit (Mach 0.7 gas-only, choked once the liquid narrows it) goes in as a larger hole at the chamber air's density
+with the same gas mass flow and the same momentum: d_eq = sqrt(4 ṁ² / (π ρ_air J)), speed J / ṁ (Phase 2 step 4;
+Phase 1's `physics.jet_exit` gives J). At 8,995 sccm, gas-only: 0.5 mm insert 78.6 mN → d_eq 0.65 mm; 0.8 mm
+53.9 mN → 0.79 mm; 1.2 mm 40.1 mN → 0.91 mm. With the liquid narrowing the 1.2 mm (CFD_LOG section 7, if all at the
+orifice): ~71 mN → 0.69 mm. Ben's current 1.0 mm hole gives ~33 mN. Each orifice is given either as a bore and Cd
+(gas-only) or as a run's measured upstream pressure and gas flow (the effective area, from run_summary); the script
+works out d_eq and cuts that.
+
+**What the CAD needs (Ben, this week).**
+1. The air volume as one clean solid, as the current STEP (Part → Check Geometry: no errors). Y up; the same origin
+   as now if possible, so the settings' coordinates carry over (else the new ones).
+2. Everything in the chamber during the exposure: atomiser body, rod, nozzle block, arm, port stub. Flat slides can
+   stay out (their positions go in the settings with the slide comparison).
+3. The nozzle tip's real outside shape. If the inserts differ outside, say so.
+4. **The orifice tip pointed and undrilled** (Ben's POINTED insert profile closed to a point), with the tip point and
+   the bore axis given. The bore is drilled from the tip point up the axis, 7.5 mm as the real inserts, at the size
+   asked (by hand in FreeCAD in the guided session, then by the script); its top face, where the real bore leaves
+   the mixing chamber, is the inlet. Ben's real inserts are not one blank drilled: each tip's flank is drawn to meet
+   its own bore at the same exit plane, so the lip angle differs slightly by size. Drilling one blank instead raises
+   the lip by a fraction of a mm on wider bores: invisible in the chamber flow (the jet is set by its gas flow and
+   push); the lip's effect on the silicone film comes in through the measured droplet sizes. If ever doubted: one
+   size built both ways, through `comparison.md` (Ben, 2026-10-25: drill the blank).
+5. Anything that will vary between designs later (Phase 3's cross-stream inlets): left out, or named, so the script
+   can add it from the settings.
+6. The STEP (and the FreeCAD file) in a new folder in `~/OpenFOAM/cfdof_cases/` (no spaces).
+
+**Steps (Parts, each stopped and reported).**
+- **Part A, can CfdOF be scripted? (a spike, scratch only).** FreeCAD's command-line Python (`freecadcmd`, installed
+  with the CfdOF add-on) opens Ben's `Chamber_v1_jet.FCStd`, rewrites its case, meshes and runs 50 iterations
+  without the GUI. Done when the mesh matches his clicked one (cell count, patch names). If CfdOF will not run
+  headless: write the OpenFOAM case directly (cfMesh / snappyHexMesh dictionaries from Python); the cases then open
+  in ParaView but not in CfdOF (Ben's choice, below).
+- **Part B, the builder, on today's CAD.** A settings file (`settings/flows_orifices.yaml`, Phase 1's style, every
+  value tagged measured / estimated / design) and `build_flows.py`:
+  - geometry: the bore (d_eq wide, 7.5 mm up from the tip point) fused onto the air volume, as in the guided
+    session; on today's STEP (to test before the new CAD), its 1.0 mm stub cut out first;
+  - boundaries as now: the stub's top face the inlet (the gas flow, 5 % turbulence, length scale 0.07 d_eq), the
+    port's end 0 Pa, every other face a wall;
+  - mesh as Ben's Part 6: 8 mm base, the hole ~10 cells across d_eq, the two jet cones (0.5 mm for the first 40 mm,
+    2 mm to the floor), the port 2 mm;
+  - solve: simpleFoam, k-ω SST, 2,000 iterations (Part D: enough), on 10 cores;
+  - out: `~/OpenFOAM/cfdof_cases/<study>/<orifice label>/` (the `.FCStd` and `case/`), a `flow.json` (d_eq, speed,
+    J, cells, residuals, gas in = out), and the droplets sweep file for these flows.
+  - **Check: it reproduces Ben's Part 6 case** at 1.0 mm (same cells within a few %, mean air speed 0.55 m/s; the
+    droplets through both "the same" in `comparison.md`) before any other size.
+- **Part C, the near-wall layer (fix (b)).** Thin cell layers on the floor (cfMesh boundary layers: first cell well
+  under the ~0.6 mm stagnation layer under the jet, growing outwards; the walls too if cheap). Check with the
+  droplets tool's tracer check: tracers landing on the floor with gusts off, 62 % now; target under ~10 % (what the
+  parallel-air prototype reached). If it does not fall, stop and report (no fix (a): Ben, dropped). Also: the jet
+  against the textbook (Phase 1's decay), and the cost in cells and minutes.
+- **Part D, the orifice sweep and the grid check.** The sizes Ben chooses (below), built and solved; the droplets
+  sweep through them all; `comparison.md` across sizes. One size again on a finer mesh (the jet cones and the floor
+  layer halved) for the grid check: the droplets "the same" or "close" by `comparison.md`'s measures.
+
+**Run time (estimated, measured in Part B):** ~2 min of meshing and ~7-10 min of solving a size at today's mesh
+(220,000 cells), more with the floor layer; the droplets ~1.5 min a size. Three sizes, the grid check and the
+droplets: about an hour, unattended.
+
+**Checks (all Parts).** Gas in = gas out; the inlet's area and flow give the planned d_eq and speed; residuals at
+the usual plateau (~1e-2); the script's 1.0 mm case reproduces Part 6; tracers on the floor fall with the layer; the
+grid check agrees; every flow opens in CfdOF and ParaView.
+
+**Decisions for Ben (before Part B):**
+1. **Which orifice sizes:** the CCD day's inserts (12 Oct: 0.5, 1.2 and 1.8 mm, ten runs each, and one at 0.8 mm),
+   others? The 1.8 mm has no measured Cd yet (gas-only needs one; its measured pressure does not).
+2. **How each becomes a hole:** gas-only (bore and Cd), the measured effective area (the liquid's narrowing), or both
+   as a bracket. Recommended: both, until the run_summary logs (the pressure before the liquid arrives) or one
+   gas-only reading on the rig separate the narrowing from upstream losses.
+3. **The gas flow:** the CCD's centre (9,000 sccm) for every size, or its three levels (7,000 / 9,000 / 11,000
+   sccm, measured within 0.5 % of the setpoint on the day) at each size (3x the flows)?
+4. **The liquid's momentum** (as much mass as the gas near the nozzle): still left out (Phase 2 step 4). Fine for a
+   first sweep?
+5. **If CfdOF will not script (Part A):** cases written directly (ParaView only), or keep clicking the flows by hand
+   and script only the rest?
+
+**Not in this plan:** compressible or time-dependent solves, a second turbulence model (Phase 2's other checks), the
+cross-stream designs (Phase 3), the slide comparison.
+**Later (Ben liked it, 2026-10-25):** build a run's flow straight from its `run_summary.xlsx` (insert, measured gas
+flow, pressure while spraying), for one run or a whole day; each distinct insert x gas x feed needs its own flow (16 on
+the CCD day, ~10 ignoring the feed), and the droplets would take that run's measured sizes.
+
+**Time:** Part A half a day; Parts B-C two to three days; Part D an afternoon (mostly unattended). Waits for Ben's go
+on Part A (which does not need the new CAD); Parts B-D are tested on today's CAD and switched to the new one when it
+comes.
+
+---
+
 ## Phase 3a. Droplets through the CfdOF baseline: first pass (Mac) — Parts A–D done (Ben's go 2026-10-25); stopped for review
 
 **Why.** The first answer, in the real chamber's geometry, to "where does each size go with just the spray running", and
@@ -612,9 +720,9 @@ the general tool for that:
   artefact's upper bound; 8 in still air), side walls 30 %, atomiser 5 %, port < 0.1 %; 17 % still airborne at
   switch-off; the band is 78 % of the floor's deposit by number, 32 % by volume. Gusts off: floor ~100 %.
 
-**Next (Ben's choice):** the scripted flow builder (Phase 2, "plan 1": the orifice from code, a near-wall layer, the
-grid check), planned first in this file; its flows then go through a sweep file (`settings/droplets_snapshots.yaml`
-is the pattern) to compare orifice sizes.
+**Next:** Phase 2a, the scripted flow builder (planned above: the orifice from code, a near-wall layer, the grid
+check); its flows then go through a sweep file (`settings/droplets_snapshots.yaml` is the pattern) to compare
+orifice sizes.
 
 ---
 
@@ -707,6 +815,45 @@ strength in Phase 2, and to-do 7b (speed weighting).
 
 ---
 
+## Parked (2026-10-26): silicone building up on the exit lip
+
+Ben: silicone builds up on the orifice's exit lip, mainly from splashes, with a little film creep. Could CFD help design
+a lip that stays clean? Discussed only, then parked for later. Nothing built. What was worked out:
+
+- **Still effervescent.** At GLR 0.53–1.38 by mass the bore is ~98–99 % gas by volume, so most of the gas runs as a
+  core inside a silicone wall film (the lamella). But microbubbles stay locked in the 3,000 cP film (Ben sees them in
+  the mixing chamber) and expand from chamber pressure to 1 bar: up to ~5–9x in volume for the 0.5 mm insert
+  (6–9 barA), under 2x for the 1.8 mm (1.45–1.82 barA). With a choked exit much of that growth is sudden, just
+  outside. That fits the higher atomised % with small inserts, and bursts at the edge are the likely splashes.
+- **The model:** OpenFOAM `compressibleInterFoam` (in v2606 on the Mac, with contact-angle wall conditions). Splashes
+  need 3D, a sector of the lip with periodic sides; an axisymmetric slice turns each bubble into a ring. 2D is enough
+  for film creep and for a standard surge. Microbubbles are seeded in the incoming film and expand by themselves, so no
+  invented push is needed. Rough cost: ~1 ms of flow per day on the Mac for the 3D sector, so really an HPC cluster.
+  CfdOF only offers incompressible VOF (`interFoam`, `multiphaseInterFoam`).
+- **Comparing designs from milliseconds:**
+  - the measure is a rate, silicone landing on the outer face per ms (tens to hundreds of bursts per ms);
+  - every design gets the same random seed, and a few seeds give the noise;
+  - rare big events get a standard surge, the same for every design;
+  - discard the first ~0.1–0.5 ms while the flow gets going.
+  It can't say what the deposit does over minutes, so the best two designs are made and tested on the rig.
+- **Cheaper first:**
+  - wipe tests, a short run against a long run (the same build-up means start/stop);
+  - gas on first, liquid off first, then a gas purge;
+  - a close-up, high-fps video of the lip, small window, well above 1,000 fps (the model's input and its check);
+  - mist pulled back onto the tip could use the existing gas-only flow + droplet tracker.
+- **Design leads:**
+  - a sharp, acute exit edge (a radius, burr or worn edge helps the film wrap round);
+  - a knife edge or steep cone;
+  - a protruding tip;
+  - a groove behind the edge;
+  - shroud air;
+  - coatings help little: silicone partly wets even PTFE.
+- **GPU:** little help with the free tools. OpenFOAM runs on the CPU. `petsc4Foam` (its source is in v2606's modules,
+  not built) can hand only the pressure solve to an NVIDIA GPU (Linux, so WSL2 on BENS-PC); the rest stays on the CPU.
+  More cores (an HPC cluster) and refining the mesh only around the silicone surface are the real levers.
+
+---
+
 ## Order
 
 1. Phase 0: done (2026-10-23).
@@ -714,8 +861,10 @@ strength in Phase 2, and to-do 7b (speed weighting).
 3. Phase 5b: the speed-analysis plan, written before the rig day.
 4. Phase 5: the rig day for speeds (next week).
 5. Phase 3a: droplets through Ben's CfdOF baseline (Parts A–D done 2026-10-25: one snapshot is enough, the mesh matters more), checked against his slide grid.
-6. Phase 2 and Phase 3, then Phase 4.
-7. Phase 6 only if wanted.
+6. Phase 2a: the scripted flow builder, a flow per orifice size (planned 2026-10-25, awaiting Ben's go; his new CAD this week).
+7. The rest of Phase 2, Phase 3, then Phase 4.
+8. Phase 6 only if wanted.
+9. Parked: CFD of silicone on the exit lip (section above), if Ben picks it up.
 
 ## Decided (Ben, 2026-10-23)
 
