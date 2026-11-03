@@ -96,11 +96,13 @@ def prepare_flow(scn: CloudScenario, log=print) -> Path:
     shutil.copytree(src / "system", tmp / "system")
     if (src / it / "U").exists():
         shutil.copytree(src / it, tmp / it)
+        _round_denormals_in(tmp / it)
     else:
         log(f"flow: reconstructing iteration {it} of {src} ({len(procs)} pieces) ...")
         for p in procs:
             shutil.copytree(p / "constant", tmp / p.name / "constant")
             shutil.copytree(p / it, tmp / p.name / it)
+            _round_denormals_in(tmp / p.name / it)
         foam(scn, tmp, f"reconstructPar -time {it}", "log.reconstructPar")
         for p in procs:
             shutil.rmtree(tmp / p.name)
@@ -118,6 +120,17 @@ def prepare_flow(scn: CloudScenario, log=print) -> Path:
         shutil.rmtree(tmp)
     log(f"flow: {dest}")
     return dest
+
+
+def _round_denormals_in(folder: Path) -> None:
+    """The copied flow's fields with numbers below ~1e-300 set to 0: OpenFOAM can write them (e.g. 4.9e-324 in p of
+    Chamber_v2) but not read them back, so reconstructPar and the droplet cases would stop on them."""
+    for f in folder.iterdir():
+        if f.is_file():
+            txt = f.read_text()
+            fixed = cfd_droplets.round_denormals(txt)
+            if fixed != txt:
+                f.write_text(fixed)
 
 
 def _wall_patches(flow_dir: Path, scn: CloudScenario) -> list[str]:

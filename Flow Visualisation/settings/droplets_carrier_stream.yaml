@@ -1,0 +1,52 @@
+# CFDOF_GUIDE.md Part 8's check: the droplets through Ben's two carrier designs beside the bare Chamber_v2 (the
+# 2026-11-02 baseline, guide 7.10). Both designs are Chamber_v2 plus a carrier inlet on the x = 270 wall (30 L/min)
+# and a 10 mm capture port on the x = 80 wall, with the 44 mm port sealed:
+#   Stream: the carrier through a 10 mm hole (6.4 m/s, 3.8 mN: a clear stream across the chamber)
+#   Gentle: the same 30 L/min through a 40 mm hole (0.4 m/s, 0.24 mN: the same through-flow, no stream)
+# 'port' in the tables is the capture port for the two designs, and the 44 mm port for Chamber_v2.
+# Run it with run_droplets.py (README.md, "Droplets through the CFD flow"). ~1 h, unattended: the 120 s runs each
+# track two minutes of flow (~15 s of computing per second of flow, measured 2026-11-02).
+#
+# A sweep: everything comes from the base file; each entry below changes only what it names (mappings merge).
+
+base: droplets_baseline.yaml
+name: droplets carrier stream
+
+slide_test:
+  flow_after_switch_off_s: !design [2, 120]  # 2 s: the spray and carrier stop together after the 5 s spray, as in
+                                             #   the slide test. 120 s: the flow kept running ~2 chamber volumes
+                                             #   (35 L / 38.6 L/min = 55 s each), standing in for continuous running
+                                             #   into the AJP; the still air after it only settles what is left
+
+sweep:
+  show: gusts_on_after_120s                  # the run the comparison's maps and size curves show
+  against: Chamber_v2                        # the reference: the bare chamber, the 44 mm port open
+  tolerance: {floor_pp: 5, centre_mm: 10, spread_mm: 10, moved_pct: 10}
+  runs:
+    - label: Chamber_v2
+      flow:
+        case: ~/OpenFOAM/cfdof_cases/Chamber_v2/case   # guide Part 7
+        iteration: 2000
+        spray_patch: spray
+        port_patches: [outlet]                   # the 44 mm port
+      spray:
+        hole_mm: !design [163.7, 237.79, -212.5]   # the lip: where the 1.11 mm bore meets the 70 degree point
+    - label: Stream
+      flow:
+        case: ~/OpenFOAM/cfdof_cases/Chamber_v2_stream/case   # guide Part 8, 8.1-8.6
+        iteration: 2000
+        spray_patch: spray
+        port_patches: [capture]                  # the 10 mm capture port on the x = 80 wall
+      spray:
+        hole_mm: !design [163.7, 237.79, -212.5]
+    - label: Gentle
+      flow:
+        case: ~/OpenFOAM/cfdof_cases/Chamber_v2_gentle/case   # guide Part 8, 8.7
+        iteration: 2000
+        spray_patch: spray
+        port_patches: [capture]
+      spray:
+        hole_mm: !design [163.7, 237.79, -212.5]
+
+run:
+  parallel: 10                               # the runs and checks of each entry at once (15 cores)

@@ -1,0 +1,26 @@
+# CFDOF_GUIDE.md Part 7's check: the baseline droplets through Ben's Part 6 flow and through his Chamber_v2 flow (the
+# refined CAD, the bore drilled at 1.11 mm, the final mesh with the jet ladder and the floor and wall layers), side
+# by side. The tracers' floor share (report.md, Checks; comparison.md) shows whether the layers fixed the near-wall
+# artefact (Part 6: 62 % with gusts off). Run it with run_droplets.py (README.md, "Droplets through the CFD flow").
+#
+# A sweep: everything comes from the base file; each entry below changes only what it names (mappings merge).
+
+base: droplets_baseline.yaml
+name: droplets chamber v2
+
+sweep:
+  show: gusts_on_after_2s                    # the run the comparison's maps and size curves show
+  against: Chamber_v2                        # the reference: the new flow
+  tolerance: {floor_pp: 5, centre_mm: 10, spread_mm: 10, moved_pct: 10}
+  runs:
+    - {label: Part 6, flow: {iteration: 2000}}     # the base file's flow: Chamber_v1_jet, 1.0 mm hole
+    - label: Chamber_v2
+      flow:
+        case: ~/OpenFOAM/cfdof_cases/Chamber_v2/case   # guide Part 7
+        iteration: 2000                          # guide 7.8: 2,000 gives the same droplets as 3,000
+        spray_patch: spray
+      spray:
+        hole_mm: !design [163.7, 237.79, -212.5]   # the lip: where the 1.11 mm bore meets the 70 degree point
+
+run:
+  parallel: 10                               # the runs and checks of each entry at once (15 cores)

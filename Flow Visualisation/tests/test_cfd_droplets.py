@@ -142,6 +142,16 @@ def test_round_denormals():
     assert C.round_denormals(txt) == "(0 0 0.5) 1e-30 0 3.2e-3 0"
 
 
+def test_copied_flow_fields_lose_denormals(tmp_path):
+    from droplet_transport.cfd_runner import _round_denormals_in
+    (tmp_path / "p").write_text("(\n-8.1e-06\n4.94065645841247e-324\n)\n")       # as in Chamber_v2's p
+    (tmp_path / "U").write_text("((0 0 0.5))\n")
+    (tmp_path / "uniform").mkdir()
+    _round_denormals_in(tmp_path)
+    assert (tmp_path / "p").read_text() == "(\n-8.1e-06\n0\n)\n"
+    assert (tmp_path / "U").read_text() == "((0 0 0.5))\n"
+
+
 def test_prune_keeps_flow_restart_and_droplets(tmp_path):
     for t in ("0", "0.25", "5"):
         d = tmp_path / t

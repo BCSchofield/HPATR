@@ -358,7 +358,10 @@ planned and dropped the same day:
      diameters. Check one setting with the compressible solver (rhoSimpleFoam).
    - To decide here: whether the liquid's momentum is added to the gas's.
 5. **Turbulence: k-omega SST**, the usual choice for jets and recirculation.
-   - Check one setting with a second model (realizable k-epsilon): how much the answer depends on the model.
+   - Check one setting with a second model: **kEpsilon** (CfdOF's dropdown offers kOmegaSST, kEpsilon,
+     SpalartAllmaras and DES/LES variants — **not** realizable k-ε, so that is the one to click). Expect it to spread
+     the round jet *more*, not less (the classic round-jet anomaly), so the two models **bracket** the model error
+     rather than one being right. That bracket is the thesis number.
    - RANS jets spread at a model-dependent rate: check a lone jet against Hussein 1994 (S = 0.094).
    - A closed box with a jet hitting the floor may not settle to a steady state. If a setting does not, run it in time
      (pimpleFoam) and average.
@@ -405,6 +408,12 @@ better mesh (hole refinement, jet cones, the floor layer), the boundaries, the s
 `cfdof/CFDOF_GUIDE.md` and checked with the droplets tool (the tracer check), so Ben knows what each step does; (3)
 then the code, Parts A-D below, repeating those steps for every size, with Ben's hand-made case as the template the
 script must reproduce.
+
+**Status (2026-10-26):** (1) done: Ben's refined STEP, `~/OpenFOAM/cfdof_cases/Chamber_v2/`. (2) written and
+rehearsed by script: `cfdof/CFDOF_GUIDE.md` Part 7 (the final mesh: jet ladder, floor and wall layers, 1.22 M cells;
+the tracers' floor share 62 % → 0.1 %); Ben clicks it at 1.11 mm with nitrogen's flow (the exit-only Cd 0.82 made the 0.91 mm below stale; 1.11 mm taken as
+air, 1.09 as nitrogen, 2026-10-27; Ben's case kept 1.11, 25.3 mN against 26.2, 2026-10-28).
+Results and reasons: `cfdof/CFD_LOG.md` section 7. Then (3).
 
 **The hole in the CAD is the momentum-equivalent hole, not the bore.** The solver is incompressible, so the real
 exit (Mach 0.7 gas-only, choked once the liquid narrows it) goes in as a larger hole at the chamber air's density
@@ -815,6 +824,320 @@ strength in Phase 2, and to-do 7b (speed weighting).
 
 ---
 
+## Phase 7. Capture design: getting the 0–30 µm band out of the chamber (DRAFT 2026-10-30, awaiting Ben's go)
+
+**Why now.** The real chamber's flow is solved and checked (Ben's Chamber_v2, CFD_LOG section 7): the mesh no longer
+limits the jet. This is CFD_LOG section 8 item 4. The band is **0–30 µm** (Ben, 2026-10-23; the goal above said 30–60
+to start). The real chamber is 190 × 692 × 280 mm with the nozzle ~230 mm above the floor, not Phase 0's idealised
+300 × 200 × 350 mm box, and it has one opening: the 44 mm port near the top (the post-test extraction opening).
+
+**What the numbers already say** (gas only, the spray at 25 mN):
+- **The band follows the air.** 0–30 µm silicone settles at most ~3 cm/s; the chamber air moves at 0.45 m/s on
+  average (Ben's case). So the band goes where the spray's own circulation takes it, and is lost to the floor and
+  walls while it waits to leave.
+- **The through-flow is the lever.** With only the spray's ~9 L/min leaving (~4 min in the chamber), a well-mixed
+  estimate (walls ignored, so optimistic; CFD_LOG section 4) lets out 78 % of 5 µm, 46 % of 10 µm, 18 % of 20 µm and
+  9 % of 30 µm. The share of a size that leaves goes as Q ÷ (Q + v_t × floor area). For this floor half of each
+  size leaves at about **10 L/min (10 µm), 40 L/min (20 µm), 90 L/min (30 µm)** (estimate). That is an extraction of
+  tens of L/min, several times the spray's own gas. A fan or pump drawing through the collector could give it, not
+  only the 5 bar supply.
+- **The big droplets sort themselves.** The spray hits the floor ~230 mm below the nozzle; Phase 1's impactor estimate
+  puts the floor's 50 % cut at roughly 20–30 µm (estimate), and anything over 30 µm settles at 3 cm/s or more. So
+  purity should come largely free: 92 % of arrivals under 30 µm in Phase 1's stirred estimate.
+- **Phase 1 is the wrong screen for this band.** Its own flag: these sizes follow the air, and its jet model sends the
+  air through the floor, with no recirculation. Its best layout ('fines to the side': 4 mm side jet at 32,000 sccm +
+  a 200 × 80 mm slot, 73.7 % of the band at 92.7 % purity by number) was in the idealised box. **Recommended: screen
+  directly in the CFD** (~35 min a case on 10 cores; a coarser screening mesh would be quicker), Phase 1 only for
+  the big droplets' side.
+
+**Steps** (each ends with a stop and a report):
+1. **DONE 2026-11-02** (CFD_LOG section 7, "Guide 7.10"): only **1–3 % of the band leaves through the 44 mm port**,
+   ~90 % ends on the floor; **48 % is airborne at switch-off (gusts on; 15 % gusts off), spread through the whole
+   chamber**, so the extraction flow should matter more than the port's position. **The baseline map (Ben, ~9 min):** guide 7.10, the droplets through Chamber_v2. Where the band goes now (floor,
+   walls, the port, still airborne) is what every design is compared with.
+2. **The port position, from the baseline map.** The band is wherever the spray's circulation carries it; step 1 says
+   where. The port goes on the return path, so the circulation sweeps the band into it. Screened in the CFD: 2–3
+   positions × the two flows (30 and 100 L/min). In CfdOF the extraction is a **flow-rate outlet** and the make-up
+   opening an **open 0 Pa** boundary.
+3. **Ben clicks the first design into the CFD (guide Part 8, written first):** the new port(s) added in Fusion, the
+   new STEP, the boundaries, refinement at each new port (and along any new jet); solve (~35 min) and droplets
+   (~9 min, the extraction port in `port_patches` so what leaves through it is counted by size); compared with
+   step 1 by the existing sweep tool.
+   **Guide Part 8 WRITTEN 2026-11-02 (Ben clicks it next):** two push designs on Chamber_v2, the 44 mm port sealed,
+   a 10 mm capture port on the x = 80 wall at (80, 80, −212.5), 30 L/min of carrier in on the x = 270 wall opposite:
+   **Stream** (10 mm inlet, 6.4 m/s, 3.8 mN) against **Gentle** (40 mm, 0.4 m/s, 0.24 mN; the same through-flow with
+   no stream, and what a suction design looks like to the solver). Plain cylinders fused into Ben's Fusion in FreeCAD
+   (FreeCAD 1.1 renumbers his existing links itself, checked); a 0.5 / 1 / 2 mm cone ladder along the stream.
+   Checked by script on a scratch copy: Mesh OK, 1.52 / 1.56 M cells, 30 iterations clean, gas in = out; the full
+   solve not run (Mac on battery). Droplets: `settings/droplets_carrier_stream.yaml` (Chamber_v2, Stream, Gentle;
+   flow kept 2 s and 120 s, the latter standing in for continuous running; ~1 h).
+4. **The screen, scripted (extends Phase 2a):** each design's ports and flows in the settings file; one command builds,
+   solves and tracks; overnight, the designs × two flows. Headlines: the band delivered to the collector and its
+   purity, by number and by volume; where the rest lands; the on/off ratio Phase 4 measures.
+5. **The best one or two, properly:** the spray's push at both ends of the bracket (25 mN gas only; up to ~70 mN if the
+   liquid narrows the exit: the 41 % redone with the series model, CFD_LOG section 8), the grid check, the second
+   turbulence model. The thesis-grade variants run here, on the chosen design, not on every candidate.
+6. **Phase 4 on the rig** once the chamber and the collector are built.
+
+### Ben's answers (2026-10-30)
+
+- **The existing 44 mm port is post-test only**, straight into a HEPA and carbon filter. A **new** port does the
+  capture. First test: can the droplets land on a glass slide.
+- **A big fan is possible**; a design that runs on the ~5 bar compressed air is also wanted. **Its flow is unknown
+  and Ben will measure it next lab visit.**
+- **Ports may go anywhere on the vertical walls**, except the lower part of the z = −17.5 and z = −297.6 walls (the
+  shadowgraph images through them). So **both 280 × 692 mm x-walls are completely free**, plus the upper parts of the
+  two 190 × 692 mm z-walls.
+- **The band is 0–30 µm**, confirmed.
+- **The HEPA and carbon filter can be disconnected for a test** (2026-10-30), and the 44 mm port then sits open to the
+  room — **and Ben can also cover it**. So both routes are open: leave it open for suction, cover it for blow-in.
+- **The chamber walls are 5 mm polycarbonate** (2026-10-30). See *Working in 5 mm polycarbonate* below — it makes the
+  ports easy, rules out some adhesives, and raises one loss mechanism the CFD does not model.
+
+### Ben's decisions (2026-11-02): push, because the capture feeds an AJP
+
+- **The capture's destination is an aerosol jet printer (AJP)** (Ben, 2026-11-02): "i'll need a clear stream that is
+  actually from a gas push for having go into an AJP". This supersedes the suction recommendation below for the
+  capture itself.
+  - An AJP head needs the aerosol pushed into it (its nozzle opens to the room), and the aerosol can't go through a
+    pump first. So the route is **B, blown in**, with the 44 mm port sealed and the capture line as the only exit
+    (and the chamber's relief: never blocked).
+- **Push against pull is not a CFD comparison:** incompressible, the same holes and flow give the same flow. The
+  difference is where the momentum enters: a small inlet is a jet that reaches across, a suction port a sink whose
+  pull dies within about a hole-width. So the first pair is **jet against no jet at the same flow** (guide Part 8).
+- **Simple first:** plain cylinders, no radii, added in FreeCAD.
+- **Still open, for the AJP:** the head's carrier flow (AJP heads typically take tens to hundreds of sccm, far below
+  the chamber's ≥ 9 L/min, so the capture line needs a split or virtual impactor), and the droplet size the head
+  takes (commercial AJ typically a few µm; if so, the band is narrower than 0–30 µm). The chamber's headline for an
+  AJP is the band's share through the capture, and that share ÷ the capture's flow (its concentration).
+
+### Seal the existing port, or not? It depends which route (the answer to Ben's question)
+
+- **Suction route: leave it OPEN.** It becomes the **make-up air inlet**. Extraction at 30–100 L/min against the
+  spray's own ~9 L/min means 21–91 L/min has to enter somewhere; sealed, the chamber goes negative and draws through
+  unknown leaks, which is both unrepeatable and an undefined CFD boundary. At 44 mm the make-up air arrives at
+  0.33 m/s (30 L/min) to 1.10 m/s (100 L/min), carrying 0.2–2.2 mN against the spray's 25 mN: gentle enough to leave
+  the spray alone. It also keeps the chamber slightly **negative, so any leak is inward** — the safe way to run an
+  aerosol. **But disconnect the HEPA and carbon filter while testing:** drawing room air backwards through a loaded
+  filter is a large pressure drop and risks re-entraining what it has already caught.
+- **Blow-in route: SEAL it.** Otherwise the compressed air short-circuits out of the wide-open 44 mm port instead of
+  going through the collector's ~10 mm nozzle, and the collector sees almost nothing. This route leaves the chamber
+  slightly **positive, so leaks are outward** — a containment negative worth weighing.
+
+### The two routes
+
+| | **A. Suction (recommended)** | **B. Compressed air, blown in** |
+|---|---|---|
+| How | A blower, pump or compressed-air ejector pulls 30–100 L/min out through the collector | Clean air in through a **diffuser**; the chamber vents through the collector |
+| Existing port | Open: make-up inlet (filter disconnected) | **Sealed** |
+| Chamber pressure | Slightly negative: leaks inward | Slightly positive: leaks outward |
+| Nothing new enters the chamber | ✔ no extra jet to disturb the spray | ✘ the inlet must be tamed (below) |
+
+**If air is blown in, the inlet must be a diffuser, not a port.** The momentum, against the spray's 25 mN:
+
+| Flow | 4 mm | 10 mm | 25 mm | 46 mm | 100 mm |
+|---|---|---|---|---|---|
+| 30 L/min | 40 m/s, **24 mN** | 6.4 m/s, 3.8 mN | 1.0 m/s, 0.6 mN | 0.3 m/s, 0.2 mN | 0.1 m/s, 0.0 mN |
+| 100 L/min | 133 m/s, **265 mN** | 21 m/s, **42 mN** | 3.4 m/s, 6.8 mN | 1.0 m/s, 2.0 mN | 0.2 m/s, 0.4 mN |
+
+So **25 mm is the minimum and 46 mm or a perforated plate is better**; a 4 mm inlet would run the chamber instead of
+the spray. (This is also why Phase 1's 'fines to the side' layout — 4 mm at 32,000 sccm, two-thirds of the spray's
+momentum — is not the design to copy here.)
+
+### The suction source (Ben asked, 2026-10-30: buy or make an ejector, and can one run without compressed air?)
+
+**An ejector cannot run without a motive fluid.** It is a jet pump: the jet *is* the pump. No jet, no suction. There is
+no version of it that runs on nothing. Two motive fluids other than compressed air exist, and one much better
+alternative that is not an ejector at all:
+
+- **Water (a lab water aspirator / water jet pump).** Screws onto a tap, no compressed air at all. Induced air flow is
+  modest (roughly 10–30 L/min on typical units), so it would cover the 30 L/min case and fall short of 100. Costs
+  running water and needs a drain.
+- **A blower or pump — the recommendation.** Not an ejector, and better suited, because **the suction duty here is
+  tiny**: 100 L/min at 400–800 Pa is 6 m³/h at under 1 kPa, and 30 L/min needs only 36–73 Pa.
+  - **Radial / centrifugal blower** (~1–3 kPa): far more than enough, throttled with a valve. An **axial or computer
+    fan (15–50 Pa) is not enough** at 100 L/min, though it would cover 30.
+  - A small **diaphragm pump** also works, and gives more suction if the impactor nozzle is made finer.
+  - **For the very first "do droplets land on the slide?" test, a vacuum cleaner or shop vac with a bleed valve is
+    enough** and probably already in the lab: the duty is trivial and it needs no purchase.
+
+**The ejector's real cost is the air it eats** — it consumes about as much compressed air as the flow it produces, so
+it is only attractive if the supply turns out generous (say over ~150 L/min free delivery) and no electrics near the
+chamber is worth paying for:
+
+| Motive nozzle at 5 bar | Compressed air consumed | Induced flow (low vacuum) |
+|---|---|---|
+| 0.8 mm | 32 L/min | 32–64 L/min |
+| 1.0 mm | 50 L/min | 50–100 L/min |
+| 1.5 mm | 113 L/min | 113–226 L/min |
+
+**Buying one:** £15–60, correctly proportioned, and it comes with a performance curve. **Pick it from the curve at
+~500 Pa**, not from a headline "max vacuum" figure, and note the distinction: a **vacuum generator** (made for
+pick-and-place suction cups) is high vacuum at low flow, the wrong end for this; an **air amplifier / air mover** is
+low pressure at high induced flow, which is this duty.
+
+**Making one is realistic**, and the proportions fall out of the numbers above. For ~100 L/min induced:
+- **motive nozzle 1.0–1.5 mm**; **mixing throat 8–10 mm** (6–10× the nozzle: the high area ratio of an air mover, not
+  of a suction-cup generator); **throat length 5–8 × its diameter** (40–80 mm); **diffuser 3–5° half-angle** opening
+  to about twice the throat; the **nozzle exit 0.5–1 throat-diameter upstream** of the throat entry, with the suction
+  port entering radially around it.
+- **Print in resin (SLA) rather than FDM:** FDM leaks and will not hold a smooth 1 mm nozzle. The neat compromise is
+  to print only the body and use a bought part for the critical nozzle — a blunt dispensing needle or a short length
+  of brass tube, glued in.
+- Expect to iterate two or three nozzle/throat combinations and measure each. That is an afternoon, against £20–40 and
+  a known curve for a bought unit — worth it only if the making is itself interesting.
+
+**Whatever pulls the air, two things are needed either way:**
+- **A flowmeter in the extraction line.** The CFD is run at a stated flow, so the comparison only means something if
+  the rig's flow is set and read. The same 0–150 L/min variable-area meter measures the compressed-air supply and
+  sets the extraction, so it does both jobs.
+- **A filter between the collector and the pump**, so silicone never reaches the blower, with the exhaust going into
+  the existing HEPA and carbon filter.
+
+### The collector: the glass slide must be an impactor, not a slide in the chamber
+
+A slide sitting in the chamber catches very little of the band. These droplets follow the air, and the chamber moves
+at 0.45 m/s; to be thrown onto a 25 mm slide by inertia they need several m/s. **Put the slide in a short duct at the
+capture port instead**, a nozzle's width behind the nozzle, and the extraction velocity does the work. There are then
+two separate efficiencies, and they are measured separately: **transport** (what share of the band reaches the port —
+the CFD answers this) and **collection** (what share of what arrives lands on the slide — the table below).
+
+| Nozzle | Flow | Velocity | 50 % cut | Dynamic pressure |
+|---|---|---|---|---|
+| 10 mm | 30 L/min | 6.4 m/s | **11 µm** | 24 Pa |
+| 10 mm | 100 L/min | 21 m/s | **5.9 µm** | 270 Pa |
+| 6 mm | 30 L/min | 18 m/s | **5.0 µm** | 190 Pa |
+| 6 mm | 100 L/min | 59 m/s | 2.7 µm | 2,100 Pa |
+| 20 mm | 100 L/min | 5.3 m/s | 17 µm | 17 Pa |
+
+(Stk = ρ_d d² U / 18 µ W, caught above Stk ≈ 0.24; estimates, and a real impactor is calibrated, not calculated.)
+**A 10 mm nozzle is the sweet spot:** at 100 L/min it catches essentially the whole 6–30 µm band at a pressure drop
+a small blower can deliver. The existing 3 × 3 floor slide grid (CFD_LOG section 8 item 3) stays as the in-chamber
+test: it measures what settles, which is the thing the capture is competing against.
+
+### What the extraction buys, in one line
+
+The chamber currently holds its air for **234 s** while the fines settle out. At 30 L/min that falls to 70 s, and at
+100 L/min to **21 s** — eleven times less time for the band to be lost to the floor and walls before it reaches
+the collector.
+
+### Shopping and look-into list (2026-10-30)
+
+Costs are rough orders, not quotes. The order matters: **A and B unlock the rest, and D should not be bought until A
+is done.**
+
+**A. Do first, costs nothing**
+1. **Run guide 7.10** (the baseline droplets map, ~9 min). It decides where the capture port goes; everything else is
+   port-independent, this is not.
+2. **Is there already a shop vac or vacuum cleaner in the lab?** If so, the whole first test needs no suction purchase.
+3. **Measure the compressed-air supply free, by timed fill** (no meter needed; see *Do you need a meter* below).
+4. ~~How the HEPA attaches; what the walls are~~ — **answered 2026-10-30** (above).
+
+### Do you need a meter to measure the compressed air? No — but you need one for the extraction
+
+- **For the compressed air: no.** Discharge the line into a bin bag or sack of known volume and time how long it takes
+  to inflate. A 60 L bag filling in 36 s is 100 L/min. Get the volume from a box lined with the bag, or by filling it
+  once with a counted number of jug-fulls of water. It is good to about ±20 %, which is all that is needed to answer
+  "is it over 150 L/min or not". **Do not use the chamber as the known volume** — it is 5 mm polycarbonate and should
+  never be pressurised (see below).
+- **If the blower route is taken (recommended), the number may not be needed at all** — nothing then runs on
+  compressed air.
+- **But a flowmeter is still needed for the extraction itself**, and that is the real reason to buy one: the CFD is
+  run at a stated flow, so the rig's flow has to be set and read, or the comparison means nothing.
+
+**B. Buy — the flowmeter, for the extraction**
+
+A **variable-area flowmeter (rotameter) for air**. This class of instrument is usually well under £100 from a
+distributor like RS, but **Claude cannot check RS's live catalogue or prices** — so search their flowmeter section and
+match this spec rather than trusting a part number from here:
+
+| Spec | What to match | Why |
+|---|---|---|
+| Range | **0–150 L/min air** | Puts both set-points on scale. 100 L/min sits at ~two-thirds, 30 L/min low at ~20 % (readable, the least accurate point). 0–100 would put 100 at full scale, which reads badly. |
+| Fluid and calibration | **air, calibrated at atmospheric discharge** (1 bar abs, ~20 °C) | A rotameter only reads true at its calibration pressure. Both jobs here discharge to atmosphere, so an atmospheric calibration is right. **Do not fit it into the 5 bar line and read it there.** |
+| Units | note whether **L/min** or **sL/min** (standard) | They differ by the density correction; the CFD is set in standard terms. |
+| Connections | hose or threaded (e.g. ¼" or ½" BSP) to suit the tubing | Panel-mount bodies often need adaptors. |
+| Body | acrylic or polycarbonate is fine at these pressures | Nothing here is above ~1 kPa. |
+
+- Under suction the meter sits ~500 Pa below atmospheric, a density error of about 0.5 %: negligible.
+- **A thermal mass flow meter** reads accurately over a far wider range (10:1 or better, so 30 and 100 L/min would both
+  be good) but will likely exceed £100. Worth pricing if the budget allows.
+- **Worth checking first: is there already a larger Alicat in the lab?** The one in use stops at 12 L/min, but if a
+  bigger unit exists it does this job with no purchase at all.
+
+### Working in 5 mm polycarbonate (walls confirmed 2026-10-30)
+
+- **Making the port is easy.** Polycarbonate is tough and does not craze and crack the way acrylic does. Cut a
+  20–25 mm hole with a **step drill or hole saw at low speed**, backed with scrap wood, and deburr. Avoid a standard
+  twist bit at speed — it grabs and snatches through.
+- **Mind the adhesives.** Polycarbonate is attacked by many solvents: **no acetone, MEK or acrylic solvent cement**,
+  and **cyanoacrylate can craze it**. Use a **mechanical bulkhead fitting with gaskets both sides**, or
+  **neutral-cure silicone sealant** — which is to hand anyway.
+- **Negative pressure is a non-issue.** At 800 Pa the load on a 190 × 692 mm panel is about 105 N: the wall will flex
+  slightly and nothing more.
+- **Positive pressure is not.** If the blow-in route is used with the 44 mm port covered, **leave a deliberate open
+  relief path** so a blocked collector cannot pressurise the chamber.
+- **Protect the walls while drilling.** The z-walls are the shadowgraph's windows; swarf and scratches there cost
+  image quality. Mask them, and cut ports only in the x-walls.
+- **NEW loss mechanism, not in the CFD: static.** Insulating plastic walls hold charge, and atomised droplets are
+  often charged, so some of the band may be lost electrostatically to the walls and to any plastic sampling tube. The
+  CFD models only inertia, gravity and drag, so it will **under-predict wall losses** if charging matters here.
+  - Mitigation: **earthed metal or conductive tubing for the extraction line** (standard practice in aerosol
+    sampling), and an antistatic wipe on the walls.
+  - This is a hypothesis, not a measurement. The cheap test is the on/off comparison already planned for Phase 4: if
+    the measured capture falls consistently below the predicted, charge is a prime suspect.
+
+**C. The first slide test — cheap**
+1. **A bulkhead fitting / port for the new opening, ~20–25 mm**, with gaskets or neutral-cure silicone (not
+   cyanoacrylate or solvent cement: see the polycarbonate notes). The 10 mm impactor nozzle sits inside the collector;
+   the wall opening should be larger. **A step drill or hole saw** if neither is already in the lab.
+1b. **A filter for the make-up air at the 44 mm port.** On the suction route the make-up air is room air, so a clean
+   filter there means what lands on the slide came from the spray and not from the room.
+1c. **Earthed metal or conductive tubing for the extraction line**, rather than plain plastic, so the fines are not
+   lost electrostatically on the way to the slide.
+2. **A throttle valve** (needle or ball) to set the flow against the rotameter.
+3. **A short straight length of tube and fittings.** Keep the duct short and **put no bend between the chamber and the
+   slide** — bends are where the droplets are lost before they reach the collector.
+4. **Plain glass microscope slides** (25 × 75 mm), and a plug/blank for the 44 mm port if the blow-in route is tried.
+   The existing microscopy covers reading them.
+
+**D. The suction source — do not buy until A5 is done**
+- **If the compressed air is generous (over ~150 L/min free delivery):** an **air amplifier / air mover**, ~£15–60,
+  chosen from its curve at ~500 Pa. Not a "vacuum generator" (that is high-vacuum, low-flow, for suction cups).
+- **Otherwise, or by default:** a **radial / centrifugal blower**, ~£20–40, throttled. An axial or computer fan is not
+  enough at 100 L/min. A small **diaphragm pump** is the alternative if a finer nozzle is wanted.
+- **Either way: a filter and housing between the collector and the pump**, so silicone never reaches it, exhausting
+  into the existing HEPA and carbon.
+
+**E. Make or print**
+1. **The impactor body:** a 10 mm nozzle facing a slide about 10 mm away, in a housing that opens to swap slides.
+   Printable; it holds no pressure to speak of.
+2. **Only if the ejector route is taken:** the body in resin, with a bought **blunt dispensing needle or brass tube**
+   as the 1–1.5 mm nozzle (the part FDM cannot do well). Expect 2–3 iterations.
+
+**F. Look into — decisions, nothing to buy yet**
+1. **Does the extraction disturb the shadowgraph?** Pulling 30–100 L/min past the imaging region could move the spray
+   inside the measurement window, and the imaging is the primary measurement. The CFD screen should check the velocity
+   across the window with the extraction on and off, before any hole is cut.
+2. **How far silicone spreads on glass** (CFD_LOG section 8 item 3 already wants this: stains ~2.5–3× the droplet if
+   it wets). It sets both the sizing correction and how long a slide can be exposed before spots merge.
+3. **Bare glass or a coated/greased substrate.** Liquid silicone should wet and stay put, so bare glass is likely
+   fine — worth confirming rather than assuming.
+4. **Single slide now, cascade impactor later?** A cascade impactor would give the delivered size distribution
+   directly, instead of a single cut plus microscopy. Worth pricing as the Phase 4 reference instrument.
+5. **Whether the sample through the port represents the chamber.** Less of a worry for sizes that follow the air, but
+   it should be stated rather than assumed.
+6. **The stand-off** (orifice exit to image centre), still outstanding from the velocity rig day and needed by the
+   droplet model either way.
+
+### What Ben measures next lab visit
+
+**The compressed-air supply's free-delivery flow, and the pressure it holds while flowing** — by timed bag fill, which
+needs no meter (above). That one number decides whether the blow-in route or the ejector reaches 100 L/min, or whether
+30 L/min is the ceiling without a blower. **It is not on the critical path if the blower route is taken.**
+
+---
+
 ## Parked (2026-10-26): silicone building up on the exit lip
 
 Ben: silicone builds up on the orifice's exit lip, mainly from splashes, with a little film creep. Could CFD help design
@@ -862,7 +1185,8 @@ a lip that stays clean? Discussed only, then parked for later. Nothing built. Wh
 4. Phase 5: the rig day for speeds (next week).
 5. Phase 3a: droplets through Ben's CfdOF baseline (Parts A–D done 2026-10-25: one snapshot is enough, the mesh matters more), checked against his slide grid.
 6. Phase 2a: the scripted flow builder, a flow per orifice size (planned 2026-10-25, awaiting Ben's go; his new CAD this week).
-7. The rest of Phase 2, Phase 3, then Phase 4.
+7. Phase 7: capture design for the 0–30 µm band (drafted 2026-10-30, awaiting Ben's go and his four answers); the
+   rest of Phase 2 and Phase 3 run inside it, on the chosen design; then Phase 4.
 8. Phase 6 only if wanted.
 9. Parked: CFD of silicone on the exit lip (section above), if Ben picks it up.
 

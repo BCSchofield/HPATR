@@ -14,7 +14,7 @@ reliably gathers the wanted band (0–30 µm). The CFD supplies the air flow; dr
 |---|---|---|
 | **FluidX3D** (Moritz Lehmann's GPU lattice Boltzmann code), on the home PC's GPU | **Dropped** | Its grid is uniform. The spray has to enter as a ~0.9 mm inlet; at the 0.5–1 mm cells the GPU could afford, that inlet would carry 4–8× its real gas and the outlet flow would be ~2.6–4.7× too high. |
 | **OpenFOAM, steady RANS, on the Mac** | **Chosen** | A graded mesh puts small cells only where needed (the spray hole, the jet) and large ones elsewhere, so the real spray fits on a CPU. Free, and the standard research code. |
-| Turbulence model **k-ω SST** | Chosen | The usual choice for jets and recirculating flow. Check later against realizable k-ε (PLAN Phase 2). |
+| Turbulence model **k-ω SST** | Chosen | The usual choice for jets and recirculating flow. Check later against **kEpsilon** (PLAN Phase 2; CfdOF has no realizable k-ε variant, checked 2026-11-02). |
 | **FreeCAD + CfdOF** (a GUI for OpenFOAM), **cfMesh** mesher, **ParaView** viewer | Installed for learning | Ben is new to CFD: CfdOF shows every step (geometry, boundaries, mesh, solve, view) by clicking. The thesis runs (Phase 2) use the same OpenFOAM, scripted. |
 
 Installed and checked: OpenFOAM v2606 (OpenFOAM's own test case, pitzDaily, ran in 5 s), ParaView 6.2.0, FreeCAD 1.1.4
@@ -193,7 +193,183 @@ out (5 min). Turbulent gusts from k on and off, as a bracket. One command (`run_
   artefact's upper bound; 8 % in still air), side walls 30 %, atomiser 5 %, lid 1 %, port < 0.1 %; 17 % airborne at
   switch-off; the band is 78 % of the floor's deposit by number, 32 % by volume. Gusts off: floor ~100 %.
 
-## 7. In progress and next
+## 7. Chamber v2: the refined CAD, the bore drilled, the final mesh (2026-10-26)
+
+**The CAD.** Ben's refined STEP, `~/OpenFOAM/cfdof_cases/Chamber_v2/Refined_Modular_Filter_Chamber.step`:
+- the same box, port and atomiser as section 4;
+- new: the nozzle's real outside. A 35 mm cap stands 4 mm proud of the block. The pointed insert's 70° tip is at
+  (163.7, 237.0, −212.5), level with the cap's face, in a 2.9 mm trough.
+- Undrilled on purpose: the bore is drilled in FreeCAD at each size's equivalent hole, so the STEP stays the blank
+  the scripted builder starts from (PLAN.md Phase 2a).
+
+**The bore: 1.11 mm in Ben's case, with nitrogen's flow** (Ben chose the drilled insert, 2026-10-26: 1.11 mm; the
+nitrogen equivalent is 1.09 mm, 2026-10-27, but Ben's case kept 1.11, 2026-10-28; the 0.91 mm the mesh was checked
+at is stale).
+- The scripted check ran at **0.91 mm**: the 1.2 mm insert's momentum-equivalent hole with the old Cd 0.527 (section 2).
+- The work PC's tests the same day separated the line and the holes upstream from the exit. The exit-only Cd is 0.82
+  for the 1.2 mm insert drilled through (0.5 mm 0.85, 0.8 mm 0.86). The old 0.527 and 0.537 included those upstream
+  losses, plus a bore not yet drilled through (~1.0 mm effective then).
+- Equivalent holes at 8,995 sccm, gas only:
+
+  | 1.2 mm insert | Effective area | Push | Equivalent hole |
+  |---|---|---|---|
+  | Old Cd 0.527 | 0.596 mm² | 40 mN | 0.91 mm |
+  | Undrilled, as on the CCD day (Cd 0.60–0.62) | 0.68–0.70 mm² | 35–36 mN | 0.97 mm |
+  | As now, drilled (Cd 0.82), the gas taken as air | 0.93 mm² | 27 mN | 1.11 mm (153 m/s) |
+  | As now, drilled (Cd 0.82), nitrogen | 0.93 mm² | 26 mN | 1.09 mm (153 m/s) |
+  | **Ben's case: nitrogen's flow through 1.11 mm** | | 25.3 mN | **1.11 mm** (147 m/s) |
+
+- **Nitrogen (2026-10-27, Ben asked):** the rig's gas is nitrogen, and the Alicat's sccm are at 25 °C: 1.145 kg/m³,
+  not air's 1.184. So 8,995 sccm is 171.6 mg/s, not 177.5: the inlet is **1.426e-4 m³/s** at the chamber air's density
+  (was 1.474e-4), the push 26.2 mN (was 27.1), the hole 1.09 mm, the length scale 0.076 mm; the exit speed stays
+  153 m/s. The case stays single phase, all air: nitrogen and air differ by 3 % in density. Every equivalent hole
+  above and in section 2 was worked out as air; each is ~2 % too wide and its push ~3 % high.
+- **Ben's case kept the 1.11 mm bore** (2026-10-28) with nitrogen's 1.426e-4 m³/s (length scale 0.076): the right
+  gas, at 147 m/s, with 25.3 mN of push, 3.6 % under the 1.09 mm hole's 26.2. Jet speeds go as the root of the push,
+  so ~1.8 % low: well inside the turbulence model's own 4–13 %. Kept; Phase 2a's script uses 1.09.
+- Ben chose the insert as it is now (drilled), which the slide test will use. The droplet sizes are still the CCD
+  run 131450's, presumably from the undrilled insert; that is noted, to confirm.
+- Other inserts, gas only, with the new Cds: 0.5 mm 0.65 mm (78 mN, choked); 0.8 mm 0.80 mm (52 mN); 1.8 mm 1.39 mm
+  at Cd 0.59 (least certain) or 1.67 mm at 0.85.
+- Not in it: the silicone film narrowing the gas's way out while spraying. Section 8's 41 % (and its 0.69 mm, 70 mN)
+  came from P0 against the old Cd, so it needs redoing with the series model (the chamber pressure behind the exit,
+  not the Alicat's P0) before it is the next stage's bracket.
+- **The face numbers don't depend on the size:** checked by script at 0.91, 0.97 and 1.11 mm (1.09 lies between). Typing another radius
+  is the only change, plus the inlet's length scale (0.07 × the hole).
+- Drilled 7.5 mm up from the tip point, starting 1 mm below it: the overlap avoids a boolean on touching surfaces.
+  The top face is the inlet. The lip, where the bore meets the 70° point, is a 35° knife edge (y 237.79 at 1.11 mm, 237.78 at 1.09).
+
+**The mesh, built up one step at a time (by script, on scratch copies; base 8 mm, cfMesh):**
+
+| Step | Cells | Mesh time | What it showed |
+|---|---|---|---|
+| Bore 0.0625 mm, tip 0.25, cap 1, port 2, plus five jet cones (0.125 / 0.25 / 0.5 / 1 / 2 mm) | 679,315 | 6 s | Mesh OK, max non-orthogonality 65°. 211 faces on the inlet. |
+| + floor: 2 mm, 8 layers, ratio 1.25, first ≤ 0.1 mm | 859,614 | 8 s | The floor's first cell is 0.05 mm everywhere (Part 6: 1.28 mm). 13 faces over 70°: at the knife-edge lip and two nozzle-block corners. |
+| + walls (four sides, lid): 10 layers, ratio 1.3, first ≤ 0.15 mm | 1,094,100 | 16 s | The walls' first cell is 0.09–0.12 mm. 52 faces over 70°: where the x = 80 wall's layers meet the arm, which has none. |
+| + a 10 mm slab of 2 mm cells over the whole floor (**final**) | **1,218,853** | **17 s** | Mesh OK; 54 faces over 70° (max 78°), skewness 2.9. |
+
+**Why each piece** (the long version is guide Part 7.6):
+- **The jet ladder:** ~8–10 cells across the jet's half-width at every height, and each cone 2.2–2.7 half-widths
+  wide. The cones were sized from Part 6's measured half-widths.
+- **The layers:** fix (b) for the droplets' near-wall artefact (section 6).
+- **The floor slab:** the floor's wall jet, which crosses the whole floor.
+- **Not on the atomiser:** its ~25 faces would be tedious to click, and only ~5 % of the band lands there.
+
+**Face numbers depend on how the solid got into the document.** The same union gave the bore Face1–3 from a script's
+`Part.read`, and Face40–42 by the click path (open the STEP, simple copy, union). The guide uses the click path's
+numbers, checked by script, plus each face's area and position so Ben can see what lights up.
+
+**The solve, at 0.91 mm** (iteration 3,000; 53 min on 10 cores, ~1.0 s an iteration after the first 500; at 1.11 mm,
+expect the same mesh results and jet speeds ~0.80× from ~20 mm down):
+
+| | Part 6 | Chamber_v2 (0.91 mm) |
+|---|---|---|
+| Gas in = gas out | yes | 1.4740e-4 = 1.4740e-4 m³/s |
+| Velocity residuals at the end | ~1e-2 | ~2e-3 |
+| Jet centre, 2 mm below the lip | 183 m/s | 258 m/s (1.14× the 226 m/s mean: the bore's developed profile) |
+| 10 / 20 / 40 / 55 / 80 / 120 / 200 mm | 112 / 49 / 23 / 17 / 11 / 7.7 / 4.3 m/s | 129 / 57 / 27 / 19 / 13 / 8.5 / 4.7 m/s |
+| Against Hussein 1994 at the same push, 20–80 mm | 11–17 % slow | 4–13 % slow |
+| Half-width at 10 / 20 / 40 / 80 / 150 mm | 0.9 / 2.3 / 4.8 / 10 / 18 mm | 1.0 / 2.2 / 4.6 / 9.5 / 19 mm |
+| Floor's wall jet, 20 / 40 / 80 / 120 mm out | 2.5 / 3.3 / 1.7 / 1.6 m/s, unresolved | 2.8 / 3.6 / 2.0 / 1.6 m/s, peak 0.8–1 mm up |
+| Chamber's mean speed; share > 0.5 m/s | 0.56 m/s; 47 % | 0.57 m/s; 50 % |
+| y⁺: floor under the jet / rest of floor / walls / bore | ~1 or more (1.28 mm cells) | 0.74 / 0.25 / 0.16 / 9.8 |
+
+- **The mesh no longer limits the jet.** What's left (~10–15 % slow, a half-width growing 0.13 mm per mm against
+  the textbook's 0.094) is k-ω SST over-spreading round jets. The lever is a second turbulence model, not more cells.
+- **The bore's y⁺ ≈ 10** is in the buffer layer, not the ~30 predicted. Its wall friction is ~1.4 % of the push, so
+  this was left.
+- **2,000 against 3,000 iterations:** the jet is the same within 0.5 %, the floor's wall jet within 1 % (9 % at
+  120 mm), the chamber's mean speed within 2 %.
+
+**Ben's hand-built case** (2026-10-28, `~/OpenFOAM/cfdof_cases/Chamber_v2/case`: 1.11 mm, nitrogen's 1.426e-4 m³/s,
+25.3 mN; 1,225,011 cells; 2,000 iterations on 10 cores in 35 min). Probed the same way at iteration 2,000; it matches
+guide 7.9's prediction (the 0.91 mm run × 0.80) within ~5 %:
+
+| | Predicted | Ben's case |
+|---|---|---|
+| Jet centre, 2 mm below the lip | ~168 m/s | 169 m/s |
+| 10 / 20 / 40 / 55 / 80 / 120 / 200 mm | – / 45 / 22 / 15 / 10 / 7 / – m/s | 110 / 47 / 22 / 15.5 / 10.4 / 6.8 / 3.7 m/s |
+| Half-width at 10 / 20 / 40 / 80 / 150 mm | as the 0.91 mm run | 0.9 / 2.1 / 4.5 / 9.5 / 19 mm |
+| Floor's wall jet, 20 / 40 / 80 / 120 mm out | 2.2 / 2.9 / 1.6 / 1.3 m/s | 2.2 / 2.9 / 1.6 / 1.4 m/s, peak ~0.9 mm up |
+| Initial residuals at the end | ~2e-3 | Ux 2.1e-3, Uy 1.5e-4, Uz 1.8e-3, p 6.3e-3; continuity ~1e-9 |
+| Chamber's mean speed; share > 0.5 / < 0.1 m/s | | 0.45 m/s; 30 % / 11 % (0.58; 50 % / 6 % at 40 mN) |
+
+- 6,158 more cells than the scripted mesh (0.5 %): the wider bore. The jet's spread doesn't depend on its push, so the
+  half-widths match the 0.91 mm run; the speeds scale as the root of the push.
+
+**The droplets** (`droplets_baseline.yaml` through Part 6 and through this flow at iterations 2,000 and 3,000; 8.4 min;
+scratch, `comparison.md`):
+
+| | Part 6 | Chamber_v2 (0.91 mm) |
+|---|---|---|
+| Tracers on the floor, gusts off | **61.8 %** | **0.1 %** |
+| Tracers on any wall, gusts on | 65 % (floor 24, side walls 34, atomiser 6) | 8.9 % (all on the atomiser, which has no layers) |
+| 0–30 µm band, gusts on, flow kept 2 s: on the side walls | 30 % | 4 % |
+| ... airborne at switch-off | 17 % | 40 % |
+| ... on the floor (air moving + still air) | 56 + 8 = 64 % | 55 + 33 = 87 % |
+| Gusts on/off bracket on the band's floor share (widest) | 42 points | 18 points |
+
+- **Fix (b) works.** The near-wall artefact is gone wherever there are layers. The fines' side-wall hits in Part 6
+  were mostly the artefact plus the gust model in coarse wall cells. Now k falls to 0 through the resolved layers, so
+  the gusts die at the walls as they should.
+- **More of the band stays airborne** and settles on the floor in the still air afterwards. For the slide test, that
+  makes the wait and covering the slides during the warm-up matter more.
+- **What's left is on the atomiser** (8.9 % of tracers, gusts on): layers there would be the next fix if it matters.
+- **Iterations 2,000 against 3,000: "close" at worst** (the > 60 µm centre, 0.5 mm). Every band is the same, so the
+  guide solves 2,000 (~35 min).
+- **Part 6 against this flow: "differs"** in every band below 30 µm. That is mostly the mesh (the artefact), not the
+  0.91 against 1.0 mm hole: the push differs by 21 %, the tracers by 62 points.
+
+**Guide 7.10 on Ben's 1.11 mm case: DONE 2026-11-02** (`settings/droplets_chamber_v2.yaml`, 5.3 min of tracking,
+~9 min with the reconstruction; `~/OpenFOAM/droplet_runs/droplets_chamber_v2/2026-11-02_121431/`, `comparison.md`).
+It confirms the scripted rehearsal above and is **Phase 7's step 1: the baseline every capture design is compared with.**
+
+| 0–30 µm band, weighted by the measured spray, by number | gusts on, flow kept 2 s | gusts off, flow kept 2 s |
+|---|---|---|
+| Tracers on the floor (Part 6: 24 / 62 %) | **0 %** | **0.2 %** |
+| Tracers on any wall | 7.3 % | 4.5 % |
+| **Leaves through the 44 mm port** | **1.2 %** | **2.5 %** |
+| On the floor (air moving + still air) | 49 + 40 = 90 % | 84 + 13 = 97 % |
+| Side walls / atomiser, nozzle block, arm | 2.8 / 6.2 % | 0 / 0.5 % |
+| **Airborne at switch-off** | **48 %** | **15 %** |
+| The band's share of the floor's deposit (still air only) | 83 % (99.6 %) | 84 % (100 %) |
+
+- **The floor artefact is gone on this mesh:** tracers 0 % on the floor against Part 6's 24–62 %. What is left is on
+  the walls (7.3 % gusts on), mostly the unlayered atomiser and the isotropic gust model near walls. The report still
+  prints "FLAG" for check 4; that wording has not caught up with this mesh.
+- **The baseline capture is 1–3 %.** In the bare chamber nearly the whole band ends on the floor: that is the number a
+  capture design has to beat.
+- **At switch-off roughly half the band is still airborne (48 %, gusts on), and spread through the whole chamber**,
+  not gathered anywhere (`paraview/gusts_on_after_2s_split_switch_off.png`: the 2–10 µm droplets fill the volume up to
+  the lid). That is the reservoir an extraction draws from, and it supports Phase 7's well-mixed estimate: **for the
+  fines, the extraction flow should matter more than the port's position.**
+- **The self-sorting is visible on the floor:** > 30 µm land in a tight patch under the jet (half within ~15 mm of
+  the impact point), while 0–20 µm land almost evenly over the whole floor (half-spread 83–89 mm). Slides more than
+  ~50 mm from the impact point collect almost only the band.
+- **Gusts on against off is the widest uncertainty for the band:** 48 against 15 % airborne at switch-off. The
+  turbulent dispersion model, not the mesh, now sets the fines' error bar.
+- Part 6 against Chamber_v2: "differs" in every band under 30 µm (the band's floor share differs by up to 25.6 points),
+  as expected from the mesh; > 30 µm "close".
+
+**A snag, fixed.** OpenFOAM saved a few pressure values as 4.9e-324 (the smallest number a double can hold) and then
+could not read them back: reconstructPar stopped. The droplets tool already rounded these to 0 when restarting its own
+cases (section 6). It now does the same to a flow's fields when it copies them (`cfd_runner._round_denormals_in`,
+with a test). Ben's case will probably have them too. ParaView reads them fine.
+
+**Lessons.**
+- cfMesh is fast (1.2 million cells in 17 s). The solve is the cost, and it scales with the cells: ~1 s an iteration
+  at 1.2 million, against ~0.2 s at 220,000.
+- cfMesh fits its layers into the first ordinary cell, and the max first-cell height is only a cap: 0.1 mm asked, 0.05
+  mm given on the floor.
+- Layers that stop at a corner, where a layered wall meets an unlayered part, leave a few faces over 70°
+  non-orthogonal. They are harmless at ~50 faces with CfdOF's 5 non-orthogonal correctors.
+- CfdOF's relative sizes round down to 8 mm halvings. Pick values inside a step: 0.04 gives 0.25 mm, 0.03 would give
+  0.125 mm.
+- CfdOF puts default walls into a patch called `defaultFaces` (type wall, no-slip, wall functions); its `walls` patch
+  is empty. That is normal (Part 6 is the same).
+- Under this load the Mac draws ~70 W. On a 35 W adapter the battery drained at ~45 W.
+
+## 8. In progress and next
 
 1. **Jet refinement** (guide Part 6, for Ben to click through; tested by script 2026-10-24): two cones of small cells
    along the jet, 0.5 mm in the first 40 mm and 2 mm down to the floor. 198,682 cells, 2,000 iterations in ~7 min.
@@ -202,7 +378,11 @@ out (5 min). Turbulent gusts from k on and off, as a bracket. One command (`run_
    the jet's momentum, which the coarse mesh still carried. The refined jet runs ~20 % below the textbook one, as
    two-equation models spread round jets too fast (Phase 2's second turbulence model checks it). Velocity residuals
    just under 1e-2 (was ~2e-2).
-2. **Grid check** (finer jet cones) and **inlet turbulence** 5 % vs 20 %: does the answer change?
+2. **Chamber v2, in stages (Ben, 2026-10-26; section 7):** Ben's hand-built 1.11 mm case is the reference; then,
+   each through the same droplets sweep: the hole while spraying (redo the 41 % with the series model first), inlet
+   turbulence 20 % against 5 %, a second turbulence model (**kEpsilon**: CfdOF does not offer realizable k-ε, checked
+   2026-11-02; expect more jet spreading, so the two models bracket the error), the grid check (all cells ×1.4 and ÷1.4),
+   layers on the atomiser, and later the liquid's own push.
 3. **Droplets through the baseline** (section 6; `../PLAN.md` Phase 3a): Parts A–D done 2026-10-25 (the tool,
    figures, report, checks, the baseline run, the snapshot check: one snapshot is enough; the mesh matters more).
    Fix (a) dropped; (b) comes with the scripted flows. Several flows compare with a sweep file or `--compare`.
@@ -211,7 +391,13 @@ out (5 min). Turbulent gusts from k on and off, as a bracket. One command (`run_
    counts but cannot size. To watch: fines from the warm-up reach the slides too (cover them, or a warm-up-only
    control); stains are larger than droplets (~2.5–3× if silicone wets glass: measure it); low coverage (try 1, 2, 5 s);
    wait ~10 min for fines to settle; slide positions relative to the nozzle (x 164, z −212 in the CAD).
-4. **Cross-stream and collection design**: screen ideas in Phase 1's fast model (about 10 s a layout), then CFD and
+4. **Cross-stream and collection design** (2026-11-02: guide **Part 8** written, two push designs, Stream 10 mm
+   against Gentle 40 mm at 30 L/min, capture 10 mm opposite, the 44 mm port sealed; push because the capture feeds an
+   AJP; checked by script to the mesh and a 30-iteration solve. Lessons: FreeCAD 1.1 renumbers CfdOF's face links
+   itself when cylinders are added to an existing Fusion; two cartesianMesh runs at once stalled at the layers stage
+   for 10+ min, each alone takes 23 s.) — planned in detail as `../PLAN.md` **Phase 7** (2026-10-30): for the
+   0–30 µm band the screen is recommended in the CFD itself, because Phase 1 cannot follow air-following sizes (its
+   own flag). Originally: screen ideas in Phase 1's fast model (about 10 s a layout), then CFD and
    droplet tracking on the best two or three.
 5. **Thesis-grade runs (PLAN Phase 2, awaiting Ben's go)**: scripted, jet refined along its length, grid check, two
    turbulence models, one compressible check, and whether a time-dependent solve is needed (the residuals never settle).
@@ -236,6 +422,8 @@ scripted orifice (Phase 2): take the effective hole from each run's own pressure
 | Practice-box answer key | `Flow Visualisation/cfdof/chamber_box.FCMacro` |
 | Ben's STEP + FreeCAD file | `~/OpenFOAM/cfdof_cases/FlowVis1stTrial/` |
 | Ben's case (mesh + results) | `~/OpenFOAM/cfdof_cases/Chamber_v1/` |
+| Chamber v2: STEP, FreeCAD file, case | `~/OpenFOAM/cfdof_cases/Chamber_v2/` (`Refined_Modular_Filter_Chamber.step`, `Chamber_v2.FCStd`, `case/`) |
+| Chamber v2 droplets check | `Flow Visualisation/settings/droplets_chamber_v2.yaml` |
 | The plan | `Flow Visualisation/PLAN.md` |
 | Droplets: settings, command | `Flow Visualisation/settings/droplets_baseline.yaml` (a sweep: `droplets_snapshots.yaml`), `run_droplets.py` |
 | Droplets: each run, all in one folder | `~/OpenFOAM/droplet_runs/<name>/<date_time>/`: report.md, figures/, paraview/<run>.command (double-click to view), openfoam/ (the cases); the flows, reconstructed once, in `flows/` |
