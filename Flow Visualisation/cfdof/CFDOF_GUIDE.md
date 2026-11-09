@@ -956,6 +956,13 @@ window, the capture's air).
 
 ---
 
+## Part 9. Nozzle designs on a 2D wedge
+
+Its own guide: **`NOZZLE_WEDGE_GUIDE.md`** (this folder, written 2026-11-08). A round nozzle drawn as a half-section
+in Fusion, meshed by CfdOF as a 5° slice, the fix CfdOF's wedge needs (its cut faces), and the mesh and domain checks.
+
+---
+
 ## In ParaView
 
 The case opens with the mesh in **metres** (the box is 0–0.3, 0–0.2, 0–0.35). The slice and streamline positions

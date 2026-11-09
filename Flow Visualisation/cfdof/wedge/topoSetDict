@@ -1,0 +1,26 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  Nozzle wedge (NOZZLE_WEDGE_GUIDE.md, step 9.7). Sorts the faces of CfdOF's one
+  "Wedge" patch into the wedge's two cut faces, front and back, so that
+  createPatchDict.wedge can make each a proper OpenFOAM wedge patch.
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      topoSetDict;
+}
+
+actions
+(
+    // every face of CfdOF's Wedge patch: both cut faces, front and back
+    { name frontSet; type faceSet; action new;    source patchToFace;  patch Wedge; }
+
+    // keep only those facing +z (the wedge is +-2.5 deg about z = 0, so the front
+    // faces point almost exactly along +z; cos 0.9 allows up to ~26 deg off)
+    { name frontSet; type faceSet; action subset; source normalToFace; normal (0 0 1); cos 0.9; }
+
+    // the same for the back: the Wedge faces facing -z
+    { name backSet;  type faceSet; action new;    source patchToFace;  patch Wedge; }
+    { name backSet;  type faceSet; action subset; source normalToFace; normal (0 0 -1); cos 0.9; }
+);

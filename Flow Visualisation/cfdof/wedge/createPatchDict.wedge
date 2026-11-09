@@ -1,0 +1,30 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  Nozzle wedge (NOZZLE_WEDGE_GUIDE.md, step 9.7). Turns CfdOF's one "Wedge"
+  patch (type symmetry) into two OpenFOAM wedge patches, from topoSet's two
+  face sets. Wedge is then empty, and createPatch removes it.
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      createPatchDict;
+}
+
+pointSync false;
+
+patches
+(
+    {
+        name            WedgeFront;
+        patchInfo       { type wedge; }
+        constructFrom   set;
+        set             frontSet;
+    }
+    {
+        name            WedgeBack;
+        patchInfo       { type wedge; }
+        constructFrom   set;
+        set             backSet;
+    }
+);

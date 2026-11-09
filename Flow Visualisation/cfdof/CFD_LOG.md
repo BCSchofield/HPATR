@@ -414,11 +414,57 @@ scripted orifice (Phase 2): take the effective hole from each run's own pressure
 **Still open.** The 1.2 mm insert's Cd (bore / residue check); the liquid carries as much mass as the gas
 (2.0e-4 vs 1.8e-4 kg/s) and its push on the air is not in any model yet; sub-30 µm sizes (the slides should help).
 
+## 9. Nozzle designs: the 2D wedge (rehearsal, 2026-11-08)
+
+Ben asked how to test nozzle designs. Round nozzle, no swirl: a 2D axisymmetric wedge (the example domain, drawn
+for a 1.11 mm exit: https://claude.ai/artifact/JgfQEQKsi6fua2yZBMs2Cn). Rehearsed headless on a dummy nozzle face
+(4 mm feed, 30° contraction, 1.11 × 3 mm bore; domain 10 D behind, 25 D radial, 100 D downstream), padded to a thin
+block, cfMesh, then CfdOF's Mesh refinement → Extrusion → **2D wedge mesh** (5°). Inlet: uniform velocity 11.35 m/s
+(1.426e-4 m³/s over the Ø4 feed). Side and back faces Open → Ambient pressure, downstream face Outlet 0 Pa. Scripts and
+cases in the session scratchpad (`wedge/`), not kept.
+
+- **Block thickness: at least 4 of the coarsest cells.** A 1 mm block with 1 mm or 0.5 mm cells lost the inlet and
+  outlet strips completely (0 faces) and gave zero-volume cells; with 0.25 mm cells every patch is there, Mesh OK.
+  Recipe: 1 mm block, CharacteristicLengthMax 0.25 mm, boxes at 0.0625 mm (to 12 mm) and 0.03125 mm (bore, lip,
+  first 3 mm). 70,837 cells, meshed in 8 s; 1,500 iterations serial in 3 min.
+- **The face can touch the axis.** extrudeMesh collapses the axis cells into prisms; checkMesh OK. The bad cells first
+  blamed on the axis came from the lost strips. An offset of 0.001 mm off the axis did not fix the jet either (below).
+- **CfdOF's wedge is wrong for a jet: it makes both cut faces one `symmetry` patch.** Same mesh, same settings: with
+  `symmetry` the jet goes hollow (centreline 161 → 92 → 29 → 7 m/s at 0 / 2 / 4 / 6 D, ~0 from 10 D, the peak moving
+  off the axis, half-speed radius 20 D at 60 D, k on the axis 2,300 m²/s² at 5 D). Split into two OpenFOAM `wedge`
+  patches (topoSet by normal, createPatch, the type set in `boundary` and `0/*`): core to ~7 D, then
+  Uc/U0 = 4.96 / (x/D − 2.8) (measured round jets ~5.8–6.2: SST spreads ~20 % too fast, as in section 8 item 1),
+  half-speed radius 0.11 x (measured 0.094 x), entrainment 35× the jet flow by 100 D (expected ~32×), gas in = out.
+  With `symmetry` OpenFOAM also treats the case as 3D (solves Uz; its residual stalls at ~0.03, so the convergence
+  stop never trips); with `wedge` it sees 2 directions.
+- **Guide written: `NOZZLE_WEDGE_GUIDE.md` (Part 9, 2026-11-08),** click-through, no script (Ben's choice). The fix
+  is done by hand after CfdOF's Run has prepared the case: `wedge/topoSetDict` (two face sets by normal, ±z),
+  `createPatch -dict wedge/createPatchDict.wedge` (WedgeFront and WedgeBack, type wedge), then `foamDictionary` on
+  `0/{U,p,k,omega,nut}` (drop Wedge, add the two), potentialFoam, simpleFoam. Rehearsed exactly as written. Lessons:
+  - createPatch can't take "the rest of a patch" after a set (`constructFrom patches (Wedge)` after a set from it):
+    it reports duplicate faces and writes nothing. Hence two sets.
+  - createPatch doesn't add the new patches to the fields in `0/`; the solver stops with "Cannot find patchField entry
+    for WedgeFront". Hence foamDictionary.
+  - CfdOF's Allrun writes `system/turbulenceLib` (and alphaDivScheme, cAlpha) before createPatch, so its steps can't
+    be redone by hand from a bare written case. The guide has Ben press Run (and Stop once it iterates) first.
+  - CfdOF's default convergence stop is 1e-3. Nozzle_A stops at 1,429 iterations; run on to 3,000, the jet is the
+    same to 0.1 m/s (only the outlet flow creeps, 7.06 → 7.32e-5 in the slice).
+  - Long runs write outlet pressures like 4.94e-324 that OpenFOAM can't read back ("Bad token"); ParaView reads them.
+- **The checks (guide 9.10–9.11):**
+  - **Domain ×1.5** (15 / 37.5 / 150 D, 139,114 cells): the jet within 0.4 % everywhere to 99 D. Big enough.
+  - **Every cell halved** (base 0.125 mm, 277,764 cells, 86 s and 3.8 GB to mesh; converged at 2,176 iterations,
+    17 min): +1.3 % at the lip, +3.6 % at 10 D, +2–3 % at 20–50 D, half-width −1 to −4 %, inlet pressure +2.6 %. Fine
+    enough to compare designs (differences under ~4 % are inside it). **But past ~70 D the fine mesh's jet speeds up
+    and narrows towards the outlet** (16.4 m/s at 99 D against 7.7), the air there converging onto the axis; the
+    0.25 mm mesh and the big domain don't. So compare inside 50 D, and the outlet flow is no measure of entrainment
+    (−25 % with the mesh). **Open:** whether an Open (ambient) outlet face would stop it.
+
 ## Where things are
 
 | What | Where |
 |---|---|
 | Step-by-step guide | `Flow Visualisation/cfdof/CFDOF_GUIDE.md` |
+| Nozzle designs on a 2D wedge (Part 9) | `Flow Visualisation/cfdof/NOZZLE_WEDGE_GUIDE.md`, its two dicts in `cfdof/wedge/` |
 | Practice-box answer key | `Flow Visualisation/cfdof/chamber_box.FCMacro` |
 | Ben's STEP + FreeCAD file | `~/OpenFOAM/cfdof_cases/FlowVis1stTrial/` |
 | Ben's case (mesh + results) | `~/OpenFOAM/cfdof_cases/Chamber_v1/` |
