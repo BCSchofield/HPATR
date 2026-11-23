@@ -27,8 +27,8 @@ from scipy.spatial import cKDTree
 
 from . import cfd_checks, cfd_droplets, cfd_plots
 from . import cfd_results as R
-from .cfd_droplets import Variant
-from .cfd_report import BAND, _p
+from .cfd_droplets import Variant, headline
+from .cfd_report import BAND, _p, link_prefix, report_path
 from .plots import BAND as BAND_FILL, INK, INK2, SERIES, STYLE
 
 import matplotlib.pyplot as plt  # noqa: E402  (after .plots, which sets the Agg backend)
@@ -351,7 +351,9 @@ def _pm(d, nz, fmt="{:+.1f}", x=NOISE_X) -> str:
 
 def compare(folders: list, out: Path, labels: list[str] | None = None, show: str | None = None,
             against: str | None = None, tolerance: dict | None = None, title: str | None = None,
-            log=print) -> Path:
+            log=print, md: Path | None = None) -> Path:
+    """comparison.csv and figures/ into out; comparison.md into md (default out/comparison.md), its links made from
+    there."""
     runs = [load_run(f, labels[i] if labels else None) for i, f in enumerate(folders)]
     if len(runs) < 2:
         raise ValueError("compare: at least two run folders")
@@ -364,9 +366,10 @@ def compare(folders: list, out: Path, labels: list[str] | None = None, show: str
         raise ValueError("compare: the runs have no variant (gusts, flow kept) in common")
     s0 = runs[ref].scn
     if show is None or show not in common:
-        mid = Variant(True if True in s0.gusts else s0.gusts[0], s0.after_s[len(s0.after_s) // 2]).key
+        mid = headline(s0)
         show = mid if mid in common else common[0]
     out = Path(out)
+    md = Path(md) if md else out / "comparison.md"
     figs = out / "figures"
     figs.mkdir(parents=True, exist_ok=True)
     title = title or "The same droplets through each flow"
@@ -376,24 +379,36 @@ def compare(folders: list, out: Path, labels: list[str] | None = None, show: str
     floor_figure(runs, show, figs / "compare_floor.png", "Where each size band lands on the floor, flow by flow")
     fates_figure(runs, ref, show, figs / "compare_fates.png", "Where each size ends up, flow by flow")
     air = air_rows(runs, ref)
-    text = report(runs, ref, show, common, tol, ag, bt, air, title)
-    (out / "comparison.md").write_text(text, encoding="utf-8")
-    log(f"comparison: {out / 'comparison.md'}")
-    return out / "comparison.md"
+    text = report(runs, ref, show, common, tol, ag, bt, air, title, link_prefix(out, md), md.parent)
+    md.write_text(text, encoding="utf-8")
+    log(f"comparison: {md}")
+    return md
 
 
-def report(runs, ref, show, common, tol, ag, bt, air, title) -> str:
+def _rel(path: Path, md_dir: Path | None) -> str:
+    """path as a link from a report in md_dir (without md_dir: its folder's name and its own)."""
+    path = Path(path)
+    return os.path.relpath(path, md_dir).replace(os.sep, "/") if md_dir else f"{path.parent.name}/{path.name}"
+
+
+def report(runs, ref, show, common, tol, ag, bt, air, title, prefix: str = "", md_dir: Path | None = None) -> str:
+    """prefix: what the links to out's files start with; md_dir: where the report is (for the links to each run's
+    report)."""
+    p = prefix
     r0 = runs[ref]
     s0 = r0.scn
     L = [f"# {title}", "", f"Made {datetime.now():%Y-%m-%d %H:%M}. The reference is **{r0.label}**; the maps and the "
          f"size curves show **{_label(s0, show)}**. Each run's own report.md has everything else.", ""]
+    if p:
+        L += [f"**In ParaView:** double-click a `View <flow>.command` beside this file to open that flow's run; every "
+              f"run's view is in `{p}<flow>/paraview/`.", ""]
     L += ["## What was compared", "", "| run | flow case | iteration | cells | orifice | droplets | folder |",
           "|---|---|---|---|---|---|---|"]
     for r in runs:
         L.append(f"| {r.label}{' (reference)' if r is r0 else ''} | `{r.meta['flow_case']}` | {r.meta['iteration']} | "
                  f"{_f(r.meta.get('flow_cells'), '{:,}')} | {_f(r.plan.get('orifice_d_mm'), '{:.2f} mm')} | "
-                 f"{r.scn.per_size} of each of {r.scn.sizes_um.size} sizes | [{r.folder.name}]"
-                 f"({r.folder.name}/report.md) |")
+                 f"{r.scn.per_size} of each of {r.scn.sizes_um.size} sizes | [{report_path(r.folder).parent.name}]"
+                 f"({_rel(report_path(r.folder), md_dir)}) |")
     L.append("")
 
     sv = ag[(ag.variant == show) & ~ag.reference]
@@ -415,7 +430,7 @@ def report(runs, ref, show, common, tol, ag, bt, air, title) -> str:
                   + (f" (worst in {_label(s0, bk['across_worst_run'])})" if bk["across_pp"] > 0 else "") + "; "
                   f"in {r0.label} the brackets we already carry span {bk['gusts_pp']:.1f} points (gusts on against "
                   f"off) and {bk['kept_pp']:.1f} points (the flow kept {s0.after_s[0]:g} to {s0.after_s[-1]:g} s)."]
-    L += ["", "![the floor deposit by band, flow by flow](figures/compare_floor.png)", ""]
+    L += ["", f"![the floor deposit by band, flow by flow]({p}figures/compare_floor.png)", ""]
 
     L += ["## The air", "", "Each flow sampled on a {:g} mm grid over the chamber (the nearest cell's value), so flows on "
           "different meshes compare point by point.".format(GRID_MM), "",
@@ -477,7 +492,7 @@ def report(runs, ref, show, common, tol, ag, bt, air, title) -> str:
                 bands = [b for b, x in zip(g.band, g.verdict) if x == VERDICTS[2]]
                 cells.append("–" if worst is None else VERDICTS[worst] + (f" ({', '.join(bands)})" if bands else ""))
             L.append(f"| {r.label} | " + " | ".join(cells) + " |")
-    L += ["", "![where each size ends up, flow by flow](figures/compare_fates.png)", ""]
+    L += ["", f"![where each size ends up, flow by flow]({p}figures/compare_fates.png)", ""]
 
     L += ["## Each run's checks", "", "| run | every droplet accounted for | tracers on the floor, gusts off / on | "
           "≥ 80 µm within (mm) of the impact point, 90 % | flags in its report |", "|---|---|---|---|---|"]
@@ -486,7 +501,8 @@ def report(runs, ref, show, common, tol, ag, bt, air, title) -> str:
         cases = (r.checks or {}).get("cases", {})
         tr = " / ".join(_p((cases.get(f"tracers_gusts_{g}") or {}).get("floor"), 0) for g in ("off", "on"))
         lg = [x.get("r90_mm") for x in (r.checks or {}).get("large", []) if x.get("variant") == show]
-        rep = (r.folder / "report.md").read_text(encoding="utf-8") if (r.folder / "report.md").exists() else ""
+        rp = report_path(r.folder)
+        rep = rp.read_text(encoding="utf-8") if rp.exists() else ""
         L.append(f"| {r.label} | {'yes' if acc else 'NO'} | {tr} % | {_f(lg[0] if lg else None, '{:.0f}')} | "
                  f"{rep.count('FLAG')} |")
     L += ["", "The tracers show the near-wall artefact (PLAN.md, Phase 3a): it depends on the mesh, so a flow on "
@@ -506,7 +522,7 @@ def report(runs, ref, show, common, tol, ag, bt, air, title) -> str:
           f"{cfd_plots.MIN_FOR_MAP} droplets on the floor (or whose resamples often fall below that) gets only the "
           "floor share.",
           f"- More droplets per size shrink the noise (as 1/sqrt): {s0.per_size} of each here.", ""]
-    L += ["## Files", "", "- `comparison.csv`: every run, variant and band: the measures, differences and noise.",
-          "- `figures/compare_floor.png`, `figures/compare_fates.png`.",
-          "- One folder per run, each with its report.md, figures and ParaView states.", ""]
+    L += ["## Files", "", f"- `{p}comparison.csv`: every run, variant and band: the measures, differences and noise.",
+          f"- `{p}figures/compare_floor.png`, `{p}figures/compare_fates.png`.",
+          "- Each run's own folder (linked in the first table), with its report.md, figures and ParaView views.", ""]
     return "\n".join(L)

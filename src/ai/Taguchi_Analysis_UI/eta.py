@@ -60,7 +60,7 @@ _WINDOWS = {
 }
 _INFER_SPREAD = (411 / 950, 1559 / 950)          # how much inference varies with load (CUDA)
 _DARWIN = {
-    # MEASURED 2026-10-05: two real sandbox runs on a MacBook Air, CPU inference, first
+    # MEASURED 2026-10-05: two real sandbox runs on Ben's MacBook Pro (M5 Pro), CPU inference, first
     # 40 frames, one condition (3000 sccm / 300 rpm / 4000 sps -- the LIGHTEST spray, so
     # heavier conditions will run slower). s/frame: extract 0.235-0.2375, inference
     # 5.80-5.83, measurement 0.1075-0.115, classical 0.042-0.044; background 1.7-2.6 s.
@@ -77,7 +77,7 @@ _DARWIN = {
 PRIORS_BY_OS = {"Windows": _WINDOWS, "Darwin": _DARWIN}
 PRIOR_SOURCE_BY_OS = {
     "Windows": "the GPU PC's figures (handoff timings, CUDA)",
-    "Darwin": "a MacBook Air's measured figures (CPU, one light condition)",
+    "Darwin": "a MacBook Pro's measured figures (CPU, one light condition)",
 }
 FIXED_STAGES = frozenset({"background"})          # seconds per run, not per frame
 # what a run costs when its frames and AI predictions are reused (Re-measure only: process_capture skips

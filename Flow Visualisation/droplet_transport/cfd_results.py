@@ -8,6 +8,7 @@ saved frames for ParaView, inactive (active 0) where they landed.
 """
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -22,7 +23,12 @@ OBJECTS = "atomiser / nozzle block / arm"
 PORT_MESH = "port mesh"
 PORT_TUBE = "port tube"
 SPRAY_HOLE = "back up the spray hole"
-WALL_TOL = 0.5e-3                                    # m: a hit this close to a wall plane is on that wall
+GUARD_FILE = "bad_tet_cells.json"                    # in a case: the runner's guard is on (cfd_runner.guard): the
+                                                     #   cells it keeps droplets out of, their centres, the ports'
+PORT_REACH = 0.08                                    # m: a removed droplet's cell this near a port's end is in its
+                                                     #   cone or pipe, so port (Stream v3: the cone mouth's rim is
+                                                     #   ~60 mm from the capture's end, the atomiser's cells >110 mm)
+WALL_TOL = 0.5e-3                                   # m: a hit this close to a wall plane is on that wall
 BANDS_UM = ((0, 10), (10, 20), (20, 30), (30, 60), (60, None))
 NUM = r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?"
 
@@ -161,6 +167,28 @@ def droplets(scn: CloudScenario, v: Variant, case: Path) -> pd.DataFrame:
         if k not in rec:
             # never touched a wall: airborne (an inactive droplet with no hit record would be a lost one)
             rec[k] = (r.d, AIRBORNE if r.active else "stopped, no wall hit", np.nan, r.x, r.y, r.z)
+    removed = set()
+    if (case / GUARD_FILE).exists():
+        # the guard took some out mid-run, each as it reached a near-wall cell: the frames (newest first; they keep the
+        # droplets) say where each was last, and the bad cell nearest that is where it went, a wall hit there
+        want = scn.per_size * scn.sizes_um.size
+        g = json.loads((case / GUARD_FILE).read_text())
+        cells = np.array(g["centres_m"], float).reshape(-1, 3)
+        ports = np.array(list(g["ports_m"].values()), float).reshape(-1, 3)
+        for _t, td in reversed(time_dirs(case)):
+            if len(rec) >= want:
+                break
+            if not (td / "lagrangian" / "kinematicCloud" / "positions").exists():
+                continue
+            for r in read_cloud(td).itertuples(index=False):
+                k = (r.proc, r.id)
+                if k in rec:
+                    continue
+                p = np.array([r.x, r.y, r.z])
+                c = cells[np.argmin(((cells - p) ** 2).sum(axis=1))] if len(cells) else p
+                at_port = len(ports) and np.sqrt(((ports - c) ** 2).sum(axis=1)).min() <= PORT_REACH
+                rec[k] = (r.d, PORT_TUBE if at_port else where(scn, "", c), np.nan, *c)
+                removed.add(k)
     airborne_off = set()
     if off is not None:
         airborne_off = {(p, i) for p, i, a in zip(off.proc, off.id, off.active) if a}
@@ -173,7 +201,8 @@ def droplets(scn: CloudScenario, v: Variant, case: Path) -> pd.DataFrame:
         "fate": [rec[k][1] for k in keys], "landed_s": [rec[k][2] for k in keys],
         "x_mm": [rec[k][3] * 1000 for k in keys], "y_mm": [rec[k][4] * 1000 for k in keys],
         "z_mm": [rec[k][5] * 1000 for k in keys],
-        "airborne_at_switch_off": [int(k in airborne_off) for k in keys] if off is not None else np.nan})
+        "airborne_at_switch_off": [int(k in airborne_off) for k in keys] if off is not None else np.nan,
+        "removed_in_bad_cell": [int(k in removed) for k in keys]})
 
 
 LANDED_CLASSES = {"positions": "Cloud<basicKinematicCollidingParcel>", "d": "scalarField", "active": "labelField",
@@ -279,7 +308,7 @@ def bands(scn: CloudScenario, df: pd.DataFrame) -> pd.DataFrame:
             row = {"variant": var, "band": band_label(lo, hi), "fired": len(sel)}
             if sel["airborne_at_switch_off"].notna().any():
                 row["airborne at switch-off"] = sel["airborne_at_switch_off"].mean()
-            for f in fates(scn):
+            for f in fates(scn) + sorted(set(df.fate) - set(fates(scn))):
                 row[f] = (sel.fate == f).mean()
             rows.append(row)
     out = pd.DataFrame(rows)

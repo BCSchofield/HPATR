@@ -45,6 +45,7 @@ def test_entries_change_only_what_they_name(tmp_path):
     ("    - {label: a, flw: {iteration: 1}}\n    - {label: b}\n", "not a settings section"),
     ("    - {label: a b}\n    - {label: a_b}\n", "used twice"),
     ("    - {flow: {iteration: 1}}\n    - {label: b}\n", "with a label"),
+    ("    - {label: Data}\n    - {label: b}\n", "is taken"),
 ])
 def test_broken_sweeps_are_refused(tmp_path, runs, msg):
     with pytest.raises(SettingsError, match=msg):
@@ -180,7 +181,44 @@ def test_compare_writes_the_report(tmp_path):
         M.compare([tmp_path / "a", tmp_path / "a"], tmp_path / "out2")
 
 
+def test_a_top_level_comparison_links_into_data(tmp_path):
+    """A sweep's comparison.md sits in the run's top folder; its figures, csv and each flow's folder in data/."""
+    scn = C.load(BASELINE)
+    top = tmp_path / "2026-01-01_0000_t"
+    run_folder(top / "data" / "a", scn, fake_run(scn, seed=0), "iteration 1000", 1000)
+    run_folder(top / "data" / "b", scn, fake_run(scn, seed=1), "iteration 2000", 2000)
+    md = M.compare([top / "data" / "a", top / "data" / "b"], top / "data", md=top / "comparison.md")
+    text = md.read_text()
+    assert md == top / "comparison.md" and (top / "data" / "figures" / "compare_floor.png").exists()
+    assert (top / "data" / "comparison.csv").exists() and not (top / "data" / "comparison.md").exists()
+    for part in ("](data/figures/compare_floor.png)", "](data/figures/compare_fates.png)", "[a](data/a/report.md)",
+                 "`View <flow>.command`", "`data/comparison.csv`"):
+        assert part in text, part
+
+
 # ---- one folder per run, and its ParaView opener -------------------------------------------------------------------
+
+def test_run_folders_are_named_by_date_and_test(tmp_path):
+    import re
+    from droplet_transport import cfd_runner
+    a = cfd_runner.fresh_stamp(tmp_path, "carrier_stream")
+    b = cfd_runner.fresh_stamp(tmp_path, "carrier_stream")
+    assert re.fullmatch(r"\d{4}-\d\d-\d\d_\d{4}_carrier_stream", a) and (tmp_path / a).is_dir()
+    assert b == f"{a}_2" or b[:15] != a[:15]                          # the same minute, or the next
+
+
+def test_where_a_runs_report_and_files_go(tmp_path):
+    from droplet_transport.cfd_report import link_prefix, report_path, run_files
+    old, new = tmp_path / "old", tmp_path / "new"
+    old.mkdir()
+    (new / "data" / "stream").mkdir(parents=True)
+    assert run_files(old) == old and run_files(new) == new / "data" and run_files(new / "data") == new / "data"
+    assert report_path(new / "data") == new / "report.md"
+    assert report_path(new / "data", "comparison.md") == new / "comparison.md"
+    assert report_path(new / "data" / "stream") == new / "data" / "stream" / "report.md"
+    assert report_path(old) == old / "report.md"
+    assert link_prefix(new / "data", new / "report.md") == "data/" and link_prefix(old, old / "report.md") == ""
+
 
 def test_the_opener_follows_the_folder(tmp_path):
     """A run's paraview/<key>.command rewrites the view's paths to wherever the folder now is, and opens it."""
@@ -206,6 +244,66 @@ def test_the_opener_follows_the_folder(tmp_path):
     assert str(scn.paraview_bin.parent.parent) in args
     state = Path(args.split("--state=")[1].strip()).read_text()
     assert state == f'<P value="{moved}/openfoam/k/cloud.foam"/><P value="{moved}/x"/>'
+
+
+def test_the_top_level_opener_follows_the_folder(tmp_path):
+    """View <flow>.command, in a run's top folder, opens that flow's headline run through the run's own opener,
+    wherever the top folder is moved; a flow without that view gets none, and older ones are replaced."""
+    import os
+    import subprocess
+    from droplet_transport import cfd_runner
+    scn = C.load(BASELINE)
+    key = "gusts_on_after_2s"
+    top = tmp_path / "runs" / "2026-01-01_0000_carrier_stream"
+    run = top / "data" / "stream"
+    (run / "paraview").mkdir(parents=True)
+    (run / "paraview" / f"{key}.pvsm").write_text(f'<P value="{run}/openfoam/{key}/cloud.foam"/>')
+    cfd_runner.write_opener(scn, run, key, "gusts on")
+    (top / "View old.command").write_text("")
+    made = cfd_runner.write_fronts(top, [("Stream", run, scn, key), ("Gentle", top / "data" / "gentle", scn, key)])
+    assert [f.name for f in made] == ["View Stream.command"] and not (top / "View old.command").exists()
+    assert os.access(made[0], os.X_OK) and "Stream: gusts on, flow kept 2 s after switch-off." in made[0].read_text()
+    moved = tmp_path / "a folder with spaces & more" / "copy"
+    shutil.copytree(top, moved)
+    shutil.rmtree(top)
+    stub = tmp_path / "bin"
+    stub.mkdir()
+    (stub / "open").write_text(f'#!/bin/bash\nprintf "%s " "$@" > "{tmp_path}/args"\n')
+    (stub / "open").chmod(0o755)
+    env = {**os.environ, "PATH": f"{stub}:{os.environ['PATH']}"}
+    subprocess.run(["bash", str(moved / "View Stream.command")], env=env, check=True)
+    state = Path((tmp_path / "args").read_text().split("--state=")[1].strip()).read_text()
+    assert state == f'<P value="{moved}/data/stream/openfoam/{key}/cloud.foam"/>'
+
+
+def test_the_case_viewer(tmp_path):
+    """cfdof/View flow.command, copied into a CfdOF case's folder: opens the newest saved view there, else the case
+    through CfdOF's own ParaView script with the case's full path."""
+    import os
+    import subprocess
+    import time
+    viewer = ROOT / "cfdof" / "View flow.command"
+    assert os.access(viewer, os.X_OK)
+    folder = tmp_path / "Chamber_v2_stream_30"
+    (folder / "case").mkdir(parents=True)
+    shutil.copy2(viewer, folder)
+    (folder / "case" / "pvScript.py").write_text("pfoam = OpenFOAMReader(FileName=r'pv.foam')\n")
+    stub = tmp_path / "bin"
+    stub.mkdir()
+    (stub / "open").write_text(f'#!/bin/bash\nprintf "%s " "$@" > "{tmp_path}/args"\n')
+    (stub / "open").chmod(0o755)
+    env = {**os.environ, "PATH": f"{stub}:{os.environ['PATH']}"}
+
+    def opened():
+        subprocess.run(["bash", str(folder / "View flow.command")], env=env, check=True)
+        return (tmp_path / "args").read_text()
+
+    script = Path(opened().split("--script=")[1].strip()).read_text()
+    assert script == f"pfoam = OpenFOAMReader(FileName=r'{folder}/case/pv.foam')\n"
+    (folder / "a.pvsm").write_text("")
+    time.sleep(1.1)
+    (folder / "b.pvsm").write_text("")
+    assert opened().strip().endswith(f"--state={folder}/b.pvsm")
 
 
 def test_bens_views_settings_and_port_seed():

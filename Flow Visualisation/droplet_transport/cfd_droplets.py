@@ -52,6 +52,12 @@ class Variant:
         return f"gusts {'on' if self.gusts else 'off'}, flow kept {self.after_s:g} s after switch-off"
 
 
+def headline(scn) -> str:
+    """The run shown unless told otherwise (a comparison's maps, a run's top-level opener): gusts on, the middle
+    flow-kept time."""
+    return Variant(True if True in scn.gusts else scn.gusts[0], scn.after_s[len(scn.after_s) // 2]).key
+
+
 @dataclass
 class CloudScenario:
     name: str
@@ -592,12 +598,14 @@ def write_still_air(scn: CloudScenario, v: Variant, case: Path) -> float:
 KEEP_LAGRANGIAN = {"positions", "d", "active", "origId", "origProcId", "U"}
 
 
-def prune(case: Path, keep_whole: set[float]) -> int:
-    """Delete the flow fields (copies of the frozen flow, ~30 MB a frame) and the droplet fields nobody reads from
-    every frame except time 0 (the flow) and keep_whole (a restart point). Returns the bytes freed."""
+def prune(case: Path, keep_whole: set[float], before: float | None = None) -> int:
+    """Delete the flow fields (copies of the frozen flow: ~30 MB a frame on Chamber_v1_jet's 0.2 M cells, ~210 MB on
+    Stream's 1.65 M) and the droplet fields nobody reads from every frame except time 0 (the flow) and keep_whole (a
+    restart point), and, if `before` is given, every frame from that time on (one OpenFOAM may still be writing).
+    Returns the bytes freed."""
     freed = 0
     for t, d in time_dirs(case):
-        if t == 0 or any(abs(t - k) < 1e-9 for k in keep_whole):
+        if t == 0 or any(abs(t - k) < 1e-9 for k in keep_whole) or (before is not None and t >= before - 1e-9):
             continue
         for p in d.iterdir():
             if p.name == "lagrangian":

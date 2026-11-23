@@ -2,6 +2,7 @@
 figures, the checks, the flags, the runs, and every input by how it is known (PLAN.md, Phase 3a, Outputs)."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import numpy as np
@@ -11,6 +12,27 @@ from . import cfd_results as R
 from .report import inputs_section
 
 BAND = (0.0, 30.0)
+DATA = "data"          # a run's files, in its top folder beside its report and its double-click openers (2026-11-12)
+
+
+def run_files(folder: Path) -> Path:
+    """Where a run's (or a sweep's) files are: folder/data/ for runs made from 2026-11-12, else the folder itself
+    (older runs, and each flow's folder inside a sweep)."""
+    folder = Path(folder)
+    return folder / DATA if (folder / DATA).is_dir() else folder
+
+
+def report_path(files: Path, name: str = "report.md") -> Path:
+    """Where the report of the run (or sweep) whose files are in `files` goes: beside a data/ folder, in the run's top
+    folder; else among the files."""
+    files = Path(files)
+    return files.parent / name if files.name == DATA else files / name
+
+
+def link_prefix(files: Path, md: Path) -> str:
+    """What the links in report `md` start with to reach `files`: "data/" for a top-level report, else nothing."""
+    rel = os.path.relpath(Path(files), Path(md).parent)
+    return "" if rel == "." else rel.replace(os.sep, "/") + "/"
 
 
 def _p(x, nd=1) -> str:
@@ -57,8 +79,8 @@ def headline(scn, df: pd.DataFrame) -> list[str]:
     return out
 
 
-def checks_section(scn, meta: dict, checks: dict) -> tuple[list[str], list[str]]:
-    """The checks, and the flags they raise."""
+def checks_section(scn, meta: dict, checks: dict, prefix: str = "") -> tuple[list[str], list[str]]:
+    """The checks, and the flags they raise (prefix: as report's)."""
     out, flags = ["## Checks", ""], []
     runs = meta.get("runs", [])
     acc = [r.get("accounting") for r in runs if r.get("accounting")]
@@ -85,7 +107,7 @@ def checks_section(scn, meta: dict, checks: dict) -> tuple[list[str], list[str]]
                 f"f = 1 + Re^⅔/6) against Phase 1's Schiller-Naumann (f = 1 + 0.15 Re^0.687), which part at Re of a "
                 f"few (a 200 µm droplet settles at Re ≈ 9). Below ~60 µm (Re < 1) they agree within ~0.5 %, "
                 f"the rest being the air's viscosity (CfdOF's ν against Sutherland's law). "
-                "`figures/check_column.png`.", ""]
+                f"`{prefix}figures/check_column.png`.", ""]
         if not good:
             flags.append("OpenFOAM's tracking disagrees with Phase 1's integrator (Checks, 2).")
     tv = checks.get("tracers_vs_sizes", [])
@@ -116,7 +138,7 @@ def checks_section(scn, meta: dict, checks: dict) -> tuple[list[str], list[str]]
                 "floor is over-collected while the air moves, most for the smallest, fading where settling or "
                 "momentum take over (compare the sizes above with the tracers). With gusts on, the random gusts "
                 "also carry tracers to every wall (an isotropic gust model near a wall over-predicts that too).",
-                "", "`figures/check_tracers.png`.", ""]
+                "", f"`{prefix}figures/check_tracers.png`.", ""]
         flags.append("**The near-wall artefact (Checks, 4):** while the air moves, the fines' floor and wall "
                      "counts are too high and their airborne shares too low (the tracers' row is the size of it). "
                      "Landings in still air are not affected; nor are the large droplets.")
@@ -164,7 +186,10 @@ def checks_section(scn, meta: dict, checks: dict) -> tuple[list[str], list[str]]
     return out, flags
 
 
-def report(scn, settings_name: str, meta: dict, df: pd.DataFrame, checks: dict, figures: list) -> str:
+def report(scn, settings_name: str, meta: dict, df: pd.DataFrame, checks: dict, figures: list,
+           prefix: str = "") -> str:
+    """prefix: what the links to the run's files start with ("data/" for a report in the run's top folder)."""
+    p = prefix
     L = [f"# Droplets through the CFD flow: {scn.name}", "",
          f"{meta['when']} · `{settings_name}` · Phase 3a (PLAN.md) · droplet_transport {meta['version']}. "
          f"{scn.sizes_um.size} sizes, {scn.sizes_um.min():g}-{scn.sizes_um.max():g} µm, {scn.per_size} of each "
@@ -185,22 +210,22 @@ def report(scn, settings_name: str, meta: dict, df: pd.DataFrame, checks: dict, 
           "half and 90 %. Each size counted equally.", ""]
     for f, desc in figures:
         if f.startswith("floor_"):
-            L += [f"**{desc}**", "", f"![{desc}](figures/{f})", ""]
+            L += [f"**{desc}**", "", f"![{desc}]({p}figures/{f})", ""]
     if "fates_by_size.png" in figs:
-        L += ["## Where each size ends up", "", "![where each size ends up](figures/fates_by_size.png)", ""]
-    ck, flags = checks_section(scn, meta, checks)
+        L += ["## Where each size ends up", "", f"![where each size ends up]({p}figures/fates_by_size.png)", ""]
+    ck, flags = checks_section(scn, meta, checks, p)
     L += ck
     if "check_tracers.png" in figs:
-        L += ["![tracers](figures/check_tracers.png)", ""]
+        L += [f"![tracers]({p}figures/check_tracers.png)", ""]
     if "check_column.png" in figs:
-        L += ["![column](figures/check_column.png)", ""]
+        L += [f"![column]({p}figures/check_column.png)", ""]
     L += ["## Flags", ""] + [f"- {f}" for f in flags] + [
         "- The slide positions are not in yet (the slide-comparison step): the maps cover the whole floor.", ""]
     L += ["## Runs", "", "| run | droplets accounted for | stage 1 | stage 2 | ParaView |", "|---|---|---|---|---|"]
     for r in meta["runs"]:
         a = r.get("accounting", {})
         acc = (f"{a['found']:,} of {a['fired_expected']:,}" + ("" if a["ok"] else " **(check)**")) if a else ""
-        pv = f"`paraview/{r['variant']}.command`" if r.get("pvsm") else ""
+        pv = f"`{p}paraview/{r['variant']}.command`" if r.get("pvsm") else ""
         L.append(f"| {r['label']} | {acc} | {r.get('stage1_s', 0):.0f} s | {r.get('stage2_s', 0):.0f} s | {pv} |")
     L += ["", f"All runs and checks together took {meta['wall_clock_s'] / 60:.1f} min ({scn.parallel} at once). "
               f"Spray: {scn.dt * 1000:g} ms steps (one droplet of each size a step); still air ~"
@@ -210,9 +235,11 @@ def report(scn, settings_name: str, meta: dict, df: pd.DataFrame, checks: dict, 
     first = next((r for r in meta["runs"] if r.get("pvsm")), None)
     if first:
         here = meta.get("root") or str(Path(first["pvsm"]).parent.parent)
-        L += ["**Open a run in ParaView:** double-click its `paraview/<run>.command` in Finder; it works wherever this "
-              "folder is copied or moved (copy the whole folder). Then First Frame, Play; *0-30 µm band only* and "
-              "*still airborne only* are hidden: click their eyes. Or paste:", "", "```",
+        how = ("the `View ….command` beside this report (the headline run: gusts on, the middle flow-kept time), or "
+               f"any run's `{p}paraview/<run>.command`," if p else "its `paraview/<run>.command`")
+        L += [f"**Open a run in ParaView:** double-click {how} in Finder; it works wherever this folder is copied or "
+              "moved (copy the whole folder). Then First Frame, Play; *0-30 µm band only* and *still airborne only* "
+              "are hidden: click their eyes. Or paste:", "", "```",
               f'open "{here}/paraview/{first["variant"]}.command"', "```", ""]
     bt = pd.read_csv(meta["bands_csv"]) if meta.get("bands_csv") and Path(meta["bands_csv"]).exists() else None
     if bt is not None:
@@ -226,12 +253,13 @@ def report(scn, settings_name: str, meta: dict, df: pd.DataFrame, checks: dict, 
             L.append("")
     L += [""] + inputs_section(scn) + [""]
     L += ["## Files", "",
-          "- `figures/`: " + "; ".join(f"`{f}` {d}" for f, d in figures) + ".",
-          "- `droplets.csv`: one row per droplet: run, size, fate, when and where it landed (mm, the CAD's "
+          f"- `{p}figures/`: " + "; ".join(f"`{f}` {d}" for f, d in figures) + ".",
+          f"- `{p}droplets.csv`: one row per droplet: run, size, fate, when and where it landed (mm, the CAD's "
           "coordinates), still airborne at switch-off.",
-          "- `fates_by_size.csv`: per run and size, how many ended up where. `bands.csv`: the tables above.",
-          "- `checks.json`, `checks_column.csv`, `checks_tracers.csv`: the checks' numbers.",
-          "- `plan_view.npz`: the chamber seen from above (from the mesh), for the maps.",
-          f"- `openfoam_cases/` (a link to `{meta['cases']}`): the OpenFOAM cases, with their logs.",
-          "- `settings.yaml`: the settings as run.", ""]
+          f"- `{p}fates_by_size.csv`: per run and size, how many ended up where. `{p}bands.csv`: the tables above.",
+          f"- `{p}checks.json`, `{p}checks_column.csv`, `{p}checks_tracers.csv`: the checks' numbers.",
+          f"- `{p}plan_view.npz`: the chamber seen from above (from the mesh), for the maps.",
+          f"- `{p}openfoam/`: the OpenFOAM cases, with their logs.",
+          f"- `{p}paraview/`: every run's view (`.pvsm`), its pictures and its double-click opener (`.command`).",
+          f"- `{p}settings.yaml`: the settings as run.", ""]
     return "\n".join(L)

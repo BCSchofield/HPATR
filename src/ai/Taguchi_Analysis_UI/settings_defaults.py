@@ -127,7 +127,7 @@ def device_warning(chosen: str | None, auto: str, os_name: str | None = None) ->
     if dev == "cpu":
         est = cpu_inference_estimate(os_name)
         if est:
-            return (f"Inference on the CPU is slow: measured at about {est[0]:.1f} s/frame on a MacBook Air "
+            return (f"Inference on the CPU is slow: measured at about {est[0]:.1f} s/frame on a MacBook Pro "
                     f"(~{est[1]:.0f} min per {eta.REF_FRAMES}-frame run, one light condition; heavier "
                     f"sprays will be slower). A campaign of 27 runs takes the best part of a day.")
         return ("No usable CUDA GPU was found, so inference runs on the CPU, which is several times "

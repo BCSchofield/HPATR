@@ -803,7 +803,7 @@ Decisions made while building, where they refine or deviate from the plan above.
   detached worker, sandbox guard on. Both finished; both pass the contract check.
 - **The real source runs were provably untouched**: every file's size and mtime in the two
   source runs was snapshotted before and compared after: identical.
-- **Measured on this Mac (MacBook Air, CPU), first 40 frames, 3000 sccm / 300 rpm / 4000 sps:**
+- **Measured on this Mac (MacBook Pro, M5 Pro, CPU), first 40 frames, 3000 sccm / 300 rpm / 4000 sps:**
   extract 0.235 s/frame, background ~2 s per run (fixed), **inference 5.8 s/frame**, measurement
   0.11 s/frame, classical 0.043 s/frame; ~4 min per 40-frame run. Scaled to 497 frames: ~51 min per
   run, of which inference ~48 min (the GPU PC did similar runs' inference in ~7 min).

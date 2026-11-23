@@ -147,9 +147,10 @@ Not by clicking (CfdOF has no droplet tracking). Copy the settings file, point i
    ```
    Six runs and four check cases at once, ~1.5 min for 60,000 droplets each (gusts on/off × 0, 2, 10 s of flow after
    switch-off). Keep `per_size` at 600 or more (a 8.3 ms step at a 5 s exposure; report.md check 7).
-3. Open `report.md` in the newest `~/OpenFOAM/droplet_runs/<name>/<date_time>/` (it prints the path): the 0–30 µm
+3. Open `report.md` in the newest `~/OpenFOAM/droplet_runs/<date>_<time>_<name>/` (it prints the path): the 0–30 µm
    band weighted by the measured spray, the floor deposit maps, where each size ends up, the checks and flags. To see
-   a run in ParaView, double-click `paraview/<run>.command` in that folder; press **First Frame**, then **Play**. In
+   a run in ParaView, double-click `View <flow>.command` at the top of that folder (every run's own:
+   `data/paraview/<run>.command`); press **First Frame**, then **Play**. In
    the Pipeline Browser, the eyes on *0-30 µm band only* and *still airborne only* show just those; your own views'
    slices and streamlines (*Slice Through Orifice*, *Tracers Whole*, ...) are there too, hidden. The **split** tab
    puts the droplets beside the air in your views, cameras linked, for screenshots. The whole folder (report, views,

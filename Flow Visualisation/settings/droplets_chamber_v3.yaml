@@ -1,0 +1,89 @@
+# The same sweep as droplets_carrier_stream.yaml (CFDOF_GUIDE.md Part 8), through Chamber_v3 and its two designs
+# (guide 8.11): the CAD's 0.1 mm step closed and near-wall layers on every atomiser face. The 2026-11-14 sweep put
+# 40-83 % of the fines on the atomiser with gusts on, and 0.5 µm tracers landed there 5-7 % in 5 s, so the deposit
+# was largely the tracking's near-wall artefact (the floor's fix, guide 7.6, never reached the atomiser). Everything
+# else as that sweep, so the two compare run for run. ~6.5 h, unattended (cfdof/overnight_chamber_v3.sh runs it after
+# solving the three flows).
+#
+# A sweep: everything comes from the base file; each entry below changes only what it names (mappings merge).
+
+base: droplets_baseline.yaml
+name: chamber v3                            # the run's folder: droplet_runs/<date>_<time>_chamber_v3/
+
+slide_test:
+  flow_after_switch_off_s: !design [2, 290]  # 2 s: the spray and carrier stop together after the 5 s spray, as in
+                                             #   the slide test. 290 s: continuous running into the AJP (Ben,
+                                             #   2026-11-13). The droplets don't touch each other or the flow, so a
+                                             #   continuous spray is many 5 s pulses added up, and each droplet's
+                                             #   eventual fate is the answer. 290 s is ~5 chamber volumes (35 L /
+                                             #   38.6 L/min = 55 s each), leaving <1 % of the well-mixed fines
+                                             #   airborne (120 s left ~1/9); it ends with 10 s of still air at the
+                                             #   rig's 300 s (settle_s), which the 2 s run keeps as the slide test
+
+sweep:
+  show: gusts_on_after_290s                  # the run the comparison's maps and size curves show
+  against: Chamber_v3                        # the reference: the bare chamber, the 44 mm port open
+  tolerance: {floor_pp: 5, centre_mm: 10, spread_mm: 10, moved_pct: 10}
+  runs:
+    - label: Chamber_v3
+      flow:
+        case: ~/OpenFOAM/cfdof_cases/Chamber_v3/case   # guide 8.11
+        iteration: 2000
+        spray_patch: spray
+        port_patches: [outlet]                   # the 44 mm port
+      spray:
+        hole_mm: !design [163.7, 237.79, -212.5]   # the lip: where the 1.11 mm bore meets the 70 degree point
+    # Neither design converges: the flow differs locally by 30-55 % between snapshots, and the share of the
+    # capture's air coming straight from Stream's carrier is 0 % at 2,000 and 4,000 but 62 % at 3,000 (guide 8.10).
+    # So each design runs at 2,000, 3,000 and 4,000, and the spread is the uncertainty (Ben, 2026-11-13).
+    - label: Stream 2000
+      flow:
+        case: ~/OpenFOAM/cfdof_cases/Chamber_v3_stream_30/case   # guide 8.11
+        iteration: 2000
+        spray_patch: spray
+        port_patches: [capture]                  # the capture pipe's end on the x = 270 side
+      spray:
+        hole_mm: !design [163.7, 237.79, -212.5]
+    - label: Stream 3000
+      flow:
+        case: ~/OpenFOAM/cfdof_cases/Chamber_v3_stream_30/case
+        iteration: 3000                          # where the jet went straight in (without the layers)
+        spray_patch: spray
+        port_patches: [capture]
+      spray:
+        hole_mm: !design [163.7, 237.79, -212.5]
+    - label: Stream 4000
+      flow:
+        case: ~/OpenFOAM/cfdof_cases/Chamber_v3_stream_30/case
+        iteration: 4000
+        spray_patch: spray
+        port_patches: [capture]
+      spray:
+        hole_mm: !design [163.7, 237.79, -212.5]
+    - label: Gentle 2000
+      flow:
+        case: ~/OpenFOAM/cfdof_cases/Chamber_v3_gentle_30/case   # guide 8.11
+        iteration: 2000
+        spray_patch: spray
+        port_patches: [capture]
+      spray:
+        hole_mm: !design [163.7, 237.79, -212.5]
+    - label: Gentle 3000
+      flow:
+        case: ~/OpenFOAM/cfdof_cases/Chamber_v3_gentle_30/case
+        iteration: 3000
+        spray_patch: spray
+        port_patches: [capture]
+      spray:
+        hole_mm: !design [163.7, 237.79, -212.5]
+    - label: Gentle 4000
+      flow:
+        case: ~/OpenFOAM/cfdof_cases/Chamber_v3_gentle_30/case
+        iteration: 4000
+        spray_patch: spray
+        port_patches: [capture]
+      spray:
+        hole_mm: !design [163.7, 237.79, -212.5]
+
+run:
+  parallel: 10                               # the runs and checks of each entry at once (15 cores)

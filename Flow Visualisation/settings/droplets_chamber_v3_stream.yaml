@@ -1,0 +1,44 @@
+# Stream's three flows from droplets_chamber_v3.yaml again (CFDOF_GUIDE.md 8.11), everything else unchanged.
+# Overnight on 2026-11-14/15, 5 of Stream's 6 runs of 290 s hung: a droplet looping in one of the layer cells
+# OpenFOAM can't split into valid tets. The runner now restarts a stalled stage from its newest frame
+# (cfd_runner._foam_pruning). Run by cfdof/rerun_stream_v3.sh, which then compares these with that night's
+# Chamber_v3 and Gentle runs. ~2.5 h.
+#
+# A sweep: everything comes from the base file; each entry below changes only what it names (mappings merge).
+
+base: droplets_baseline.yaml
+name: chamber v3 stream                     # the run's folder: droplet_runs/<date>_<time>_chamber_v3_stream/
+
+slide_test:
+  flow_after_switch_off_s: !design [2, 290]  # as droplets_chamber_v3.yaml
+
+sweep:
+  show: gusts_on_after_290s                  # the run the comparison's maps and size curves show
+  runs:
+    - label: Stream 2000
+      flow:
+        case: ~/OpenFOAM/cfdof_cases/Chamber_v3_stream_30/case   # guide 8.11
+        iteration: 2000
+        spray_patch: spray
+        port_patches: [capture]                  # the capture pipe's end on the x = 270 side
+      spray:
+        hole_mm: !design [163.7, 237.79, -212.5]   # the lip: where the 1.11 mm bore meets the 70 degree point
+    - label: Stream 3000
+      flow:
+        case: ~/OpenFOAM/cfdof_cases/Chamber_v3_stream_30/case
+        iteration: 3000
+        spray_patch: spray
+        port_patches: [capture]
+      spray:
+        hole_mm: !design [163.7, 237.79, -212.5]
+    - label: Stream 4000
+      flow:
+        case: ~/OpenFOAM/cfdof_cases/Chamber_v3_stream_30/case
+        iteration: 4000
+        spray_patch: spray
+        port_patches: [capture]
+      spray:
+        hole_mm: !design [163.7, 237.79, -212.5]
+
+run:
+  parallel: 10                               # the runs and checks of each entry at once (15 cores)

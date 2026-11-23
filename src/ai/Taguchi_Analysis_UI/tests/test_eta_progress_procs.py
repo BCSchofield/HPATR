@@ -88,7 +88,7 @@ def test_priors_are_used_and_labelled_before_anything_has_run():
     typical = sum(eta.priors_for("Darwin")[eta._prior_key(s, "extremes")][1] for s in eta.STAGE_ORDER)
     assert est.batch_remaining_s == pytest.approx(2 * typical)
     assert not est.measured and "not yet measured on this machine" in est.note
-    assert "MacBook Air" in est.note                    # HOST is a Darwin host
+    assert "MacBook Pro" in est.note                    # HOST is a Darwin host
 
 
 def test_priors_follow_the_operating_system():
@@ -96,7 +96,7 @@ def test_priors_follow_the_operating_system():
     mac = eta.estimate(pending, "extremes", host="m|Darwin", now=0)
     win = eta.estimate(pending, "extremes", host="w|Windows", now=0)
     assert mac.batch_remaining_s > 2 * win.batch_remaining_s      # CPU vs CUDA inference
-    assert "GPU PC" in win.note and "MacBook Air" in mac.note
+    assert "GPU PC" in win.note and "MacBook Pro" in mac.note
     other = eta.estimate(pending, "extremes", host="l|Linux", now=0)
     assert other.batch_remaining_s == win.batch_remaining_s       # unknown OS: GPU figures
 

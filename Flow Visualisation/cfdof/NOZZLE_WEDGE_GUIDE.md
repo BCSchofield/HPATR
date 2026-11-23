@@ -99,8 +99,11 @@ The picture of the domain, to scale, with every boundary:
 
 ## 9.1 Three folders (1 min)
 
+Three folders, each with a double-click viewer (`View flow.command`: opens your newest saved view in that folder, or
+else the case at its last iteration; see `TESTS.md` for how folders are named):
 ```
 mkdir -p /Users/benschofield/OpenFOAM/cfdof_cases/Nozzle_A /Users/benschofield/OpenFOAM/cfdof_cases/Nozzle_A_fine /Users/benschofield/OpenFOAM/cfdof_cases/Nozzle_A_big
+for d in Nozzle_A Nozzle_A_fine Nozzle_A_big; do cp "/Users/benschofield/Documents/GitHub/HPATR/Flow Visualisation/cfdof/View flow.command" "/Users/benschofield/OpenFOAM/cfdof_cases/$d/"; done
 ```
 
 ## 9.2 Draw it in Fusion (20 min)

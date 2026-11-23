@@ -414,6 +414,27 @@ scripted orifice (Phase 2): take the effective hole from each run's own pressure
 **Still open.** The 1.2 mm insert's Cd (bore / residue check); the liquid carries as much mass as the gas
 (2.0e-4 vs 1.8e-4 kg/s) and its push on the air is not in any model yet; sub-30 µm sizes (the slides should help).
 
+**Where the droplets are by height: a capture high or low? (2026-11-12, Ben's question for Part 8; read from the
+2026-11-02 Chamber_v2 droplet run's frames, no carrier, gusts on, each size counted equally.)**
+- **The fines are mixed through the whole height within the 5 s spray.** 0-10, 10-20 and 20-30 µm: every 100 mm
+  height slice from floor (y 13) to lid (y 705) holds the chamber's average share within about ±25 %, at switch-off,
+  2 s later and 10 s later.
+- **The big droplets stay low.** At switch-off, 85 % of the airborne > 60 µm are below y 80 and none above y 180;
+  30-60 µm are mostly in the bottom 67 mm, a few reach the top.
+- **Within 80 mm of a point on the x = 80 wall, in the spray's plane, as × the chamber's average:** low (y 80) 1.3-1.7×
+  for 0-30 µm and **4.3× for > 60 µm** while spraying; high (y 600) 0.8-1.1× for 0-30 µm and **none > 60 µm**. Two s after
+  switch-off both are ~1× for the fines. Small counts (the 30-60 and > 60 µm cells are 0-17 droplets).
+- **Just under half way does as well (Ben runs it continuously, so the flow-on frames are what count).** Pooled over
+  t = 5, 10 and 15 s of the run with the flow kept 10 s: x = 80 wall at y 330, z −150 (beside the arm) and x = 270 wall
+  at y 330, z −212.5 both 0.8-1.0× for 0-30 µm and no > 60 µm; y 600: 0.9-1.0×, none; the low spot 1.0-1.2× and
+  4.3× for > 60 µm.
+- **So a high capture gets about the same fines without the big droplets: a free upper cut.** It matters because the
+  virtual impactor keeps everything above its cut, big droplets included. The cut is soft (somewhere in 30-60 µm). Not
+  yet with a carrier: Part 8's droplet run counts it directly. The near-wall artefact (section 6) lowers the fines
+  near the floor while the air moves.
+- The arm runs up the x = 80 wall from y 250 to 530 (z −228 to −197); the lid, the x = 270 wall and both z walls are
+  clear (from the mesh).
+
 ## 9. Nozzle designs: the 2D wedge (rehearsal, 2026-11-08)
 
 Ben asked how to test nozzle designs. Round nozzle, no swirl: a 2D axisymmetric wedge (the example domain, drawn
@@ -472,4 +493,6 @@ cases in the session scratchpad (`wedge/`), not kept.
 | Chamber v2 droplets check | `Flow Visualisation/settings/droplets_chamber_v2.yaml` |
 | The plan | `Flow Visualisation/PLAN.md` |
 | Droplets: settings, command | `Flow Visualisation/settings/droplets_baseline.yaml` (a sweep: `droplets_snapshots.yaml`), `run_droplets.py` |
-| Droplets: each run, all in one folder | `~/OpenFOAM/droplet_runs/<name>/<date_time>/`: report.md, figures/, paraview/<run>.command (double-click to view), openfoam/ (the cases); the flows, reconstructed once, in `flows/` |
+| Droplets: each run, all in one folder | `~/OpenFOAM/droplet_runs/<date>_<time>_<name>/` (from 2026-11-12): `View <flow>.command` (double-click to view), the report (`comparison.md` / `report.md`), and `data/` with everything else (figures, CSVs, every run's `paraview/<run>.command`, `openfoam/`); before that `<name>/<date_time>/`, all at the top. The flows, reconstructed once, in `flows/` |
+| What every case and run is | `~/OpenFOAM/TESTS.md` (a link to `Flow Visualisation/cfdof/TESTS.md`): how folders are named, one line per case and run |
+| Open a CFD case in ParaView | `View flow.command` in each case's folder (from `Flow Visualisation/cfdof/View flow.command`) |

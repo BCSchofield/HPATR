@@ -86,7 +86,7 @@ def test_cpu_on_a_mac_quotes_the_measured_rate_from_the_eta_priors(ti, monkeypat
     monkeypatch.setattr(ti, "auto_device", lambda: "cpu")
     w = sd.device("Darwin").warn
     per_frame, minutes = sd.cpu_inference_estimate("Darwin")
-    assert f"{per_frame:.1f} s/frame" in w and f"{minutes:.0f} min" in w and "MacBook Air" in w
+    assert f"{per_frame:.1f} s/frame" in w and f"{minutes:.0f} min" in w and "MacBook Pro" in w
     assert per_frame == pytest.approx(eta.priors_for("Darwin")[("inference", None)][1] / eta.REF_FRAMES)
     assert 5 < per_frame < 7
 

@@ -573,8 +573,8 @@ tracer check (0.5 µm droplets that follow the air: any that touch a wall show t
 ```
 /Users/benschofield/anaconda3/envs/phantom/bin/python3 "/Users/benschofield/Documents/GitHub/HPATR/Flow Visualisation/run_droplets.py" "/Users/benschofield/Documents/GitHub/HPATR/Flow Visualisation/settings/droplets_chamber_v2.yaml"
 ```
-It writes `~/OpenFOAM/droplet_runs/droplets_chamber_v2/<date_time>/comparison.md`; each run's `report.md` has the
-tracer check under Checks.
+It writes `~/OpenFOAM/droplet_runs/<date>_<time>_droplets_chamber_v2/comparison.md` (runs before 2026-11-12:
+`droplet_runs/droplets_chamber_v2/<date_time>/`); each run's `report.md` has the tracer check under Checks.
 
 **What the scripted run gave (0.91 mm; yours will differ a little in the numbers, not the picture):**
 
@@ -632,25 +632,29 @@ Faces 1–17, 22–25, 28, 29 and 31 are the atomiser body, rod, nozzle block an
 
 ---
 
-## Part 8. A carrier stream: two push designs (~1 h clicking, ~45 min solving each)
+## Part 8. A carrier stream: two push designs (~1 h clicking, ~1.5 h solving each)
 
-Written 2026-11-02 (`../PLAN.md` Phase 7, step 3). Both designs are **your Chamber_v2 case**, with everything in it
-kept: the 1.11 mm bore, the five jet cones, the tip and cap refinements, the floor and wall layers. To it you add:
-- a **carrier inlet**: a 20 mm stub on the x = 270 wall, blowing 30 L/min straight across the chamber;
-- a **capture port**: a 10 mm stub on the opposite x = 80 wall, where the air leaves (the AJP line, later);
+Written 2026-11-02 (`../PLAN.md` Phase 7, step 3); **rewritten 2026-11-12 to your layout** (the first version had
+the carrier on the x = 270 wall and a plain 10 mm capture low on the x = 80 wall, crossing the spray). Both designs
+are **your Chamber_v2 case**, with everything in it kept: the 1.11 mm bore, the five jet cones, the tip and cap
+refinements, the floor and wall layers. To it you add:
+- a **carrier inlet**: a 20 mm long stub on the x = 80 wall at y 210, z −100, blowing 30 L/min straight across the
+  chamber, beside the spray rather than through it;
+- a **capture**: on the opposite x = 270 wall, **in line with the carrier**: a cone from a 50 mm mouth down to 10 mm,
+  then a 10 mm pipe, where the air leaves (the AJP line, later);
 - **the 44 mm port, sealed**: the capture is the only way out.
 
-| | **Stream** (`Chamber_v2_stream`) | **Gentle** (`Chamber_v2_gentle`) |
+| | **Stream** (`Chamber_v2_stream_30`) | **Gentle** (`Chamber_v2_gentle_30`) |
 |---|---|---|
 | Carrier inlet | **10 mm**, 30 L/min | **40 mm**, 30 L/min |
 | Speed at the inlet | 6.4 m/s | 0.4 m/s (below the chamber's 0.45 m/s mean) |
 | Push (momentum) | 3.8 mN, 15 % of the spray's 25 mN | 0.24 mN, 1 % |
-| What it tests | a clear stream across the chamber | the same through-flow with no stream |
-| Capture port | 10 mm, 38.6 L/min out (8.2 m/s) | the same |
+| What it tests | a jet aimed straight into the capture (push-pull) | the same through-flow with no jet |
+| Capture | 50 mm cone to a 10 mm pipe; 38.6 L/min out (0.34 m/s at the mouth, 8.2 m/s in the pipe) | the same |
 
-**Checked by script first** (2026-11-02, on a scratch copy of your `Chamber_v2.FCStd`, the same clicks): both build,
-mesh ("Mesh OK", 1.52 and 1.56 million cells, 23 s each) and solve (30 iterations; gas in = gas out). Nothing of
-yours was touched. The full 2,000-iteration solve was not run (the Mac was on battery): yours is the first. See 8.10.
+**Checked** (2026-11-12, on a copy of your file after 8.2; nothing of yours touched): the three parts fuse into one
+valid solid with 47 faces, every Part 7 link follows its face, and Gentle's 40 mm carrier gives the same face numbers.
+Not checked for this layout: the mesh and the solve (the first layout meshed and ran clean by script). See 8.10.
 
 ### 8.0 The design, and why (read first)
 
@@ -676,10 +680,12 @@ yours was touched. The full 2,000-iteration solve was not run (the Mac was on ba
 - So the comparison worth making is **jet against no jet at the same flow**: Stream against Gentle. Gentle is also
   what a suction design looks like to the solver.
 
-**Simple first: plain cylinders, no radii.** Yes.
-- Sharp edges only change the small losses at the ports. The jet is set by its flow and its diameter.
-- The cylinders go in FreeCAD, fused into your Fusion, so no new STEP is needed. That is also what the scripted
-  builder will do later.
+**A plain carrier, a cone on the capture (you, 2026-11-12).**
+- The carrier's jet is set by its flow and its diameter; a plain cylinder is enough.
+- At a sharp 10 mm capture hole the air separates at the edge and throws the bigger droplets onto the pipe wall. The
+  cone brings the air in at 0.34 m/s and speeds it up over ~38 mm instead.
+- All three parts go in FreeCAD, fused into your Fusion, so no new STEP is needed (a new one would mean re-picking
+  Part 7's ~25 faces). That is also what the scripted builder will do later.
 
 **30 L/min first.**
 - It is the middle of Phase 7's 30–100 L/min.
@@ -689,98 +695,133 @@ yours was touched. The full 2,000-iteration solve was not run (the Mac was on ba
 - 10 and 100 L/min come next, on whichever design wins. At 100 L/min a 10 mm inlet would push 42 mN, more than the
   spray, so the hole has to grow with the flow (Phase 7's table).
 
-**Where (a design choice, a first guess: move them later).**
-- **In the spray's own plane (z −212.5), 67 mm above the floor (y 80), across x:** in on the x = 270 wall, out on the
-  x = 80 wall.
-- **The stream crosses the spray 157 mm below the lip,** where the spray's centre is ~5 m/s. The fines (St ≪ 1) can
-  turn with the stream; the big droplets have the momentum to keep falling. This is the cross-flow sorting Phase 1
-  pointed at.
-- **It is 102 mm below the shadowgraph window.** 8.8 checks that the spray at the window is unchanged.
-- **The capture sits where the floor's wall jet climbs the x = 80 wall,** 84 mm from where the spray lands. That air
-  has just come off the floor carrying the fines.
-- **Clear of everything:** the arm on the x = 80 wall stops at y 250, and the z walls are the imaging windows.
-- **Everything is in one plane:** one slice in ParaView shows the spray, the stream and both ports.
+**Where (your layout, 2026-11-12).**
+- **Height y 210:** 28 mm below the nozzle's tip, above the layer the big droplets stay in. In the Chamber_v2 droplet
+  run (`CFD_LOG.md` section 8), droplets over 60 µm never got above y 180; at your capture's spot the air had 1.0–1.2×
+  the chamber's average of 0–20 µm droplets and none over 60 µm.
+- **z −100, beside the spray, not through it:** the stream passes 112 mm in front of the spray's plane. The spray mixes
+  the fines through the whole chamber within seconds anyway; the carrier's job is the through-flow.
+- **In line, carrier to capture (push-pull):**
+  - The jet entrains as it goes: by the far wall it carries ~180 L/min, ~5× its own flow, most of it chamber air.
+  - The capture takes 38.6 L/min of that, from the jet's middle. By a free-jet estimate, a fifth to a quarter of the
+    air there is fresh carrier gas that has picked up no droplets.
+  - Whether the entrainment or the fresh gas wins is what Stream against Gentle shows: Gentle's 0.4 m/s is lost
+    within a few cm, so its capture draws the chamber's own air.
+  - If the fresh gas wins, the next variant moves the capture out of line (z −212.5 in the spray's plane: the same
+    face numbers, and 1.1–1.3× the average of 0–30 µm there).
+- **The stream passes 27 mm above the shadowgraph window's height** (y 182.8), 112 mm in front of the spray. 8.8 checks
+  that the spray at the window is unchanged.
+- **Clear of everything:** the arm runs up the x = 80 wall at y 250–530 (z −228 to −197), the atomiser's parts are
+  all above y 237, and the z walls are the imaging windows.
+- **One level slice at y 210** in ParaView shows the stream, the capture and the spray's cross-section.
 
 **What to expect (textbook estimates; the CFD will say).**
-- A free 10 mm jet at 6.4 m/s would still be ~3.7 m/s where it meets the spray's axis and ~2 m/s at the far wall.
-- But the spray pushes ~7× harder, so expect the spray to bend the stream down towards the floor. How far it bends,
-  and whether its air still reaches the capture, is the main thing this run shows.
+- A free 10 mm jet at 6.4 m/s would be ~3.7 m/s half way across and ~2 m/s at the capture, about as wide as the cone's
+  mouth by then.
+- Nothing stands in its way, so it should arrive roughly straight, unless the chamber's circulation (0.45 m/s mean,
+  driven by a spray pushing ~7× harder) bends it.
 - Gentle's 0.4 m/s will be lost in the spray's circulation within a few cm of the inlet.
 
 **For the AJP, later.**
-- **The capture line will need a split before the head.** The atomiser alone makes ~9 L/min of gas, and AJP heads
-  typically take a small fraction of that (tens to hundreds of sccm; check yours). Commercial pneumatic AJ systems
-  strip the excess with a virtual impactor.
-- **What size does your head take?** Commercial AJ usually prints with droplets of a few µm. If yours does, the band
-  to deliver is narrower than 0–30 µm, and the split sets the upper cut.
+- **The capture line will need a split before the head.** Your head takes 1.0–1.5 L/min of aerosol (the sheath gas is
+  added in the head), ~30× less than the capture's 38.6 L/min, so a virtual impactor goes before it (`../PLAN.md`
+  Phase 7).
+- **The virtual impactor keeps everything above its cut, big droplets included.** So the capture's height is the
+  upper cut: another reason it sits above the big droplets' layer.
 - **For the chamber, the numbers to compare are the share of the band that leaves through the capture, and that share
   ÷ the capture's flow** (how concentrated it is).
 
-**On the rig: the capture becomes the chamber's only way out, and its relief.** The CFD puts the chamber at ~+40 Pa
-(the capture's 8.2 m/s). Never block the capture line with the carrier on (5 mm polycarbonate, `../PLAN.md`
+**On the rig: the capture becomes the chamber's only way out, and its relief.** The CFD put the first layout's
+chamber at ~+40 Pa (the capture pipe's 8.2 m/s). Never block the capture line with the carrier on (5 mm polycarbonate, `../PLAN.md`
 Phase 7).
 
 ### 8.1 Two folders, then open your case under a new name (3 min)
 
+Two folders, each with a double-click viewer in it, then FreeCAD:
 ```
-mkdir -p /Users/benschofield/OpenFOAM/cfdof_cases/Chamber_v2_stream /Users/benschofield/OpenFOAM/cfdof_cases/Chamber_v2_gentle
+mkdir -p /Users/benschofield/OpenFOAM/cfdof_cases/Chamber_v2_stream_30 /Users/benschofield/OpenFOAM/cfdof_cases/Chamber_v2_gentle_30
+cp "/Users/benschofield/Documents/GitHub/HPATR/Flow Visualisation/cfdof/View flow.command" /Users/benschofield/OpenFOAM/cfdof_cases/Chamber_v2_stream_30/
+cp "/Users/benschofield/Documents/GitHub/HPATR/Flow Visualisation/cfdof/View flow.command" /Users/benschofield/OpenFOAM/cfdof_cases/Chamber_v2_gentle_30/
 open -a FreeCAD "/Users/benschofield/OpenFOAM/cfdof_cases/Chamber_v2/Chamber_v2.FCStd"
 ```
-**File → Save As** `/Users/benschofield/OpenFOAM/cfdof_cases/Chamber_v2_stream/Chamber_v2_stream.FCStd`, then
+**File → Save As** `/Users/benschofield/OpenFOAM/cfdof_cases/Chamber_v2_stream_30/Chamber_v2_stream_30.FCStd`, then
 **File → Close**, and reopen it:
 ```
-open -a FreeCAD "/Users/benschofield/OpenFOAM/cfdof_cases/Chamber_v2_stream/Chamber_v2_stream.FCStd"
+open -a FreeCAD "/Users/benschofield/OpenFOAM/cfdof_cases/Chamber_v2_stream_30/Chamber_v2_stream_30.FCStd"
 ```
-**Why:** as 7.1. CfdOF writes the case to `cfdof_cases/<document name>/case`. Reopened, the name is
-Chamber_v2_stream, so the case goes to `cfdof_cases/Chamber_v2_stream/case` and your Chamber_v2 stays as it is.
+**Why:**
+- **Reopen:** as 7.1. CfdOF writes the case to `cfdof_cases/<document name>/case`. Reopened, the name is
+  Chamber_v2_stream_30, so the case goes to `cfdof_cases/Chamber_v2_stream_30/case` and your Chamber_v2 stays as it is.
+- **The names** are `<model>_<design>_<flow>`: the `_30` is the carrier's 30 L/min, so 10 and 100 L/min later become
+  `_10` and `_100` beside them. No spaces or dots (OpenFOAM).
+- **`View flow.command`:** double-click it in Finder to open the case in ParaView (8.8). It opens your newest saved
+  view in that folder, or else the case at its last iteration.
 
-### 8.2 The two port stubs (5 min)
+### 8.2 The carrier and the capture (10 min)
 
-Workbench **Part**. **Part → Primitives → Cylinder**, twice. Rename them (F2) and set their Data tab:
-- **Carrier:** **Radius 5 mm, Height 21 mm**; Placement: Position **x 269, y 80, z −212.5**; Axis **(0, 1, 0)**;
-  Angle **90°**.
-- **Capture:** **Radius 5 mm, Height 21 mm**; Placement: Position **x 81, y 80, z −212.5**; Axis **(0, 1, 0)**;
-  Angle **−90°**.
+Workbench **Part**. **Part → Primitives**: a **Cylinder**, a **Cone** and another **Cylinder**. Rename them (F2) and
+set their Data tab. All three have Axis **(0, 1, 0)**:
 
-**Check:** two short rods, one sticking 20 mm out of each x wall, level with each other, 67 mm above the floor and in
-line with the nozzle (seen from the front, they line up with the spray's axis).
+| Name | Shape | Size | Position | Angle |
+|---|---|---|---|---|
+| **Carrier** | Cylinder | Radius **5 mm**, Height **21 mm** | x **81**, y **210**, z **−100** | **−90°** (shown as 270°) |
+| **CaptureCone** | Cone | Radius1 **25 mm**, Radius2 **4 mm**, Height **40 mm** | x **269**, y **210**, z **−100** | **90°** |
+| **Capture** | Cylinder | Radius **5 mm**, Height **25 mm** | x **300**, y **210**, z **−100** | **90°** |
+
+**Check:** a short rod sticking 20 mm out of the x = 80 wall, and opposite it, in line, a funnel narrowing into a
+10 mm pipe out of the x = 270 wall. Both 197 mm above the floor, 28 mm below the nozzle's tip, in front of the
+atomiser.
 
 **Why:**
 - **They start 1 mm inside the chamber,** as the bore did (7.3): booleans fail where two surfaces only just touch. That
   1 mm is air already.
-- **Axis (0, 1, 0), 90°** turns the cylinder's own z to +x, out through the x = 270 wall. **−90°** turns it to −x, out
-  through the x = 80 wall.
-- **20 mm stubs, like the 44 mm port:** each port gets its own end disc to pick as the boundary, and the carrier comes
-  in through a short pipe.
+- **Axis (0, 1, 0), −90°** turns the cylinder's own z to −x, out through the x = 80 wall. **90°** turns it to +x, out
+  through the x = 270 wall.
+- **The cone** is 49 mm across where it meets the wall and 10 mm at 38 mm out (a ~28° taper). Then 18 mm of 10 mm pipe
+  to the end disc at x 325.
+- **Its tip is 4 mm, not 5:** the cone's surface then crosses the pipe's cleanly, instead of meeting it along a shared
+  edge.
+- **Each port has its own end disc** to pick as the boundary, as the 44 mm port does; the carrier comes in through a
+  short pipe.
 
 ### 8.3 Add them to your Fusion (3 min)
 
-1. In the tree, **drag Carrier onto Fusion**, then **drag Capture onto Fusion**. They tuck under it. (Or: select
-   Fusion, Data tab, **Shapes**, the **…** button, and add both.)
-2. **Recompute** (the circular-arrows button, or Ctrl-R) if Fusion shows the blue recompute mark.
-3. **Part → Check Geometry** on Fusion: no errors, **1 solid, 46 faces** (Run BOP check off, as 7.2).
-4. **Check your boundaries followed the faces.** Double-click **spray**: its face list should now say **Face46**. Click
+1. In the tree, **drag Carrier, CaptureCone and Capture onto Fusion**, one at a time. They tuck under it. (Or: select
+   Fusion, Data tab, **Shapes**, the **…** button, and add all three.)
+   - **Fusion, not Fusion_Mesh.** Fusion sits at the top level of the tree (scroll up). Dropped on Fusion_Mesh, they
+     join its refinement list instead and the chamber doesn't change. If that happens, drag them from there onto Fusion.
+   - Close any open task panel first (its **Close** button): the tree and Recompute wait for it.
+2. **Recompute** (the circular-arrows button right of Undo/Redo, Edit → Recompute, or ⌘R) if Fusion shows the blue
+   recompute mark. It's greyed out when nothing needs recomputing.
+3. **Part → Check Geometry** on Fusion: no errors, **1 solid, 47 faces** (Run BOP check off, as 7.2).
+4. **Check your boundaries followed the faces.** Double-click **spray**: its face list should now say **Face47**. Click
    it: the bore's top lights up. Do the same for one refinement, e.g. **FloorRefinement → Face21**. Close each with
    **Cancel**.
 
 **Why add them to the Fusion you have, not make a new union:**
 - Every boundary and refinement you made points at Fusion's faces.
-- When Fusion changes, FreeCAD 1.1 renumbers those links itself. Checked by script: spray Face42 → Face46, and every
-  other one (the table at the end of this part).
+- When Fusion changes, FreeCAD 1.1 renumbers those links itself. Checked on a copy of your file: spray Face42 →
+  Face47, and every other one (the table at the end of this part).
 - A new union would have meant picking all ~25 faces again.
 - **If a link didn't follow** (the wrong face lights up in step 4), re-pick it from the table at the end of this part.
 
 ### 8.4 Boundaries (5 min)
 
 Workbench **CfdOF**; double-click **CfdAnalysis** if the tools are greyed out.
+
+**Every face number in this part is Fusion's.** In a face picker's **Select from list** tab, click **Fusion** under
+"Select objects" first, then tick the faces. Whichever object is highlighted there is the one whose faces you're ticking,
+and **Flow Analysis Basic** (the imported STEP, 40 faces) has its own Face22, Face29 and so on, in other places. In the
+list of picked faces, each should read **Fusion:Face…**.
+
 1. **outlet → capture.** Double-click **outlet**.
-   - **Remove** its face (Face35, the 44 mm port's end), and **add Face29**: the capture stub's end disc, 78.5 mm²,
-     at x 60.
+   - **Remove** its face (Face35, the 44 mm port's end), and **add Face39**: the capture pipe's end disc, 78.5 mm²,
+     at x 325.
    - Keep **Outlet, Static pressure, 0 Pa**. **OK**, then rename it **capture** (F2).
 2. **carrier.** A new **Fluid boundary**:
    - **Inlet**, **Volumetric flow rate**, **5.0e-4 m^3/s**;
    - Intensity **5 %**, length scale **0.7 mm**;
-   - Face: **Face37**, the carrier stub's end disc, 78.5 mm², at x 290. **OK**, rename it **carrier**.
+   - Face: **Face29**, the carrier stub's end disc, 78.5 mm², at x 60. **OK**, rename it **carrier**.
 3. **spray** and **wall**: unchanged.
 4. **InitialiseFields:** double-click it and check the pressure comes from **capture**. It follows by itself, because
    capture is the same object your outlet was.
@@ -796,110 +837,164 @@ Workbench **CfdOF**; double-click **CfdAnalysis** if the tools are greyed out.
 
 Everything from Part 7 stays. OutletRefinement still refines the sealed port; leave it (harmless). Add, as in 7.7:
 1. **Surface refinements** (mesh object selected, **Mesh refinement**, **Surface refinement**):
-   - **CarrierRefinement:** **0.15**; Face34, Face37 (the carrier stub's side and end).
-   - **CaptureRefinement:** **0.15**; Face22, Face29 (the capture stub's side and end).
+   - **CarrierRefinement:** **0.15**; Face22, Face29 (the carrier stub's side and end).
+   - **CaptureRefinement:** **0.15**; Face34, Face37, Face39 (the cone, the pipe's side, the pipe's end).
 2. **The stream cones.** Workbench **Part**, **Part → Primitives → Cone**, three times. All three share one Placement:
-   Position **x 291, y 80, z −212.5**; Axis **(0, 1, 0)**; Angle **−90°**. They start at the carrier's end and point
+   Position **x 59, y 210, z −100**; Axis **(0, 1, 0)**; Angle **90°**. They start at the carrier's end and point
    across the chamber.
 
    | Cone | Radius1 | Radius2 | Height | reaches | Relative size | Cells |
    |---|---|---|---|---|---|---|
-   | **StreamNear** | 7 mm | 10 mm | 71 mm | x 220, 50 mm into the chamber | **0.08** | 0.5 mm |
-   | **StreamMid** | 8 mm | 20 mm | 131 mm | x 160, just past the spray's axis | **0.15** | 1 mm |
-   | **StreamFar** | 10 mm | 45 mm | 216 mm | x 75, into the capture's mouth | **0.3** | 2 mm |
+   | **StreamNear** | 7 mm | 10 mm | 71 mm | x 130, 50 mm into the chamber | **0.08** | 0.5 mm |
+   | **StreamMid** | 8 mm | 20 mm | 131 mm | x 190, past the spray's x | **0.15** | 1 mm |
+   | **StreamFar** | 10 mm | 45 mm | 216 mm | x 275, into the capture's mouth | **0.3** | 2 mm |
 
    - Shortcut, as 7.7: make one, copy and paste it twice, change only the radii and height.
    - Back in **CfdOF**: a **Volume refinement** for each, with the relative size from the table, ticking the cone
      itself. Hide the cones (Space).
-3. **Mesh it:** **Write mesh case**, **Run mesher**. About 25 s: **~1,522,600 cells**.
-   - **Check Mesh:** "Mesh OK"; **~65 faces over 70°** non-orthogonal (max 80°), against Part 7's ~54. The extra ones
-     are where the x walls' layers stop at the new stubs, as they do at the 44 mm port. Harmless at this count (7.7).
+   - **CaptureInside:** one more **Volume refinement**, **0.15**, ticking **CaptureCone** itself (the one already in
+     Fusion; no new cone). 1 mm cells right through the cone, ~30,000 of them.
+3. **Mesh it:** **Write mesh case**, **Run mesher**. About 25 s; **~1,652,500 cells** (Ben's Stream, 2026-11-13).
+   - **Check Mesh:** "Mesh OK". Ben's Stream: 32 faces over 70° non-orthogonal, max 78.9°; max skewness 3.27 (Part
+     7: ~54 faces). They sit where the x walls' layers stop at the carrier and the cone, as at the 44 mm port.
+     Harmless at that count (7.7). Tell me if it says otherwise.
+   - The panel only says OK or not. For the numbers (~15 s; the full report lands in `meshCase/checkMesh.log`):
+     ```
+     bash -c 'source /Applications/OpenFOAM-v2606.app/Contents/Resources/etc/bashrc && cd /Users/benschofield/OpenFOAM/cfdof_cases/Chamber_v2_stream_30/meshCase && checkMesh -meshQuality > checkMesh.log 2>&1; grep -iE "cells:|non-orthogonal|skewness|Mesh OK|Failed" checkMesh.log'
+     ```
    - **Run one mesher at a time.** In the check, two meshes run together sat for 10 min at the layers stage; alone,
      each took 23 s.
 
 **Why these cells:**
 - **The same rule as the spray's ladder (7.6):** about 10 cells across the stream's half-width all the way across.
-  - Its half-width is ~5 mm for the first ~50 mm (the 10 mm hole's core), ~10 mm by the spray's axis and ~19 mm at
-    the far wall: it spreads ~0.1 mm per mm.
+  - Its half-width is ~5 mm for the first ~50 mm (the 10 mm hole's core), ~10 mm half way across and ~19 mm at the
+    far wall: it spreads ~0.1 mm per mm.
   - So the cells go 0.5 → 1 → 2 mm, doubling as the stream's width doubles.
-- **The last cone is wide (45 mm)** because the spray will bend the stream down, off its straight line.
-- **1 mm on the ports:** 10 cells across each 10 mm hole.
-- **No layers on the stubs**, as on the 44 mm port: no droplets land in there that matter.
+- **The last cone is wide (45 mm)** in case the chamber's circulation bends the stream off its straight line.
+- **1 mm on the ports:** 10 cells across each 10 mm hole, and ~50 across the cone's mouth.
+  - CaptureRefinement fines only the cone's wall; inside, the cells would grow towards the axis, and StreamFar stops at
+    x 275, 5 mm into the cone.
+  - CaptureInside keeps 1 mm all the way in. The stream converges there, and that's where the bigger droplets hit the
+    cone or get through (the entrance losses, 8.9). It costs ~2% more cells.
+- **No layers on the carrier, the cone or the pipe**, as on the 44 mm port. Droplets landing in the cone and pipe do
+  matter here (the entrance losses, 8.9); without layers the fines' share there reads high (the near-wall artefact,
+  report.md Checks 4), so read it for the 20–30 µm band.
 
-### 8.6 Solve (~45 min)
+### 8.6 Solve (~1 h)
 
-As 7.8: **CfdSolver**, Max Iterations **2000**, Steady Write Interval **500**; **Solve in Parallel**, **10 cores**;
-**Write**, **Run**.
+1. Click **CfdSolver** in the tree (once; don't double-click). In the **property view's Data tab**, under Iteration
+   Control: **Convergence Tol 1e-5**, **Max Iterations 4000**, **Steady Write Interval 500**.
+   - They're not in the solver's task panel. No property view under the tree? **View → Panels → Property view**.
+2. Double-click **CfdSolver**: **Solve in Parallel**, **10 cores**; **Write**, **Run**.
 - **Plug in first** (70 W or more): the solve draws ~70 W, and on battery it would run flat partway through.
-- Keep the Mac awake for 2 h:
+- Keep the Mac awake for 2 h, in the background so the Terminal window stays free:
   ```
-  caffeinate -i -t 7200
+  caffeinate -i -t 7200 &
   ```
-- **~45 min** (estimated: Part 7's 35 min × 1.25 for the extra cells).
+- **~1.5 h** (Stream and Gentle 93 min each: 1.4 s an iteration on 10 cores, steady from the start).
+
+**Why 4,000, when the droplets use iteration 2,000:**
+- **2,000 matches the reference.** Chamber_v2's run used 2,000, so Stream and Gentle compare at the same point.
+- **4,000 checks that 2,000 was enough.** The steady solve never fully settles: Part 7's residuals plateaued at ~2e-3,
+  and the circulation wanders. In Part 6, droplets through iterations 1,000, 1,500 and 2,000 gave the same answer
+  (CFD_LOG.md section 6).
+- **This flow is new:** a second jet, and a capture that drives the circulation. Writing every 500 keeps 2,000, 3,000
+  and 4,000, so the droplets can be run through two of them and compared.
+- **Why Convergence Tol 1e-5:** CfdOF's default stops the solve once every residual is under 1e-3. Ben's first Stream
+  solve (2026-11-13) stopped there at iteration 1,072, in 15 min, with no 2,000.
+  - At the stop, Ux and Uz were still falling steadily, so the flow was still changing.
+  - p had been flat at ~1e-3 since ~400, so with 1e-5 the solve runs the full 4,000.
+  - Restarting from 0 costs nothing: the same mesh and cores give the same 500 and 1,000 again.
 
 **Gas in = gas out** once it has finished (~30 s):
 ```
-bash -c 'source /Applications/OpenFOAM-v2606.app/Contents/Resources/etc/bashrc && cd /Users/benschofield/OpenFOAM/cfdof_cases/Chamber_v2_stream/case && for p in spray carrier capture; do mpiexec -np 10 postProcess -parallel -func "flowRatePatch(name=$p)" -latestTime 2>&1 | grep "of phi"; done'
+bash -c 'source /Applications/OpenFOAM-v2606.app/Contents/Resources/etc/bashrc && cd /Users/benschofield/OpenFOAM/cfdof_cases/Chamber_v2_stream_30/case && for p in spray carrier capture; do mpiexec -np 10 postProcess -parallel -func "flowRatePatch(name=$p)" -latestTime 2>&1 | grep "of phi"; done'
 ```
 It should print spray **−0.0001426**, carrier **−0.0005**, capture **+0.0006426** (in negative, out positive; checked
 on the scripted case). It also writes a `postProcessing` folder into the case, which is harmless.
 
-### 8.7 The second design: Gentle (10 min clicking, ~45 min solving)
+### 8.7 The second design: Gentle (10 min clicking, ~1.5 h solving)
 
-1. **File → Save As** `/Users/benschofield/OpenFOAM/cfdof_cases/Chamber_v2_gentle/Chamber_v2_gentle.FCStd`, **File →
-   Close**, and reopen:
+1. **File → Save As** `/Users/benschofield/OpenFOAM/cfdof_cases/Chamber_v2_gentle_30/Chamber_v2_gentle_30.FCStd`,
+   **File → Close**, and reopen:
    ```
-   open -a FreeCAD "/Users/benschofield/OpenFOAM/cfdof_cases/Chamber_v2_gentle/Chamber_v2_gentle.FCStd"
+   open -a FreeCAD "/Users/benschofield/OpenFOAM/cfdof_cases/Chamber_v2_gentle_30/Chamber_v2_gentle_30.FCStd"
    ```
 2. Change only two things:
    - the **Carrier** cylinder's **Radius: 20 mm** (40 mm across);
    - the **carrier** boundary's length scale: **2.8 mm** (0.07 × 40 mm).
-3. Recompute and **Check Geometry**: still **46 faces**. The face numbers don't change (checked).
-4. **Mesh** (~25 s, **~1,561,300 cells**, Mesh OK, ~65 over 70°), then **solve** as 8.6. Run the gas balance with
-   `Chamber_v2_gentle` in the path.
+3. Recompute and **Check Geometry**: still **47 faces**. The face numbers don't change (checked on a copy of your
+   file).
+4. **Mesh** (~25 s, about 1.65 million cells like Stream's, Mesh OK; for the numbers, 8.5's checkMesh line with
+   `Chamber_v2_gentle_30` in the path), then **solve** as 8.6. Run the gas balance with
+   `Chamber_v2_gentle_30` in the path:
+   ```
+   bash -c 'source /Applications/OpenFOAM-v2606.app/Contents/Resources/etc/bashrc && cd /Users/benschofield/OpenFOAM/cfdof_cases/Chamber_v2_gentle_30/case && for p in spray carrier capture; do mpiexec -np 10 postProcess -parallel -func "flowRatePatch(name=$p)" -latestTime 2>&1 | grep "of phi"; done'
+   ```
+
+**Ben's Gentle (2026-11-13), built by Claude by script** from a copy of Stream's saved file: Carrier radius 20 mm, carrier length scale 2.8 mm, both boundaries set on Fusion (carrier Face29, now 1,257 mm²; capture Face39), the solver at 4,000 / 1e-5 / 500. Mesh and case compared with Stream's file by file: only the carrier's surfaces and its length scale differ. 1,692,233 cells (40,000 more, the wider stub); Mesh OK, 30 faces over 70°, max 78.8°, skewness 3.27; patches spray 366, capture 445, carrier 3,590 faces.
 
 **Why the stream cones stay:** the two meshes then differ only at the inlet, so any difference in where the droplets
 go is the stream, not the mesh.
 
 ### 8.8 What to look at in ParaView
 
-Open the case from CfdOF as before, **Last Frame**, colour by **U** (Magnitude), max **~3 m/s**.
-1. **The plane of everything:** **Slice**, **Z Normal**, origin **(0.1637, 0.2, −0.2125)**. The spray, the stream and
-   both ports are all in this cut.
+**Double-click `View flow.command`** in `cfdof_cases/Chamber_v2_stream_30/` (or open it from CfdOF as before), **Last
+Frame**, colour by **U** (Magnitude), max **~3 m/s**. Once it looks right, **File → Save State** into the same folder
+(e.g. `stream_view.pvsm`): the viewer opens your newest saved view from then on.
+1. **Two cuts:**
+   - **Slice**, **Y Normal**, origin **(0.175, 0.21, −0.157)**: a level cut through the stream, the capture and the
+     spray just below the tip, seen from above.
+   - **Slice**, **Z Normal**, origin **(0.175, 0.2, −0.1)**: the stream and the capture side-on.
 2. **Where the carrier's gas goes:** **Stream Tracer**, Seed Type **Point Cloud**, Center
-   **(0.285, 0.08, −0.2125)**, Radius **0.004** (Gentle: **0.018**), Number of Points 200.
-3. **Where the capture's air comes from:** the same at Center **(0.065, 0.08, −0.2125)**, Radius **0.004**. The
-   tracer draws both ways from its seeds, so these lines show the path into the capture.
+   **(0.070, 0.21, −0.1)**, Radius **0.004** (Gentle: **0.018**), Number of Points 200.
+3. **Where the capture's air comes from:** the same at Center **(0.316, 0.21, −0.1)** (in the capture's pipe), Radius
+   **0.004**. The tracer draws both ways from its seeds, so these lines show the path into the capture.
 4. **The spray at the shadowgraph window:** **Filters → Data Analysis → Probe Location** at
    **(0.1637, 0.1828, −0.2125)** (55 mm below the lip). Your Chamber_v2 gives 15.5 m/s there. **The designs should
    match it within a few %.** If not, the stream is moving the spray in your measurement.
 
 What to note:
-- Does the stream survive to the far wall, or does the spray fold it into the floor?
-- Does the capture's air come from the stream, from the floor's wall jet, or from round about?
+- Does the stream arrive at the capture straight, or does the chamber's circulation bend it away?
+- Does the capture's air come straight from the carrier (step 3's lines trace back to it), or from round about?
 - How different is Gentle from Chamber_v2, away from the inlet?
 
-### 8.9 The droplets through both (~1 h, unattended)
+### 8.9 The droplets through both (~6 h, unattended)
 
-Once both have solved:
+Once both have solved (plugged in; caffeinate keeps the Mac awake for 8 h). It leaves ~12 GB a flow (~85 GB for
+the seven); the first try, on 2026-11-14, filled the disk, because the frames' flow copies were deleted only as each
+stage ended (~500 GB at once for two 290 s runs). They are now deleted as it runs (`df -h /System/Volumes/Data`
+shows what's free):
 ```
-caffeinate -i -t 7200 &
+caffeinate -i -t 28800 &
 /Users/benschofield/anaconda3/envs/phantom/bin/python3 "/Users/benschofield/Documents/GitHub/HPATR/Flow Visualisation/run_droplets.py" "/Users/benschofield/Documents/GitHub/HPATR/Flow Visualisation/settings/droplets_carrier_stream.yaml"
 ```
 
 **What it runs** (`settings/droplets_carrier_stream.yaml`):
-- The same droplets as 7.10, through three flows:
+- The same droplets as 7.10, through seven flows:
   - **Chamber_v2:** the reference, the band leaving through the 44 mm port;
-  - **Stream** and **Gentle:** the band leaving through the capture.
+  - **Stream** and **Gentle**, each at iterations 2,000, 3,000 and 4,000: the band leaving through the capture.
+    Neither design converges, and Stream's jet reaches the capture at 3,000 but not at 2,000 or 4,000 (8.10). The
+    three snapshots' spread is the uncertainty.
 - **Two endings, each with gusts on and off:**
   - **2 s:** the spray and carrier stop together after the 5 s spray, as in the slide test.
-  - **120 s:** the flow keeps running for two chamber volumes before going still. This stands in for **continuous
-    running** into the AJP, the case that matters.
-- Results: `~/OpenFOAM/droplet_runs/droplets_carrier_stream/<date_time>/comparison.md`.
+  - **290 s:** the flow keeps running for ~5 chamber volumes, then 10 s of still air to the rig's 300 s. This is
+    **continuous running** into the AJP, the case that matters.
+    - The droplets don't touch each other or the flow, so a continuous spray is many 5 s pulses added up. Each
+      droplet's eventual fate is the answer, so the run lasts until almost nothing is left airborne.
+    - Well mixed, 290 s leaves <1 % of the fines airborne in the designs. 120 s (the first plan) left ~1/9, which
+      would have read the capture's share up to ~10 points low. Chamber_v2's port takes 8.6 L/min, so ~30 % of its
+      fines are still airborne at 290 s; compare it as "where things stand at 5 min", not as an eventual fate.
+- Results: one folder, `~/OpenFOAM/droplet_runs/<date>_<time>_carrier_stream/` (it prints the path):
+  - **`View Stream.command`, `View Gentle.command`, `View Chamber_v2.command`:** double-click to open that flow's
+    headline run in ParaView (gusts on, the flow kept 290 s); then First Frame, Play.
+  - **`comparison.md`:** the results to read.
+  - **`data/`:** everything else: each flow's own report, figures and CSVs, the other runs' views
+    (`data/<flow>/paraview/*.command`), and the OpenFOAM cases.
 
 **What to read in it** (the 0–30 µm band, weighted by the measured spray, by number):
 - **"port":** the share that leaves through the capture (the 44 mm port for Chamber_v2, today 1.2 %). This is the
-  headline. Compare it at 120 s and at 2 s.
+  headline. Compare it at 290 s and at 2 s.
 - **Floor, walls, airborne at switch-off:** where the rest goes.
 - **How concentrated:** the "port" share ÷ the flow out: 38.6 L/min for the designs, 8.6 L/min for Chamber_v2.
 - **The > 30 µm bands at the capture:** what the stream lets through that the AJP doesn't want.
@@ -907,52 +1002,279 @@ caffeinate -i -t 7200 &
 **What "port" lumps together** (the tool's fates, not yet split by port):
 - The band tables' **"port"** is two fates added together:
   - **"port mesh":** reached the capture's end disc;
-  - **"port tube":** touched anything beyond the chamber's walls, i.e. the inside of any stub (the capture's, the
-    carrier's, the sealed 44 mm port's), or the carrier's end disc.
-- `fates_by_size.csv` in each run's folder keeps them apart. **"port mesh" is the capture alone.**
-- Droplets reaching the carrier's stub against its inflow should be next to none: check "port tube" is small.
+  - **"port tube":** touched anything beyond the chamber's walls, i.e. the inside of any stub (the capture's cone and
+    pipe, the carrier's, the sealed 44 mm port's), or the carrier's end disc.
+- `fates_by_size.csv` in each run's folder keeps them apart. **"port mesh" is what the capture delivers.**
+- **"port tube" at the capture is lost on its cone and pipe walls:** the entrance losses the cone is there to cut.
+  In `droplets.csv`, x_mm above 270 is the capture's cone and pipe, below 80 the carrier's stub. Without layers there,
+  the fines' share reads high (8.5); read it for the 20–30 µm band.
+- Droplets reaching the carrier's stub against its inflow should be next to none.
 
-### 8.10 What the check by script gave
+### 8.10 What the checks gave
 
-On a scratch copy of your `Chamber_v2.FCStd`, the same objects and settings as 8.2–8.7:
+**Your layout** (2026-11-12, on a copy of your file after 8.2):
 
 | | Stream | Gentle |
 |---|---|---|
-| Fusion | 1 solid, 46 faces, valid | the same |
+| Fusion | 1 solid, **47 faces**, valid | the same |
 | Your links after 8.3 | all followed their faces (table below) | the same |
-| Cells; meshing | **1,522,608**; 23 s | **1,561,252**; 23 s |
+
+**The first layout** (2026-11-02, by script; carrier on the x = 270 wall, a plain 10 mm capture at y 80 on the
+x = 80 wall), for scale:
+
+| | Stream | Gentle |
+|---|---|---|
+| Cells; meshing | 1,522,608; 23 s | 1,561,252; 23 s |
 | checkMesh | Mesh OK; 65 faces over 70°, max 80.2°; max skewness 2.77 | the same |
 | 30 iterations (on 7 cores, with setup) | ran clean; 2 min | ran clean |
 | Gas in = gas out (iteration 30) | 1.426e-4 + 5.000e-4 = **6.426e-4 m³/s** out | |
 
-**Not checked:** the full 2,000-iteration solve (the Mac was on battery), so there is no predicted flow to compare
-yours with yet. Your run is the first. After it, I'll probe it the way 7.9 did (the stream's path, the spray at the
-window, the capture's air).
+**Your layout's Stream mesh (Ben, 2026-11-13):** 1,652,490 cells; Mesh OK; 32 faces over 70°, max 78.9°; max
+skewness 3.27. All 9 volume refinements (CaptureInside among them) and both new surface refinements were in its
+meshDict.
+
+**Your Stream's first solve (Ben, 2026-11-13, CfdOF's default 1e-3 stop):** converged at iteration 1,072 in 15 min (0.81 s an iteration on 10 cores). Gas in = gas out: 1.426e-4 + 5.000e-4 = 6.426e-4 m³/s out through capture. Re-solved to 4,000 at 1e-5 for the droplets' 2,000 (8.6): ran clean (53 min), but **both new boundaries were on the wrong faces**. `capture` was the whole floor (18,792 faces at y 13) and `carrier` the atomiser arm's underside (y 250, x 80–143), picked on Flow Analysis Basic's Face39 and Face29, not Fusion's (the 8.4 note). The refinements were all on the right faces. Gas in = gas out can't catch this: it holds whichever faces they are. **Check the patches before solving:** after Write mesh case, `meshCase/constant/triSurface/` holds one `patch_*.stl` per boundary; the capture's should sit at x 325 and the carrier's at x 60.
+
+**Your two flows at 4,000 (2026-11-13, patches checked):** Stream (Ben, re-picked on Fusion) and Gentle (by script)
+each took 93 min. Both put gas in = gas out exactly at 2,000 and 4,000.
+
+- **Neither reaches 1e-5.** The residuals level off by ~1,000: Stream at U ~1e-3, p 3–6e-2; Gentle at U ~2e-3,
+  p 8–10e-2.
+- **Chamber-wide, both are steady.** Mean speed is 0.40–0.44 m/s for Stream and 0.43–0.46 m/s for Gentle, with
+  ~27 % of the volume above 0.5 m/s in each.
+- **Locally, both wander.** Each 500-iteration snapshot differs from the 2,000 one by 31–56 % of the mean speed in
+  Stream and 34–49 % in Gentle. Gentle wanders as much with no jet, so the wander is mostly the spray's own
+  circulation (25 mN, against the stream's 3.8 mN), not the stream flapping. Pick a snapshot and the droplets
+  inherit that one; 2,000, 3,000 and 4,000 together give the spread.
+- **Stream's jet** (probes along y 210, z −100, at 2,000 / 3,000 / 4,000): 7.0 m/s at x 100; 2.8–6.2 at x 130;
+  1.7–2.3 at x 190; 0.4–1.2 at x 250. It reaches the cone mouth at 0.56–0.70 m/s, off-centre: the jet carries air
+  about two-thirds of the way across, then breaks up.
+- **Gentle's carrier** leaves the 40 mm hole at 0.4 m/s and turns down at once (x 100: +0.28, −0.31, −0.14 m/s).
+  Along the same line it runs 0.17–0.55 m/s, which is the chamber's own circulation, and the cone mouth sees
+  0.39–0.52 m/s. The capture draws from wherever the circulation brings air.
+- **Both:** the spray at the window runs 15.3–16.3 m/s, the capture pipe 9.2–9.3 m/s, and the floor jet spreads
+  out at up to ~1.5 m/s.
+
+- **Where the capture's air comes from** (400 seeds in the capture pipe, traced back, 2026-11-13). In Stream, the
+  share coming straight from the carrier (within 0.6 m of path; the direct line is ~0.25 m) changes a lot from
+  snapshot to snapshot. At 1,000–4,000 in steps of 500 it is 10, 32, 0, 14, 62, 0 and 0 %. The jet reaches the
+  capture in some snapshots (3,000 best) and is bent toward the spray in most. In Gentle the share is 0 % in every
+  snapshot. Most of the capture's air comes round the chamber's circulation.
+
+Which design catches more of the 0–30 µm band is the droplet runs' question (8.9).
+
+**The droplets (2026-11-14, `droplet_runs/2026-11-14_1439_carrier_stream/comparison.md`):** all seven flows, every
+droplet accounted for. Stream 3000's and Gentle 4000's gusts-off 290 s runs hung (one droplet looping in OpenFOAM's
+tracking) and are missing.
+- **Out through the capture**, gusts on, flow kept 290 s, % of each size fired:
+
+  | | 2 µm | 6 µm | 10 µm | 20 µm | 30 µm | 0–30 µm band, by the measured spray |
+  |---|---|---|---|---|---|---|
+  | Chamber_v2 (the 44 mm port) | 15 | 16 | 8 | 5 | 0.5 | 4.8 |
+  | Stream 2,000 / 3,000 / 4,000 | 41 / 30 / 44 | 31 / 23 / 41 | 25 / 19 / 33 | 9 / 6 / 13 | 1 / 1 / 3 | 9.6 / 7.6 / 13.7 |
+  | Gentle 2,000 / 3,000 / 4,000 | 45 / 39 / 47 | 39 / 32 / 38 | 31 / 24 / 34 | 10 / 13 / 11 | 1 / 2 / 2 | 12.3 / 12.2 / 12.4 |
+
+- **Both designs take ~2–3× the bare chamber's fines; neither wins every snapshot.** Gentle is steady from snapshot
+  to snapshot; Stream swings, and its worst snapshot (3,000) is the one where the jet goes straight in (carrier gas,
+  not chamber air, into the capture). With gusts off, Stream takes more at 10–14 µm (44–50 % against 30–32 %).
+- **The fines' biggest sink is the atomiser and its arm** (gusts on: 40–60 % of ≤ 6 µm in the designs, 70–83 % in
+  Chamber_v2). Largely an artefact: the atomiser has no near-wall layers (only the floor and walls got them, 7.6),
+  and 0.5 µm tracers land on it 5–7 % in 5 s with gusts on (under 1 % with gusts off; 0 % on the layered floor).
+  With gusts off the designs' capture takes 47–66 % of 2–6 µm, the atomiser 15–29 %, and 19–26 % of the 2 µm stay
+  airborne on closed streamlines. Until the atomiser has layers, the capture's true share of the fines is somewhere
+  between the two.
+- **The floor's cut** (gusts on, within 30 mm of the spray axis): Chamber_v2 27–28 µm (the 2 Nov run's 28 µm
+  reproduced), Gentle 27–28.5, Stream 29–31; gusts off 21–25.
+- **The floor's share of the 0–30 µm band** across snapshots: Stream 62.8–67.9 %, Gentle 63.5–65.7 % (the tolerance
+  is 5 points).
+
+**Not checked:** the two hung runs. The atomiser with near-wall layers on it is checked in 8.11: the artefact goes,
+and Gentle's capture share rises to 16–17 %.
+
+### 8.11 Chamber_v3: the base model from now on (built by Claude, 2026-11-14; ~10.5 h overnight)
+
+**Chamber_v3 is Chamber_v2 with the atomiser treated like the floor:** the near-wall layers on every face a droplet
+can touch, so the fines' deposit on it is no longer the tracking's artefact (8.10). **Start new designs from
+`~/OpenFOAM/cfdof_cases/Chamber_v3/Chamber_v3.FCStd`**, not Chamber_v2. Your Chamber_v2 files are untouched.
+
+**What changed, in the FreeCAD tree:**
+- **`StepFix (0.1 mm: arm end flush with body)`**, a box in `Fusion`. The imported air had a 0.1 mm step:
+  - the arm's end below the body was at x = 130.0, while the body's side above it is at x = 129.9;
+  - the box (x 129.9–130.0, y 280–305, z −227.5 to −197.5) is air, so the arm's end is now flush with the body.
+  - The step wasn't on the real atomiser; it broke the layers there (open cells).
+  - Every boundary's and refinement's faces were re-found by position (the face numbers shift).
+  - **`Chamber_v3_air.step`** beside the `.FCStd` is the fixed air body, to open in Fusion 360 or anything else.
+- **`AtomiserLayers`** (11 faces, 115,403 mm²: the body and arm) and **`NozzleBlockLayers`** (12 faces, 13,238 mm²:
+  the nozzle block, its neck, the pocket round them and the body's underside), under the mesh.
+  - Both have the walls' layers: 10, ratio 1.3, first 0.15 mm.
+  - `NozzleBlockLayers` also has a finer surface mesh (0.25 of the base, 2 mm). The pocket is 13 mm across, and at
+    the base 8 mm the layers from its sides collided (inside-out cells).
+  - The tip, cap and bore keep their own refinements, as before.
+- **`allowDiscontinuity 1`** on both, in `meshCase/system/meshDict`. Without it, cfMesh spreads their layer count to
+  the nozzle tip and skews the mesh there (85–90 faces). CfdOF has no box for it, and **Write mesh drops it**. After
+  every Write mesh of a Chamber_v3 case, run this before Run mesher:
+  ```
+  /Users/benschofield/anaconda3/envs/phantom/bin/python3 "/Users/benschofield/Documents/GitHub/HPATR/Flow Visualisation/cfdof/add_layer_discontinuity.py" ~/OpenFOAM/cfdof_cases/<case>/meshCase
+  ```
+  It prints "allowDiscontinuity added" (or "already has") for both.
+
+**The three cases** (`~/OpenFOAM/cfdof_cases/`):
+
+| Case | Made from | Cells | checkMesh |
+|---|---|---|---|
+| `Chamber_v3` | `Chamber_v2` | 1,351,969 (was 1,225,011) | 100 faces skewness > 4 (max 4.8) |
+| `Chamber_v3_stream_30` | `Chamber_v2_gentle_30`'s file, the carrier hole back to 10 mm and its length scale to 0.7 mm (Stream's own file on disk predates its boundary fix) | 1,778,254 (was 1,652,490) | 155 faces skewness > 4 (max 4.5) |
+| `Chamber_v3_gentle_30` | `Chamber_v2_gentle_30` | 1,818,050 (was 1,692,233) | 157 faces skewness > 4 (max 4.5) |
+
+- **The skewed faces** all sit at one corner, within ~1 mm. That's where the arm's side meets the body's side and
+  its bottom edge (x 129–129.5, y 304–305, z −227.5 or −197.5), a mix of inside and outside corners. Matching the
+  surface mesh on all three faces there didn't change it (92–97 faces, max 4.6).
+  - Skewness above 4 is checkMesh's warning, not an error.
+  - It's away from the jet and the capture. There are no open or inside-out cells.
+- **The layers formed:** the first cell centre beside the atomiser is 0.01–0.1 mm from it, down from 0.46–1.7 mm
+  (the walls' is 0.06 mm).
+- **The cases:** every file is the same as the original's except `system/createPatchDict`, which merges the two new
+  patches into the walls. That includes Stream's carrier inlet, rebuilt from Gentle's file.
+- **On the way** (scratch builds, since deleted): `Chamber_v2_*_atomiser_layers` layered only the body and arm.
+  Everything else gave open or inside-out cells until the step was closed and the pocket's mesh refined.
+
+**Look at it:**
+- **In FreeCAD:** open `Chamber_v3.FCStd`. `StepFix` is in `Fusion`; the two layer settings are under the mesh.
+- **In ParaView:** open the mesh with the command below, Apply, then **Slice** at z = −212.5 (normal z), shown as
+  **Surface With Edges**. Zoom in on the atomiser: the thin layers hug it all round, as they do the walls.
+
+```
+open -n -a /Applications/ParaView-6.2.0.app --args /Users/benschofield/OpenFOAM/cfdof_cases/Chamber_v3/meshCase/pv.foam
+```
+
+**Overnight** (plugged in; it solves the three flows one after another, then runs the droplets,
+`settings/droplets_chamber_v3.yaml`):
+```
+cd "/Users/benschofield/Documents/GitHub/HPATR/Flow Visualisation/cfdof"
+caffeinate -i -t 43200 &
+./overnight_chamber_v3.sh
+```
+- **The watchdog:** a droplet run whose log stops changing for 15 minutes is stopped and logged as failed, and the
+  sweep carries on. A stopped run is left out of the comparison; its flow's other runs are kept. (Since
+  2026-11-15 a stalled droplet stage restarts instead, below.)
+- **One risk:** Chamber_v3 stops early if its residuals all fall below 1e-3. Chamber_v2's sat at U ~2e-3, p ~6e-3
+  at 2,000. If it does stop early, iteration 2,000 won't exist, and only its droplet runs fail.
+
+**What it gave (2026-11-14/15, `droplet_runs/2026-11-15_0145_chamber_v3/comparison.md`):**
+- **The flows:** all three solved to the end (Chamber_v3 2,000 in 40 min; Stream and Gentle 4,000 in 94 and 101 min),
+  no errors, gas in = gas out exactly. The air is as on v2: mean speed 0.44–0.46 m/s, and the designs' air differs from
+  Chamber_v3's by 44–70 % (33–77 % on v2).
+- **The atomiser artefact is gone.** 0.5 µm tracers on the atomiser, gusts on: 0.3–0.4 % (5–7 % on v2). The 0–30 µm
+  band's deposit on it, gusts on, flow kept 290 s: 4–6 % (17–22 % on v2); at 2 µm, 19 % in Chamber_v3 and 5–8 % in
+  Gentle (83 % and 40–60 % on v2). What is left is the fines' own settling and impaction.
+- **Out through the capture**, gusts on, flow kept 290 s, % of each size fired:
+
+  | | 2 µm | 6 µm | 10 µm | 14 µm | 20 µm | 30 µm | 0–30 µm band, by the measured spray |
+  |---|---|---|---|---|---|---|---|
+  | Chamber_v3 (the 44 mm port) | 37 | 32 | 20 | 11 | 4 | 0 | 6.2 (4.8 on v2) |
+  | Gentle 2,000 / 3,000 / 4,000 | 70 / 71 / 72 | 67 / 67 / 70 | 48 / 46 / 50 | 30 / 30 / 30 | 12 / 9 / 12 | 1 / 2 / 1 | 16.2 / 15.5 / 17.2 (12.2–12.4 on v2) |
+  | Stream 2,000 / 3,000 / 4,000 (the rerun, below) | 41 / 77 / 72 | 33 / 62 / 62 | 21 / 49 / 45 | 12 / 33 / 26 | 6 / 15 / 10 | 0 / 3 / 1 | 7.6 / 18.3 / 15.6 |
+
+  - **Gentle takes ~2.6× the bare chamber's fines**, and the same in every snapshot (within 2 points). The fines the
+    atomiser used to take now reach the capture. In Chamber_v3, 40 % of the 2 µm are still airborne at 290 s.
+  - **Gusts off** (290 s): Chamber_v3 6.7 %, Gentle 7.0–8.3 %, Stream 4,000 12.3 %. Stream takes more at 10–14 µm
+    (57 and 27 % against Gentle's 47–54 and 12–15 %), as on v2.
+- **Stream's 290 s runs mostly hung:** 5 of its 6 (both at 2,000 and 3,000, gusts on at 4,000), stopped by the
+  watchdog 13–50 s into the spray (1 of 6 on v2). Every 2 s run finished. By 2 s the capture has taken only 1.5–4.4 %
+  (Stream) and 3.5–4.2 % (Gentle), too early to rank them. OpenFOAM v2606's tracking loop has no limit for a stuck
+  droplet: `maxTrackAttempts` is declared in `KinematicParcel.C` but `move()` never uses it.
+- **Why they hang (found 2026-11-15):**
+  - The runs repeat exactly, because the gusts' random numbers are seeded by the processor number. A rerun from 0
+    hangs at the same moment.
+  - The stuck droplet is in a near-wall layer cell so thin and twisted that OpenFOAM can't split it into valid tets.
+    The log says "No base point for face ..., produces a valid tet decomposition".
+  - The one caught is a 0.035 mm sliver on the nozzle block's underside (x 181, y 241, z −216).
+  - `checkMesh -allGeometry` finds 2,239 such faces in Stream v3, 2,238 in Gentle v3 and 1,809 in Stream v2, out of
+    5.4 M. Most are in the capture cone's layers; v3 adds some on the atomiser.
+  - Every run passes through them, Gentle's and Chamber_v3's too. Now and then a droplet hits one exactly and loops.
+  - A restart from the last frame (positions rounded to 10 digits, a nudge of ~1e-10 m) runs past it.
+- **The fix (2026-11-15):** a droplet stage that stalls for 5 minutes now restarts from its newest frame, up to
+  4 times, instead of failing. Restarting from the frame it began from would repeat exactly, so there the droplets'
+  positions are first rounded to 8 figures, then 6. Each run's `run.json` lists its restarts, and the stuck logs are
+  kept as `log.stage1.stalled1` and so on. Tested on the caught case: it restarted once and ran on.
+- **Stream again** (~2.5 h; then all seven flows compared, `droplet_runs/<date>_<time>_chamber_v3_all/comparison.md`):
+  ```
+  cd "/Users/benschofield/Documents/GitHub/HPATR/Flow Visualisation/cfdof"
+  caffeinate -i ./rerun_stream_v3.sh
+  ```
+- **What the rerun gave (2026-11-15, `droplet_runs/2026-11-15_1218_chamber_v3_stream/`):**
+  - Stream 2,000, gusts on, 290 s finished after one restart: 7.6 % of the 0–30 µm band out through the capture.
+  - Stream 4,000 repeated the overnight runs exactly.
+  - Four runs of 290 s still failed. In three, after every nudge the droplet came back onto the same bad face: the air
+    carries droplets into those cells. In the fourth (4,000, gusts on), the frame it restarted from held a number
+    OpenFOAM writes but can't read back (1.2e-311); such numbers are now set to 0 before a restart.
+- **The guard (2026-11-15):** from a stage's first stall on, droplets are kept out of those cells.
+  - The cells are both sides of every face `checkMesh -allGeometry` flags: 2,851 cells in Stream v3. A faceZone of
+    their internal faces carries OpenFOAM's `removeParcels`, which takes a droplet out the moment it reaches one.
+    Droplets already in one are taken out of the frame the stage restarts from.
+  - Only the flagged faces is not enough: the droplet loops inside the cell without touching its bad face (tested).
+  - They are near-wall layer cells, so a removed droplet counts as a hit on the wall its cell is on, or as port if the
+    cell is within 80 mm of the capture's end (its cone and pipe). `droplets.csv` flags each one (`removed_in_bad_cell`),
+    and `run.json` gives how many and where.
+  - Counting the cone's as port matters. Tested on the stuck cases, about a third of the droplets reaching the cone
+    went into its bad cells. Without the guard, droplets that reach the mouth are almost all captured: 687 against
+    10 on the x = 270 wall by 28 s.
+  - Each case's own `faceZones` and cloud file are new files. The meshes stay shared (hard links) and unchanged.
+- **Stream's four stuck runs carried on** from their newest frames, guarded (~1 h; then all seven compared again):
+  ```
+  cd "/Users/benschofield/Documents/GitHub/HPATR/Flow Visualisation/cfdof"
+  caffeinate -i ./resume_stream_v3.sh
+  ```
+  Any run folder's stuck runs: `run_droplets.py --resume <flow folder> [<flow folder> ...]`.
+- **What it gave (2026-11-15 17:07, `droplet_runs/2026-11-15_1707_chamber_v3_all/comparison.md`, all seven at 290 s):**
+  - All four finished after one guarded restart each; 60,000 of 60,000 droplets accounted for in every run.
+  - The guard removed 200–432 droplets a run (0.3–0.7 %): 58–72 % of them at the capture cone (counted as port), the
+    rest at the atomiser.
+  - The 0–30 µm band out through the capture, by the measured spray:
+
+    | | gusts on | gusts off |
+    |---|---|---|
+    | Chamber_v3 | 6.2 | 6.7 |
+    | Gentle 2,000 / 3,000 / 4,000 | 16.2 / 15.5 / 17.2 | 7.0 / 8.3 / 7.9 |
+    | Stream 2,000 / 3,000 / 4,000 | 7.6 / 18.3 / 15.6 | 7.0 / 12.6 / 12.3 |
+
+  - **Gentle is steady:** about 2.6× the bare chamber with gusts on, within 2 points across the snapshots.
+  - **Stream depends on the snapshot.** At 3,000 and 4,000 it matches or beats Gentle (2 µm: 72–77 % against 70–72 %).
+    At 2,000 it barely beats the bare chamber, gusts on or off. Their mean (13.8 % gusts on) is below Gentle's (16.3 %).
+    The steady solve's snapshots stand in for a jet that wanders in time (8.10: 3,000 is the snapshot where 62 % of
+    the capture's air came straight from the carrier; 2,000 and 4,000 had none), so the real jet is likely somewhere
+    in between, varying.
+  - **Gusts off**, Stream is at or above Gentle in all three (12–13 % at 3,000 and 4,000).
+  - **The guard's own effect is small.** Not counting the cone's removed droplets as port lowers Stream's numbers by at
+    most 1.5 points (gusts on 17.2 / 15.1 at 3,000 / 4,000). Its atomiser removals add ~1 point to the atomiser's share
+    in the guarded runs. Stream 2,000 gusts on is unguarded (it got past on a plain restart).
 
 ### The faces after 8.3
 
-**Your existing links, renumbered by FreeCAD** (checked by script; re-pick from here if one didn't follow):
+**Your existing links, renumbered by FreeCAD** (checked on a copy of your file; re-pick from here if one didn't
+follow):
 
 | Link | Was (Part 7) | Now |
 |---|---|---|
-| spray | Face42 | **Face46** |
-| outlet (the 44 mm port's end) | Face32 | Face35 (then swapped for Face29 in 8.4) |
-| BoreRefinement | Face40, 41, 42 | **Face44, 45, 46** |
-| TipRefinement | Face34–39 | **Face38–43** |
+| spray | Face42 | **Face47** |
+| outlet (the 44 mm port's end) | Face32 | Face35 (then swapped for Face39 in 8.4) |
+| BoreRefinement | Face40, 41, 42 | **Face45, 46, 47** |
+| TipRefinement | Face34–39 | **Face38, 40, 41, 42, 43, 44** |
 | CapRefinement | Face30, 33 | **Face32, 36** |
 | OutletRefinement | Face27, 32 | **Face28, 35** |
 | FloorRefinement | Face20 | **Face21** |
 | WallsRefinement | Face10, 18, 19, 21, 26 | **Face10 (x = 80), 18 (lid), 19 (z = −17.5), 20 (z = −297.6), 27 (x = 270)** |
 
-**The new faces** (the same numbers for Stream and Gentle):
+**The new faces** (the same numbers for Stream and Gentle, and with the capture moved to z −212.5):
 
 | Face | What | Area (Stream / Gentle) | Centre (mm) |
 |---|---|---|---|
-| Face37 | the carrier stub's end disc: **carrier** | 78.5 / 1,257 mm² | (290, 80, −212.5) |
-| Face34 | the carrier stub's side | 628 / 2,513 mm² | (280, 80, −212.5) |
-| Face29 | the capture stub's end disc: **capture** | 78.5 mm² | (60, 80, −212.5) |
-| Face22 | the capture stub's side | 628 mm² | (70, 80, −212.5) |
-| Face10 / Face27 | the x = 80 / x = 270 walls, now with the holes | 192,949 / 193,849 mm² (Gentle: 192,671 at x = 270) | |
+| Face29 | the carrier stub's end disc: **carrier** | 78.5 / 1,257 mm² | (60, 210, −100) |
+| Face22 | the carrier stub's side | 628 / 2,513 mm² | (70, 210, −100) |
+| Face39 | the capture pipe's end disc: **capture** | 78.5 mm² | (325, 210, −100) |
+| Face37 | the capture pipe's side | 562 mm² | (316, 210, −100) |
+| Face34 | the capture's cone | 3,880 mm² | (284.5, 210, −100) |
+| Face10 / Face27 | the x = 80 / x = 270 walls, now with the holes | 192,949 / 192,045 mm² (Gentle: 191,771 at x = 80) | |
 
 ---
 
@@ -964,6 +1286,11 @@ in Fusion, meshed by CfdOF as a 5° slice, the fix CfdOF's wedge needs (its cut 
 ---
 
 ## In ParaView
+
+**To open a case without FreeCAD:** double-click **`View flow.command`** in its folder, `~/OpenFOAM/cfdof_cases/<case>/`.
+It opens your newest saved view there (**File → Save State** into that folder), or else the case at its last
+iteration. Every case has one from 2026-11-12 (copy it into a new case's folder from
+`Flow Visualisation/cfdof/View flow.command`; 8.1 shows how). `~/OpenFOAM/TESTS.md` says what each case is.
 
 The case opens with the mesh in **metres** (the box is 0–0.3, 0–0.2, 0–0.35). The slice and streamline positions
 below are for the **box** (Parts 3–4). Your own chamber has different coordinates: use the ones in Part 5.

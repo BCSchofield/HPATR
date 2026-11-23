@@ -241,6 +241,8 @@ def test_figures_and_report(scn, tmp_path):
     ck = {"cases": {}, "gusts": K.gusts_compare(scn, df), "large": K.large_near_impact(scn, df),
           "tracers_vs_sizes": []}
     md = cfd_report.report(scn, "s.yaml", meta, df, ck, [("floor_x.png", "the floor")])
+    top = cfd_report.report(scn, "s.yaml", meta, df, ck, [("floor_x.png", "the floor")], prefix="data/")
+    assert "](figures/floor_x.png)" in md and "](data/figures/floor_x.png)" in top and "`data/droplets.csv`" in top
     for part in ("## Headline", "By number", "By volume", "## Checks", "1. Every droplet accounted for: PASS",
                  "5. Gusts on against off", "6. Large droplets", "## Flags", "## Inputs, by how they are known"):
         assert part in md

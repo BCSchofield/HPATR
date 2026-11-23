@@ -168,6 +168,14 @@ def test_prune_keeps_flow_restart_and_droplets(tmp_path):
     assert kept == {"positions", "d", "active"}
 
 
+def test_prune_before_leaves_the_frame_being_written(tmp_path):
+    for t in ("0", "0.25", "0.5", "0.75"):
+        (tmp_path / t).mkdir()
+        (tmp_path / t / "U").write_text("x" * 100)
+    C.prune(tmp_path, set(), before=0.5)
+    assert [t for t in ("0", "0.25", "0.5", "0.75") if (tmp_path / t / "U").exists()] == ["0", "0.5", "0.75"]
+
+
 # ---- results -----------------------------------------------------------------------------------------------------
 
 HDR = ('# Time           currentProc " (coordinates0 coordinates1 coordinates2 coordinates3) (position0 position1 '

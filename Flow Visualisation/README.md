@@ -98,31 +98,37 @@ once, ~1.5 min in all at 600 droplets per size:
 Then open the newest run's report:
 
 ```
-open "$(ls -dt ~/OpenFOAM/droplet_runs/droplets_baseline/*/ | head -1)report.md"
+open "$(ls -dt ~/OpenFOAM/droplet_runs/*_droplets_baseline/ | head -1)report.md"
 ```
 
 `report.md`: where the 0-30 µm band ends up, weighted by the spray's measured sizes (by number and by volume), and
 its share of the floor's deposit; the floor deposit maps by size band (seen from above, with the atomiser body,
 nozzle block and arm outlined, the exit orifice and the port), where each size ends up, the checks (accounting,
 OpenFOAM's tracking and settling against Phase 1, the tracers' near-wall artefact, gusts on against off, large
-droplets near the impact point), the flags and the runs. The figures are in `figures/`. Also `droplets.csv` (every
-droplet: size, fate, when and where it landed, airborne at switch-off), `fates_by_size.csv`, `bands.csv`,
-`checks.json` and its csv files.
+droplets near the impact point), the flags and the runs. The figures are in `data/figures/`. Also, in `data/`,
+`droplets.csv` (every droplet: size, fate, when and where it landed, airborne at switch-off), `fates_by_size.csv`,
+`bands.csv`, `checks.json` and its csv files.
 
-**Everything for a run is in one folder**, `~/OpenFOAM/droplet_runs/<name>/<date_time>/` (`run.runs_folder`; no spaces,
-as OpenFOAM cannot work in them): the report and figures, the ParaView views in `paraview/`, and the OpenFOAM cases in
-`openfoam/` (each with its own mesh files). **To view a run in ParaView, double-click `paraview/<run>.command` in
-Finder** (then First Frame, Play). The folder can be copied or moved anywhere whole (Finder, a drive): the
-`.command` rewrites the view's paths to where it now sits. Only `flows/` (the reconstructed flows, reused) is shared
-between runs, and nothing in a run's folder needs it.
+**Everything for a run is in one folder**, `~/OpenFOAM/droplet_runs/<date>_<time>_<name>/` (`run.runs_folder`, the
+settings' `name`; no spaces, as OpenFOAM cannot work in them). At its top, only what you open:
+- **`View <flow>.command`: double-click it in Finder to view the run in ParaView** (then First Frame, Play). It opens
+  the headline run: gusts on, the middle flow-kept time (a sweep's `show`). One per flow.
+- `report.md` (a sweep: `comparison.md`).
+- `data/`: everything else: the figures, the CSVs, every run's view in `paraview/` (each with its own
+  `<run>.command`), and the OpenFOAM cases in `openfoam/` (each with its own mesh files).
+
+The folder can be copied or moved anywhere whole (Finder, a drive): the `.command` files rewrite the view's paths to
+where it now sits. Only `flows/` (the reconstructed flows, reused) is shared between runs, and nothing in a run's
+folder needs it. Runs before 2026-11-12 are `~/OpenFOAM/droplet_runs/<name>/<date_time>/`, with everything at the
+top; the options below read both. `~/OpenFOAM/TESTS.md` lists every run and CFD case.
 
 Each view has two tabs. **droplets**: the flow on a grey cut through the hole, the outlines, every droplet coloured by
 size; hidden layers (click their eyes): the 0-30 µm band only, the still-airborne only, and Ben's own CfdOF views
 (`Slice Through Orifice`, `Slice Through Outlet`, `Tracers From Orifice`, `Tracers Outlet`, `Tracers Whole`, built as
 in his `jet_refined_chamber_v1_view.pvsm`, on his 0-5 m/s colour scale). **split: droplets | the air**: the droplets
 beside the air in Ben's views, cameras linked, seen from the +x side as in his comparison view, for screenshots
-(`paraview/<run>_split_switch_off.png` is a picture of it). To remake a finished run's views after a change to them,
-without running OpenFOAM: `run_droplets.py --views-only <run folder>` (a sweep's folder does every entry).
+(`data/paraview/<run>_split_switch_off.png` is a picture of it). To remake a finished run's views after a change to
+them, without running OpenFOAM: `run_droplets.py --views-only <run folder>` (a sweep's folder does every entry).
 
 Options: `--per-size 20` for a quick look (its 250 ms step is flagged in report.md: the fines need 8.3 ms or less,
 so 600 per size at a 5 s exposure); `--only gusts_on_after_0s` (names as in `report.md`); `--write-only` writes
@@ -131,7 +137,7 @@ off, every size dropped in still air and in a cross-flow). To remake the figures
 a change to them), without running anything:
 
 ```
-/Users/benschofield/anaconda3/envs/phantom/bin/python3 "/Users/benschofield/Documents/GitHub/HPATR/Flow Visualisation/run_droplets.py" --report-only "$(ls -dt ~/OpenFOAM/droplet_runs/droplets_baseline/*/ | head -1)"
+/Users/benschofield/anaconda3/envs/phantom/bin/python3 "/Users/benschofield/Documents/GitHub/HPATR/Flow Visualisation/run_droplets.py" --report-only "$(ls -dt ~/OpenFOAM/droplet_runs/*_droplets_baseline/ | head -1)"
 ```
 
 The settings file says which CfdOF case and iteration (the flow is reconstructed once into
@@ -149,7 +155,7 @@ Part 5 case, 600 per size, ~6 min):
 
 ```
 /Users/benschofield/anaconda3/envs/phantom/bin/python3 "/Users/benschofield/Documents/GitHub/HPATR/Flow Visualisation/run_droplets.py" "/Users/benschofield/Documents/GitHub/HPATR/Flow Visualisation/settings/droplets_snapshots.yaml"
-open "$(ls -dt ~/OpenFOAM/droplet_runs/droplets_snapshots/*/ | head -1)comparison.md"
+open "$(ls -dt ~/OpenFOAM/droplet_runs/*_droplets_snapshots/ | head -1)comparison.md"
 ```
 
 `comparison.md`: what was compared (case, iteration, cells, orifice); a verdict per flow; the air on a common 10 mm
@@ -159,7 +165,7 @@ share, the deposit's centre, its spread and the share moved to a different 20 mm
 with the noise from the droplet count (the bootstrap), and the verdict (the same / close / differs; how it is judged
 is at its end); where each size ends up, one line per flow; each run's checks. Also `comparison.csv`. The same for
 runs already finished (two or more output folders; `--labels` names them, `--show gusts_off_after_2s` picks the run
-the maps show; into `~/OpenFOAM/droplet_runs/comparisons/<date_time>/` unless `--out`):
+the maps show; into `~/OpenFOAM/droplet_runs/<date>_<time>_comparison/` unless `--out`):
 
 ```
 /Users/benschofield/anaconda3/envs/phantom/bin/python3 "/Users/benschofield/Documents/GitHub/HPATR/Flow Visualisation/run_droplets.py" --compare "<output folder 1>" "<output folder 2>" --labels "first,second"

@@ -12,9 +12,13 @@ with `base:`):
         - {label: iteration 1000, flow: {iteration: 1000}}
         - {label: Part 5 case, flow: {case: ~/OpenFOAM/cfdof_cases/Chamber_v1/case}}
 
-    <runs_folder>/<name>/<date_time>/          comparison.md, comparison.csv, figures/, sweep.json, the settings
-    <runs_folder>/<name>/<date_time>/<label>/  each entry's full run folder (report.md, paraview/, openfoam/, ...),
+    <runs_folder>/<date>_<time>_<name>/        View <label>.command (double-click: that entry's `show` run in
+                                               ParaView), comparison.md
+        data/                                  comparison.csv, figures/, sweep.json, the settings
+        data/<label>/                          each entry's full run folder (report.md, paraview/, openfoam/, ...),
                                                its settings written out
+
+(Sweeps made before 2026-11-12: <runs_folder>/<name>/<date_time>/, everything at the top, no data/.)
 """
 from __future__ import annotations
 
@@ -26,6 +30,8 @@ from pathlib import Path
 import yaml
 
 from . import cfd_compare, cfd_runner
+from .cfd_droplets import headline
+from .cfd_report import DATA, report_path, run_files
 from .runner import _slug
 from .settings import BASES, SettingsError, _merge, _replaced, base_files
 
@@ -48,6 +54,8 @@ def expand(plain: dict, basis: dict) -> tuple[dict, list[tuple[str, dict, dict]]
         label = str(e["label"]).strip()
         if _slug(label) in seen:
             raise SettingsError(f"sweep.runs.{i}: label {label!r} is used twice (folders are named after it)")
+        if _slug(label).lower() == DATA:
+            raise SettingsError(f"sweep.runs.{i}: label {label!r} is taken (the sweep's own files go in {DATA}/)")
         seen.add(_slug(label))
         change = {k: v for k, v in e.items() if k != "label"}
         bad = [k for k in change if k not in SECTIONS]
@@ -112,15 +120,16 @@ def run_sweep(settings_path: Path, plain: dict, basis: dict, out: Path | None = 
     sw, entries = expand(plain, basis)
     name = str(plain.get("name") or settings_path.stem)
     scns = [(label, cfd_runner.scenario(p, b, settings_path, per_size), p, b) for label, p, b in entries]
-    runs = scns[0][1].runs_folder / _slug(name)                     # every entry's settings checked: now run
-    root = Path(out) if out else runs / cfd_runner.fresh_stamp(runs)
+    runs = scns[0][1].runs_folder                                   # every entry's settings checked: now run
+    top = Path(out) if out else runs / cfd_runner.fresh_stamp(runs, _slug(name))
+    root = top / DATA
     if " " in str(root):
-        raise SettingsError(f"--out {root}: OpenFOAM cannot work in a path with spaces")
+        raise SettingsError(f"--out {top}: OpenFOAM cannot work in a path with spaces")
     root.mkdir(parents=True, exist_ok=True)
     shutil.copy2(settings_path, root / "settings.yaml")
     for f in base_files(settings_path):
         shutil.copy2(f, root / f.name)
-    log(f"{settings_path.name}: a sweep of {len(scns)} -> {root}")
+    log(f"{settings_path.name}: a sweep of {len(scns)} -> {top}")
     done, errors = [], []
     for i, (label, scn, p, b) in enumerate(scns):
         folder = root / _slug(label)
@@ -142,26 +151,34 @@ def run_sweep(settings_path: Path, plain: dict, basis: dict, out: Path | None = 
             "show": sw.get("show"), "against": sw.get("against"), "tolerance": sw.get("tolerance"),
             "runs": [{"label": la, "folder": f.name} for la, f in done], "errors": errors}
     (root / "sweep.json").write_text(json.dumps(info, indent=1))
+    by_label = {label: scn for label, scn, _p, _b in scns}
+    cfd_runner.write_fronts(top, [(la, f, by_label[la], _show(sw.get("show"), by_label[la])) for la, f in done])
     if not write_only and len(done) >= 2:
         compare_sweep(root, log)
     if errors:
         raise cfd_runner.RunError("some of the sweep failed:\n" + "\n".join(errors))
-    return root
+    return top
+
+
+def _show(show, scn) -> str:
+    """The run an entry's top-level opener shows: sweep.show if the entry has it, else the default."""
+    return show if show in [v.key for v in scn.variants()] else headline(scn)
 
 
 def compare_sweep(root: Path, log=print) -> Path:
     """The comparison of a finished sweep's entries (again, after a change to the comparison)."""
-    root = Path(root)
+    root = run_files(root)
     info = json.loads((root / "sweep.json").read_text())
     return cfd_compare.compare([root / r["folder"] for r in info["runs"]], root,
                                labels=[r["label"] for r in info["runs"]], show=info.get("show"),
                                against=info.get("against"), tolerance=info.get("tolerance"),
-                               title=f"{info['name']}: the same droplets through each flow", log=log)
+                               title=f"{info['name']}: the same droplets through each flow", log=log,
+                               md=report_path(root, "comparison.md"))
 
 
 def rebuild(root: Path, log=print) -> Path:
     """Every entry's figures and report.md, then the comparison."""
-    root = Path(root)
+    root = run_files(root)
     info = json.loads((root / "sweep.json").read_text())
     for r in info["runs"]:
         cfd_runner.rebuild_report(root / r["folder"], log)

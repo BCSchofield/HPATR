@@ -619,7 +619,8 @@ still air; every droplet accounted for; shown in ParaView (`../cfdof/CFD_LOG.md`
 `settings/droplets_baseline.yaml` (README.md, "Droplets through the CFD flow"; `cfdof/HOW_TO_REDO.md` step 7):
 - copies the CfdOF case's chosen iteration (reconstructed once into `~/OpenFOAM/droplet_runs/flows/`, reused);
 - writes and runs one OpenFOAM case per run (gusts on/off × flow kept 0 / 2 / 10 s after switch-off: 6 runs, all at
-  once), under `~/OpenFOAM/droplet_runs/<name>/<date_time>/` (OpenFOAM cannot work in a path with spaces);
+  once), under `~/OpenFOAM/droplet_runs/<date>_<time>_<name>/` (OpenFOAM cannot work in a path with spaces;
+  `<name>/<date_time>/` before 2026-11-12);
 - 100 sizes (2–200 µm), 200 of each by default = 20,000 droplets a run, fed in evenly over the exposure; ~30 s a run;
 - collects every droplet's fate (floor, each side wall, lid, the atomiser / nozzle block / arm, port mesh or tube,
   back up the spray hole, airborne), when and where it landed, and whether it was airborne at switch-off:
@@ -721,6 +722,12 @@ the general tool for that:
   extra disk); `paraview/<run>.command` opens a view from wherever the folder has been copied or moved (checked: a
   copy in a path with spaces, the original hidden, opened with all its data). The two runs above were moved in.
   Phase 1's results (the fast Python model) stay in `Flow Visualisation/output/`.
+- **Well-named folders, the viewers on top (Ben, 2026-11-12):** a run's folder is now
+  `~/OpenFOAM/droplet_runs/<date>_<time>_<name>/`. At its top only `View <flow>.command` (one per flow: its headline
+  run, gusts on with the middle flow-kept time or the sweep's `show`), the report (`comparison.md` / `report.md`) and
+  `data/`, which holds everything else. CFD cases are named `<model>_<design>_<flow>` (`Chamber_v2_stream_30`), each
+  with a `View flow.command` (`cfdof/View flow.command`, copied in). `~/OpenFOAM/TESTS.md` (`cfdof/TESTS.md`) lists
+  every case and run.
 - **Ben's views in every run (Ben, 2026-10-25):** each run's ParaView state also carries his CfdOF view's two slices
   and three streamline sets (hidden; his colour scale), and a second tab, a split of the droplets beside the air in
   his views with linked cameras, for screenshots. `--views-only <run folder>` remakes a finished run's views (the
@@ -813,14 +820,100 @@ strength in Phase 2, and to-do 7b (speed weighting).
 
 ---
 
-## Phase 6 (optional). Gas-only CFD of the nozzle (to-do item 11)
+## Phase 6. Nozzle CFD: the silicone film at the lip, and the gas that drives it (DRAFT 2026-11-10, awaiting Ben's go)
 
-- **What:** the gas through the bubbler and orifice, in Ansys Student or OpenFOAM (compressible, since the 0.5 mm
-  orifice chokes).
-- **Validate it** against the Cd tests: the measured upstream pressure against flow (e.g. 2.41 barA at 12,000 sccm
-  through the 0.8 mm insert).
-- **Not needed** for the droplet transport. Gas + silicone inside the nozzle, and breakup into droplets, are not
-  planned.
+**Why (Ben, 2026-11-10):** "i care less about the gas flow from the nozzle, and more about like what the liquid film
+is doing, if it will creep along the sides of the wall". The gas matters as what drives the film, and whether it goes
+supersonic. This replaces the old Phase 6 (gas-only, optional; its Cd check is step 2 below) and picks up the
+parked lip work (*Background to Phase 6* below: the reasoning from 2026-10-26).
+
+**What is known already:**
+- **Choking.** With nitrogen (γ 1.4) into 1 bar, the exit chokes once the upstream pressure passes **1.89 barA**.
+  - Gas only: the 1.2 mm insert at 9,000 sccm needs ~1.39 barA, so it doesn't choke. The 0.8 mm at 12,000 sccm
+    measured 2.41 barA, so it does.
+  - **While spraying:** the 1.2 mm measured **3.1 barA** (CFD_LOG section 8), so its exit is very likely choked.
+    The gas then expands supersonically just past the lip, with shock cells (an underexpanded jet). The 0.5 mm,
+    at 6–9 barA, is far more so.
+  - At a choked lip, the gas turns outward round the edge as it expands: where film creep would start.
+- **The film.** In the 1.2 mm run the liquid carries 2.0e-4 kg/s against the gas's 1.8e-4. The bore is ~98–99 % gas
+  by volume, the liquid a wall film round a gas core. If all of the measured narrowing is that film at the exit, it is
+  ~150 µm thick (CFD_LOG section 8), moving at ~0.3 m/s against the core's hundreds of m/s.
+- **The tools** (checked on the Mac, 2026-11-10): `rhoPimpleFoam` (compressible gas) and `compressibleInterFoam`
+  (compressible two-phase: it tracks the silicone surface, with contact-angle walls) are in v2606.
+  - CfdOF does the geometry, the mesh and the 2D wedge (guide Part 9, `cfdof/NOZZLE_WEDGE_GUIDE.md`, with its wedge
+    fix).
+  - CfdOF can't set up a compressible or a compressible two-phase case: its free surface is incompressible only. That
+    part is by hand, written as guide parts in the 9.7 style (each file, what it does), rehearsed first. Ben clicks
+    and types it himself (click first, then script).
+- **A 2D wedge is enough for film creep** (Background below). Not for microbubbles bursting at the lip (an
+  axisymmetric slice turns each bubble into a ring): that is step 5.
+
+**Steps** (each ends with a stop and a report):
+1. **Ben's exact insert on the wedge** (guide Part 9 on his own geometry, not the made-up Nozzle_A; Ben, 2026-11-10).
+   - **First insert:** proposed the **1.2 mm** (it has the Cd tests, the 3.1 barA spraying point, and is Chamber_v2's
+     bore). Ben's call.
+   - **The profile** from his Fusion model by Intersect (Part 9.12): the bore (7.5 mm), the 70° point with its 35° knife
+     edge, and the outer face as far as the film could creep (the trough and cap).
+   - **A finer mesh at the walls than Part 9:** ~15 µm cells (10 across a 150 µm film) down the bore wall and round the
+     lip; checked by halving.
+   - Part 9's incompressible gas solve here is only a check that the setup works: at these speeds its gas is wrong.
+2. **The gas alone, compressible (`rhoPimpleFoam`), against the Cd tests.**
+   - Inlet at the measured upstream pressure; air outside at 1 bar.
+   - **The check:** the computed gas flow against the measured sccm at 2–3 of that insert's Cd points, one of them
+     choked if the insert reaches it.
+   - **It answers "supersonic?" directly:** where Mach 1 sits, the shock cells, and the gas's speed and pressure at the
+     lip.
+   - Guide part first (the dictionaries by hand), rehearsed.
+3. **The film, two-phase (`compressibleInterFoam`) on the wedge.**
+   - **Inlet at the bore's entry**, with the film already formed: liquid in a ring on the wall at the measured liquid
+     flow, gas in the core at the measured gas flow and pressure. The mixing chamber upstream isn't round (aerator
+     holes), so it stays out.
+   - **Walls:** the measured contact angle. **Liquid:** density, viscosity and surface tension (what Ben measures).
+   - **Run time (estimate, untested):** ~15 µm cells and gas at ~300 m/s give ~25,000 time steps per ms, so a few
+     hours of computing per ms of flow. Creep at film speeds plays out over ms to tens of ms, so overnight runs.
+   - **Outputs:** the film's thickness down the bore; at the lip, whether it leaves cleanly or wraps round; how far
+     and how fast silicone creeps onto the outer face.
+   - **Bracket the wetting:** the clean-metal angle against ~0°, a lip already coated with silicone, which is what the
+     lip is after a few seconds of spraying.
+   - **Checked against** a close-up high-fps video of the lip.
+4. **Lip designs, then the second fluid.**
+   - **Lip designs** (from the Background list), all at the same operating point: a sharper edge against a radiused
+     one, a steeper cone, a protruding tip, a groove behind the edge, shroud air. Compared on creep onto the outer face
+     per ms.
+   - **Then the Teksil mix** (below): the same cases with its own measured properties.
+5. **Later: a 3D sector for the bursts** (microbubbles; the splashes). Cluster-scale (Background).
+
+**The fluids (Ben, 2026-11-10).** EcoFlex 00-30 part A, ~3,000 cP, now; soon 90 % Teksil + 10 % solvent, ~3,900 cP.
+**Work it all out on EcoFlex first, then switch the fluid** (Ben's suggestion): the model is the same and only the
+fluid's numbers change. But:
+- the solvent may change the **surface tension and the wetting** more than the viscosity, so measure both fluids;
+- **solvent evaporating at the lip** (thickening the film there) isn't in the model;
+- if either is **shear-thinning** at the film's shear rates (~10³–10⁴ /s), a single viscosity is a simplification
+  (a rheometer curve would settle it; the datasheet value is the start).
+
+**What Ben provides:**
+1. **Which insert first**, its Fusion model, and its **material and finish**. The lip as made matters: a burr or worn
+   edge is a design difference. A microscope look at the lip would show it.
+2. **Lab, both fluids, one session** (the rig's backlit optics or a macro camera; the PS20 reticle or a ruler in the
+   drop's plane for scale):
+   - **Contact angle** (sessile drop): a small drop on a clean flat of the insert's metal (or the insert's own flat
+     face), side-on and backlit. The **advancing** angle matters most (film moving onto dry metal): feed the drop
+     slowly through a needle and image its edge as it moves. These fluids are viscous, so image it over minutes (0,
+     1, 5, 10 min); how fast it spreads is useful too. A drop that spreads flat is an answer too (angle ~0°).
+     Also one on metal that has had silicone on it and been wiped, as the lip is in use.
+   - **Surface tension** (pendant drop): a drop hanging from a blunt needle of known diameter; its shape gives the
+     surface tension (a ~2–3 mm drop, so it may not fit the shadowgraph's field). Silicones are typically ~20 mN/m:
+     a check of the datasheet, if it has one.
+   - **Density:** weigh a known volume. **The room temperature** (viscosity depends on it).
+3. **The operating point:** the run to model (its run_summary: gas sccm, liquid flow, upstream pressure), and the
+   insert's gas-only Cd points for step 2.
+4. **Later, for step 3's check:** a close-up high-fps video of the lip while spraying.
+
+Analysing the drop images (an edge fit for the angle, a Young–Laplace fit for the surface tension) is new code: on
+Ben's go, after he has the images (plan before code).
+
+**Not in it:** the mixing chamber and its aerator holes, breakup into droplets, solvent evaporation, and what the
+deposit does over minutes (the rig answers that; the Background's wipe tests).
 
 ---
 
@@ -870,7 +963,7 @@ to start). The real chamber is 190 × 692 × 280 mm with the nozzle ~230 mm abov
    (FreeCAD 1.1 renumbers his existing links itself, checked); a 0.5 / 1 / 2 mm cone ladder along the stream.
    Checked by script on a scratch copy: Mesh OK, 1.52 / 1.56 M cells, 30 iterations clean, gas in = out; the full
    solve not run (Mac on battery). Droplets: `settings/droplets_carrier_stream.yaml` (Chamber_v2, Stream, Gentle;
-   flow kept 2 s and 120 s, the latter standing in for continuous running; ~1 h).
+   flow kept 2 s and 290 s, the latter standing in for continuous running; ~2.5 h).
 4. **The screen, scripted (extends Phase 2a):** each design's ports and flows in the settings file; one command builds,
    solves and tracks; overnight, the designs × two flows. Headlines: the band delivered to the collector and its
    purity, by number and by volume; where the rest lands; the on/off ratio Phase 4 measures.
@@ -910,6 +1003,48 @@ to start). The real chamber is 190 × 692 × 280 mm with the nozzle ~230 mm abov
   the chamber's ≥ 9 L/min, so the capture line needs a split or virtual impactor), and the droplet size the head
   takes (commercial AJ typically a few µm; if so, the band is narrower than 0–30 µm). The chamber's headline for an
   AJP is the band's share through the capture, and that share ÷ the capture's flow (its concentration).
+  - **Ben, 2026-11-10:** aim for **sub-30 µm** for now. The head takes **~1,000–1,500 sccm of aerosol** (the
+    aerosol alone: the sheath gas is added later, in the head). So the capture line needs a **virtual impactor**
+    before the head (below), its last minor flow matched to that 1.0–1.5 L/min. Diagram:
+    https://claude.ai/artifact/1zNgyYmXdTSSs1fVJ9BJRK (2026-11-10).
+
+### The virtual impactor before the AJP head (2026-11-10)
+
+**Why one is needed.** The capture carries the chamber's whole through-flow: 38.6 L/min in guide Part 8 (30 of
+carrier + 8.6 of spray gas). The head takes ~1.25 L/min, **~30× less**. A plain split (take 1.25 L/min, dump the
+rest) works but throws away ~97 % of the droplets with the gas. A virtual impactor keeps the droplets and dumps the
+gas: commercial pneumatic AJ systems do the same.
+
+**How it works, and what it means for the band.**
+- A nozzle fires the flow at a receiving tube that takes only a small **minor flow** (here ~1.25 L/min, to the head).
+  The rest, the **major flow**, turns away round the tube's mouth and is exhausted.
+- **Droplets above the cut** can't turn with the gas, so they carry on into the tube: they reach the head,
+  concentrated ~30×.
+- **Droplets below the cut** turn with the gas and leave in the exhaust. Only the minor flow's share of them (~3 %)
+  reaches the head.
+- So it is a **low cut**: it sets the **bottom** of the band delivered, and the cut must be a few µm to keep most of
+  the sub-30 µm band. The top (~30 µm) is set by the chamber's own settling (the floor's cut is ~20–30 µm, Phase 7
+  above); a conventional pre-impactor at ~30 µm could make it sharp if the slides show bigger ones getting through.
+
+**Sizing (estimates, the same Stokes rule as the slide impactor above).**
+
+| Flow into it | Cut 3 µm | Cut 5 µm | Minor flow (1.25 L/min) as a share |
+|---|---|---|---|
+| 38.6 L/min (Part 8) | 5.9 mm nozzle, 24 m/s, ~340 Pa | 8.2 mm, 12 m/s, ~90 Pa | 3.2 % |
+| 20 L/min | 4.7 mm, 19 m/s, ~220 Pa | 6.6 mm, 10 m/s, ~60 Pa | 6.2 % |
+| 10 L/min | 3.7 mm, 15 m/s, ~140 Pa | 5.3 mm, 7.7 m/s, ~35 Pa | 12.5 % |
+
+- **A minor flow of ~3 % is aggressive for one stage** (VIs usually run ~10 %). At 38.6 L/min that means **two stages
+  in series**, ~18 % minor flow each: 38.6 → ~7 → 1.25 L/min. At a 3 µm cut per stage: stage 1 a 5.9 mm nozzle
+  (24 m/s, ~340 Pa), stage 2 a 3.3 mm nozzle (13 m/s, ~110 Pa); together ~3.5 µm overall. The alternative, less chamber through-flow, costs transport out of the
+  chamber (Phase 7: half the 20 µm only leave at ~40 L/min). Two stages keep both: a high through-flow for transport
+  and the VI for concentration.
+- **Its pressure drop adds to the chamber's** (blown-in, so positive): ~100–350 Pa. Harmless for 5 mm polycarbonate
+  (~50 N on a whole x-wall at 400 Pa), but it makes the relief path more important, not less.
+- **A round VI is axisymmetric:** guide Part 9's 2D wedge workflow can model it (nozzle, receiving tube, the major
+  flow out round it). Tracking the droplets through it on a wedge mesh is still to check.
+- **The bench test:** the same slide impactor as the first capture test, or a filter, on each of the VI's two
+  outlets, to measure what goes where.
 
 ### Seal the existing port, or not? It depends which route (the answer to Ben's question)
 
@@ -1004,14 +1139,17 @@ the CFD answers this) and **collection** (what share of what arrives lands on th
 
 | Nozzle | Flow | Velocity | 50 % cut | Dynamic pressure |
 |---|---|---|---|---|
-| 10 mm | 30 L/min | 6.4 m/s | **11 µm** | 24 Pa |
-| 10 mm | 100 L/min | 21 m/s | **5.9 µm** | 270 Pa |
-| 6 mm | 30 L/min | 18 m/s | **5.0 µm** | 190 Pa |
-| 6 mm | 100 L/min | 59 m/s | 2.7 µm | 2,100 Pa |
-| 20 mm | 100 L/min | 5.3 m/s | 17 µm | 17 Pa |
+| 10 mm | 30 L/min | 6.4 m/s | **7.6 µm** | 24 Pa |
+| 10 mm | 38.6 L/min (guide Part 8's capture) | 8.2 m/s | **6.7 µm** | 40 Pa |
+| 10 mm | 100 L/min | 21 m/s | **4.1 µm** | 270 Pa |
+| 6 mm | 30 L/min | 18 m/s | **3.5 µm** | 190 Pa |
+| 6 mm | 100 L/min | 59 m/s | 1.9 µm | 2,100 Pa |
+| 20 mm | 100 L/min | 5.3 m/s | 12 µm | 17 Pa |
 
-(Stk = ρ_d d² U / 18 µ W, caught above Stk ≈ 0.24; estimates, and a real impactor is calibrated, not calculated.)
-**A 10 mm nozzle is the sweet spot:** at 100 L/min it catches essentially the whole 6–30 µm band at a pressure drop
+(Stk = ρ_d d² U / 9 µ W with W the nozzle diameter, caught above Stk ≈ 0.24 (round jet, √Stk50 ≈ 0.49; Marple, as
+in Hinds); silicone 1,070 kg/m³. **Corrected 2026-11-10:** the first version used 18 µ W with the same 0.24, which put
+every cut √2 too large (11 µm for the first row). Estimates: a real impactor is calibrated, not calculated.)
+**A 10 mm nozzle is the sweet spot:** at 100 L/min it catches essentially the whole 4–30 µm band at a pressure drop
 a small blower can deliver. The existing 3 × 3 floor slide grid (CFD_LOG section 8 item 3) stays as the in-chamber
 test: it measures what settles, which is the thing the capture is competing against.
 
@@ -1111,7 +1249,8 @@ match this spec rather than trusting a part number from here:
 
 **E. Make or print**
 1. **The impactor body:** a 10 mm nozzle facing a slide about 10 mm away, in a housing that opens to swap slides.
-   Printable; it holds no pressure to speak of.
+   Printable; it holds no pressure to speak of. At Part 8's 38.6 L/min it catches from ~6.7 µm (table above).
+2. **Later, the virtual impactor** before the AJP head (section above): printable too, in two stages.
 2. **Only if the ejector route is taken:** the body in resin, with a bought **blunt dispensing needle or brass tube**
    as the 1–1.5 mm nozzle (the part FDM cannot do well). Expect 2–3 iterations.
 
@@ -1138,10 +1277,132 @@ needs no meter (above). That one number decides whether the blow-in route or the
 
 ---
 
-## Parked (2026-10-26): silicone building up on the exit lip
+## Phase 8. The port impactor: CFD of the funnel and the slide (DRAFT 2026-11-21, awaiting Ben's go)
+
+**Why (Ben, 2026-11-21):** "worth us doing a CFD test on this? like just basic airflow, and then dropping in
+droplets of between 1-30 microns into the area before the funnel". The first slides show whether it collects at all.
+This gives, for each size arriving at the funnel, where it ends up: the glass, the funnel, or out with the gas.
+Multiplied by the chamber model's port share and the measured spray distribution, that predicts the slide's size
+distribution. A slide then checks the chamber model (a cheap Phase 4). It also says where on the glass the spot is,
+and how big.
+
+**What is known already** (estimates, not yet checked):
+- **The design** (`docs/STATUS.md`, the 17:07 entry, 2026-11-19/20):
+  - the funnel narrows from r 22 to 1.5 mm over 45 mm (one conic), then the 3 mm bore, drilled;
+  - a flat Ø19 face round the hole;
+  - the glass (Thorlabs CG15XH1, Ø25, #1.5H) ~4.6 mm from the face, on a seat ring (opening ~Ø18) in a bayonet
+    holder;
+  - out through the holder's open quadrants into the hose.
+  - The axis is horizontal (the back-wall port).
+- **The gas:**
+  - 11,000 sccm of nitrogen is 1.83e-4 m³/s: 0.12 m/s across the Ø44 mouth, 26 m/s in the bore.
+  - Re ≈ 5,100 and Mach 0.07, so incompressible is right.
+  - ~400 Pa across the jet.
+- **Theory's cut: ~2.0 µm** (Stk50 0.24, as Phase 7's collector table), with S/W ≈ 1.5. 10 µm sits at Stk ≈ 6.
+  Theory says nothing about losses on the funnel's own walls.
+- **Settling across the axis:** 30 µm falls at ~3 cm/s and 10 µm at ~0.3 cm/s. The gas spends ~0.3 s in the slow mouth
+  and funnel, so 30 µm drops ~1 cm and 10 µm ~1 mm. Gravity is across the axis, so this is a 3D model, not the
+  Part 9 wedge.
+- **The tool** (Phase 3a's):
+  - `icoUncoupledKinematicParcelFoam` on the frozen flow, with gravity, gusts on or off;
+  - each droplet ends at its first touch, counted by the patch's name.
+
+**Steps** (each ends with a stop and a report):
+1. **The gas as one body, in Fusion (Ben).** CfdOF meshes the gas, so the model is the gas inside the parts, as Flow
+   Analysis Basic is for the chamber.
+   - **Draw it as one revolve of the gas's half-section,** not by cutting the parts out of a block. Everything that
+     matters is round. Each line of the profile becomes one face, so each boundary is one pick. A cut would bring in
+     the threads, bolt holes and slivers.
+   - **Keep exactly:**
+     - the funnel's inside (the conic) and the bore as drilled;
+     - the nozzle face (Ø19, its slope and its rounded shoulder);
+     - the glass's underside at the gap;
+     - the seat ring under it;
+     - the pocket round the funnel;
+     - the sleeve's bore up to the rim.
+   - **Drop:**
+     - the threads, the bolt holes and the flange's outside;
+     - the bayonet slots, pins and arms. The ring between the holder and the sleeve is open all round instead; its
+       area is far larger than the bore's, so the jet doesn't notice;
+     - the plug. Above the glass is not gas, so the holder and the plug become one solid round block;
+     - small fillets away from the bore and the face.
+   - **Add:**
+     - upstream, the port and some chamber air: a Ø44 cylinder 25 mm long before the mouth, with its end disc as the
+       inlet;
+     - downstream, ~20 mm of the hose's bore past the holder, with its end disc as the outlet.
+   - **Axis along x, y up** (gravity −y, as in the chamber), the inlet disc at x = 0, in mm.
+   - **The gap and the bore as Fusion parameters.** The model uses the printed parts' measured values (callipers'
+     depth rod for the gap), not the CAD's.
+   - Export a STEP. **Stop:** a screenshot of the section, checked before the flow.
+2. **The flow, in CfdOF (Ben clicks, then it is scripted).** The guide part is a new `cfdof/IMPACTOR_GUIDE.md`,
+   written on the go for this step.
+   - **Physics as Chamber_v3:** steady, kOmegaSST, air.
+   - **Boundaries:**
+     - **inlet:** volumetric flow, 1.83e-4 m³/s (or the test's sccm); 5 %; length scale 3 mm (0.07 × 44 mm);
+     - **outlet:** static pressure 0;
+     - **walls by name,** so the droplets' fates come out by surface: **glass**, **face** (the nozzle face),
+       **bore**, **funnel** (the funnel's inside) and **wall** (the default: the rest).
+   - **Mesh (cfMesh):**
+     - ~1.5 mm in the stub and the pocket;
+     - ~0.1 mm in the bore and from the bore to the glass (~30 cells across the bore);
+     - layers on the glass, the bore and the funnel's last ~10 mm (the near-wall artefact, guide 7.6).
+     - Estimate ~1 M cells. Checked by halving the fine cells.
+   - **Solve:** 2,000 iterations, written every 500 (the chamber's snapshot check). Estimate ~1 h.
+   - **Checks:**
+     - gas in = gas out;
+     - the bore's speed (~26 m/s) and the pressure across it (~400 Pa);
+     - the jet straight and its stagnation point centred on the glass;
+     - how far the 1,000, 1,500 and 2,000 snapshots differ.
+3. **The droplets (new code, on Ben's go).**
+   - **Sizes:** 1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 8, 10, 12, 14, 17, 20, 25 and 30 µm, close together round the cut.
+     **2,000 of each** (±1.1 points at 50 %).
+   - **Released over the inlet disc** at the gas's speed, along the axis, spread evenly by area.
+     - OpenFOAM's `disc` injection may spread them evenly in radius instead, which crowds the axis (to check).
+     - If so, use a list of positions (manualInjection). The funnel loses least near the axis, so crowding it would
+       understate the losses.
+   - **The flow stays on until all have left** (~1 s); no still-air stage. Gusts on and off, as the bracket.
+   - **Out:**
+     - per size, the % on the glass, the face, the bore, the funnel and the other walls, and out through the outlet;
+     - the deposit on the glass: the radii holding 50 % and 90 %;
+     - where on the funnel they land, top or bottom (gravity).
+   - **New code:** an impactor scenario in `droplet_transport` (one stage, injection at the inlet, fates by patch,
+     its report). Tests first, as for the rest.
+   - **Checks:**
+     - 0.5 µm tracers should not land on the glass or the funnel (the near-wall artefact);
+     - the glass's curve against theory (d50 ~2 µm, for droplets that enter the bore);
+     - the mesh halved;
+     - the spread between snapshots.
+4. **The prediction for a slide.** Per size, multiply:
+   - the chamber's port share (Chamber_v3, gusts on, 290 s; its gusts and snapshot spread as the uncertainty);
+   - the measured spray distribution (CCD run 131450, as in the comparison);
+   - the glass's share from step 3.
+
+   The product is the predicted number per size on the glass, as airborne diameters, and as footprints once the
+   spread factor is known.
+5. **Against the slides** (once they are imaged). Not CFD, but listed so the comparison has what it needs:
+   - the slide imaging (microscope, scale);
+   - the spread factor: silicone spreads on glass, so a footprint is wider than the droplet was. It comes from
+     EcoFlex's contact angle on the cover glass (a sessile drop, as in Phase 6's list).
+
+**What Ben provides:**
+1. The gas body (step 1), and the measured gap and bore of the printed parts.
+2. The test's gas flow (its run_summary's sccm); 11,000 until then.
+3. For step 5: images of the slides with a scale, and the contact angle of EcoFlex on the cover glass.
+
+**Not in it:**
+- the chamber's flow into the port (a uniform inlet on the stub instead);
+- droplets landing on droplets (over a 1-minute spray the spot may build into a film; the slides will show it);
+- the holder's arms, and the hose beyond 20 mm;
+- bounce (liquid silicone: none expected).
+
+**Order:** steps 1–2 any time; steps 3–4 after the first slides, which show whether it collects.
+
+---
+
+## Background to Phase 6 (parked 2026-10-26, picked up 2026-11-10): silicone building up on the exit lip
 
 Ben: silicone builds up on the orifice's exit lip, mainly from splashes, with a little film creep. Could CFD help design
-a lip that stays clean? Discussed only, then parked for later. Nothing built. What was worked out:
+a lip that stays clean? Discussed only, then parked; picked up as Phase 6 on 2026-11-10. What was worked out:
 
 - **Still effervescent.** At GLR 0.53–1.38 by mass the bore is ~98–99 % gas by volume, so most of the gas runs as a
   core inside a silicone wall film (the lamella). But microbubbles stay locked in the 3,000 cP film (Ben sees them in
@@ -1187,8 +1448,11 @@ a lip that stays clean? Discussed only, then parked for later. Nothing built. Wh
 6. Phase 2a: the scripted flow builder, a flow per orifice size (planned 2026-10-25, awaiting Ben's go; his new CAD this week).
 7. Phase 7: capture design for the 0–30 µm band (drafted 2026-10-30, awaiting Ben's go and his four answers); the
    rest of Phase 2 and Phase 3 run inside it, on the chosen design; then Phase 4.
-8. Phase 6 only if wanted.
-9. Parked: CFD of silicone on the exit lip (section above), if Ben picks it up.
+8. Phase 6: nozzle CFD, the silicone film at the lip (drafted 2026-11-10, awaiting Ben's go and his inputs: the
+   insert, contact angle and surface tension of both fluids, the operating point). Its step 1 is guide Part 9 on his
+   own insert.
+9. Phase 8: CFD of the port impactor, funnel and slide (drafted 2026-11-21, awaiting Ben's go). Its step 1 is Ben's
+   gas body in Fusion.
 
 ## Decided (Ben, 2026-10-23)
 
