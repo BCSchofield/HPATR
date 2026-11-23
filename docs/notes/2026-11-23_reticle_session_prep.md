@@ -76,6 +76,9 @@ Then find out:
    - If not, its size in mm.
 4. **Square to the camera.** At best focus on the array, check the left and right edges (and the top and bottom) are
    equally sharp. If one side goes soft first as you defocus, the slide is tilted.
+   - This only catches a large tilt. 1° across the 20.5 mm field puts the edges 0.36 mm apart in focus, about 3.4 µm
+     of χ (k 9.57 µm/mm), which can't be seen. Square it as well as you can by eye and move on: the analysis takes
+     out what's left (below, "After the session" item 2).
 5. **Stage travel.**
    - The micrometer reading at best focus on the dots (z0).
    - Whether it reaches z0 − 6 mm and z0 + 6 mm. On 2026-10-15 it didn't move from +7 to +8.
@@ -83,6 +86,30 @@ Then find out:
    lens? If it has to be re-seated, that's fine: each patch then gets its own z0.
 7. **Brightness.** The dots are fully opaque, so they should read near 0. The background should be about as bright
    as on the bead day and not saturated.
+
+### Found at the rig, 2026-11-23 (PCC and GUI_Clean screenshots)
+
+- **The dots are one vertical column, 2534 → 3.5 µm, each centre one larger-dot diameter below the last.** So the gap
+  between neighbours is only 0.146 × the larger dot. The gaps by pair (µm):
+
+  | Pair | 1792→1267 | 634→448 | 448→317 | 317→224 | 158→112 | 112→79 | 79→56 | 56→40 | 40→28 | 28→20 | 20→14 |
+  |---|---|---|---|---|---|---|---|---|---|---|---|
+  | Gap | 262 | 93 | 65 | 46 | 23 | 16 | 12 | 8 | 6 | 4 | 3 |
+
+  - At best focus (σ ≈ 4.5 µm) the dots at 56 µm and below run together into one tapering line. The 14–28 µm dots
+    can't be measured as separate dots at all.
+  - At |z| = 5 mm (χ ≈ 55 µm) every pair below ~634 µm overlaps on the sides that face each other. The left and right
+    arcs of each dot stay clear for dots ≥ ~79 µm up to χ 50.
+  - So "the small end (14–28)" and the bead pairs at 39.6 / 56.0 / 79.2 don't come from this column directly. 158
+    (and 112 / 224 / 317) are clean. The rest needs isolated dots elsewhere on the slide, or a model of the whole
+    column (discs × Gaussian blur), with the small end of the table simulated from the measured blur. That's a new
+    method: plan before code.
+- **Scale:** the 1792 µm dot measures 1791.7 µm at 10 µm/px. The ruler's ticks, 1 mm apart, are 100 px apart.
+- **Focus:** best χ 8.7 µm on the 1792 µm dot, against χ0 13.15 µm in the profile (from beads).
+- **The column, ruler and concentric squares all fit in one frame.** The column runs along the 1152 px axis; 1792 µm
+  down to the tip is ~700 px.
+- **Dust:** sharp specks all over the slide, on the slide itself, and they don't come off. Most are clear of the
+  column. The analysis masks them; they're not a reason to stop.
 
 ## Part 2. What to send Claude on the lab PC
 
@@ -93,6 +120,21 @@ Then find out:
 - The pinhole check: done or not.
 
 ## Part 3. The run sheet (Claude writes it from Part 2)
+
+**Written 2026-11-23: `docs/notes/2026-11-23_reticle_run_sheet.csv`, 20 rows** (copy:
+`E:\Experiments\Run sheets\2026-11-23 Reticle run sheet.csv`). R01–R19 are the column at ±6 mm; R20 is one array
+capture (`RETICLE array c`). It differs from the plan below:
+- **Static runs:** Silicone 0, so no pump, no homing and no pump vibration. Each row: START, Arm, Trigger, wait for
+  "saved", then STOP EVERYTHING, which saves the run with its Notes.
+- **The dial has no reading,** only 0.5 mm per turn. So z0 is wherever the slide is in focus, and each row says how
+  many turns forwards to move.
+- **Ben dropped the z0 repeat and the bg row:** best focus comes from the fit, and there's no clear patch. The
+  background is estimated from each frame, with the patterns and dust masked. Nothing in the sheet checks for drift.
+- **One array capture,** centred, not the corners.
+- **No array through focus** (the lens is telecentric) and **no wall-offcut check** (there's no offcut).
+- **Framing:** one frame for the whole column, from the 1792 µm dot to the tip.
+
+The original plan, kept for reference:
 
 **Template:** `docs/notes/2026-10-16_big_bead_through_focus_run_sheet.csv`, with the same columns. Save it as
 `docs/notes/<date>_reticle_run_sheet.csv` and load it in GUI_Clean's **Run sheet** tab, which fills in each row's
@@ -117,10 +159,10 @@ Notes and settings.
    - Notes `RETICLE z-6.00` … `RETICLE z+6.00`, with ` p1` / ` p2` added if there are two patches (then 38 rows).
    - Take up the backlash first: go past −6 and come back to −6, then always turn forwards.
 3. **The array at z0:** `RETICLE array c`. Add `tl tr bl br` only if the array doesn't fill the frame.
-4. **The array through focus** (does the scale stay constant with depth, i.e. is the lens telecentric?):
-   `RETICLE z-5.00 array c`, `RETICLE z-2.50 array c`, `RETICLE z+2.50 array c`, `RETICLE z+5.00 array c`.
-   - **Write z before "array".** The parser lets the later token set the kind, so `RETICLE array c z-5.00` would be
-     read as a dots capture.
+4. ~~The array through focus~~ **Dropped (Ben, 2026-11-23): the lens is telecentric**, as the optics profile
+   already records (Ben, 2026-10-16).
+   - If a z ever goes into an array row: **write z before "array".** The parser lets the later token set the kind,
+     so `RETICLE array c z-5.00` would be read as a dots capture.
 
 **Why these depths and not the old 31:**
 - The analysis fits blur against depth as a V (χ = χ0 + k|z − zf|). The profile has χ0 13.15 µm and k 9.57 µm/mm.
@@ -133,6 +175,11 @@ Notes and settings.
 1. The certificate's values go into `Calibration/Imaging Work/targets.json`.
 2. `bead_calibration.py` gains the 14 / 19.8 / 28 µm dots, the squares (a shape per target) and the
    array-through-focus result (the scale against z).
+   - **Best focus is fitted per dot, not once per patch.** The dots sit at different places on the slide, so any tilt
+     gives each one its own zf. Fitting zf per dot takes the tilt out whatever the eye check said.
+   - The array through focus gives zf at every array dot, so a plane zf(x, y) fitted to them measures the tilt
+     directly. Report it; if it is more than ~0.1 mm across the frame, re-square the slide before the new box's
+     runs.
 3. The sizer calibration is redone with both days, which gives optics profile v2. The new box's runs use it.
 
 ## Not now

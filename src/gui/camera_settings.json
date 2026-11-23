@@ -9,7 +9,7 @@
   "width": "2048",
   "height": "1152",
   "pre_trigger_s": "0",
-  "post_trigger_s": "13",
+  "post_trigger_s": "0.15",
   "px_per_mm": 100.0,
   "cone_camera_index": 0,
   "save_video": true,

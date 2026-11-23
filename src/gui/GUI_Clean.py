@@ -1208,8 +1208,16 @@ class PhantomController:
         self.cam.exposure = float(exposure_us)
         if exp_index != 0:
             self.cam.exp_index = int(exp_index)
+        # Auto exposure always off (Ben, 2026-11-23): it reacts to the scene, so a denser spray would get a
+        # longer exposure and more motion blur. Read back: None if the camera would not say.
+        try:
+            self.cam.auto_exposure = 0
+            v = self.cam.auto_exposure                     # pyphantom passes the raw value through
+            auto_exp = (v != 0) if isinstance(v, (bool, int, float)) else None
+        except Exception:
+            auto_exp = None
         return {'resolution': self.cam.resolution, 'frame_rate': actual_fps,
-                'exposure': self.cam.exposure}
+                'exposure': self.cam.exposure, 'auto_exposure': auto_exp}
 
     def start_recording(self):
         self.cam.record(); self.is_recording = True; self.is_armed = True
@@ -6996,7 +7004,7 @@ class AtomisationApp(QMainWindow):
             pre_frames, post_frames = self._cam_frame_counts()
             self._cam_pre_frames  = pre_frames
             self._cam_post_frames = post_frames
-            self.phantom.configure(
+            applied = self.phantom.configure(
                 width=int(self._cam_width.text()),
                 height=int(self._cam_height.text()),
                 fps=fps,
@@ -7006,6 +7014,17 @@ class AtomisationApp(QMainWindow):
             )
             self._cam_status_lbl.setText(
                 f"Config applied — {pre_frames} pre / {post_frames} post frames")
+            auto_exp = applied.get('auto_exposure')
+            if auto_exp is False:
+                self._log("Camera: auto exposure off.")
+            elif auto_exp is True:
+                self._log("Camera: AUTO EXPOSURE IS STILL ON — the camera refused to turn it off. "
+                          "Turn it off in PCC (Auto Exposure) before recording.")
+                self._set_status("Auto exposure still ON: turn it off in PCC", CLR_RED)
+                self._flash_log_border(CLR_RED)
+            else:
+                self._log("Camera: could not read auto exposure back; check PCC shows no 'AE Enabled'.")
+                self._set_status("Auto exposure not confirmed off: check PCC", CLR_ORANGE)
             self._save_camera_settings()
         except Exception as e:
             self._set_status(f"Camera config error: {e}", CLR_RED)
